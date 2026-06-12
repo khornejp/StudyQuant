@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
+import logging
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from math import isfinite, sqrt, sin
 from pathlib import Path
 from statistics import mean
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from . import data
 
@@ -26,6 +31,27 @@ COLLECTED_CSV_FIELDS: tuple[str, ...] = (
     "taker_buy_base_volume",
     "taker_buy_quote_volume",
 )
+
+ARCHIVE_BASE_URL = "https://data.binance.vision/data/futures/um/daily/klines/BTCUSDT/1m"
+
+ARCHIVE_CSV_FIELDS: tuple[str, ...] = (
+    "open_time",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time",
+    "quote_volume",
+    "count",
+    "taker_buy_volume",
+    "taker_buy_quote_volume",
+    "ignore",
+)
+
+ARCHIVE_CHECKPOINT_KEYS: tuple[str, ...] = ("last_completed_date", "downloaded_files", "failed_dates")
+
+LOGGER = logging.getLogger(__name__)
 
 
 FEATURE_FORMULAS: tuple[dict[str, object], ...] = (
@@ -158,6 +184,32 @@ class CollectionResult:
     network_used: bool
 
 
+@dataclass(frozen=True)
+class ArchiveDownloadSummary:
+    output_dir: Path
+    checkpoint_file: Path
+    start_date: str
+    end_date: str
+    total_days: int
+    downloaded_days: int
+    failed_days: int
+    last_completed_date: str | None
+    downloaded_files: tuple[str, ...]
+    failed_dates: tuple[str, ...]
+
+
+class ArchiveDownloadError(RuntimeError):
+    """Recoverable per-day archive download failure."""
+
+
+class ArchiveHardBanError(RuntimeError):
+    """HTTP 418 hard-ban response; archive crawling must stop immediately."""
+
+
+class ArchiveValidationError(ValueError):
+    """Malformed archive CSV or zip payload."""
+
+
 class PublicKlineDownloader:
     """Explicit opt-in downloader for unsigned public kline data only."""
 
@@ -181,6 +233,124 @@ class PublicKlineDownloader:
         return [candle_from_kline_row(row) for row in payload]
 
 
+class BinanceArchiveDownloader:
+    """Downloader for Binance futures daily 1m kline archives."""
+
+    def __init__(
+        self,
+        base_url: str = ARCHIVE_BASE_URL,
+        symbol: str = "BTCUSDT",
+        interval: str = "1m",
+        timeout_seconds: int = 30,
+        max_retries: int = 5,
+        urlopen: Callable[..., object] | None = None,
+        sleep: Callable[[float], None] | None = None,
+    ) -> None:
+        if max_retries <= 0:
+            raise ValueError("max_retries must be positive")
+        self.base_url = base_url.rstrip("/")
+        self.symbol = symbol
+        self.interval = interval
+        self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
+        self.urlopen = urlopen or urllib.request.urlopen
+        self.sleep = sleep or time.sleep
+
+    def download_range(
+        self,
+        start_date: str | date | datetime,
+        end_date: str | date | datetime,
+        output_dir: Path | str,
+        checkpoint_file: Path | str | None = None,
+    ) -> ArchiveDownloadSummary:
+        start = _parse_archive_date(start_date)
+        end = _parse_archive_date(end_date)
+        if start > end:
+            raise ValueError("start_date must be on or before end_date")
+        destination = Path(output_dir)
+        destination.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = Path(checkpoint_file) if checkpoint_file is not None else destination / "checkpoint.json"
+        checkpoint = _load_archive_checkpoint(checkpoint_path)
+
+        resume_after = checkpoint.get("last_completed_date")
+        first_day = start
+        if isinstance(resume_after, str) and resume_after:
+            completed_day = _parse_archive_date(resume_after)
+            if completed_day >= start:
+                first_day = completed_day + timedelta(days=1)
+
+        for current_day in _iter_archive_dates(first_day, end):
+            try:
+                downloaded_file = self._download_day(current_day, destination)
+            except ArchiveHardBanError:
+                _write_archive_checkpoint(checkpoint_path, checkpoint)
+                LOGGER.error("hard ban while downloading Binance archive; stopping immediately")
+                raise
+            except (ArchiveDownloadError, ArchiveValidationError, OSError, ValueError) as error:
+                failed_dates = _string_list(checkpoint.get("failed_dates"))
+                current_iso = current_day.isoformat()
+                if current_iso not in failed_dates:
+                    failed_dates.append(current_iso)
+                checkpoint["failed_dates"] = failed_dates
+                _write_archive_checkpoint(checkpoint_path, checkpoint)
+                LOGGER.error("failed to download Binance archive %s: %s", current_iso, error)
+                continue
+
+            downloaded_files = _string_list(checkpoint.get("downloaded_files"))
+            if downloaded_file not in downloaded_files:
+                downloaded_files.append(downloaded_file)
+            failed_dates = [value for value in _string_list(checkpoint.get("failed_dates")) if value != current_day.isoformat()]
+            checkpoint["last_completed_date"] = current_day.isoformat()
+            checkpoint["downloaded_files"] = downloaded_files
+            checkpoint["failed_dates"] = failed_dates
+            _write_archive_checkpoint(checkpoint_path, checkpoint)
+
+        return _archive_summary(destination, checkpoint_path, start, end, checkpoint)
+
+    def _download_day(self, day: date, output_dir: Path) -> str:
+        zip_name = f"{day.isoformat()}_{self.symbol}-{self.interval}.zip"
+        csv_name = f"{day.isoformat()}_{self.symbol}-{self.interval}.csv"
+        url = f"{self.base_url}/{zip_name}"
+        request = urllib.request.Request(url, headers={"User-Agent": "btcusdt-quant-archive-crawler/0.1"})
+        backoff_seconds = 1.0
+        last_error: BaseException | None = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                with self.urlopen(request, timeout=self.timeout_seconds) as response:  # type: ignore[attr-defined]
+                    payload = response.read()  # type: ignore[attr-defined]
+                csv_text = _archive_csv_text_from_zip(bytes(payload))
+                parse_archive_csv_text(csv_text)
+                (output_dir / zip_name).write_bytes(bytes(payload))
+                (output_dir / csv_name).write_text(csv_text, encoding="utf-8")
+                return zip_name
+            except urllib.error.HTTPError as error:
+                last_error = error
+                if error.code == 418:
+                    LOGGER.error("HTTP 418 hard ban while downloading %s", url)
+                    raise ArchiveHardBanError(f"HTTP 418 hard ban while downloading {zip_name}") from error
+                if error.code == 429:
+                    if attempt >= self.max_retries:
+                        break
+                    self.sleep(backoff_seconds)
+                    backoff_seconds = min(backoff_seconds * 2.0, 60.0)
+                    continue
+                if error.code == 404:
+                    raise ArchiveDownloadError(f"HTTP 404 archive file not found: {zip_name}") from error
+                if attempt >= self.max_retries:
+                    break
+                self.sleep(backoff_seconds)
+                backoff_seconds = min(backoff_seconds * 2.0, 60.0)
+            except (urllib.error.URLError, TimeoutError, OSError) as error:
+                last_error = error
+                if attempt >= self.max_retries:
+                    break
+                self.sleep(backoff_seconds)
+                backoff_seconds = min(backoff_seconds * 2.0, 60.0)
+            except (zipfile.BadZipFile, UnicodeDecodeError, ArchiveValidationError, ValueError) as error:
+                raise ArchiveValidationError(f"invalid archive CSV for {zip_name}: {error}") from error
+        raise ArchiveDownloadError(f"failed downloading {zip_name} after {self.max_retries} attempts: {last_error}")
+
+
 def parse_open_time(value: str) -> datetime:
     stripped = value.strip()
     if stripped.isdigit():
@@ -191,6 +361,163 @@ def parse_open_time(value: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def parse_archive_csv_text(csv_text: str) -> list[data.Candle]:
+    reader = csv.DictReader(io.StringIO(csv_text))
+    fieldnames = reader.fieldnames or []
+    missing = set(ARCHIVE_CSV_FIELDS) - set(fieldnames)
+    if missing:
+        raise ArchiveValidationError(f"archive CSV missing required columns: {', '.join(sorted(missing))}")
+    candles: list[data.Candle] = []
+    seen_open_times: set[datetime] = set()
+    previous_open_time: datetime | None = None
+    for row in reader:
+        open_time = parse_open_time(row["open_time"])
+        if open_time in seen_open_times:
+            raise ArchiveValidationError(f"archive CSV contains duplicate open_time: {open_time.isoformat()}")
+        if previous_open_time is not None and open_time <= previous_open_time:
+            raise ArchiveValidationError("archive CSV open_time values must be chronological")
+        seen_open_times.add(open_time)
+        previous_open_time = open_time
+        open_price = float(row["open"])
+        high = float(row["high"])
+        low = float(row["low"])
+        close = float(row["close"])
+        volume = float(row["volume"])
+        _validate_ohlcv(open_price, high, low, close, volume)
+        candles.append(
+            data.Candle(
+                open_time=open_time,
+                open=open_price,
+                high=high,
+                low=low,
+                close=close,
+                volume=volume,
+                quote_volume=float(row.get("quote_volume") or 0.0),
+                number_of_trades=int(float(row.get("count") or 0)),
+                taker_buy_base_volume=float(row.get("taker_buy_volume") or 0.0),
+                taker_buy_quote_volume=float(row.get("taker_buy_quote_volume") or 0.0),
+            )
+        )
+    return candles
+
+
+def load_archive_csv_candles(path: Path) -> list[data.Candle]:
+    return parse_archive_csv_text(path.read_text(encoding="utf-8"))
+
+
+def load_archive_zip_candles(path: Path) -> list[data.Candle]:
+    return parse_archive_csv_text(_archive_csv_text_from_zip(path.read_bytes()))
+
+
+def load_archive_candles(archive_dir: Path) -> list[data.Candle]:
+    if not archive_dir.is_dir():
+        raise ValueError(f"archive_dir does not exist or is not a directory: {archive_dir}")
+    candles: list[data.Candle] = []
+    csv_stems: set[str] = set()
+    for csv_path in sorted(archive_dir.glob("*.csv")):
+        csv_stems.add(csv_path.stem)
+        candles.extend(load_archive_csv_candles(csv_path))
+    for zip_path in sorted(archive_dir.glob("*.zip")):
+        if zip_path.stem in csv_stems:
+            continue
+        candles.extend(load_archive_zip_candles(zip_path))
+    if not candles:
+        raise ValueError(f"archive_dir contains no archive CSV or zip files: {archive_dir}")
+    merged_by_time: dict[datetime, data.Candle] = {}
+    for candle in sorted(candles, key=lambda row: row.open_time):
+        merged_by_time.setdefault(candle.open_time, candle)
+    return list(merged_by_time.values())
+
+
+def _archive_csv_text_from_zip(payload: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        names = [name for name in archive.namelist() if not name.endswith("/")]
+        csv_names = [name for name in names if name.lower().endswith(".csv")]
+        if not csv_names:
+            raise ArchiveValidationError("archive zip contains no CSV file")
+        with archive.open(csv_names[0]) as handle:
+            return handle.read().decode("utf-8-sig")
+
+
+def _parse_archive_date(value: str | date | datetime) -> date:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).date() if value.tzinfo is not None else value.date()
+    if isinstance(value, date):
+        return value
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def _iter_archive_dates(start: date, end: date) -> list[date]:
+    days: list[date] = []
+    current = start
+    while current <= end:
+        days.append(current)
+        current += timedelta(days=1)
+    return days
+
+
+def _default_archive_checkpoint() -> dict[str, object]:
+    return {"last_completed_date": None, "downloaded_files": [], "failed_dates": []}
+
+
+def _load_archive_checkpoint(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return _default_archive_checkpoint()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError("archive checkpoint must be a JSON object")
+    checkpoint = _default_archive_checkpoint()
+    checkpoint["last_completed_date"] = payload.get("last_completed_date")
+    checkpoint["downloaded_files"] = _string_list(payload.get("downloaded_files"))
+    checkpoint["failed_dates"] = _string_list(payload.get("failed_dates"))
+    return checkpoint
+
+
+def _write_archive_checkpoint(path: Path, checkpoint: Mapping[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "last_completed_date": checkpoint.get("last_completed_date"),
+        "downloaded_files": _string_list(checkpoint.get("downloaded_files")),
+        "failed_dates": _string_list(checkpoint.get("failed_dates")),
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _string_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("archive checkpoint list fields must be lists")
+    output: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("archive checkpoint list values must be strings")
+        output.append(item)
+    return output
+
+
+def _archive_summary(output_dir: Path, checkpoint_file: Path, start: date, end: date, checkpoint: Mapping[str, object]) -> ArchiveDownloadSummary:
+    total_days = (end - start).days + 1
+    requested_dates = {day.isoformat() for day in _iter_archive_dates(start, end)}
+    downloaded_files = tuple(_string_list(checkpoint.get("downloaded_files")))
+    failed_dates = tuple(_string_list(checkpoint.get("failed_dates")))
+    downloaded_days = sum(1 for filename in downloaded_files if filename[:10] in requested_dates)
+    failed_days = sum(1 for failed_date in failed_dates if failed_date in requested_dates)
+    last_completed = checkpoint.get("last_completed_date")
+    return ArchiveDownloadSummary(
+        output_dir=output_dir,
+        checkpoint_file=checkpoint_file,
+        start_date=start.isoformat(),
+        end_date=end.isoformat(),
+        total_days=total_days,
+        downloaded_days=downloaded_days,
+        failed_days=failed_days,
+        last_completed_date=last_completed if isinstance(last_completed, str) else None,
+        downloaded_files=downloaded_files,
+        failed_dates=failed_dates,
+    )
 
 
 def load_csv_candles(path: Path) -> list[data.Candle]:
@@ -343,11 +670,13 @@ def expanded_fixture(rows: int = 240) -> list[data.Candle]:
 
 def build_dataset(
     input_path: Path | None = None,
+    stream_buffer: Sequence[data.Candle] | None = None,
     horizon: int = 3,
     label_threshold: float = 0.0002,
     tp_pct: float = 0.001,
     sl_pct: float = 0.0005,
     external_events: Mapping[object, object] | None = None,
+    archive_dir: Path | None = None,
 ) -> DatasetBuild:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
@@ -355,7 +684,16 @@ def build_dataset(
         raise ValueError("tp_pct must be positive")
     if sl_pct <= 0.0:
         raise ValueError("sl_pct must be positive")
-    if input_path is None:
+    supplied_sources = sum(1 for value in (input_path, stream_buffer, archive_dir) if value is not None)
+    if supplied_sources > 1:
+        raise ValueError("input_path, stream_buffer, and archive_dir are mutually exclusive")
+    if archive_dir is not None:
+        raw = load_archive_candles(archive_dir)
+        source = archive_dir.as_posix()
+    elif stream_buffer is not None:
+        raw = list(stream_buffer)
+        source = "live_stream_buffer"
+    elif input_path is None:
         raw = expanded_fixture()
         source = "offline_expanded_fixture"
     else:

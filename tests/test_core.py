@@ -1,16 +1,93 @@
 from __future__ import annotations
 
 import csv
+import io
 import importlib.util
 import json
+import threading
 import tempfile
 import unittest
+import urllib.error
+import zipfile
+from datetime import timedelta
 from pathlib import Path
 from typing import Mapping, cast
 from unittest import mock
 
 from btcusdt_quant import data, dataset, features, governance, live, training
-from btcusdt_quant.cli import run_collect, run_demo, run_train
+from btcusdt_quant.cli import main, run_collect, run_demo, run_live, run_train
+
+
+def make_stream_candles(rows: int) -> list[data.Candle]:
+    base = data.utc_minute(2026, 1, 2, 0, 0)
+    candles: list[data.Candle] = []
+    previous_close = 100000.0
+    for index in range(rows):
+        open_price = previous_close
+        close = 100000.0 + index * 10.0
+        candles.append(
+            data.Candle(
+                open_time=base.replace(minute=index),
+                open=open_price,
+                high=max(open_price, close) + 5.0,
+                low=min(open_price, close) - 5.0,
+                close=close,
+                volume=10.0 + index,
+                quote_volume=(10.0 + index) * close,
+                number_of_trades=100 + index,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=5.0 * close,
+            )
+        )
+        previous_close = close
+    return candles
+
+
+def make_archive_csv(day: str = "2024-01-01", rows: int = 3, header: str | None = None) -> str:
+    fields = header or ",".join(dataset.ARCHIVE_CSV_FIELDS)
+    lines = [fields]
+    base = dataset.parse_open_time(f"{day}T00:00:00+00:00")
+    for index in range(rows):
+        open_time = int((base + timedelta(minutes=index)).timestamp() * 1000)
+        close_time = open_time + 59_999
+        price = 100000.0 + index
+        values = {
+            "open_time": open_time,
+            "open": price,
+            "high": price + 2.0,
+            "low": price - 2.0,
+            "close": price + 1.0,
+            "volume": 10.0 + index,
+            "close_time": close_time,
+            "quote_volume": (10.0 + index) * price,
+            "count": 100 + index,
+            "taker_buy_volume": 5.0,
+            "taker_buy_quote_volume": 5.0 * price,
+            "ignore": 0,
+        }
+        lines.append(",".join(str(values[name]) for name in fields.split(",")))
+    return "\n".join(lines) + "\n"
+
+
+def make_archive_zip(csv_text: str, name: str = "BTCUSDT-1m.csv") -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(name, csv_text)
+    return buffer.getvalue()
+
+
+class FakeArchiveResponse:
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+
+    def __enter__(self) -> "FakeArchiveResponse":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.payload
 
 
 class DataPipelineTests(unittest.TestCase):
@@ -236,6 +313,96 @@ class DataPipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
                 run_collect(Path(tmp) / "invalid.csv", rows=0)
+
+
+class ArchiveDownloaderTests(unittest.TestCase):
+    def test_archive_downloader_downloads_single_day(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = make_archive_zip(make_archive_csv(rows=2))
+            urlopen = mock.Mock(return_value=FakeArchiveResponse(payload))
+            downloader = dataset.BinanceArchiveDownloader(urlopen=urlopen, sleep=lambda _: None)
+            summary = downloader.download_range("2024-01-01", "2024-01-01", Path(tmp), Path(tmp) / "checkpoint.json")
+            self.assertEqual(summary.downloaded_days, 1)
+            self.assertEqual(summary.failed_days, 0)
+            self.assertTrue((Path(tmp) / "2024-01-01_BTCUSDT-1m.zip").exists())
+            self.assertTrue((Path(tmp) / "2024-01-01_BTCUSDT-1m.csv").exists())
+            self.assertEqual(len(dataset.load_archive_candles(Path(tmp))), 2)
+
+    def test_archive_downloader_resumes_from_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint = Path(tmp) / "checkpoint.json"
+            checkpoint.write_text(
+                json.dumps({"last_completed_date": "2024-01-01", "downloaded_files": ["2024-01-01_BTCUSDT-1m.zip"], "failed_dates": []}),
+                encoding="utf-8",
+            )
+            payload = make_archive_zip(make_archive_csv(day="2024-01-02", rows=1))
+            urlopen = mock.Mock(return_value=FakeArchiveResponse(payload))
+            downloader = dataset.BinanceArchiveDownloader(urlopen=urlopen, sleep=lambda _: None)
+            summary = downloader.download_range("2024-01-01", "2024-01-02", Path(tmp), checkpoint)
+            self.assertEqual(urlopen.call_count, 1)
+            self.assertEqual(summary.last_completed_date, "2024-01-02")
+            self.assertIn("2024-01-02_BTCUSDT-1m.zip", summary.downloaded_files)
+
+    def test_archive_downloader_retry_on_429(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            http_429 = urllib.error.HTTPError("https://example.test/archive.zip", 429, "rate limited", {}, None)
+            payload = make_archive_zip(make_archive_csv(rows=1))
+            urlopen = mock.Mock(side_effect=[http_429, FakeArchiveResponse(payload)])
+            sleep = mock.Mock()
+            downloader = dataset.BinanceArchiveDownloader(urlopen=urlopen, sleep=sleep)
+            summary = downloader.download_range("2024-01-01", "2024-01-01", Path(tmp), Path(tmp) / "checkpoint.json")
+            self.assertEqual(summary.downloaded_days, 1)
+            self.assertEqual(urlopen.call_count, 2)
+            sleep.assert_called_once_with(1.0)
+
+    def test_archive_downloader_validates_csv_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            malformed = make_archive_csv(header="open_time,open,high,low,close,volume", rows=1)
+            urlopen = mock.Mock(return_value=FakeArchiveResponse(make_archive_zip(malformed)))
+            downloader = dataset.BinanceArchiveDownloader(urlopen=urlopen, sleep=lambda _: None)
+            summary = downloader.download_range("2024-01-01", "2024-01-01", Path(tmp), Path(tmp) / "checkpoint.json")
+            self.assertEqual(summary.downloaded_days, 0)
+            self.assertEqual(summary.failed_dates, ("2024-01-01",))
+            self.assertFalse((Path(tmp) / "2024-01-01_BTCUSDT-1m.csv").exists())
+
+    def test_archive_downloader_checkpoint_format(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint = Path(tmp) / "checkpoint.json"
+            urlopen = mock.Mock(return_value=FakeArchiveResponse(make_archive_zip(make_archive_csv(rows=1))))
+            downloader = dataset.BinanceArchiveDownloader(urlopen=urlopen, sleep=lambda _: None)
+            downloader.download_range("2024-01-01", "2024-01-01", Path(tmp), checkpoint)
+            payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+            self.assertEqual(set(payload), {"last_completed_date", "downloaded_files", "failed_dates"})
+            self.assertEqual(payload["last_completed_date"], "2024-01-01")
+            self.assertEqual(payload["downloaded_files"], ["2024-01-01_BTCUSDT-1m.zip"])
+            self.assertEqual(payload["failed_dates"], [])
+
+    def test_build_dataset_from_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            (archive / "2024-01-01_BTCUSDT-1m.csv").write_text(make_archive_csv(rows=30), encoding="utf-8")
+            build = dataset.build_dataset(archive_dir=archive)
+            self.assertEqual(build.source, archive.as_posix())
+            self.assertEqual(build.raw_rows, 30)
+            self.assertEqual(build.gap_report.canonical_rows, 30)
+            self.assertGreater(len(build.labeled_rows), 0)
+
+    def test_cli_collect_archive_runs(self) -> None:
+        class FakeDownloader:
+            def download_range(self, start_date: str, end_date: str, output_dir: Path, checkpoint_file: Path | None = None) -> dataset.ArchiveDownloadSummary:
+                output_dir.mkdir(parents=True, exist_ok=True)
+                checkpoint = checkpoint_file or output_dir / "checkpoint.json"
+                checkpoint.write_text(
+                    json.dumps({"last_completed_date": end_date, "downloaded_files": [f"{end_date}_BTCUSDT-1m.zip"], "failed_dates": []}),
+                    encoding="utf-8",
+                )
+                return dataset.ArchiveDownloadSummary(output_dir, checkpoint, start_date, end_date, 1, 1, 0, end_date, (f"{end_date}_BTCUSDT-1m.zip",), ())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("btcusdt_quant.cli.dataset.BinanceArchiveDownloader", return_value=FakeDownloader()):
+                code = main(["collect-archive", "--start", "2024-01-01", "--end", "2024-01-01", "--output", tmp])
+            self.assertEqual(code, 0)
+            self.assertTrue((Path(tmp) / "checkpoint.json").exists())
 
 
 class DataQualityEdgeTests(unittest.TestCase):
@@ -886,6 +1053,86 @@ class GovernanceTests(unittest.TestCase):
         self.assertTrue(live.FundingEventManager().blackout_active(3))
         self.assertEqual(live.GhostFillPrevention().safe_market_exit(1, 0.1, False), "hard_kill")
         self.assertEqual(live.EmergencyCloseExecutor().close(0, 0), "emergency_close_submitted")
+
+
+class WebSocketStreamTests(unittest.TestCase):
+    def test_websocket_client_mock_receives_fixture(self) -> None:
+        fixture = make_stream_candles(3)
+        client = live.MockWebSocketClient(fixture)
+        client.start()
+        try:
+            received = [client.next_candle(timeout=0.5) for _ in fixture]
+        finally:
+            client.close()
+        self.assertEqual([candle.open_time for candle in received if candle is not None], [candle.open_time for candle in fixture])
+        self.assertEqual(len(client.buffer_snapshot()), 3)
+
+    def test_stream_gap_detector_flags_missing_minute(self) -> None:
+        candles = make_stream_candles(3)
+        detector = live.StreamGapDetector()
+        detector.observe(candles[0])
+        detection = detector.observe(candles[2])
+        self.assertTrue(detection.stream_desync_detected)
+        self.assertEqual(detection.missing_open_times, [candles[1].open_time])
+        self.assertIsNone(detection.anomaly)
+
+    def test_rest_backfill_fills_gap(self) -> None:
+        candles = make_stream_candles(3)
+        backfill = live.RESTBackfill(fetcher=lambda open_times: [candles[1] for _ in open_times])
+        repaired = backfill.backfill_missing([candles[1].open_time])
+        self.assertEqual(len(repaired), 1)
+        self.assertTrue(repaired[0].repaired)
+        self.assertEqual(repaired[0].gap_flag, 1)
+        self.assertEqual(backfill.events[0]["filled"], 1)
+
+    def test_stream_desync_detected_after_3_missing(self) -> None:
+        candles = make_stream_candles(5)
+        detector = live.StreamGapDetector()
+        detector.observe(candles[0])
+        detection = detector.observe(candles[4])
+        self.assertTrue(detection.stream_desync_detected)
+        self.assertEqual(detection.consecutive_missing, 3)
+        self.assertEqual(detection.anomaly, "stream_desync")
+
+    def test_live_engine_produces_canonical_timeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = live.run_live(Path(tmp), dry_run=True, max_candles=12)
+            self.assertTrue(result.summary["stream_desync_detected"])
+            self.assertEqual(result.summary["backfilled_rows"], 3)
+            self.assertEqual(len(result.canonical), result.summary["canonical_rows"])
+            self.assertTrue((Path(tmp) / "live_summary.json").exists())
+
+    def test_cli_live_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            code = main(["live", "--dry-run", "--output", tmp])
+            self.assertEqual(code, 0)
+            summary = json.loads((Path(tmp) / "live_summary.json").read_text(encoding="utf-8"))
+            self.assertFalse(summary["network_used"])
+            self.assertTrue(summary["stream_desync_detected"])
+
+    def test_websocket_graceful_shutdown(self) -> None:
+        client = live.MockWebSocketClient(make_stream_candles(20), interval_seconds=0.01)
+        client.start()
+        client.close()
+        self.assertTrue(client.is_finished())
+
+    def test_websocket_buffer_thread_safe(self) -> None:
+        candles = make_stream_candles(40)
+        client = live.MockWebSocketClient([], buffer_size=50)
+
+        def add_rows(rows: list[data.Candle]) -> None:
+            for candle in rows:
+                client.add_candle(candle)
+                client.buffer_snapshot()
+
+        threads = [threading.Thread(target=add_rows, args=(candles[index::4],)) for index in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        snapshot = client.buffer_snapshot()
+        self.assertEqual(len(snapshot), 40)
+        self.assertEqual([candle.open_time for candle in snapshot], sorted(candle.open_time for candle in candles))
 
 
 class OfflineTrainingTests(unittest.TestCase):

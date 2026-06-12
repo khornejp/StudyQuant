@@ -134,6 +134,26 @@ def run_collect(output: Path, rows: int, allow_public_network: bool = False) -> 
     }
 
 
+def run_collect_archive(start: str, end: str, output: Path, checkpoint: Path | None = None) -> dict[str, object]:
+    summary = dataset.BinanceArchiveDownloader().download_range(start, end, output, checkpoint)
+    return {
+        "output_dir": summary.output_dir.as_posix(),
+        "checkpoint_file": summary.checkpoint_file.as_posix(),
+        "start_date": summary.start_date,
+        "end_date": summary.end_date,
+        "total_days": summary.total_days,
+        "downloaded_days": summary.downloaded_days,
+        "failed_days": summary.failed_days,
+        "last_completed_date": summary.last_completed_date,
+        "downloaded_files": list(summary.downloaded_files),
+        "failed_dates": list(summary.failed_dates),
+    }
+
+
+def run_live(output: Path, dry_run: bool = True, allow_public_network: bool = False, max_candles: int = 12) -> dict[str, object]:
+    return live.run_live(output, dry_run=dry_run, allow_public_network=allow_public_network, max_candles=max_candles).summary
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Safe local BTCUSDT v7.18 scaffold")
     subparsers = parser.add_subparsers(dest="command")
@@ -143,9 +163,19 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--output", default="artifacts/collected/btcusdt_1m.csv", help="CSV output path")
     collect.add_argument("--rows", type=int, default=240, help="number of fixture rows or public klines to write")
     collect.add_argument("--allow-public-network", action="store_true", help="opt in to unsigned public Binance kline download")
+    collect_archive = subparsers.add_parser("collect-archive", help="collect Binance data.binance.vision daily BTCUSDT 1m archives")
+    collect_archive.add_argument("--start", required=True, help="inclusive start date YYYY-MM-DD")
+    collect_archive.add_argument("--end", required=True, help="inclusive end date YYYY-MM-DD")
+    collect_archive.add_argument("--output", default="artifacts/archive", help="archive output directory")
+    collect_archive.add_argument("--checkpoint", default=None, help="optional checkpoint JSON path; defaults to output/checkpoint.json")
     train = subparsers.add_parser("train", help="run deterministic offline CSV/fixture training pipeline")
     train.add_argument("--output", default="artifacts/training", help="training artifact output directory")
     train.add_argument("--input", default=None, help="optional local CSV candles path; defaults to offline fixture")
+    live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
+    live_parser.add_argument("--output", default="artifacts/live", help="live artifact output directory")
+    live_parser.add_argument("--dry-run", action="store_true", help="use deterministic fixture WebSocket and REST backfill")
+    live_parser.add_argument("--allow-public-network", action="store_true", help="opt in to unsigned public Binance WebSocket and REST klines")
+    live_parser.add_argument("--max-candles", type=int, default=12, help="maximum closed klines to process before returning")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -177,6 +207,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"rows={summary['rows']}")
         print(f"output={summary['output_path']}")
         return 0
+    if args.command == "collect-archive":
+        output = Path(args.output)
+        checkpoint = Path(args.checkpoint) if args.checkpoint else None
+        try:
+            summary = run_collect_archive(args.start, args.end, output, checkpoint)
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"archive collection failed: {error}", file=sys.stderr)
+            return 1
+        print("BTCUSDT archive collection complete")
+        print(f"downloaded={summary['downloaded_days']}/{summary['total_days']} days")
+        print(f"failed={summary['failed_days']} days")
+        print(f"last_completed_date={summary['last_completed_date']}")
+        print(f"checkpoint={summary['checkpoint_file']}")
+        print(f"output={summary['output_dir']}")
+        return 0
     if args.command == "train":
         output = Path(args.output)
         input_path = Path(args.input) if args.input else None
@@ -191,6 +236,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"labeled_rows={summary['labeled_rows']}")
         print(f"fold_count={summary['fold_count']}")
         print(f"mean_test_f1={summary['mean_test_f1']}")
+        print(f"artifacts={output}")
+        return 0
+    if args.command == "live":
+        output = Path(args.output)
+        try:
+            summary = run_live(output, dry_run=args.dry_run, allow_public_network=args.allow_public_network, max_candles=args.max_candles)
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"live failed: {error}", file=sys.stderr)
+            return 1
+        print("BTCUSDT live collection complete")
+        print(f"dry_run={summary['dry_run']}")
+        print(f"network_used={summary['network_used']}")
+        print(f"stream_desync_detected={summary['stream_desync_detected']}")
+        print(f"backfilled_rows={summary['backfilled_rows']}")
+        print(f"canonical_rows={summary['canonical_rows']}")
+        print(f"signal={summary['signal']}")
         print(f"artifacts={output}")
         return 0
     if args.command == "artifacts":
