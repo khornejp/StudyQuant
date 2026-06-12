@@ -1,64 +1,52 @@
 # Implementation Gaps, Vulnerabilities, and Improvements
 
-This file records the security and completeness findings. **All items from the original v7.18 scaffold have been addressed.** Remaining items are production-only validation, not missing code.
+**Status**: Multiple critical code gaps remain. See `docs/V718_CRITICAL_GAPS.md` for full review.
 
-## Safety boundary decisions
+## Remaining Code Gaps (Blocking)
 
-- Credentialed/live Binance REST calls, WebSocket streams, account-state reads, and order submission are **gated**, not absent.
-- `MockExchangeAdapter` remains the **default** path in demo and tests.
-- `BinanceUsdMFuturesTestnetAdapter` is available behind `--exchange binance-testnet --allow-signed-network`.
-- `BinanceUsdMFuturesProdAdapter` is **hard-gated** behind `--allow-prod` + valid approval artifacts.
-- Generated artifacts state `forbidden_use: live trading or real order submission` until approval.
+| Gap | Status | File |
+|-----|--------|------|
+| F11/F12 real-time source integration | Pending | `feature_registry.py` |
+| Live source parity enforcement | Missing | `live.py` |
+| Production semantic approval | Missing | `exchange.py`, `governance.py` |
+| Live order submission | Missing | `live.py` |
+| Risk state wiring | Missing | `live.py` |
+| Retry-After reset | Missing | `live.py`, `exchange.py` |
 
-## Vulnerabilities avoided (original + v7.18)
+## Remaining Test Gaps (Critical)
 
-1. **Credential exposure**: credentials loaded only from `BINANCE_API_KEY` / `BINANCE_API_SECRET` env vars; never logged or stored in files.
-2. **Accidental live order placement**: mock adapter is default; testnet requires explicit flags; prod requires approval artifacts.
-3. **Rate-limit ban risk**: `RateLimitManager` models 429/418 with deterministic actions; retry-after respected; capped retries.
-4. **Gap-contaminated inference**: gap metrics and feature-group policies block entries at 0.20 ratio.
-5. **One-way position race risk**: `OneWayPositionGuard` blocks entries when position open.
-6. **Artifact drift**: `artifact_manifest.json` records SHA-256 hashes with path traversal rejection.
-7. **Ghost-fill race**: `GhostFillPrevention` with cancel-confirm lock and safe exit.
-8. **Drawdown cascade**: `DrawdownProtocol` with 3-tier step-down (warn → reduce → block → kill).
-9. **Calibration drift**: `CalibrationDriftMonitor` tracks ECE/Brier/MCE with rolling windows.
-10. **Clock drift**: `ClockDriftService` hard-kills at ≥1000ms.
-11. **ADL risk**: `ADLMonitorService` blocks entries at rank ≥4, kills at ≥5.
+| Gap | Status | File |
+|-----|--------|------|
+| Gap-contamination test | Ineffective | `tests/test_v718.py` |
+| Champion/challenger metrics | Incomplete | `tests/test_core.py`, `cli.py` |
+| Source parity blocking | Untested | Missing |
+| Production approval validation | Untested | Missing |
 
-## Original gaps — ALL RESOLVED
+## Vulnerabilities avoided (implemented)
 
-| Gap | Resolution | File |
-|-----|-----------|------|
-| Binance signed/testnet API | ✅ Implemented | `exchange.py`, `secrets.py` |
-| listenKey refresh | ✅ Implemented | `exchange.py` |
-| Order reconciliation | ✅ Implemented | `live.py`, `exchange.py` |
-| 503 retry semantics | ✅ Implemented | `exchange.py` (query-by-clientOrderId) |
-| Rate-limit headers | ✅ Implemented | `exchange.py` (X-MBX-USED-WEIGHT, Retry-After) |
-| Ghost-fill timing | ✅ Implemented | `live.py`, `risk.py` |
-| Funding blackout | ✅ Implemented | `monitoring.py` |
-| MDD limits | ✅ Implemented | `risk.py` |
-| LightGBM/CatBoost/Optuna | ✅ Implemented | `models.py` (optional) |
-| 70+ feature registry | ✅ Implemented | `feature_registry.py` (107 features, 92 active) |
-| NTP/clock drift | ✅ Implemented | `monitoring.py` |
-| ADL monitoring | ✅ Implemented | `monitoring.py` |
-| Public backfill | ✅ Implemented | `dataset.py` (pagination, checkpointing) |
-| WebSocket live | ✅ Implemented | `live.py` |
-| Train/live parity | ✅ Implemented | `parity.py`, `sources.py` |
-| Failure injection | ✅ Implemented | `failure_injection.py` |
-| MLflow/DVC lineage | ✅ Implemented | `lineage.py` (optional fallback) |
+1. **Credential exposure**: credentials loaded only from env vars; never logged.
+2. **Accidental live order placement**: mock adapter default; explicit flags required.
+3. **Rate-limit modeling**: `RateLimitManager` with deterministic actions.
+4. **Gap-contaminated inference**: gap metrics block entries at 0.20 ratio.
+5. **One-way position guard**: blocks entries when position open.
+6. **Artifact drift**: SHA-256 hashes with path traversal rejection.
+7. **Ghost-fill prevention**: cancel-confirm lock.
+8. **Drawdown protocol**: 3-tier step-down.
+9. **Calibration drift**: ECE/Brier/MCE tracking.
+10. **Clock drift**: hard-kill at ≥1000ms.
+11. **ADL risk**: block entries at rank ≥4.
 
-## Production-only validation (NOT code gaps)
+## Production-only validation (operational, not code gaps)
 
-These are operational items requiring real-world testing:
+1. **Testnet soak**: 7+ days real signed testnet
+2. **Latency SLO**: real exchange measurement
+3. **Credential rotation**: formal SOP
+4. **Security audit**: third-party review
+5. **Human approval**: LIVE_DEPLOYMENT sign-off
+6. **MLflow/DVC server**: deployed tracking
+7. **Long-running WS**: 24h+ validation
+8. **Exchange drills**: maintenance window drills
+9. **Funding/ADL validation**: real endpoint behavior
+10. **Partial fill reconciliation**: real order lifecycle
 
-1. **Testnet soak**: 7+ days of real signed testnet trading
-2. **Latency SLO**: real exchange latency measurement
-3. **Credential rotation**: formal SOP for API key rotation
-4. **Security audit**: third-party review of production path
-5. **Human approval**: formal sign-off for LIVE_DEPLOYMENT stage
-6. **MLflow/DVC server**: deployed tracking server and remote storage
-7. **Long-running WS**: 24h+ continuous WebSocket validation
-8. **Exchange drills**: real outage/maintenance window drills
-9. **Funding/ADL validation**: real endpoint behavior under volatility
-10. **Partial fill reconciliation**: real order lifecycle validation
-
-See `docs/REMAINING_GAPS_V718.md` for full checklist.
+See `docs/V718_CRITICAL_GAPS.md` for full checklist.

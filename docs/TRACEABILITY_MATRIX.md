@@ -5,7 +5,7 @@ This matrix maps the ProjectMD BTCUSDT v7.18 requirements to the local scaffold 
 | ProjectMD requirement | Local implementation | Verification |
 |---|---|---|
 | Canonical 1m timeline and gap metrics | `CanonicalTimelineBuilder`, `gap_ratio`, `max_gap_run` | `test_canonical_timeline_repairs_gaps` |
-| Feature-group gap contamination policy | `GapContaminationGovernance` | `test_gap_policy_blocks_trade_flow_contamination` |
+| Feature-group gap contamination policy | `GapContaminationGovernance` | `test_gap_contamination_blocks_entry_when_gap_ratio_high` |
 | Strict rolling warm-up/no partial windows | `RollingFeatureEngine` | `test_ml_and_ops_scaffold_modules` |
 | Feature clipping incl. vol-adjusted limit | `FeatureClipper` | `test_feature_clipper_bounds_and_inf_to_nan` |
 | Live NaN source classification | `NaNSourceClassifier` | `test_nan_source_classifier_distinguishes_outage` |
@@ -35,6 +35,17 @@ This matrix maps the ProjectMD BTCUSDT v7.18 requirements to the local scaffold 
 | Collection input validation | `dataset.collect_candles` | `test_collect_rejects_non_positive_rows` |
 | Vulnerability/improvement MD | `docs/IMPLEMENTATION_GAPS_AND_IMPROVEMENTS.md` | File exists and reviewed |
 
+## Missing Implementations
+
+| ProjectMD requirement | Status | Gap |
+|---|---|---|
+| Live source parity enforcement | Missing | `live.py` does not block entries on missing sources |
+| Production semantic approval | Missing | Only hash verification, no human signoff |
+| Real order submission | Missing | `submit=True` not called in live loop |
+| Risk state wiring | Missing | Balance, leverage, drawdown not fetched |
+| Retry-After respect | Partial | Header parsed but not consumed by rate limiter |
+| F11/F12 real-time sources | Pending | 15 features require depth/funding/ADL/mark-price |
+
 ## Explicit non-production boundary
 
-The scaffold implements deterministic local contracts and mocks. It does not claim live production readiness, and the remaining production-only gaps are documented in `IMPLEMENTATION_GAPS_AND_IMPROVEMENTS.md`.
+The scaffold implements deterministic local contracts and mocks. It does not claim live production readiness. See `docs/V718_CRITICAL_GAPS.md` for remaining code gaps.

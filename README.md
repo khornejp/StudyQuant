@@ -1,6 +1,10 @@
-# BTCUSDT 1m Quant Trading System v7.18 — Expanded Local Scaffold (~85% Feature-Complete)
+# BTCUSDT 1m Quant Trading System v7.18 — Local Scaffold (40% Implemented, 60% Gaps Remain)
 
-**Note**: This is a significantly expanded local scaffold (~85% of the v7.18 specification). It is NOT a production-ready system. 15 features (F11/F12 microstructure and exchange-safety features) require real-time data sources that are not yet integrated. See `docs/REMAINING_GAPS_V718.md` for the full production validation checklist.
+**Status**: This is a local scaffold with significant implementation gaps. It is NOT a production-ready system.  
+**Active features**: 92 of 107 (F01–F10 only). 15 features (F11–F12) require real-time data sources.  
+**See**: `docs/V718_CRITICAL_GAPS.md` for the complete critical review.
+
+**⚠️ SAFETY WARNING**: Do not use for live trading. Mock exchange is default. Production requires human approval, security audit, and testnet soak.
 
 ## What is implemented
 
@@ -20,15 +24,15 @@
 - **Optuna integration**: budget profiles (research/practical/full) with MDD(p90) objective
 - **Champion-challenger workflow**: shadow → canary 5/20/50 → full promotion with rollback gates
 
-### Live Execution (Scaffold — 85%)
+### Live Execution (Scaffold — 40% Implemented)
 - **Exchange adapters**: Mock (default), Binance USD-M Futures Testnet (signed), Production (hard-gated)
-- **Rate limiting**: token bucket with emergency reserve (20%), 429/418/503 handling, retry-after respect
-- **Position management**: one-way position guard, position sizing (fixed notional, Kelly placeholder), leverage cap
-- **Order safety**: TP/SL bracket orders (reduce-only), clientOrderId reconciliation, gap-cross exit
-- **Drawdown protocol**: 3-tier step-down (warn → reduce size → block entries → hard kill)
+- **Rate limiting**: token bucket with emergency reserve (20%), 429/418/503 handling, retry-after respect *(partial — Retry-After reset not implemented)*
+- **Position management**: one-way position guard, position sizing (fixed notional, Kelly placeholder), leverage cap *(position state not wired into live loop)*
+- **Order safety**: TP/SL bracket orders (reduce-only), clientOrderId reconciliation, gap-cross exit *(not actually submitted in live loop)*
+- **Drawdown protocol**: 3-tier step-down (warn → reduce size → block entries → hard kill) *(drawdown state not passed in live loop)*
 - **Ghost-fill prevention**: cancel-confirm lock, safe market exit
 - **Emergency close**: priority-based execution, retry capped, hard kill on max retries
-- **Note**: The exchange adapter is created but not yet wired into the live execution loop for real order submission
+- **⚠️ Known gaps**: Live loop does not submit orders; source parity not enforced; risk state not fetched; real order lifecycle untested
 
 ### Operational Monitoring (100% of scaffold)
 - **Clock drift**: NTP-style monitoring, thresholds at 100ms/500ms/1000ms
