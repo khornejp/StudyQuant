@@ -1,0 +1,2 @@
+action,condition,metric,slo_category
+allow,0,schema_violation_count,data_quality

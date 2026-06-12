@@ -1,0 +1,2 @@
+security_signoff: local_mock_only
+compliance_signoff: not_for_live_trading
