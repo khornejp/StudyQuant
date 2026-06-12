@@ -216,7 +216,14 @@ def run_live(
     recv_window_ms: int = 5000,
 ) -> dict[str, object]:
     exchange_adapter = create_exchange_adapter(exchange_name, allow_signed_network, allow_prod, approval_artifacts, recv_window_ms)
-    summary = dict(live.run_live(output, dry_run=dry_run, allow_public_network=allow_public_network, max_candles=max_candles).summary)
+    result = live.run_live(
+        output,
+        dry_run=dry_run,
+        allow_public_network=allow_public_network,
+        max_candles=max_candles,
+        exchange_adapter=exchange_adapter,
+    )
+    summary = dict(result.summary)
     summary["exchange"] = exchange_name
     summary["signed_network_enabled"] = exchange_adapter.network_enabled
     return summary

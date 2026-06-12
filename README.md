@@ -1,16 +1,17 @@
-# BTCUSDT 1m Quant Trading System v7.18 — Production-Ready Implementation
+# BTCUSDT 1m Quant Trading System v7.18 — Expanded Local Scaffold (~85% Feature-Complete)
 
-This project is a safe, local implementation scaffold derived from the Markdown documents in `ProjectMD/`, now expanded to near-complete v7.18 specification coverage.
+**Note**: This is a significantly expanded local scaffold (~85% of the v7.18 specification). It is NOT a production-ready system. 15 features (F11/F12 microstructure and exchange-safety features) require real-time data sources that are not yet integrated. See `docs/REMAINING_GAPS_V718.md` for the full production validation checklist.
 
-## What is implemented (v7.18 — 100% feature coverage)
+## What is implemented
 
-### Data Pipeline
+### Data Pipeline (100%)
 - **Canonical 1-minute timeline** with gap repair, gap metrics, and gap ratio tracking
-- **70+ feature registry** across 12 categories (F01–F12): price/return, trend, volatility, volume/trade flow, candle structure, gap quality, regime normalization, volatility-adjusted returns, volatility-adjusted price/trend, volatility-adjusted candle/flow, microstructure, and exchange/funding/safety
+- **92 active computed features** across F01–F10 (price/return, trend, volatility, volume, candle structure, gap quality, regime normalization, volatility-adjusted returns/trend/flow)
+- 15 additional features registered (F11–F12) but pending real-time data sources (depth, funding, ADL, mark price)
 - **Feature governance**: finite-value enforcement, clipping (z-score ±10, ratio ±100, return ±0.20, vol_adj ±10), NaN source classification (outage, warmup, structural, isolated)
 - **Source contracts**: availability grading (A/B/C/D), train/live feature parity gates, column data contracts, retention contracts
 
-### ML Pipeline
+### ML Pipeline (100% of local scope)
 - **Model adapters**: stdlib centroid linear classifier (default), optional LightGBM/CatBoost with graceful fallback chain
 - **Walk-forward validation**: standard purged splits + combinatorial purged CV (CPCV) with sample uniqueness weighting (O(N+T))
 - **Calibration**: Platt/Beta/Isotonic calibration with sample gates, ECE/Brier drift monitoring
@@ -19,22 +20,23 @@ This project is a safe, local implementation scaffold derived from the Markdown 
 - **Optuna integration**: budget profiles (research/practical/full) with MDD(p90) objective
 - **Champion-challenger workflow**: shadow → canary 5/20/50 → full promotion with rollback gates
 
-### Live Execution
-- **Exchange adapters**: Mock (default), Binance USD-M Futures Testnet (signed), Production (gated)
+### Live Execution (Scaffold — 85%)
+- **Exchange adapters**: Mock (default), Binance USD-M Futures Testnet (signed), Production (hard-gated)
 - **Rate limiting**: token bucket with emergency reserve (20%), 429/418/503 handling, retry-after respect
 - **Position management**: one-way position guard, position sizing (fixed notional, Kelly placeholder), leverage cap
 - **Order safety**: TP/SL bracket orders (reduce-only), clientOrderId reconciliation, gap-cross exit
 - **Drawdown protocol**: 3-tier step-down (warn → reduce size → block entries → hard kill)
 - **Ghost-fill prevention**: cancel-confirm lock, safe market exit
 - **Emergency close**: priority-based execution, retry capped, hard kill on max retries
+- **Note**: The exchange adapter is created but not yet wired into the live execution loop for real order submission
 
-### Operational Monitoring
+### Operational Monitoring (100% of scaffold)
 - **Clock drift**: NTP-style monitoring, thresholds at 100ms/500ms/1000ms
 - **ADL monitoring**: rank-based actions (≥3 reduce size, ≥4 block entries, ≥5 hard kill)
 - **Funding monitoring**: rate tracking, blackout detection, cost estimation
 - **Calibration drift**: ECE, MCE, Brier, Brier skill score with rolling window
 
-### Governance & Artifacts
+### Governance & Artifacts (100%)
 - **13-stage pipeline**: strict stage ordering with enforcement
 - **7-tier fallback chain**: allow → warn → raise_threshold → reduce_size → block_new_entries → rollback → hard_kill
 - **Approval package**: dataset/model cards, feature registry, dependency graph, source contracts, calibration config, bootstrap CI, monitoring SLO, lineage manifest, security signoff

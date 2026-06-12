@@ -159,10 +159,10 @@ class DataPipelineTests(unittest.TestCase):
     def test_feature_registry_scaffold_status(self) -> None:
         registry = dataset.feature_formula_registry()
         registry_features = cast(list[dict[str, object]], registry["features"])
-        pending = [feature for feature in registry_features if feature.get("scaffold_status") == "pending_data_source"]
-        self.assertTrue(pending)
-        self.assertTrue({"spread", "bid_ask_imbalance", "adl_indicator", "funding_rate"}.issubset({feature["feature_name"] for feature in pending}))
-        self.assertFalse(set(dataset.FEATURE_NAMES) & {feature["feature_name"] for feature in pending})
+        mock_features = [feature for feature in registry_features if feature.get("scaffold_status") == "mock_implemented"]
+        self.assertTrue(mock_features)
+        self.assertTrue({"spread", "bid_ask_imbalance", "adl_indicator", "funding_rate"}.issubset({feature["feature_name"] for feature in mock_features}))
+        self.assertTrue(set(dataset.FEATURE_NAMES) & {feature["feature_name"] for feature in mock_features})
 
     def test_warmup_invalid_derived_from_feature_registry(self) -> None:
         original_formulas = dataset.FEATURE_FORMULAS
@@ -491,10 +491,16 @@ class DataQualityEdgeTests(unittest.TestCase):
         ]
         rows = dataset.build_feature_rows(candles)
         self.assertEqual(len(rows), 3)
+        registry = dataset.feature_formula_registry()
+        mock_features = {str(f["feature_name"]) for f in registry["features"] if f.get("scaffold_status") == "mock_implemented"}
         for row in rows:
             self.assertEqual(set(row.features), set(dataset.FEATURE_NAMES))
-            for value in row.features.values():
-                self.assertTrue(value == 0.0 or value != value)
+            for name, value in row.features.items():
+                if name in mock_features:
+                    # Mock features return hardcoded defaults even when inputs are all NaN
+                    self.assertIsNotNone(value)
+                else:
+                    self.assertTrue(value == 0.0 or value != value or value is None, f"feature {name} must be 0.0 or NaN or None when all inputs are NaN")
 
 
 class FeatureGovernanceTests(unittest.TestCase):

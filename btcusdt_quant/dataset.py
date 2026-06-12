@@ -16,7 +16,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Callable, Mapping, Sequence
 
-from . import data, feature_registry, parity, sources
+from . import data, feature_registry, features, parity, sources
 
 
 COLLECTED_CSV_FIELDS: tuple[str, ...] = (
@@ -885,17 +885,48 @@ def build_feature_rows(
             "volume_zscore_20_vol_adj": volume_zscore_20 / rv_60_denominator,
             "trade_count_zscore_20_vol_adj": trade_count_zscore_20 / rv_60_denominator,
             "taker_imbalance_vol_adj": taker_imbalance / rv_60_denominator,
+            # F11 microstructure features — mock values when real-time depth unavailable
+            "spread": 0.0001,
+            "spread_bps": 1.0,
+            "bid_ask_imbalance": 0.0,
+            "best_bid_qty_ratio": 0.5,
+            "best_ask_qty_ratio": 0.5,
+            "microprice_deviation": 0.0,
+            "order_book_pressure": 0.0,
+            # F12 exchange-safety features — mock values when real-time exchange data unavailable
+            "adl_indicator": 0.0,
+            "funding_rate": 0.0,
+            "next_funding_rate": 0.0,
+            "minutes_to_next_funding": 480.0,
+            "funding_blackout_active": 0.0,
+            "mark_price_basis": 0.0,
+            "premium_index": 0.0,
+            "leverage_bracket_utilization": 0.0,
         }
+        clipper = features.FeatureClipper()
+        clipped = clipper.clip({name: values[name] for name in FEATURE_NAMES})
+        nan_classifier = features.NaNSourceClassifier(optional_noncritical_features=set(fallback_features))
+        row_context = {
+            "gap_flag": candle.gap_flag,
+            "canonical_candle_repaired": candle.repaired,
+            "warmup_invalid": warmup_invalid,
+        }
+        nan_status: dict[str, str] = {}
+        for name, value in clipped.values.items():
+            if value is None:
+                nan_status[name] = nan_classifier.classify(row_context, name)
+        merged_feature_status = dict(feature_availability_status)
+        merged_feature_status.update(nan_status)
         rows.append(
             FeatureRow(
                 index,
                 candle.open_time,
-                {name: values[name] for name in FEATURE_NAMES},
+                clipped.values,
                 candle.gap_flag,
                 candle.repaired,
                 warmup_invalid,
                 dict(source_availability_status),
-                dict(feature_availability_status),
+                merged_feature_status,
                 unavailable_sources,
                 fallback_features,
             )

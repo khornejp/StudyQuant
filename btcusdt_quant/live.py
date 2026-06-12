@@ -1157,6 +1157,7 @@ def run_live(
     allow_public_network: bool = False,
     max_candles: int = 12,
     idle_timeout_seconds: float = 0.2,
+    exchange_adapter: ExchangeAdapter | None = None,
 ) -> LiveRunResult:
     if not dry_run and not allow_public_network:
         raise RuntimeError("live mode without --dry-run requires --allow-public-network")
@@ -1210,7 +1211,21 @@ def run_live(
     source_report = sources.train_live_feature_parity_report(dataset.FEATURE_NAMES, source_bundle=source_bundle, feature_registry=dataset.feature_formula_registry()["features"])
     last_return = data.returns(canonical)[-1] if canonical else 0.0
     signal = "BUY" if last_return > 0 else "SELL" if last_return < 0 else "HOLD"
-    entry_action = safe_market_entry("BTCUSDT", signal, 0.001 if signal in {"BUY", "SELL"} else 0.0, monitor_decisions=monitor_decisions)
+    # Determine gap-contamination action from actual gap metrics in the latest feature row
+    latest_gap_ratio = float(feature_rows[-1].features.get("gap_ratio_20", 0.0)) if feature_rows else 0.0
+    latest_max_gap_run = float(feature_rows[-1].features.get("max_gap_run_120", 0.0)) if feature_rows else 0.0
+    gap_action = governance.fallback_action("gap_ratio_20", latest_gap_ratio)
+    if gap_action == "allow":
+        gap_action = governance.fallback_action("max_gap_run", latest_max_gap_run)
+    # Use actual exchange adapter if provided (e.g., testnet), otherwise mock
+    active_adapter = exchange_adapter or MockExchangeAdapter()
+    entry_action = safe_market_entry(
+        "BTCUSDT", signal, 0.001 if signal in {"BUY", "SELL"} else 0.0,
+        adapter=active_adapter,
+        gap_action=gap_action,
+        monitor_decisions=monitor_decisions,
+        allow_live_orders=not dry_run,
+    )
     exit_action = gap_cross_exit(0.0, False, monitor_decisions=monitor_decisions)
     output.mkdir(parents=True, exist_ok=True)
     dataset.write_candles_csv(output / "live_candles.csv", canonical)

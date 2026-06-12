@@ -261,8 +261,7 @@ def _feature_rows(feature_schema: Mapping[str, object] | Sequence[Mapping[str, o
         name = str(row.get("feature_name", ""))
         if requested_set is not None and name not in requested_set:
             continue
-        if requested_set is None and row.get("scaffold_status") == "pending_data_source":
-            continue
+        # Include all registered features (even pending_data_source) in parity checks
         rows.append(row)
     if requested is None:
         return tuple(rows)

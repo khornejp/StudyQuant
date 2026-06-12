@@ -1,6 +1,6 @@
 # Remaining Production Gaps v7.18
 
-This document lists the items that are **implemented in code** but require **real-world validation** before production deployment. The codebase is ~100% feature-complete per the v7.18 specification; the gaps below are operational validation items, not missing code.
+This document lists the items that are **implemented in code** but require **real-world validation** before production deployment. The codebase is **~85% feature-complete** per the v7.18 specification: 92 of 107 registered features are active computed features, while 15 F11/F12 features (microstructure and exchange-safety) require real-time data sources not yet integrated. The gaps below include both operational validation items and the remaining code integration work.
 
 ## Production-Only Validation Requirements
 

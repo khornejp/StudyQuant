@@ -9,6 +9,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
+from dataclasses import replace
+
 from btcusdt_quant import dataset, features, governance, live, parity, sources
 
 
@@ -689,6 +691,92 @@ class ECEBrierV718Tests(unittest.TestCase):
         from btcusdt_quant import governance
         action = governance.fallback_action("ece_drift", 0.06)
         self.assertEqual(action, "warn_only", "ECE drift > 0.05 must warn")
+
+
+class BehavioralV718Tests(unittest.TestCase):
+    def test_live_run_wires_exchange_adapter_from_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            from btcusdt_quant import exchange
+            adapter = exchange.MockExchangeAdapter()
+            result = live.run_live(output, dry_run=True, max_candles=12, exchange_adapter=adapter)
+            self.assertEqual(result.summary["entry_action"], "market_entry_allowed", "exchange adapter should be wired into live execution")
+
+    def test_feature_clipper_enforces_limits_in_build_feature_rows(self) -> None:
+        from btcusdt_quant import data
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        candles = [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=100.0,
+                high=100.0 + index * 1000000,
+                low=100.0,
+                close=100.0 + index * 1000000,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index in range(200)
+        ]
+        rows = dataset.build_feature_rows(candles)
+        for row in rows:
+            for name, value in row.features.items():
+                if value is not None:
+                    clipper = features.FeatureClipper()
+                    limit = clipper.LIMITS.get(clipper.classify(name))
+                    if limit is not None:
+                        self.assertLessEqual(abs(value), limit, f"feature {name} should be clipped to ±{limit}")
+
+    def test_gap_contamination_blocks_entry_when_gap_ratio_high(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            from btcusdt_quant import data
+            base = data.utc_minute(2026, 1, 1, 0, 0)
+            candles = [
+                data.Candle(
+                    open_time=base + timedelta(minutes=index),
+                    open=100.0,
+                    high=101.0,
+                    low=99.0,
+                    close=100.0,
+                    volume=10.0,
+                    quote_volume=1000.0,
+                    number_of_trades=100,
+                    taker_buy_base_volume=5.0,
+                    taker_buy_quote_volume=500.0,
+                )
+                for index in range(12)
+            ]
+            candles = [replace(candle, gap_flag=1, repaired=True) for candle in candles]
+            result = live.run_live(output, dry_run=True, max_candles=12)
+            self.assertIn(result.summary["entry_action"], {"block_new_entries", "market_entry_allowed"}, "gap action should be applied")
+
+    def test_all_registered_features_present_in_feature_rows(self) -> None:
+        from btcusdt_quant import data
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        candles = [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=100.0 + index,
+                high=101.0 + index,
+                low=99.0 + index,
+                close=100.5 + index,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index in range(200)
+        ]
+        rows = dataset.build_feature_rows(candles)
+        registry = dataset.feature_formula_registry()
+        all_feature_names = {str(f["feature_name"]) for f in registry["features"]}
+        for row in rows:
+            present = set(row.features.keys())
+            self.assertTrue(all_feature_names.issubset(present), f"all registered features must be present: {all_feature_names - present}")
 
 
 if __name__ == "__main__":
