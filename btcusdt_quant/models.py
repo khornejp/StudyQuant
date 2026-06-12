@@ -1,0 +1,454 @@
+from __future__ import annotations
+
+import contextlib
+import importlib
+import importlib.util
+import io
+from dataclasses import dataclass
+from typing import Mapping, Protocol, Sequence, runtime_checkable
+
+
+FeatureMatrix = Sequence[Sequence[float]]
+_OPTIONAL_IMPORT_FAILURES: dict[str, str] = {}
+
+
+class OptionalDependencyUnavailable(RuntimeError):
+    pass
+
+
+@runtime_checkable
+class ModelAdapter(Protocol):
+    @property
+    def model_family(self) -> str:
+        ...
+
+    def fit(self, feature_matrix: FeatureMatrix, labels: Sequence[int], sample_weight: Sequence[float] | None = None) -> "ModelAdapter":
+        ...
+
+    def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
+        ...
+
+    def as_dict(self) -> dict[str, object]:
+        ...
+
+
+@dataclass(frozen=True)
+class ModelSelection:
+    adapter: ModelAdapter
+    requested_family: str
+    selected_family: str
+    fallback_allowed: bool
+    fallback_used: bool
+    fallback_reason: str
+    attempted_families: tuple[str, ...]
+    unavailable_families: dict[str, str]
+    model_params: dict[str, object]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "requested_family": self.requested_family,
+            "selected_family": self.selected_family,
+            "fallback_allowed": self.fallback_allowed,
+            "fallback_used": self.fallback_used,
+            "fallback_reason": self.fallback_reason,
+            "attempted_families": list(self.attempted_families),
+            "unavailable_families": dict(self.unavailable_families),
+            "model_params": dict(self.model_params),
+        }
+
+
+@dataclass(frozen=True)
+class _AdapterRow:
+    features: dict[str, float]
+    label: int
+
+
+class StdlibLinearAdapter:
+    def __init__(self, feature_names: Sequence[str] | None = None, model_params: Mapping[str, object] | None = None) -> None:
+        self.feature_names = tuple(str(name) for name in feature_names) if feature_names is not None else ()
+        self.model_params = dict(model_params or {})
+        self.model: object | None = None
+
+    @property
+    def model_family(self) -> str:
+        return "stdlib"
+
+    def fit(self, feature_matrix: FeatureMatrix, labels: Sequence[int], sample_weight: Sequence[float] | None = None) -> "StdlibLinearAdapter":
+        rows = _matrix_to_float_lists(feature_matrix)
+        label_values = [int(label) for label in labels]
+        if len(rows) != len(label_values):
+            raise ValueError("feature_matrix and labels must have the same length")
+        if not self.feature_names:
+            self.feature_names = _default_feature_names(rows)
+        adapter_rows = [_AdapterRow(_row_mapping(row, self.feature_names), label) for row, label in zip(rows, label_values)]
+        from . import training
+
+        self.model = training.fit_classifier(adapter_rows, self.feature_names, sample_weight)  # type: ignore[arg-type]
+        return self
+
+    def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
+        if self.model is None:
+            raise RuntimeError("stdlib adapter must be fitted before predict_proba")
+        probabilities = []
+        probability = getattr(self.model, "probability")
+        for row in _matrix_to_float_lists(feature_matrix):
+            probabilities.append(_clip_probability(float(probability(_row_mapping(row, self.feature_names)))))
+        return probabilities
+
+    def probability(self, values: Mapping[str, float]) -> float:
+        if self.model is None:
+            raise RuntimeError("stdlib adapter must be fitted before probability")
+        return _clip_probability(float(getattr(self.model, "probability")(values)))
+
+    def as_dict(self) -> dict[str, object]:
+        if self.model is None:
+            return {
+                "model_family": "deterministic_centroid_linear_classifier",
+                "adapter_family": self.model_family,
+                "feature_names": list(self.feature_names),
+                "model_params": dict(self.model_params),
+                "fitted": False,
+            }
+        payload = dict(getattr(self.model, "as_dict")())
+        payload["adapter_family"] = self.model_family
+        payload["model_params"] = dict(self.model_params)
+        return payload
+
+
+class LightGBMAdapter:
+    DEFAULT_PARAMS: Mapping[str, object] = {
+        "objective": "binary",
+        "n_estimators": 80,
+        "learning_rate": 0.05,
+        "random_state": 42,
+        "use_missing": True,
+        "zero_as_missing": False,
+        "verbosity": -1,
+    }
+
+    def __init__(self, feature_names: Sequence[str] | None = None, model_params: Mapping[str, object] | None = None) -> None:
+        self.feature_names = tuple(str(name) for name in feature_names) if feature_names is not None else ()
+        self.model_params = _merged_params(self.DEFAULT_PARAMS, model_params)
+        self.model: object | None = None
+
+    @property
+    def model_family(self) -> str:
+        return "lightgbm"
+
+    @staticmethod
+    def available() -> bool:
+        return "lightgbm" not in _OPTIONAL_IMPORT_FAILURES and importlib.util.find_spec("lightgbm") is not None
+
+    def fit(self, feature_matrix: FeatureMatrix, labels: Sequence[int], sample_weight: Sequence[float] | None = None) -> "LightGBMAdapter":
+        lgb = _import_optional_module("lightgbm")
+
+        rows = _matrix_to_float_lists(feature_matrix)
+        label_values = [int(label) for label in labels]
+        if len(rows) != len(label_values):
+            raise ValueError("feature_matrix and labels must have the same length")
+        if not self.feature_names:
+            self.feature_names = _default_feature_names(rows)
+        model = lgb.LGBMClassifier(**self.model_params)
+        fit_kwargs: dict[str, object] = {}
+        if sample_weight is not None:
+            fit_kwargs["sample_weight"] = [float(weight) for weight in sample_weight]
+        model.fit(rows, label_values, **fit_kwargs)
+        self.model = model
+        return self
+
+    def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
+        if self.model is None:
+            raise RuntimeError("lightgbm adapter must be fitted before predict_proba")
+        predictions = getattr(self.model, "predict_proba")(_matrix_to_float_lists(feature_matrix))
+        return _positive_class_probabilities(predictions)
+
+    def as_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "model_family": self.model_family,
+            "feature_names": list(self.feature_names),
+            "model_params": dict(self.model_params),
+            "missing_policy": {"use_missing": True, "zero_as_missing": False},
+            "fitted": self.model is not None,
+        }
+        payload["weights"] = _feature_importance_map(self.model, self.feature_names)
+        serialized = _serialized_booster(self.model)
+        if serialized:
+            payload["serialized_model"] = serialized
+        return payload
+
+
+class CatBoostAdapter:
+    DEFAULT_PARAMS: Mapping[str, object] = {
+        "loss_function": "Logloss",
+        "iterations": 80,
+        "learning_rate": 0.05,
+        "random_seed": 42,
+        "verbose": False,
+        "allow_writing_files": False,
+    }
+
+    def __init__(self, feature_names: Sequence[str] | None = None, model_params: Mapping[str, object] | None = None) -> None:
+        self.feature_names = tuple(str(name) for name in feature_names) if feature_names is not None else ()
+        self.model_params = _merged_params(self.DEFAULT_PARAMS, model_params)
+        self.model: object | None = None
+
+    @property
+    def model_family(self) -> str:
+        return "catboost"
+
+    @staticmethod
+    def available() -> bool:
+        return "catboost" not in _OPTIONAL_IMPORT_FAILURES and importlib.util.find_spec("catboost") is not None
+
+    def fit(self, feature_matrix: FeatureMatrix, labels: Sequence[int], sample_weight: Sequence[float] | None = None) -> "CatBoostAdapter":
+        catboost = _import_optional_module("catboost")
+
+        rows = _matrix_to_float_lists(feature_matrix)
+        label_values = [int(label) for label in labels]
+        if len(rows) != len(label_values):
+            raise ValueError("feature_matrix and labels must have the same length")
+        if not self.feature_names:
+            self.feature_names = _default_feature_names(rows)
+        model = catboost.CatBoostClassifier(**self.model_params)
+        fit_kwargs: dict[str, object] = {}
+        if sample_weight is not None:
+            fit_kwargs["sample_weight"] = [float(weight) for weight in sample_weight]
+        model.fit(rows, label_values, **fit_kwargs)
+        self.model = model
+        return self
+
+    def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
+        if self.model is None:
+            raise RuntimeError("catboost adapter must be fitted before predict_proba")
+        predictions = getattr(self.model, "predict_proba")(_matrix_to_float_lists(feature_matrix))
+        return _positive_class_probabilities(predictions)
+
+    def as_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "model_family": self.model_family,
+            "feature_names": list(self.feature_names),
+            "model_params": dict(self.model_params),
+            "fitted": self.model is not None,
+        }
+        payload["weights"] = _feature_importance_map(self.model, self.feature_names)
+        return payload
+
+
+class ModelFactory:
+    SUPPORTED_FAMILIES: tuple[str, ...] = ("stdlib", "lightgbm", "catboost", "auto")
+
+    def create(
+        self,
+        family: str = "auto",
+        feature_names: Sequence[str] | None = None,
+        model_params: Mapping[str, object] | None = None,
+        fallback_allowed: bool = True,
+    ) -> ModelAdapter:
+        return self.select(family, feature_names, model_params, fallback_allowed).adapter
+
+    def select(
+        self,
+        family: str = "auto",
+        feature_names: Sequence[str] | None = None,
+        model_params: Mapping[str, object] | None = None,
+        fallback_allowed: bool = True,
+    ) -> ModelSelection:
+        requested = _normalize_family(family)
+        attempted: list[str] = []
+        unavailable: dict[str, str] = {}
+        for candidate in _candidate_families(requested, fallback_allowed):
+            attempted.append(candidate)
+            if candidate == "stdlib" or self._is_available(candidate):
+                adapter = self._adapter(candidate, feature_names, model_params)
+                return _selection(adapter, requested, candidate, fallback_allowed, attempted, unavailable, model_params)
+            unavailable[candidate] = f"optional dependency '{_module_name(candidate)}' is not installed"
+        raise OptionalDependencyUnavailable(_selection_error(requested, attempted, unavailable))
+
+    def fit(
+        self,
+        family: str,
+        feature_matrix: FeatureMatrix,
+        labels: Sequence[int],
+        feature_names: Sequence[str] | None = None,
+        sample_weight: Sequence[float] | None = None,
+        model_params: Mapping[str, object] | None = None,
+        fallback_allowed: bool = True,
+    ) -> ModelSelection:
+        requested = _normalize_family(family)
+        attempted: list[str] = []
+        unavailable: dict[str, str] = {}
+        for candidate in _candidate_families(requested, fallback_allowed):
+            attempted.append(candidate)
+            adapter = self._adapter(candidate, feature_names, model_params)
+            try:
+                adapter.fit(feature_matrix, labels, sample_weight=sample_weight)
+                return _selection(adapter, requested, candidate, fallback_allowed, attempted, unavailable, model_params)
+            except OptionalDependencyUnavailable as error:
+                unavailable[candidate] = str(error)
+                if not fallback_allowed:
+                    raise
+            except Exception as error:
+                if candidate == "stdlib" or not fallback_allowed:
+                    raise
+                unavailable[candidate] = f"fit failed: {error}"
+        raise OptionalDependencyUnavailable(_selection_error(requested, attempted, unavailable))
+
+    def _adapter(self, family: str, feature_names: Sequence[str] | None, model_params: Mapping[str, object] | None) -> ModelAdapter:
+        if family == "stdlib":
+            return StdlibLinearAdapter(feature_names, model_params)
+        if family == "lightgbm":
+            return LightGBMAdapter(feature_names, model_params)
+        if family == "catboost":
+            return CatBoostAdapter(feature_names, model_params)
+        raise ValueError(f"unsupported model family: {family}")
+
+    def _is_available(self, family: str) -> bool:
+        if family == "lightgbm":
+            return LightGBMAdapter.available()
+        if family == "catboost":
+            return CatBoostAdapter.available()
+        return family == "stdlib"
+
+
+def _selection(
+    adapter: ModelAdapter,
+    requested: str,
+    selected: str,
+    fallback_allowed: bool,
+    attempted: Sequence[str],
+    unavailable: Mapping[str, str],
+    model_params: Mapping[str, object] | None,
+) -> ModelSelection:
+    fallback_used = bool(unavailable) or (requested != "auto" and selected != requested)
+    reason = "requested family selected"
+    if requested == "auto" and selected != "lightgbm":
+        reason = "auto fallback chain selected first available family"
+    if requested != "auto" and selected != requested:
+        reason = f"requested family '{requested}' unavailable; selected '{selected}'"
+    if not fallback_used:
+        reason = "no fallback required"
+    return ModelSelection(adapter, requested, selected, fallback_allowed, fallback_used, reason, tuple(attempted), dict(unavailable), dict(model_params or {}))
+
+
+def _candidate_families(requested: str, fallback_allowed: bool) -> tuple[str, ...]:
+    if requested == "auto":
+        chain = ("lightgbm", "catboost", "stdlib")
+    elif requested == "lightgbm":
+        chain = ("lightgbm", "catboost", "stdlib")
+    elif requested == "catboost":
+        chain = ("catboost", "stdlib")
+    elif requested == "stdlib":
+        chain = ("stdlib",)
+    else:
+        raise ValueError(f"unsupported model family: {requested}")
+    return chain if fallback_allowed else (chain[0],)
+
+
+def _normalize_family(family: str) -> str:
+    normalized = str(family or "auto").lower().strip()
+    aliases = {"linear": "stdlib", "deterministic": "stdlib", "lgbm": "lightgbm", "cat": "catboost"}
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in ModelFactory.SUPPORTED_FAMILIES:
+        raise ValueError(f"unsupported model family: {family}")
+    return normalized
+
+
+def _module_name(family: str) -> str:
+    return {"lightgbm": "lightgbm", "catboost": "catboost", "stdlib": "stdlib"}[family]
+
+
+def _selection_error(requested: str, attempted: Sequence[str], unavailable: Mapping[str, str]) -> str:
+    return f"unable to create model family '{requested}' after {list(attempted)}: {dict(unavailable)}"
+
+
+def _import_optional_module(module_name: str) -> object:
+    cached_error = _OPTIONAL_IMPORT_FAILURES.get(module_name)
+    if cached_error is not None:
+        raise OptionalDependencyUnavailable(f"{module_name} unavailable: {cached_error}")
+    try:
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            return importlib.import_module(module_name)
+    except Exception as error:
+        _OPTIONAL_IMPORT_FAILURES[module_name] = str(error)
+        raise OptionalDependencyUnavailable(f"{module_name} unavailable: {error}") from error
+
+
+def _merged_params(defaults: Mapping[str, object], overrides: Mapping[str, object] | None) -> dict[str, object]:
+    params = dict(defaults)
+    params.update(dict(overrides or {}))
+    return params
+
+
+def _default_feature_names(rows: Sequence[Sequence[float]]) -> tuple[str, ...]:
+    width = len(rows[0]) if rows else 0
+    return tuple(f"f_{index}" for index in range(width))
+
+
+def _row_mapping(row: Sequence[float], feature_names: Sequence[str]) -> dict[str, float]:
+    return {str(name): float(row[index]) if index < len(row) else 0.0 for index, name in enumerate(feature_names)}
+
+
+def _matrix_to_float_lists(feature_matrix: FeatureMatrix) -> list[list[float]]:
+    return [[float(value) for value in row] for row in feature_matrix]
+
+
+def _positive_class_probabilities(predictions: object) -> list[float]:
+    rows = _plain_list(predictions)
+    probabilities = []
+    for row in rows:
+        values = _plain_list(row)
+        if len(values) >= 2:
+            probabilities.append(_clip_probability(float(values[1])))
+        elif values:
+            probabilities.append(_clip_probability(float(values[0])))
+        else:
+            probabilities.append(0.5)
+    return probabilities
+
+
+def _plain_list(value: object) -> list[object]:
+    if hasattr(value, "tolist"):
+        value = getattr(value, "tolist")()
+    if isinstance(value, (str, bytes)):
+        return [value]
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    try:
+        return list(value)  # type: ignore[arg-type]
+    except TypeError:
+        return [value]
+
+
+def _clip_probability(value: float) -> float:
+    return min(1.0, max(0.0, value))
+
+
+def _feature_importance_map(model: object | None, feature_names: Sequence[str]) -> dict[str, float]:
+    values: list[object] = []
+    if model is not None:
+        importance = getattr(model, "feature_importances_", None)
+        if importance is None:
+            get_importance = getattr(model, "get_feature_importance", None)
+            if callable(get_importance):
+                try:
+                    importance = get_importance()
+                except Exception:
+                    importance = None
+        if importance is not None:
+            values = _plain_list(importance)
+    return {str(name): float(values[index]) if index < len(values) else 0.0 for index, name in enumerate(feature_names)}
+
+
+def _serialized_booster(model: object | None) -> str:
+    if model is None:
+        return ""
+    booster = getattr(model, "booster_", None)
+    model_to_string = getattr(booster, "model_to_string", None)
+    if callable(model_to_string):
+        try:
+            return str(model_to_string())
+        except Exception:
+            return ""
+    return ""

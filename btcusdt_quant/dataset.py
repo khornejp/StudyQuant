@@ -9,14 +9,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from math import isfinite, sqrt, sin
+from math import isfinite, log, sqrt, sin
 from pathlib import Path
 from statistics import mean
 from typing import Callable, Mapping, Sequence
 
-from . import data
+from . import data, feature_registry, parity, sources
 
 
 COLLECTED_CSV_FIELDS: tuple[str, ...] = (
@@ -54,48 +54,8 @@ ARCHIVE_CHECKPOINT_KEYS: tuple[str, ...] = ("last_completed_date", "downloaded_f
 LOGGER = logging.getLogger(__name__)
 
 
-FEATURE_FORMULAS: tuple[dict[str, object], ...] = (
-    {"feature_name": "return_1", "category": "F01", "formula": "close_t / close_t-1 - 1", "lookback": 2, "min_samples": 2, "warmup_rule": "strict"},
-    {"feature_name": "return_3", "category": "F01", "formula": "close_t / close_t-3 - 1", "lookback": 4, "min_samples": 4, "warmup_rule": "strict"},
-    {"feature_name": "return_5", "category": "F01", "formula": "close_t / close_t-5 - 1", "lookback": 6, "min_samples": 6, "warmup_rule": "strict"},
-    {"feature_name": "return_10", "category": "F01", "formula": "close_t / close_t-10 - 1", "lookback": 11, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "close_sma_5_ratio", "category": "F02", "formula": "close_t / SMA(close,5) - 1", "lookback": 5, "min_samples": 5, "warmup_rule": "strict"},
-    {"feature_name": "close_sma_10_ratio", "category": "F02", "formula": "close_t / SMA(close,10) - 1", "lookback": 10, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "close_sma_20_ratio", "category": "F02", "formula": "close_t / SMA(close,20) - 1", "lookback": 20, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "close_sma_60_ratio", "category": "F02", "formula": "close_t / SMA(close,60) - 1", "lookback": 60, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "rv_15", "category": "F03", "formula": "stddev(1m returns over 15 bars)", "lookback": 16, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "rv_60", "category": "F03", "formula": "stddev(1m returns over 60 bars)", "lookback": 61, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "rv_120", "category": "F03", "formula": "stddev(1m returns over 120 bars)", "lookback": 121, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "atr_pct", "category": "F03", "formula": "SMA(true_range,14) / close_t", "lookback": 15, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "volume_sma_5_ratio", "category": "F04", "formula": "volume_t / max(SMA(volume,5), 1e-12) - 1", "lookback": 5, "min_samples": 5, "warmup_rule": "strict"},
-    {"feature_name": "volume_sma_20_ratio", "category": "F04", "formula": "volume_t / max(SMA(volume,20), 1e-12) - 1", "lookback": 20, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "taker_ratio", "category": "F04", "formula": "taker_buy_base_volume_t / max(volume_t, 1e-12)", "lookback": 1, "min_samples": 1, "warmup_rule": "strict"},
-    {"feature_name": "trade_count_ratio", "category": "F04", "formula": "number_of_trades_t / max(SMA(number_of_trades,20), 1e-12) - 1", "lookback": 20, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "high_low_range", "category": "F05", "formula": "(high_t - low_t) / close_t", "lookback": 1, "min_samples": 1, "warmup_rule": "strict"},
-    {"feature_name": "body_pct", "category": "F05", "formula": "abs(close_t - open_t) / close_t", "lookback": 1, "min_samples": 1, "warmup_rule": "strict"},
-    {"feature_name": "upper_shadow", "category": "F05", "formula": "high_t - max(open_t, close_t) over close_t", "lookback": 1, "min_samples": 1, "warmup_rule": "strict"},
-    {"feature_name": "lower_shadow", "category": "F05", "formula": "min(open_t, close_t) - low_t over close_t", "lookback": 1, "min_samples": 1, "warmup_rule": "strict"},
-    {"feature_name": "gap_ratio_20", "category": "F06", "formula": "rolling repaired candle ratio over last 20 canonical rows", "lookback": 20, "min_samples": 1, "warmup_rule": "state"},
-    {"feature_name": "gap_ratio_60", "category": "F06", "formula": "rolling repaired candle ratio over last 60 canonical rows", "lookback": 60, "min_samples": 1, "warmup_rule": "state"},
-    {"feature_name": "gap_ratio_120", "category": "F06", "formula": "rolling repaired candle ratio over last 120 canonical rows", "lookback": 120, "min_samples": 1, "warmup_rule": "state"},
-    {"feature_name": "max_gap_run_120", "category": "F06", "formula": "maximum contiguous repaired candle run over last 120 canonical rows", "lookback": 120, "min_samples": 1, "warmup_rule": "state"},
-    {"feature_name": "close_zscore_20", "category": "F07", "formula": "(close_t - SMA(close,20)) / stddev(close,20)", "lookback": 20, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "close_zscore_60", "category": "F07", "formula": "(close_t - SMA(close,60)) / stddev(close,60)", "lookback": 60, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "volume_zscore_5", "category": "F07", "formula": "(volume_t - SMA(volume,5)) / stddev(volume,5)", "lookback": 5, "min_samples": 5, "warmup_rule": "strict"},
-    {"feature_name": "volume_zscore_20", "category": "F07", "formula": "(volume_t - SMA(volume,20)) / stddev(volume,20)", "lookback": 20, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "return_5_vol_adj", "category": "F08", "formula": "return_5 / max(rv_15, rv_60, rv_120, atr_pct, 1e-12)", "lookback": 121, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "return_10_vol_adj", "category": "F08", "formula": "return_10 / max(rv_15, rv_60, rv_120, atr_pct, 1e-12)", "lookback": 121, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "close_zscore_20_vol_adj", "category": "F09", "formula": "close_zscore_20 / max(rv_60, 1e-12)", "lookback": 61, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "volume_zscore_20_vol_adj", "category": "F09", "formula": "volume_zscore_20 / max(rv_60, 1e-12)", "lookback": 61, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "candle_range_vol_adj", "category": "F10", "formula": "high_low_range / max(rv_60, 1e-12)", "lookback": 61, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "body_pct_vol_adj", "category": "F10", "formula": "body_pct / max(rv_60, 1e-12)", "lookback": 61, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "spread", "category": "F11", "formula": "best_ask - best_bid over mid price", "lookback": 1, "min_samples": 1, "warmup_rule": "strict", "scaffold_status": "pending_data_source"},
-    {"feature_name": "bid_ask_imbalance", "category": "F11", "formula": "(bid_qty - ask_qty) / max(bid_qty + ask_qty, 1e-12)", "lookback": 1, "min_samples": 1, "warmup_rule": "strict", "scaffold_status": "pending_data_source"},
-    {"feature_name": "adl_indicator", "category": "F12", "formula": "exchange ADL quantile indicator", "lookback": 1, "min_samples": 1, "warmup_rule": "state", "scaffold_status": "pending_data_source"},
-    {"feature_name": "funding_rate", "category": "F12", "formula": "current and next funding rate state", "lookback": 1, "min_samples": 1, "warmup_rule": "state", "scaffold_status": "pending_data_source"},
-)
-
-FEATURE_NAMES: tuple[str, ...] = tuple(str(row["feature_name"]) for row in FEATURE_FORMULAS if row.get("scaffold_status") != "pending_data_source")
+FEATURE_FORMULAS: tuple[dict[str, object], ...] = feature_registry.FEATURE_FORMULAS
+FEATURE_NAMES: tuple[str, ...] = feature_registry.active_feature_names()
 
 LABEL_REASON_BUCKETS: tuple[str, ...] = (
     "tp_first",
@@ -144,6 +104,10 @@ class FeatureRow:
     gap_flag: int
     repaired: bool
     warmup_invalid: bool
+    source_availability_status: dict[str, str] = field(default_factory=dict)
+    feature_availability_status: dict[str, str] = field(default_factory=dict)
+    unavailable_sources: tuple[str, ...] = ()
+    fallback_features: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,6 +121,10 @@ class LabeledRow:
     gap_flag: int
     repaired: bool
     warmup_invalid: bool
+    source_availability_status: dict[str, str] = field(default_factory=dict)
+    feature_availability_status: dict[str, str] = field(default_factory=dict)
+    unavailable_sources: tuple[str, ...] = ()
+    fallback_features: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -172,6 +140,8 @@ class DatasetBuild:
     feature_names: tuple[str, ...]
     label_horizon: int
     label_threshold: float
+    source_bundle: sources.MarketSourceBundle | None = None
+    source_availability_report: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -677,6 +647,8 @@ def build_dataset(
     sl_pct: float = 0.0005,
     external_events: Mapping[object, object] | None = None,
     archive_dir: Path | None = None,
+    source_bundle: sources.MarketSourceBundle | None = None,
+    external_sources: Mapping[str, object] | None = None,
 ) -> DatasetBuild:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
@@ -701,8 +673,24 @@ def build_dataset(
         source = input_path.as_posix()
     canonical = data.CanonicalTimelineBuilder().build(raw)
     gap_report = summarize_gaps(len(raw), canonical)
-    feature_rows = build_feature_rows(canonical)
-    labeled_rows = attach_labels(feature_rows, canonical, horizon, label_threshold, tp_pct=tp_pct, sl_pct=sl_pct, external_events=external_events)
+    resolved_source_bundle = source_bundle or sources.bundle_from_candles(canonical, source=source)
+    feature_rows = build_feature_rows(canonical, source_bundle=resolved_source_bundle, external_sources=external_sources)
+    labeled_rows = attach_labels(
+        feature_rows,
+        canonical,
+        horizon,
+        label_threshold,
+        tp_pct=tp_pct,
+        sl_pct=sl_pct,
+        external_events=external_events,
+        include_warmup=input_path is not None or archive_dir is not None,
+    )
+    source_report = sources.train_live_feature_parity_report(
+        FEATURE_NAMES,
+        source_bundle=resolved_source_bundle,
+        external_sources=external_sources,
+        feature_registry=feature_formula_registry()["features"],
+    )
     return DatasetBuild(
         source=source,
         symbol="BTCUSDT",
@@ -715,6 +703,8 @@ def build_dataset(
         feature_names=FEATURE_NAMES,
         label_horizon=horizon,
         label_threshold=label_threshold,
+        source_bundle=resolved_source_bundle,
+        source_availability_report=source_report,
     )
 
 
@@ -733,63 +723,183 @@ def summarize_gaps(raw_rows: int, canonical: Sequence[data.Candle]) -> GapReport
     )
 
 
-def build_feature_rows(candles: Sequence[data.Candle]) -> list[FeatureRow]:
+def build_feature_rows(
+    candles: Sequence[data.Candle],
+    source_bundle: sources.MarketSourceBundle | None = None,
+    external_sources: Mapping[str, object] | None = None,
+) -> list[FeatureRow]:
     rows: list[FeatureRow] = []
+    resolved_source_bundle = source_bundle or sources.bundle_from_candles(candles, source="feature_rows")
+    source_report = sources.train_live_feature_parity_report(
+        FEATURE_NAMES,
+        source_bundle=resolved_source_bundle,
+        external_sources=external_sources,
+        feature_registry=feature_formula_registry()["features"],
+    )
+    source_availability_status = _source_availability_status(source_report)
+    feature_availability_status = dict(source_report.get("feature_source_status", {}))
+    unavailable_sources = tuple(str(value) for value in source_report.get("unavailable_sources", ()))
+    fallback_features = tuple(str(value) for value in source_report.get("fallback_features", ()))
+    opens = [candle.open for candle in candles]
+    highs = [candle.high for candle in candles]
+    lows = [candle.low for candle in candles]
     closes = [candle.close for candle in candles]
     volumes = [candle.volume for candle in candles]
+    quote_volumes = [candle.quote_volume for candle in candles]
     trades = [float(candle.number_of_trades) for candle in candles]
+    ranges = [_range_value(candle) for candle in candles]
+    range_pcts = [_range_pct(candle) for candle in candles]
     warmup_cutoff = max_feature_min_samples() - 1
     for index, candle in enumerate(candles):
         warmup_invalid = index < warmup_cutoff
+        return_1 = _return(closes, index, 1)
+        return_3 = _return(closes, index, 3)
         return_5 = _return(closes, index, 5)
         return_10 = _return(closes, index, 10)
+        return_15 = _return(closes, index, 15)
+        return_30 = _return(closes, index, 30)
+        return_60 = _return(closes, index, 60)
+        momentum_10 = return_10
+        momentum_30 = return_30
+        sma_5 = _rolling_mean_value(closes, index, 5)
+        sma_20 = _rolling_mean_value(closes, index, 20)
+        sma_60 = _rolling_mean_value(closes, index, 60)
+        ema_12 = _ema(closes, index, 12)
+        ema_26 = _ema(closes, index, 26)
+        ema_12_26_spread = _spread_to_close(ema_12, ema_26, candle.close)
+        sma_20_60_spread = _spread_to_close(sma_20, sma_60, candle.close)
         rv_15 = _rolling_return_std(closes, index, 15)
+        rv_5 = _rolling_return_std(closes, index, 5)
+        rv_30 = _rolling_return_std(closes, index, 30)
         rv_60 = _rolling_return_std(closes, index, 60)
         rv_120 = _rolling_return_std(closes, index, 120)
         atr_pct = _atr_pct(candles, index, 14)
-        volatility_denominator = max(rv_15, rv_60, rv_120, atr_pct, 1e-12)
-        rv_60_denominator = max(rv_60, 1e-12)
+        atr_pct_30 = _atr_pct(candles, index, 30)
+        volatility_denominator = _positive_denominator(rv_15, rv_60, rv_120, atr_pct)
+        rv_60_denominator = _positive_denominator(rv_60)
         close_zscore_20 = _zscore(closes, index, 20)
+        close_zscore_60 = _zscore(closes, index, 60)
+        volume_zscore_5 = _zscore(volumes, index, 5)
         volume_zscore_20 = _zscore(volumes, index, 20)
-        high_low_range = (candle.high - candle.low) / candle.close if candle.close else 0.0
-        body_pct = abs(candle.close - candle.open) / candle.close if candle.close else 0.0
+        trade_count_zscore_20 = _zscore(trades, index, 20)
+        high_low_range = range_pcts[index]
+        body_pct = _body_pct(candle)
+        upper_shadow_raw = max(0.0, candle.high - max(candle.open, candle.close))
+        lower_shadow_raw = max(0.0, min(candle.open, candle.close) - candle.low)
+        upper_shadow = _divide(upper_shadow_raw, candle.close)
+        lower_shadow = _divide(lower_shadow_raw, candle.close)
+        taker_ratio = _divide(candle.taker_buy_base_volume, candle.volume)
+        taker_imbalance = _divide(candle.taker_buy_base_volume - (candle.volume - candle.taker_buy_base_volume), candle.volume)
+        taker_quote_ratio = _divide(candle.taker_buy_quote_volume, candle.quote_volume)
+        range_value = ranges[index]
         values = {
-            "return_1": _return(closes, index, 1),
-            "return_3": _return(closes, index, 3),
+            "return_1": return_1,
+            "return_3": return_3,
             "return_5": return_5,
             "return_10": return_10,
+            "return_15": return_15,
+            "return_30": return_30,
+            "return_60": return_60,
+            "log_return_1": _log_return(closes, index, 1),
+            "log_return_5": _log_return(closes, index, 5),
+            "momentum_10": momentum_10,
+            "momentum_30": momentum_30,
+            "rolling_return_max_20": _rolling_return_extreme(closes, index, 20, use_max=True),
+            "rolling_return_min_20": _rolling_return_extreme(closes, index, 20, use_max=False),
             "close_sma_5_ratio": _ratio_to_mean(closes, index, 5),
             "close_sma_10_ratio": _ratio_to_mean(closes, index, 10),
             "close_sma_20_ratio": _ratio_to_mean(closes, index, 20),
             "close_sma_60_ratio": _ratio_to_mean(closes, index, 60),
+            "close_ema_12_ratio": _ratio_to_value(candle.close, ema_12),
+            "close_ema_26_ratio": _ratio_to_value(candle.close, ema_26),
+            "ema_12_26_spread": ema_12_26_spread,
+            "sma_5_20_spread": _spread_to_close(sma_5, sma_20, candle.close),
+            "sma_20_60_spread": sma_20_60_spread,
+            "trend_slope_10": _trend_slope(closes, index, 10),
+            "trend_slope_30": _trend_slope(closes, index, 30),
+            "distance_to_high_20": _distance_to_extreme(candle.close, _rolling_max(highs, index, 20)),
+            "distance_to_low_20": _distance_to_extreme(candle.close, _rolling_min(lows, index, 20)),
+            "rv_5": rv_5,
             "rv_15": rv_15,
+            "rv_30": rv_30,
             "rv_60": rv_60,
             "rv_120": rv_120,
             "atr_pct": atr_pct,
+            "atr_pct_30": atr_pct_30,
+            "parkinson_vol_20": _parkinson_vol(candles, index, 20),
+            "garman_klass_vol_20": _garman_klass_vol(candles, index, 20),
+            "range_vol_20": _rolling_std(range_pcts, index, 20),
+            "har_rv_short": rv_5,
+            "har_rv_medium": rv_30,
+            "har_rv_long": rv_120,
             "volume_sma_5_ratio": _ratio_to_mean(volumes, index, 5),
             "volume_sma_20_ratio": _ratio_to_mean(volumes, index, 20),
-            "taker_ratio": candle.taker_buy_base_volume / candle.volume if candle.volume else 0.0,
+            "volume_sma_60_ratio": _ratio_to_mean(volumes, index, 60),
+            "quote_volume_sma_20_ratio": _ratio_to_mean(quote_volumes, index, 20),
+            "taker_ratio": taker_ratio,
+            "taker_imbalance": taker_imbalance,
+            "taker_quote_ratio": taker_quote_ratio,
             "trade_count_ratio": _ratio_to_mean(trades, index, 20),
+            "trade_count_zscore_20": trade_count_zscore_20,
+            "volume_per_trade": _divide(candle.volume, float(candle.number_of_trades)),
+            "quote_volume_per_trade": _divide(candle.quote_volume, float(candle.number_of_trades)),
+            "volume_shock_20": volume_zscore_20,
             "high_low_range": high_low_range,
             "body_pct": body_pct,
-            "upper_shadow": (candle.high - max(candle.open, candle.close)) / candle.close if candle.close else 0.0,
-            "lower_shadow": (min(candle.open, candle.close) - candle.low) / candle.close if candle.close else 0.0,
+            "upper_shadow": upper_shadow,
+            "lower_shadow": lower_shadow,
+            "close_location_value": _divide((candle.close - candle.low) - (candle.high - candle.close), range_value),
+            "wick_imbalance": _divide(upper_shadow_raw - lower_shadow_raw, range_value),
+            "body_to_range": _divide(abs(candle.close - candle.open), range_value),
+            "range_sma_20_ratio": _ratio_to_mean(ranges, index, 20),
+            "inside_bar_flag": _inside_bar_flag(candles, index),
+            "outside_bar_flag": _outside_bar_flag(candles, index),
+            "gap_flag": float(candle.gap_flag),
             "gap_ratio_20": candle.gap_ratio_20,
             "gap_ratio_60": candle.gap_ratio_60,
             "gap_ratio_120": candle.gap_ratio_120,
             "max_gap_run_120": float(candle.max_gap_run_120),
+            "repaired_flag": 1.0 if candle.repaired else 0.0,
+            "gap_length": float(candle.gap_length),
+            "canonical_gap_pressure": candle.gap_ratio_20 * (1.0 + float(candle.max_gap_run_120)),
             "close_zscore_20": close_zscore_20,
-            "close_zscore_60": _zscore(closes, index, 60),
-            "volume_zscore_5": _zscore(volumes, index, 5),
+            "close_zscore_60": close_zscore_60,
+            "volume_zscore_5": volume_zscore_5,
             "volume_zscore_20": volume_zscore_20,
+            "rv_zscore_60": _indicator_zscore(lambda position: _rolling_return_std(closes, position, 5), index, 60),
+            "range_zscore_20": _zscore(range_pcts, index, 20),
+            "volatility_regime_60": _indicator_ratio_to_mean(lambda position: _rolling_return_std(closes, position, 15), index, 60),
+            "volume_regime_60": _ratio_to_mean(volumes, index, 60),
+            "return_1_vol_adj": return_1 / volatility_denominator,
             "return_5_vol_adj": return_5 / volatility_denominator,
             "return_10_vol_adj": return_10 / volatility_denominator,
+            "return_30_vol_adj": return_30 / volatility_denominator,
+            "momentum_10_vol_adj": momentum_10 / volatility_denominator,
+            "momentum_30_vol_adj": momentum_30 / volatility_denominator,
             "close_zscore_20_vol_adj": close_zscore_20 / rv_60_denominator,
-            "volume_zscore_20_vol_adj": volume_zscore_20 / rv_60_denominator,
+            "close_zscore_60_vol_adj": close_zscore_60 / rv_60_denominator,
+            "ema_spread_vol_adj": ema_12_26_spread / rv_60_denominator,
+            "sma_spread_vol_adj": sma_20_60_spread / rv_60_denominator,
             "candle_range_vol_adj": high_low_range / rv_60_denominator,
             "body_pct_vol_adj": body_pct / rv_60_denominator,
+            "volume_zscore_20_vol_adj": volume_zscore_20 / rv_60_denominator,
+            "trade_count_zscore_20_vol_adj": trade_count_zscore_20 / rv_60_denominator,
+            "taker_imbalance_vol_adj": taker_imbalance / rv_60_denominator,
         }
-        rows.append(FeatureRow(index, candle.open_time, values, candle.gap_flag, candle.repaired, warmup_invalid))
+        rows.append(
+            FeatureRow(
+                index,
+                candle.open_time,
+                {name: values[name] for name in FEATURE_NAMES},
+                candle.gap_flag,
+                candle.repaired,
+                warmup_invalid,
+                dict(source_availability_status),
+                dict(feature_availability_status),
+                unavailable_sources,
+                fallback_features,
+            )
+        )
     return rows
 
 
@@ -801,6 +911,7 @@ def attach_labels(
     tp_pct: float = 0.001,
     sl_pct: float = 0.0005,
     external_events: Mapping[object, object] | None = None,
+    include_warmup: bool = False,
 ) -> list[LabeledRow]:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
@@ -811,7 +922,7 @@ def attach_labels(
     labeled: list[LabeledRow] = []
     for row in feature_rows:
         future_index = row.index + horizon
-        if row.warmup_invalid or future_index >= len(candles):
+        if (row.warmup_invalid and not include_warmup) or future_index >= len(candles):
             continue
         close = candles[row.index].close
         if close == 0.0:
@@ -833,6 +944,10 @@ def attach_labels(
                 gap_flag=row.gap_flag,
                 repaired=row.repaired,
                 warmup_invalid=row.warmup_invalid,
+                source_availability_status=dict(row.source_availability_status),
+                feature_availability_status=dict(row.feature_availability_status),
+                unavailable_sources=row.unavailable_sources,
+                fallback_features=row.fallback_features,
             )
         )
     return labeled
@@ -907,6 +1022,21 @@ def _event_for_row(row: FeatureRow, external_events: Mapping[object, object]) ->
 
 
 def dataset_card(build: DatasetBuild) -> dict[str, object]:
+    registry = feature_formula_registry()
+    source_report = build.source_availability_report or sources.train_live_feature_parity_report(
+        build.feature_names,
+        source_bundle=build.source_bundle,
+        feature_registry=registry["features"],
+    )
+    parity_result = parity.compare_training_live_features(
+        registry,
+        registry,
+        source_report=source_report,
+        training_feature_names=build.feature_names,
+        live_feature_names=build.feature_names,
+    )
+    parity_metadata = parity_result.as_metadata()
+    train_live_feature_parity_passed = bool(source_report.get("train_live_feature_parity_passed", False)) and parity_result.passed
     return {
         "dataset_id": "btcusdt_offline_research_v1",
         "symbol": build.symbol,
@@ -921,6 +1051,26 @@ def dataset_card(build: DatasetBuild) -> dict[str, object]:
         "label_reason_buckets": list(LABEL_REASON_BUCKETS),
         "label_reason_counts": label_reason_counts(build.labeled_rows),
         "gap_report": gap_report_dict(build.gap_report),
+        "source_hashes": dict(source_report.get("source_hashes", {})),
+        "feature_space_parity_passed": bool(source_report.get("feature_space_parity_passed", False)),
+        "train_live_feature_parity_passed": train_live_feature_parity_passed,
+        "feature_parity_passed": bool(parity_metadata["feature_parity_passed"]),
+        "feature_schema_hash": parity_metadata["feature_schema_hash"],
+        "training_feature_schema_hash": parity_metadata["training_feature_schema_hash"],
+        "live_feature_schema_hash": parity_metadata["live_feature_schema_hash"],
+        "source_schema_hash": parity_metadata["source_schema_hash"],
+        "training_source_schema_hash": parity_metadata["training_source_schema_hash"],
+        "live_source_schema_hash": parity_metadata["live_source_schema_hash"],
+        "dependency_graph_hash": parity_metadata["dependency_graph_hash"],
+        "training_dependency_graph_hash": parity_metadata["training_dependency_graph_hash"],
+        "live_dependency_graph_hash": parity_metadata["live_dependency_graph_hash"],
+        "feature_parity_checks": parity_metadata["parity_checks"],
+        "feature_parity_reasons": parity_metadata["parity_reasons"],
+        "documented_grade_c_fallback": parity_metadata["documented_grade_c_fallback"],
+        "unavailable_sources": list(source_report.get("unavailable_sources", ())),
+        "grade_c_sources": list(source_report.get("grade_c_sources", ())),
+        "fallback_features": list(source_report.get("fallback_features", ())),
+        "approval_block_reasons": list(source_report.get("approval_block_reasons", ())),
         "offline_only": True,
         "network_required": False,
     }
@@ -933,7 +1083,22 @@ def feature_matrix(build: DatasetBuild) -> tuple[list[list[float]], list[int]]:
 
 
 def feature_formula_registry() -> dict[str, object]:
-    return {"features": [dict(row) for row in FEATURE_FORMULAS]}
+    return feature_registry.registry_from_feature_rows(FEATURE_FORMULAS)
+
+
+def _source_availability_status(source_report: Mapping[str, object]) -> dict[str, str]:
+    rows = source_report.get("source_rows", ())
+    status: dict[str, str] = {}
+    if not isinstance(rows, Sequence):
+        return status
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        source_name = row.get("source_name")
+        availability_grade = row.get("availability_grade")
+        if isinstance(source_name, str):
+            status[source_name] = str(availability_grade)
+    return status
 
 
 def max_feature_min_samples() -> int:
@@ -966,6 +1131,28 @@ def _return(values: Sequence[float], index: int, lookback: int) -> float:
     return values[index] / values[index - lookback] - 1.0
 
 
+def _log_return(values: Sequence[float], index: int, lookback: int) -> float:
+    if index < lookback:
+        return 0.0
+    current = values[index]
+    previous = values[index - lookback]
+    if current <= 0.0 or previous <= 0.0:
+        return 0.0
+    return log(current / previous)
+
+
+def _divide(numerator: float, denominator: float) -> float:
+    if denominator == 0.0:
+        return 0.0
+    return numerator / denominator
+
+
+def _ratio_to_value(numerator: float, denominator: float) -> float:
+    if denominator == 0.0:
+        return 0.0
+    return numerator / denominator - 1.0
+
+
 def _ratio_to_mean(values: Sequence[float], index: int, window: int) -> float:
     if index + 1 < window:
         return 0.0
@@ -975,11 +1162,77 @@ def _ratio_to_mean(values: Sequence[float], index: int, window: int) -> float:
     return values[index] / average - 1.0
 
 
+def _rolling_mean_value(values: Sequence[float], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    return mean(values[index + 1 - window:index + 1])
+
+
+def _ema(values: Sequence[float], index: int, span: int) -> float:
+    if index + 1 < span or not values:
+        return 0.0
+    alpha = 2.0 / (span + 1.0)
+    value = values[0]
+    for position in range(1, index + 1):
+        value = alpha * values[position] + (1.0 - alpha) * value
+    return value
+
+
+def _spread_to_close(left: float, right: float, close: float) -> float:
+    if close == 0.0:
+        return 0.0
+    return (left - right) / close
+
+
+def _rolling_max(values: Sequence[float], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    return max(values[index + 1 - window:index + 1])
+
+
+def _rolling_min(values: Sequence[float], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    return min(values[index + 1 - window:index + 1])
+
+
+def _distance_to_extreme(close: float, extreme: float) -> float:
+    if extreme == 0.0:
+        return 0.0
+    return close / extreme - 1.0
+
+
+def _trend_slope(values: Sequence[float], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    sample = values[index + 1 - window:index + 1]
+    x_mean = (window - 1) / 2.0
+    y_mean = mean(sample)
+    denominator = sum((position - x_mean) ** 2 for position in range(window))
+    if denominator == 0.0 or values[index] == 0.0:
+        return 0.0
+    numerator = sum((position - x_mean) * (value - y_mean) for position, value in enumerate(sample))
+    return (numerator / denominator) / values[index]
+
+
+def _rolling_return_extreme(values: Sequence[float], index: int, window: int, use_max: bool) -> float:
+    if index < window:
+        return 0.0
+    returns = [_return(values, position, 1) for position in range(index + 1 - window, index + 1)]
+    return max(returns) if use_max else min(returns)
+
+
 def _rolling_return_std(values: Sequence[float], index: int, window: int) -> float:
     if index < window:
         return 0.0
     returns = [_return(values, position, 1) for position in range(index + 1 - window, index + 1)]
     return _stddev(returns)
+
+
+def _rolling_std(values: Sequence[float], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    return _stddev(values[index + 1 - window:index + 1])
 
 
 def _atr_pct(candles: Sequence[data.Candle], index: int, window: int) -> float:
@@ -992,6 +1245,92 @@ def _atr_pct(candles: Sequence[data.Candle], index: int, window: int) -> float:
         true_ranges.append(max(candle.high - candle.low, abs(candle.high - previous_close), abs(candle.low - previous_close)))
     close = candles[index].close
     return mean(true_ranges) / close if close else 0.0
+
+
+def _parkinson_vol(candles: Sequence[data.Candle], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    terms: list[float] = []
+    for candle in candles[index + 1 - window:index + 1]:
+        if candle.high <= 0.0 or candle.low <= 0.0:
+            terms.append(0.0)
+        else:
+            high_low_log = log(candle.high / candle.low)
+            terms.append(high_low_log * high_low_log)
+    variance = mean(terms) / (4.0 * log(2.0))
+    return sqrt(variance) if variance > 0.0 else 0.0
+
+
+def _garman_klass_vol(candles: Sequence[data.Candle], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    terms: list[float] = []
+    for candle in candles[index + 1 - window:index + 1]:
+        if candle.high <= 0.0 or candle.low <= 0.0 or candle.open <= 0.0 or candle.close <= 0.0:
+            terms.append(0.0)
+        else:
+            high_low_log = log(candle.high / candle.low)
+            close_open_log = log(candle.close / candle.open)
+            terms.append(0.5 * high_low_log * high_low_log - (2.0 * log(2.0) - 1.0) * close_open_log * close_open_log)
+    variance = mean(terms)
+    return sqrt(variance) if variance > 0.0 else 0.0
+
+
+def _range_value(candle: data.Candle) -> float:
+    return candle.high - candle.low
+
+
+def _range_pct(candle: data.Candle) -> float:
+    return _divide(candle.high - candle.low, candle.close)
+
+
+def _body_pct(candle: data.Candle) -> float:
+    return _divide(abs(candle.close - candle.open), candle.close)
+
+
+def _inside_bar_flag(candles: Sequence[data.Candle], index: int) -> float:
+    if index == 0:
+        return 0.0
+    current = candles[index]
+    previous = candles[index - 1]
+    return 1.0 if current.high <= previous.high and current.low >= previous.low else 0.0
+
+
+def _outside_bar_flag(candles: Sequence[data.Candle], index: int) -> float:
+    if index == 0:
+        return 0.0
+    current = candles[index]
+    previous = candles[index - 1]
+    return 1.0 if current.high >= previous.high and current.low <= previous.low else 0.0
+
+
+def _indicator_zscore(value_at: Callable[[int], float], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    sample = [value_at(position) for position in range(index + 1 - window, index + 1)]
+    scale = _stddev(sample)
+    if scale == 0.0:
+        return 0.0
+    return (sample[-1] - mean(sample)) / scale
+
+
+def _indicator_ratio_to_mean(value_at: Callable[[int], float], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    sample = [value_at(position) for position in range(index + 1 - window, index + 1)]
+    average = mean(sample)
+    if average == 0.0:
+        return 0.0
+    return sample[-1] / average - 1.0
+
+
+def _positive_denominator(*values: float) -> float:
+    finite_values = [value for value in values if isfinite(value) and value > 1e-12]
+    if finite_values:
+        return max(finite_values)
+    if any(not isfinite(value) for value in values):
+        return float("nan")
+    return 1e-12
 
 
 def _zscore(values: Sequence[float], index: int, window: int) -> float:

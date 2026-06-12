@@ -5,5 +5,9 @@ description = "Safe local BTCUSDT v7.18 quant trading scaffold derived from Proj
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+ml = ["lightgbm", "catboost", "optuna", "shap"]
+lineage = ["mlflow", "dvc"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

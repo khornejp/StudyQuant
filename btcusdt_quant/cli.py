@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from . import data, dataset, features, governance, live, training
+from . import data, dataset, exchange, features, governance, live, secrets, training
 
 
 def run_demo(output: Path) -> dict[str, object]:
@@ -58,15 +58,15 @@ def run_demo(output: Path) -> dict[str, object]:
         qty_step=0.001,
         max_notional_fraction=0.10,
     )
-    exchange = live.MockExchangeAdapter()
-    order = exchange.submit_order("BTCUSDT", "BUY", "LIMIT", sizing.quantity)
+    exchange_adapter = create_exchange_adapter("mock")
+    order = exchange_adapter.submit_order("BTCUSDT", "BUY", "LIMIT", sizing.quantity)
 
     enforcer = governance.PipelineStageEnforcer()
     for stage in governance.PIPELINE_STAGES:
         enforcer.complete(stage)
 
     run_summary = {
-        "network_used": exchange.network_enabled,
+        "network_used": exchange_adapter.network_enabled,
         "orders_enabled": False,
         "mock_exchange_order_status": order.status,
         "canonical_rows": len(candles),
@@ -117,9 +117,30 @@ def run_demo(output: Path) -> dict[str, object]:
     return run_summary
 
 
-def run_train(output: Path, input_path: Path | None = None) -> dict[str, object]:
-    result = training.run_training(input_path, output)
-    return result.run_summary
+def run_train(
+    output: Path,
+    input_path: Path | None = None,
+    model_family: str = "auto",
+    cv_mode: str = "walk_forward",
+    embargo_size: int = 0,
+    n_groups: int = 5,
+    test_group_count: int = 1,
+    fallback_allowed: bool = True,
+    model_params: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    config = training.TrainingConfig(
+        cv_mode=cv_mode,
+        embargo_size=embargo_size,
+        n_groups=n_groups,
+        test_group_count=test_group_count,
+        model_family=model_family,
+        model_params=dict(model_params or {}),
+        fallback_allowed=fallback_allowed,
+    )
+    result = training.run_training(input_path, output, config)
+    summary = dict(result.run_summary)
+    summary["requested_model_family"] = model_family
+    return summary
 
 
 def run_collect(output: Path, rows: int, allow_public_network: bool = False) -> dict[str, object]:
@@ -150,8 +171,55 @@ def run_collect_archive(start: str, end: str, output: Path, checkpoint: Path | N
     }
 
 
-def run_live(output: Path, dry_run: bool = True, allow_public_network: bool = False, max_candles: int = 12) -> dict[str, object]:
-    return live.run_live(output, dry_run=dry_run, allow_public_network=allow_public_network, max_candles=max_candles).summary
+def create_exchange_adapter(
+    exchange_name: str = "mock",
+    allow_signed_network: bool = False,
+    allow_prod: bool = False,
+    approval_artifacts: Path | None = None,
+    recv_window_ms: int = 5000,
+) -> exchange.ExchangeAdapter:
+    if exchange_name == "mock":
+        return exchange.MockExchangeAdapter()
+    if exchange_name == "binance-testnet":
+        if not allow_signed_network:
+            raise RuntimeError("binance-testnet requires --allow-signed-network")
+        credentials = secrets.load_binance_credentials_from_env()
+        return exchange.BinanceUsdMFuturesTestnetAdapter(
+            credentials,
+            allow_signed_network=allow_signed_network,
+            recv_window_ms=recv_window_ms,
+        )
+    if exchange_name == "binance-prod":
+        if not allow_prod or approval_artifacts is None:
+            raise RuntimeError("binance-prod requires --allow-prod and --approval-artifacts")
+        credentials = secrets.load_binance_credentials_from_env()
+        return exchange.BinanceUsdMFuturesProdAdapter(
+            credentials,
+            environment="prod",
+            allow_prod=allow_prod,
+            approval_artifacts=approval_artifacts,
+            allow_signed_network=allow_signed_network,
+            recv_window_ms=recv_window_ms,
+        )
+    raise ValueError(f"unsupported exchange: {exchange_name}")
+
+
+def run_live(
+    output: Path,
+    dry_run: bool = True,
+    allow_public_network: bool = False,
+    max_candles: int = 12,
+    exchange_name: str = "mock",
+    allow_signed_network: bool = False,
+    allow_prod: bool = False,
+    approval_artifacts: Path | None = None,
+    recv_window_ms: int = 5000,
+) -> dict[str, object]:
+    exchange_adapter = create_exchange_adapter(exchange_name, allow_signed_network, allow_prod, approval_artifacts, recv_window_ms)
+    summary = dict(live.run_live(output, dry_run=dry_run, allow_public_network=allow_public_network, max_candles=max_candles).summary)
+    summary["exchange"] = exchange_name
+    summary["signed_network_enabled"] = exchange_adapter.network_enabled
+    return summary
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -171,11 +239,22 @@ def build_parser() -> argparse.ArgumentParser:
     train = subparsers.add_parser("train", help="run deterministic offline CSV/fixture training pipeline")
     train.add_argument("--output", default="artifacts/training", help="training artifact output directory")
     train.add_argument("--input", default=None, help="optional local CSV candles path; defaults to offline fixture")
+    train.add_argument("--model-family", default="auto", help="model family selector; auto keeps the deterministic stdlib model")
+    train.add_argument("--cv-mode", choices=("walk_forward", "combinatorial_purged"), default="walk_forward", help="cross-validation splitter mode")
+    train.add_argument("--embargo-size", type=int, default=0, help="bars to embargo after combinatorial test windows")
+    train.add_argument("--n-groups", type=int, default=5, help="sequential groups for combinatorial purged CV")
+    train.add_argument("--test-group-count", type=int, default=1, help="number of groups selected for each combinatorial test fold")
+    train.add_argument("--no-model-fallback", action="store_true", help="disable optional model fallback and fail if the requested family is unavailable")
     live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
     live_parser.add_argument("--output", default="artifacts/live", help="live artifact output directory")
     live_parser.add_argument("--dry-run", action="store_true", help="use deterministic fixture WebSocket and REST backfill")
     live_parser.add_argument("--allow-public-network", action="store_true", help="opt in to unsigned public Binance WebSocket and REST klines")
     live_parser.add_argument("--max-candles", type=int, default=12, help="maximum closed klines to process before returning")
+    live_parser.add_argument("--exchange", choices=("mock", "binance-testnet", "binance-prod"), default="mock", help="exchange adapter for signed execution path")
+    live_parser.add_argument("--allow-signed-network", action="store_true", help="opt in to signed Binance REST requests")
+    live_parser.add_argument("--allow-prod", action="store_true", help="opt in to production exchange adapter after artifact approval")
+    live_parser.add_argument("--approval-artifacts", default=None, help="approval artifact directory required for production")
+    live_parser.add_argument("--recv-window-ms", type=int, default=5000, help="Binance signed request recvWindow in milliseconds")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -226,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
         output = Path(args.output)
         input_path = Path(args.input) if args.input else None
         try:
-            summary = run_train(output, input_path)
+            summary = run_train(output, input_path, args.model_family, args.cv_mode, args.embargo_size, args.n_groups, args.test_group_count, not args.no_model_fallback)
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)
             return 1
@@ -241,13 +320,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "live":
         output = Path(args.output)
         try:
-            summary = run_live(output, dry_run=args.dry_run, allow_public_network=args.allow_public_network, max_candles=args.max_candles)
+            approval_artifacts = Path(args.approval_artifacts) if args.approval_artifacts else None
+            summary = run_live(
+                output,
+                dry_run=args.dry_run,
+                allow_public_network=args.allow_public_network,
+                max_candles=args.max_candles,
+                exchange_name=args.exchange,
+                allow_signed_network=args.allow_signed_network,
+                allow_prod=args.allow_prod,
+                approval_artifacts=approval_artifacts,
+                recv_window_ms=args.recv_window_ms,
+            )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"live failed: {error}", file=sys.stderr)
             return 1
         print("BTCUSDT live collection complete")
         print(f"dry_run={summary['dry_run']}")
         print(f"network_used={summary['network_used']}")
+        print(f"exchange={summary['exchange']}")
         print(f"stream_desync_detected={summary['stream_desync_detected']}")
         print(f"backfilled_rows={summary['backfilled_rows']}")
         print(f"canonical_rows={summary['canonical_rows']}")

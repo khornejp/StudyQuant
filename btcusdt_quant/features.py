@@ -21,14 +21,35 @@ class FeatureClipper:
         "ratio": 100.0,
         "return": 0.20,
         "vol_adj": 10.0,
+        "bps": 10_000.0,
+        "vol": 10.0,
+        "regime": 10.0,
+        "flag": 1.0,
+        "minutes": 1440.0,
+        "funding": 1.0,
+        "adl": 4.0,
     }
 
     def classify(self, feature_name: str) -> str:
         lower = feature_name.lower()
         if "vol_adj" in lower:
             return "vol_adj"
+        if "bps" in lower:
+            return "bps"
+        if "adl" in lower:
+            return "adl"
+        if "minutes" in lower:
+            return "minutes"
+        if "funding" in lower:
+            return "funding"
+        if "flag" in lower:
+            return "flag"
+        if "regime" in lower:
+            return "regime"
         if "zscore" in lower:
             return "zscore"
+        if lower.startswith("rv_") or lower.startswith("atr") or lower.startswith("har_rv") or "volatility" in lower or "_vol" in lower:
+            return "vol"
         if "ratio" in lower or "pct" in lower or "vs_" in lower:
             return "ratio"
         if "return" in lower:

@@ -911,6 +911,7 @@ class GovernanceTests(unittest.TestCase):
             self.assertIn("model_card.json", paths)
             self.assertIn("model_card.yaml", paths)
             self.assertIn("column_data_contract.csv", paths)
+            self.assertIn("train_live_feature_parity_report.csv", paths)
             self.assertIn("monitoring_slo_report.csv", paths)
             self.assertIn("lineage_manifest.json", paths)
 

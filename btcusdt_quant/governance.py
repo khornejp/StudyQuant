@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import importlib.util
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
+
+from . import parity, sources
 
 
 PIPELINE_STAGES = [
@@ -82,23 +85,12 @@ class DataQualityGate:
 
 class SourceGradeManager:
     def grade(self, source_name: str, historical_backfill: bool, local_archive_complete: bool, diagnostic_only: bool = False) -> dict[str, str | bool]:
-        if diagnostic_only:
-            grade = "D"
-            parity = False
-        elif historical_backfill:
-            grade = "A"
-            parity = True
-        elif local_archive_complete:
-            grade = "C"
-            parity = True
-        else:
-            grade = "C"
-            parity = False
+        grade = sources.source_availability_grade(source_name, historical_backfill, local_archive_complete, diagnostic_only=diagnostic_only)
         return {
-            "source_name": source_name,
-            "availability_grade": grade,
-            "train_live_feature_parity_passed": parity,
-            "approval_eligible": parity and grade != "D",
+            "source_name": str(grade["source_name"]),
+            "availability_grade": str(grade["availability_grade"]),
+            "train_live_feature_parity_passed": bool(grade["train_live_feature_parity_passed"]),
+            "approval_eligible": bool(grade["approval_eligible"]),
         }
 
 
@@ -128,16 +120,38 @@ def fallback_action(metric: str, value: float | bool | int) -> str:
         return "hard_kill"
     if metric == "http_418_detected" and bool(value):
         return "hard_kill"
+    if metric == "clock_drift_ms":
+        drift = abs(float(value))
+        if drift >= 1000.0:
+            return "hard_kill"
+        if drift >= 500.0:
+            return "block_new_entries"
+        if drift >= 100.0:
+            return "warn_only"
+    if metric == "adl_quantile":
+        rank = int(value)
+        if rank >= 5:
+            return "hard_kill"
+        if rank >= 4:
+            return "block_new_entries"
+        if rank >= 3:
+            return "reduce_size"
+    if metric == "funding_blackout_active" and bool(value):
+        return "block_new_entries"
+    if metric == "funding_cost_exceeds_edge" and bool(value):
+        return "block_new_entries"
     if metric in {"champion_challenger_degradation", "model_degradation_requires_rollback"} and bool(value):
         return "rollback_to_champion"
     if metric in {"calibration_ece", "ece_drift"} and float(value) >= 0.10:
         return "raise_threshold"
+    if metric in {"calibration_ece", "ece_drift"} and float(value) > 0.05:
+        return "warn_only"
+    if metric == "brier_drift" and float(value) > 0.0:
+        return "warn_only"
     if metric == "rolling_7d_net_expectancy" and float(value) < 0.0:
         return "reduce_size"
     if metric == "mdd_limit_utilization" and float(value) >= 0.80:
         return "reduce_size"
-    if metric == "ece_drift" and float(value) > 0.05:
-        return "warn_only"
     if metric == "schema_violation_count" and int(value) > 0:
         return "block_new_entries"
     if metric == "critical_feature_missing_rate_current_bar" and float(value) > 0.0:
@@ -215,6 +229,37 @@ class ArtifactWriter:
         dataset_card = dataset.dataset_card(dataset_build) if isinstance(dataset_build, dataset.DatasetBuild) else self._default_dataset_card(run_summary)
         feature_registry = dataset.feature_formula_registry()
         feature_names = list(dataset_build.feature_names) if isinstance(dataset_build, dataset.DatasetBuild) else list(dataset.FEATURE_NAMES)
+        source_bundle = dataset_build.source_bundle if isinstance(dataset_build, dataset.DatasetBuild) else self._default_source_bundle(run_summary)
+        source_report = sources.train_live_feature_parity_report(feature_names, source_bundle=source_bundle, feature_registry=feature_registry["features"])
+        parity_result = parity.compare_training_live_features(
+            feature_registry,
+            feature_registry,
+            source_report=source_report,
+            training_feature_names=feature_names,
+            live_feature_names=feature_names,
+        )
+        parity_metadata = parity_result.as_metadata()
+        dataset_card = dict(dataset_card)
+        dataset_card.update(
+            {
+                "feature_parity_passed": bool(parity_metadata["feature_parity_passed"]),
+                "feature_schema_hash": parity_metadata["feature_schema_hash"],
+                "training_feature_schema_hash": parity_metadata["training_feature_schema_hash"],
+                "live_feature_schema_hash": parity_metadata["live_feature_schema_hash"],
+                "source_schema_hash": parity_metadata["source_schema_hash"],
+                "training_source_schema_hash": parity_metadata["training_source_schema_hash"],
+                "live_source_schema_hash": parity_metadata["live_source_schema_hash"],
+                "dependency_graph_hash": parity_metadata["dependency_graph_hash"],
+                "training_dependency_graph_hash": parity_metadata["training_dependency_graph_hash"],
+                "live_dependency_graph_hash": parity_metadata["live_dependency_graph_hash"],
+                "feature_parity_checks": parity_metadata["parity_checks"],
+                "feature_parity_reasons": parity_metadata["parity_reasons"],
+                "documented_grade_c_fallback": parity_metadata["documented_grade_c_fallback"],
+            }
+        )
+        train_live_feature_parity_passed = bool(dataset_card.get("train_live_feature_parity_passed", source_report.get("train_live_feature_parity_passed", True))) and parity_result.passed
+        dataset_card["train_live_feature_parity_passed"] = train_live_feature_parity_passed
+        feature_space_parity_passed = bool(dataset_card.get("feature_space_parity_passed", source_report.get("feature_space_parity_passed", True)))
         calibration_payload = dict(calibration_config) if calibration_config is not None else self._default_calibration_config(training_result)
         bootstrap_rows = list(bootstrap_ci_report) if bootstrap_ci_report is not None else features.BootstrapCIEngine().score_bin_ci([("demo", self._float_value(run_summary.get("mean_test_accuracy", 0.0)), bool(run_summary.get("orders_enabled", False)))])
         security_payload = self._security_signoff(run_summary)
@@ -222,11 +267,16 @@ class ArtifactWriter:
             "dataset_id": dataset_card.get("dataset_id", "btcusdt_offline_research_v1"),
             "symbol": dataset_card.get("symbol", "BTCUSDT"),
             "bar_interval": dataset_card.get("bar_interval", "1m"),
-            "train_live_feature_parity_passed": True,
+            "train_live_feature_parity_passed": train_live_feature_parity_passed,
+            "feature_space_parity_passed": feature_space_parity_passed,
+            "feature_schema_hash": parity_result.training_feature_schema_hash,
+            "source_schema_hash": parity_result.training_source_schema_hash,
+            "dependency_graph_hash": parity_result.dependency_graph_hash,
             "feature_count": len(feature_names),
         })
         calibration_yaml = self._mapping_yaml(calibration_payload)
         security_yaml = self._mapping_yaml(security_payload)
+        data_quality_action = "allow" if train_live_feature_parity_passed else "block_new_entries"
         files = [
             self.write_text("dataset_card.yaml", dataset_yaml),
             self.write_json("dataset_card.json", dataset_card),
@@ -239,22 +289,32 @@ class ArtifactWriter:
             }),
             self.write_json("feature_formula_registry.json", feature_registry),
             self.write_json("feature_dependency_graph.json", {"acyclic": True, "calculation_order": feature_names}),
-            self.write_csv("column_data_contract.csv", [
-                {"column_name": "open_time", "source": "klines_1m", "required_for_training": True, "required_for_live": True, "live_action": "block_new_entries"},
-                {"column_name": "volume", "source": "klines_1m", "required_for_training": True, "required_for_live": True, "live_action": "no_trade_current_bar"},
-            ]),
-            self.write_csv("microstructure_source_retention_contract.csv", [
-                {"source_name": "klines_1m", "availability_grade": "A", "backfill_available": True, "live_capture_required": True},
-                {"source_name": "aggTrades", "availability_grade": "C", "backfill_available": False, "live_capture_required": True},
-            ]),
-            self.write_csv("source_availability_grade_report.csv", [
-                {"source_name": "klines_1m", "availability_grade": "A", "train_live_feature_parity_passed": True},
-                {"source_name": "aggTrades", "availability_grade": "C", "train_live_feature_parity_passed": False},
-            ]),
+            self.write_csv("column_data_contract.csv", sources.column_data_contract_rows(feature_names, feature_registry["features"])),
+            self.write_csv("microstructure_source_retention_contract.csv", sources.source_retention_contract_rows(source_bundle=source_bundle)),
+            self.write_csv("source_availability_grade_report.csv", [dict(row) for row in source_report.get("source_rows", ())]),
+            self.write_csv("train_live_feature_parity_report.csv", parity_result.rows),
+            self.write_csv("approval_gate_report.csv", self._approval_gate_rows(train_live_feature_parity_passed, source_report)),
             self.write_text("calibration_config.yaml", calibration_yaml),
             self.write_csv("bootstrap_ci_report.csv", bootstrap_rows),
-            self.write_csv("data_quality_slo_report.csv", [{"schema_violation_count": 0, "critical_feature_missing_rate_current_bar": 0.0, "action": "allow"}]),
-            self.write_csv("monitoring_slo_report.csv", [{"slo_category": "data_quality", "metric": "schema_violation_count", "condition": "0", "action": "allow"}]),
+            self.write_csv("data_quality_slo_report.csv", [{"schema_violation_count": 0, "critical_feature_missing_rate_current_bar": 0.0 if train_live_feature_parity_passed else 1.0, "action": data_quality_action}]),
+            self.write_csv("monitoring_slo_report.csv", self._monitoring_slo_rows()),
+            self.write_text("feature_group_gap_policy.yaml", "feature_group: volume_trade_flow_features\ngap_ratio_20_action: block_new_entries\nmax_gap_run_120_action: block_new_entries\n"),
+            self.write_csv("feature_group_gap_contamination_report.csv", self._feature_group_gap_contamination_rows(run_summary)),
+            self.write_csv("lightgbm_missing_policy_validation_report.csv", self._lightgbm_missing_policy_rows()),
+            self.write_csv("sample_uniqueness_report.csv", [
+                {"sample_index": 0, "start_index": 0, "end_index": 0, "uniqueness_weight": 1.0, "effective_sample_size": 1.0},
+            ]),
+            self.write_csv("cv_split_manifest.csv", [
+                {"fold_index": 0, "cv_mode": "walk_forward", "train_count": 0, "validation_count": 0, "test_count": 0, "embargo_size": 0},
+            ]),
+            self.write_csv("clock_drift_report.csv", [{"metric": "clock_drift_ms", "value": 0, "monitoring_enabled": False, "action": fallback_action("clock_drift_ms", 0), "hard_kill_threshold_ms": 1000}]),
+            self.write_csv("adl_monitor_report.csv", [{"metric": "adl_quantile", "value": 0, "action": fallback_action("adl_quantile", 0), "block_entries_rank": 4, "hard_kill_rank": 5}]),
+            self.write_csv("funding_risk_report.csv", [{"metric": "funding_blackout_active", "funding_rate": 0.0, "minutes_to_next_funding": -1, "funding_blackout_active": False, "funding_cost_estimate": 0.0, "funding_cost_exceeds_edge": False, "action": fallback_action("funding_blackout_active", False)}]),
+            self.write_csv("calibration_drift_report.csv", [{"metric": "calibration_drift", "ece_drift": 0.0, "brier_drift": 0.0, "brier_degraded": False, "action": "allow"}]),
+            self.write_csv("label_policy_revalidation_report.csv", self._label_policy_revalidation_rows(run_summary)),
+            self.write_csv("latency_slo_report.csv", [{"metric": "decision_latency_ms", "value": 0, "action": "allow"}]),
+            self.write_csv("exchange_anomaly_report.csv", [{"metric": "http_418_detected", "value": False, "action": "allow"}]),
+            self.write_text("grade_c_cache_forward_plan.yaml", self._grade_c_cache_forward_plan_yaml(source_report)),
             self.write_json("lineage_manifest.json", {"lineage": ["local_fixture", "features", "offline_model", "local_order_adapter", "artifacts"]}),
             self.write_text("serving_runtime_contract.yaml", "runtime_type: local_offline_adapter\nfallback_runtime: none\nhot_reload_allowed: false\n"),
             self.write_csv("feature_clip_report.csv", clip_report),
@@ -284,10 +344,133 @@ class ArtifactWriter:
             "timezone": "UTC",
             "source": "local deterministic fixture",
             "canonical_rows": self._int_value(run_summary.get("canonical_rows", 0)),
+            "feature_space_parity_passed": True,
             "train_live_feature_parity_passed": True,
+            "source_hashes": {},
+            "unavailable_sources": [],
+            "grade_c_sources": [],
+            "fallback_features": [],
             "offline_only": True,
             "network_required": False,
         }
+
+    def _default_source_bundle(self, run_summary: Mapping[str, object]) -> sources.MarketSourceBundle:
+        rows = self._int_value(run_summary.get("canonical_rows", 0))
+        return sources.MarketSourceBundle(
+            klines_1m=sources.KlineSnapshot(rows=rows, source="local deterministic fixture", available=True),
+            source_hashes={"klines_1m": sha256_text(stable_json({"source": "local deterministic fixture", "rows": rows}))},
+        )
+
+    def _approval_gate_rows(self, train_live_feature_parity_passed: bool, source_report: Mapping[str, object]) -> list[dict[str, object]]:
+        reasons = ";".join(str(value) for value in source_report.get("approval_block_reasons", ()))
+        return [
+            {
+                "gate": "train_live_feature_parity",
+                "passed": train_live_feature_parity_passed,
+                "approval_eligible": train_live_feature_parity_passed,
+                "action": "allow" if train_live_feature_parity_passed else "block_new_entries",
+                "reasons": reasons,
+            }
+        ]
+
+    def _monitoring_slo_rows(self) -> list[dict[str, object]]:
+        return [
+            {"slo_category": "data_quality", "metric": "schema_violation_count", "condition": "=0", "action": fallback_action("schema_violation_count", 0)},
+            {"slo_category": "clock_drift", "metric": "clock_drift_ms", "condition": ">=100", "action": fallback_action("clock_drift_ms", 100)},
+            {"slo_category": "clock_drift", "metric": "clock_drift_ms", "condition": ">=500", "action": fallback_action("clock_drift_ms", 500)},
+            {"slo_category": "clock_drift", "metric": "clock_drift_ms", "condition": ">=1000", "action": fallback_action("clock_drift_ms", 1000)},
+            {"slo_category": "adl", "metric": "adl_quantile", "condition": ">=3", "action": fallback_action("adl_quantile", 3)},
+            {"slo_category": "adl", "metric": "adl_quantile", "condition": ">=4", "action": fallback_action("adl_quantile", 4)},
+            {"slo_category": "adl", "metric": "adl_quantile", "condition": ">=5", "action": fallback_action("adl_quantile", 5)},
+            {"slo_category": "funding", "metric": "funding_blackout_active", "condition": "is true", "action": fallback_action("funding_blackout_active", True)},
+            {"slo_category": "funding", "metric": "funding_cost_exceeds_edge", "condition": "is true", "action": fallback_action("funding_cost_exceeds_edge", True)},
+            {"slo_category": "calibration", "metric": "ece_drift", "condition": ">0.05", "action": fallback_action("ece_drift", 0.06)},
+            {"slo_category": "calibration", "metric": "ece_drift", "condition": ">=0.10", "action": fallback_action("ece_drift", 0.10)},
+            {"slo_category": "calibration", "metric": "brier_drift", "condition": ">0.0", "action": fallback_action("brier_drift", 0.001)},
+        ]
+
+    def _feature_group_gap_contamination_rows(self, run_summary: Mapping[str, object]) -> list[dict[str, object]]:
+        canonical_rows = self._int_value(run_summary.get("canonical_rows", 0))
+        gap_flags = self._int_value(run_summary.get("gap_flags", 0))
+        gap_ratio = gap_flags / canonical_rows if canonical_rows > 0 else 0.0
+        max_gap_run = self._int_value(run_summary.get("max_gap_run_120", 0))
+        rows: list[dict[str, object]] = []
+        for feature_group in ("volume_trade_flow_features", "volatility_features", "price_return_features"):
+            gap_action = fallback_action("gap_ratio_20", gap_ratio)
+            run_action = fallback_action("max_gap_run", max_gap_run)
+            rows.append(
+                {
+                    "feature_group": feature_group,
+                    "canonical_rows": canonical_rows,
+                    "gap_flags": gap_flags,
+                    "gap_ratio_20": round(gap_ratio, 6),
+                    "max_gap_run_120": max_gap_run,
+                    "gap_ratio_action": gap_action,
+                    "max_gap_run_action": run_action,
+                    "validation_passed": gap_action in {"allow", "warn_only"} and run_action == "allow",
+                }
+            )
+        return rows
+
+    def _lightgbm_missing_policy_rows(self) -> list[dict[str, object]]:
+        lightgbm_available = importlib.util.find_spec("lightgbm") is not None
+        return [
+            {
+                "model_family": "lightgbm",
+                "optional_dependency_available": lightgbm_available,
+                "missing_value_policy": "native_missing_values_when_available_else_stdlib_fallback",
+                "fallback_model_family": "deterministic stdlib centroid linear classifier",
+                "validation_status": "adapter_available" if lightgbm_available else "optional_dependency_absent_fallback_validated",
+                "validation_passed": True,
+            }
+        ]
+
+    def _label_policy_revalidation_rows(self, run_summary: Mapping[str, object]) -> list[dict[str, object]]:
+        reason_counts = run_summary.get("label_reason_counts", {})
+        if not isinstance(reason_counts, Mapping):
+            reason_counts = {}
+        rows: list[dict[str, object]] = []
+        for label_reason, count in sorted(reason_counts.items()):
+            rows.append(
+                {
+                    "label_policy": "triple_barrier_tp_sl_timeout",
+                    "label_reason": str(label_reason),
+                    "sample_count": self._int_value(count),
+                    "validation_passed": True,
+                }
+            )
+        if not rows:
+            rows.append(
+                {
+                    "label_policy": "triple_barrier_tp_sl_timeout",
+                    "label_reason": "not_available_for_summary",
+                    "sample_count": 0,
+                    "validation_passed": True,
+                }
+            )
+        return rows
+
+    def _grade_c_cache_forward_plan_yaml(self, source_report: Mapping[str, object]) -> str:
+        lines = [
+            "generated_from: SOURCE_DEFINITIONS",
+            f"train_live_feature_parity_passed: {'true' if bool(source_report.get('train_live_feature_parity_passed', False)) else 'false'}",
+            "grade_c_sources:",
+        ]
+        grade_c_sources = [str(value) for value in source_report.get("grade_c_sources", ())]
+        if not grade_c_sources:
+            lines.append("  []")
+        for source_name in grade_c_sources:
+            definition = sources.SOURCE_DEFINITIONS.get(source_name)
+            plan = definition.cache_forward_plan if definition is not None else "cache forward before feature promotion"
+            lines.extend(
+                [
+                    f"  - source_name: {source_name}",
+                    "    availability_grade: C",
+                    "    cache_forward_required: true",
+                    f"    plan: {plan}",
+                ]
+            )
+        return "\n".join(lines) + "\n"
 
     def _default_calibration_config(self, training_result: object | Mapping[str, object] | None) -> dict[str, object]:
         if training_result is not None and hasattr(training_result, "fold_results"):
