@@ -6,7 +6,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from math import sin
+from math import isfinite, sqrt, sin
 from pathlib import Path
 from statistics import mean
 from typing import Mapping, Sequence
@@ -29,17 +29,74 @@ COLLECTED_CSV_FIELDS: tuple[str, ...] = (
 
 
 FEATURE_FORMULAS: tuple[dict[str, object], ...] = (
-    {"feature_name": "return_1", "formula": "close_t / close_t-1 - 1", "lookback": 2, "min_samples": 2, "warmup_rule": "strict"},
-    {"feature_name": "return_3", "formula": "close_t / close_t-3 - 1", "lookback": 4, "min_samples": 4, "warmup_rule": "strict"},
-    {"feature_name": "close_sma_5_ratio", "formula": "close_t / SMA(close,5) - 1", "lookback": 5, "min_samples": 5, "warmup_rule": "strict"},
-    {"feature_name": "close_sma_10_ratio", "formula": "close_t / SMA(close,10) - 1", "lookback": 10, "min_samples": 10, "warmup_rule": "strict"},
-    {"feature_name": "volume_sma_5_ratio", "formula": "volume_t / max(SMA(volume,5), 1e-12) - 1", "lookback": 5, "min_samples": 5, "warmup_rule": "strict"},
-    {"feature_name": "high_low_range", "formula": "(high_t - low_t) / close_t", "lookback": 1, "min_samples": 1, "warmup_rule": "strict"},
-    {"feature_name": "gap_ratio_20", "formula": "rolling repaired candle ratio over last 20 canonical rows", "lookback": 20, "min_samples": 1, "warmup_rule": "state"},
-    {"feature_name": "max_gap_run_120", "formula": "maximum contiguous repaired candle run over last 120 canonical rows", "lookback": 120, "min_samples": 1, "warmup_rule": "state"},
+    {"feature_name": "return_1", "category": "F01", "formula": "close_t / close_t-1 - 1", "lookback": 2, "min_samples": 2, "warmup_rule": "strict"},
+    {"feature_name": "return_3", "category": "F01", "formula": "close_t / close_t-3 - 1", "lookback": 4, "min_samples": 4, "warmup_rule": "strict"},
+    {"feature_name": "return_5", "category": "F01", "formula": "close_t / close_t-5 - 1", "lookback": 6, "min_samples": 6, "warmup_rule": "strict"},
+    {"feature_name": "return_10", "category": "F01", "formula": "close_t / close_t-10 - 1", "lookback": 11, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "close_sma_5_ratio", "category": "F02", "formula": "close_t / SMA(close,5) - 1", "lookback": 5, "min_samples": 5, "warmup_rule": "strict"},
+    {"feature_name": "close_sma_10_ratio", "category": "F02", "formula": "close_t / SMA(close,10) - 1", "lookback": 10, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "close_sma_20_ratio", "category": "F02", "formula": "close_t / SMA(close,20) - 1", "lookback": 20, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "close_sma_60_ratio", "category": "F02", "formula": "close_t / SMA(close,60) - 1", "lookback": 60, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "rv_15", "category": "F03", "formula": "stddev(1m returns over 15 bars)", "lookback": 16, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "rv_60", "category": "F03", "formula": "stddev(1m returns over 60 bars)", "lookback": 61, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "rv_120", "category": "F03", "formula": "stddev(1m returns over 120 bars)", "lookback": 121, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "atr_pct", "category": "F03", "formula": "SMA(true_range,14) / close_t", "lookback": 15, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "volume_sma_5_ratio", "category": "F04", "formula": "volume_t / max(SMA(volume,5), 1e-12) - 1", "lookback": 5, "min_samples": 5, "warmup_rule": "strict"},
+    {"feature_name": "volume_sma_20_ratio", "category": "F04", "formula": "volume_t / max(SMA(volume,20), 1e-12) - 1", "lookback": 20, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "taker_ratio", "category": "F04", "formula": "taker_buy_base_volume_t / max(volume_t, 1e-12)", "lookback": 1, "min_samples": 1, "warmup_rule": "strict"},
+    {"feature_name": "trade_count_ratio", "category": "F04", "formula": "number_of_trades_t / max(SMA(number_of_trades,20), 1e-12) - 1", "lookback": 20, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "high_low_range", "category": "F05", "formula": "(high_t - low_t) / close_t", "lookback": 1, "min_samples": 1, "warmup_rule": "strict"},
+    {"feature_name": "body_pct", "category": "F05", "formula": "abs(close_t - open_t) / close_t", "lookback": 1, "min_samples": 1, "warmup_rule": "strict"},
+    {"feature_name": "upper_shadow", "category": "F05", "formula": "high_t - max(open_t, close_t) over close_t", "lookback": 1, "min_samples": 1, "warmup_rule": "strict"},
+    {"feature_name": "lower_shadow", "category": "F05", "formula": "min(open_t, close_t) - low_t over close_t", "lookback": 1, "min_samples": 1, "warmup_rule": "strict"},
+    {"feature_name": "gap_ratio_20", "category": "F06", "formula": "rolling repaired candle ratio over last 20 canonical rows", "lookback": 20, "min_samples": 1, "warmup_rule": "state"},
+    {"feature_name": "gap_ratio_60", "category": "F06", "formula": "rolling repaired candle ratio over last 60 canonical rows", "lookback": 60, "min_samples": 1, "warmup_rule": "state"},
+    {"feature_name": "gap_ratio_120", "category": "F06", "formula": "rolling repaired candle ratio over last 120 canonical rows", "lookback": 120, "min_samples": 1, "warmup_rule": "state"},
+    {"feature_name": "max_gap_run_120", "category": "F06", "formula": "maximum contiguous repaired candle run over last 120 canonical rows", "lookback": 120, "min_samples": 1, "warmup_rule": "state"},
+    {"feature_name": "close_zscore_20", "category": "F07", "formula": "(close_t - SMA(close,20)) / stddev(close,20)", "lookback": 20, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "close_zscore_60", "category": "F07", "formula": "(close_t - SMA(close,60)) / stddev(close,60)", "lookback": 60, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "volume_zscore_5", "category": "F07", "formula": "(volume_t - SMA(volume,5)) / stddev(volume,5)", "lookback": 5, "min_samples": 5, "warmup_rule": "strict"},
+    {"feature_name": "volume_zscore_20", "category": "F07", "formula": "(volume_t - SMA(volume,20)) / stddev(volume,20)", "lookback": 20, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "return_5_vol_adj", "category": "F08", "formula": "return_5 / max(rv_15, rv_60, rv_120, atr_pct, 1e-12)", "lookback": 121, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "return_10_vol_adj", "category": "F08", "formula": "return_10 / max(rv_15, rv_60, rv_120, atr_pct, 1e-12)", "lookback": 121, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "close_zscore_20_vol_adj", "category": "F09", "formula": "close_zscore_20 / max(rv_60, 1e-12)", "lookback": 61, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "volume_zscore_20_vol_adj", "category": "F09", "formula": "volume_zscore_20 / max(rv_60, 1e-12)", "lookback": 61, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "candle_range_vol_adj", "category": "F10", "formula": "high_low_range / max(rv_60, 1e-12)", "lookback": 61, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "body_pct_vol_adj", "category": "F10", "formula": "body_pct / max(rv_60, 1e-12)", "lookback": 61, "min_samples": 10, "warmup_rule": "strict"},
+    {"feature_name": "spread", "category": "F11", "formula": "best_ask - best_bid over mid price", "lookback": 1, "min_samples": 1, "warmup_rule": "strict", "scaffold_status": "pending_data_source"},
+    {"feature_name": "bid_ask_imbalance", "category": "F11", "formula": "(bid_qty - ask_qty) / max(bid_qty + ask_qty, 1e-12)", "lookback": 1, "min_samples": 1, "warmup_rule": "strict", "scaffold_status": "pending_data_source"},
+    {"feature_name": "adl_indicator", "category": "F12", "formula": "exchange ADL quantile indicator", "lookback": 1, "min_samples": 1, "warmup_rule": "state", "scaffold_status": "pending_data_source"},
+    {"feature_name": "funding_rate", "category": "F12", "formula": "current and next funding rate state", "lookback": 1, "min_samples": 1, "warmup_rule": "state", "scaffold_status": "pending_data_source"},
 )
 
-FEATURE_NAMES: tuple[str, ...] = tuple(str(row["feature_name"]) for row in FEATURE_FORMULAS)
+FEATURE_NAMES: tuple[str, ...] = tuple(str(row["feature_name"]) for row in FEATURE_FORMULAS if row.get("scaffold_status") != "pending_data_source")
+
+LABEL_REASON_BUCKETS: tuple[str, ...] = (
+    "tp_first",
+    "sl_first",
+    "timeout_no_tp",
+    "ambiguous_path",
+    "no_fill",
+    "partial_fill",
+    "post_only_blocked",
+    "gap_cross_timeout",
+    "gap_cross_sl",
+    "funding_force_close",
+    "funding_cross",
+    "liquidation",
+)
+
+EVENT_NEGATIVE_REASONS: frozenset[str] = frozenset(
+    {
+        "no_fill",
+        "partial_fill",
+        "post_only_blocked",
+        "gap_cross_sl",
+        "funding_force_close",
+        "funding_cross",
+        "liquidation",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -69,9 +126,11 @@ class LabeledRow:
     open_time: datetime
     features: dict[str, float]
     label: int
+    label_reason: str
     target_return: float
     gap_flag: int
     repaired: bool
+    warmup_invalid: bool
 
 
 @dataclass(frozen=True)
@@ -142,22 +201,51 @@ def load_csv_candles(path: Path) -> list[data.Candle]:
         if missing:
             raise ValueError(f"CSV missing required columns: {', '.join(sorted(missing))}")
         candles: list[data.Candle] = []
+        seen_open_times: set[datetime] = set()
         for row in reader:
+            open_time = parse_open_time(row["open_time"])
+            if open_time in seen_open_times:
+                raise ValueError(f"CSV contains duplicate open_time: {open_time.isoformat()}")
+            seen_open_times.add(open_time)
+            open_price = float(row["open"])
+            high = float(row["high"])
+            low = float(row["low"])
+            close = float(row["close"])
+            volume = float(row["volume"])
+            _validate_ohlcv(open_price, high, low, close, volume)
             candles.append(
                 data.Candle(
-                    open_time=parse_open_time(row["open_time"]),
-                    open=float(row["open"]),
-                    high=float(row["high"]),
-                    low=float(row["low"]),
-                    close=float(row["close"]),
-                    volume=float(row["volume"]),
+                    open_time=open_time,
+                    open=open_price,
+                    high=high,
+                    low=low,
+                    close=close,
+                    volume=volume,
                     quote_volume=float(row.get("quote_volume") or 0.0),
                     number_of_trades=int(float(row.get("number_of_trades") or 0)),
                     taker_buy_base_volume=float(row.get("taker_buy_base_volume") or 0.0),
                     taker_buy_quote_volume=float(row.get("taker_buy_quote_volume") or 0.0),
                 )
             )
-    return candles
+    if candles and all(candle.volume == 0.0 for candle in candles):
+        raise ValueError("CSV volume is zero for all rows")
+    return sorted(candles, key=lambda candle: candle.open_time)
+
+
+def _validate_ohlcv(open_price: float, high: float, low: float, close: float, volume: float) -> None:
+    prices = (open_price, high, low, close)
+    if any(not isfinite(value) for value in (*prices, volume)):
+        raise ValueError("CSV OHLCV values must be finite")
+    if any(value <= 0.0 for value in prices):
+        raise ValueError("CSV OHLC prices must be positive")
+    if volume < 0.0:
+        raise ValueError("CSV volume must be non-negative")
+    if high < low:
+        raise ValueError("CSV high must be greater than or equal to low")
+    if not low <= open_price <= high:
+        raise ValueError("CSV open must be within high/low range")
+    if not low <= close <= high:
+        raise ValueError("CSV close must be within high/low range")
 
 
 def candle_from_kline_row(row: Sequence[object]) -> data.Candle:
@@ -253,9 +341,20 @@ def expanded_fixture(rows: int = 240) -> list[data.Candle]:
     return candles
 
 
-def build_dataset(input_path: Path | None = None, horizon: int = 3, label_threshold: float = 0.0002) -> DatasetBuild:
+def build_dataset(
+    input_path: Path | None = None,
+    horizon: int = 3,
+    label_threshold: float = 0.0002,
+    tp_pct: float = 0.001,
+    sl_pct: float = 0.0005,
+    external_events: Mapping[object, object] | None = None,
+) -> DatasetBuild:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
+    if tp_pct <= 0.0:
+        raise ValueError("tp_pct must be positive")
+    if sl_pct <= 0.0:
+        raise ValueError("sl_pct must be positive")
     if input_path is None:
         raw = expanded_fixture()
         source = "offline_expanded_fixture"
@@ -265,7 +364,7 @@ def build_dataset(input_path: Path | None = None, horizon: int = 3, label_thresh
     canonical = data.CanonicalTimelineBuilder().build(raw)
     gap_report = summarize_gaps(len(raw), canonical)
     feature_rows = build_feature_rows(canonical)
-    labeled_rows = attach_labels(feature_rows, canonical, horizon, label_threshold)
+    labeled_rows = attach_labels(feature_rows, canonical, horizon, label_threshold, tp_pct=tp_pct, sl_pct=sl_pct, external_events=external_events)
     return DatasetBuild(
         source=source,
         symbol="BTCUSDT",
@@ -300,23 +399,77 @@ def build_feature_rows(candles: Sequence[data.Candle]) -> list[FeatureRow]:
     rows: list[FeatureRow] = []
     closes = [candle.close for candle in candles]
     volumes = [candle.volume for candle in candles]
+    trades = [float(candle.number_of_trades) for candle in candles]
+    warmup_cutoff = max_feature_min_samples() - 1
     for index, candle in enumerate(candles):
-        warmup_invalid = index < 10
+        warmup_invalid = index < warmup_cutoff
+        return_5 = _return(closes, index, 5)
+        return_10 = _return(closes, index, 10)
+        rv_15 = _rolling_return_std(closes, index, 15)
+        rv_60 = _rolling_return_std(closes, index, 60)
+        rv_120 = _rolling_return_std(closes, index, 120)
+        atr_pct = _atr_pct(candles, index, 14)
+        volatility_denominator = max(rv_15, rv_60, rv_120, atr_pct, 1e-12)
+        rv_60_denominator = max(rv_60, 1e-12)
+        close_zscore_20 = _zscore(closes, index, 20)
+        volume_zscore_20 = _zscore(volumes, index, 20)
+        high_low_range = (candle.high - candle.low) / candle.close if candle.close else 0.0
+        body_pct = abs(candle.close - candle.open) / candle.close if candle.close else 0.0
         values = {
             "return_1": _return(closes, index, 1),
             "return_3": _return(closes, index, 3),
+            "return_5": return_5,
+            "return_10": return_10,
             "close_sma_5_ratio": _ratio_to_mean(closes, index, 5),
             "close_sma_10_ratio": _ratio_to_mean(closes, index, 10),
+            "close_sma_20_ratio": _ratio_to_mean(closes, index, 20),
+            "close_sma_60_ratio": _ratio_to_mean(closes, index, 60),
+            "rv_15": rv_15,
+            "rv_60": rv_60,
+            "rv_120": rv_120,
+            "atr_pct": atr_pct,
             "volume_sma_5_ratio": _ratio_to_mean(volumes, index, 5),
-            "high_low_range": (candle.high - candle.low) / candle.close if candle.close else 0.0,
+            "volume_sma_20_ratio": _ratio_to_mean(volumes, index, 20),
+            "taker_ratio": candle.taker_buy_base_volume / candle.volume if candle.volume else 0.0,
+            "trade_count_ratio": _ratio_to_mean(trades, index, 20),
+            "high_low_range": high_low_range,
+            "body_pct": body_pct,
+            "upper_shadow": (candle.high - max(candle.open, candle.close)) / candle.close if candle.close else 0.0,
+            "lower_shadow": (min(candle.open, candle.close) - candle.low) / candle.close if candle.close else 0.0,
             "gap_ratio_20": candle.gap_ratio_20,
+            "gap_ratio_60": candle.gap_ratio_60,
+            "gap_ratio_120": candle.gap_ratio_120,
             "max_gap_run_120": float(candle.max_gap_run_120),
+            "close_zscore_20": close_zscore_20,
+            "close_zscore_60": _zscore(closes, index, 60),
+            "volume_zscore_5": _zscore(volumes, index, 5),
+            "volume_zscore_20": volume_zscore_20,
+            "return_5_vol_adj": return_5 / volatility_denominator,
+            "return_10_vol_adj": return_10 / volatility_denominator,
+            "close_zscore_20_vol_adj": close_zscore_20 / rv_60_denominator,
+            "volume_zscore_20_vol_adj": volume_zscore_20 / rv_60_denominator,
+            "candle_range_vol_adj": high_low_range / rv_60_denominator,
+            "body_pct_vol_adj": body_pct / rv_60_denominator,
         }
         rows.append(FeatureRow(index, candle.open_time, values, candle.gap_flag, candle.repaired, warmup_invalid))
     return rows
 
 
-def attach_labels(feature_rows: Sequence[FeatureRow], candles: Sequence[data.Candle], horizon: int, label_threshold: float) -> list[LabeledRow]:
+def attach_labels(
+    feature_rows: Sequence[FeatureRow],
+    candles: Sequence[data.Candle],
+    horizon: int,
+    label_threshold: float,
+    tp_pct: float = 0.001,
+    sl_pct: float = 0.0005,
+    external_events: Mapping[object, object] | None = None,
+) -> list[LabeledRow]:
+    if horizon <= 0:
+        raise ValueError("horizon must be positive")
+    if tp_pct <= 0.0:
+        raise ValueError("tp_pct must be positive")
+    if sl_pct <= 0.0:
+        raise ValueError("sl_pct must be positive")
     labeled: list[LabeledRow] = []
     for row in feature_rows:
         future_index = row.index + horizon
@@ -326,18 +479,93 @@ def attach_labels(feature_rows: Sequence[FeatureRow], candles: Sequence[data.Can
         if close == 0.0:
             continue
         target_return = (candles[future_index].close - close) / close
+        label, label_reason = triple_barrier_label(row.index, candles, horizon, label_threshold, tp_pct, sl_pct, target_return)
+        external_label, external_reason = _external_label(row, target_return, label_threshold, external_events)
+        if external_label is not None and external_reason is not None:
+            label = external_label
+            label_reason = external_reason
         labeled.append(
             LabeledRow(
                 index=row.index,
                 open_time=row.open_time,
                 features=dict(row.features),
-                label=1 if target_return > label_threshold else 0,
+                label=label,
+                label_reason=label_reason,
                 target_return=target_return,
                 gap_flag=row.gap_flag,
                 repaired=row.repaired,
+                warmup_invalid=row.warmup_invalid,
             )
         )
     return labeled
+
+
+def triple_barrier_label(
+    entry_index: int,
+    candles: Sequence[data.Candle],
+    horizon: int,
+    label_threshold: float,
+    tp_pct: float,
+    sl_pct: float,
+    target_return: float,
+) -> tuple[int, str]:
+    entry_price = candles[entry_index].close
+    tp_level = entry_price * (1.0 + tp_pct)
+    sl_level = entry_price * (1.0 - sl_pct)
+    gap_seen = False
+    for future_index in range(entry_index + 1, entry_index + horizon + 1):
+        candle = candles[future_index]
+        if candle.gap_flag == 1:
+            gap_seen = True
+        tp_touched = candle.high >= tp_level
+        sl_touched = candle.low <= sl_level
+        if tp_touched and sl_touched:
+            if candle.close > candle.open:
+                return 1, "tp_first"
+            if candle.close < candle.open:
+                return 0, "sl_first"
+            return 0, "ambiguous_path"
+        if tp_touched:
+            return 1, "tp_first"
+        if sl_touched:
+            return 0, "gap_cross_sl" if candle.gap_flag == 1 else "sl_first"
+    timeout_reason = "gap_cross_timeout" if gap_seen else "timeout_no_tp"
+    return (1 if target_return > label_threshold else 0), timeout_reason
+
+
+def _external_label(row: FeatureRow, target_return: float, label_threshold: float, external_events: Mapping[object, object] | None) -> tuple[int | None, str | None]:
+    if not external_events:
+        return None, None
+    event = _event_for_row(row, external_events)
+    if event is None:
+        return None, None
+    if isinstance(event, str):
+        reason = event
+        explicit_label: object | None = None
+    elif isinstance(event, Mapping):
+        reason = event.get("label_reason") or event.get("reason")
+        explicit_label = event.get("label")
+    else:
+        return None, None
+    if not isinstance(reason, str) or reason not in LABEL_REASON_BUCKETS:
+        raise ValueError(f"unknown label_reason: {reason}")
+    if explicit_label is not None:
+        label = int(explicit_label)
+        if label not in (0, 1):
+            raise ValueError("external event label must be 0 or 1")
+        return label, reason
+    if reason == "tp_first":
+        return 1, reason
+    if reason in EVENT_NEGATIVE_REASONS or reason in {"sl_first", "ambiguous_path"}:
+        return 0, reason
+    return (1 if target_return > label_threshold else 0), reason
+
+
+def _event_for_row(row: FeatureRow, external_events: Mapping[object, object]) -> object | None:
+    for key in (row.index, row.open_time, row.open_time.isoformat()):
+        if key in external_events:
+            return external_events[key]
+    return None
 
 
 def dataset_card(build: DatasetBuild) -> dict[str, object]:
@@ -352,6 +580,8 @@ def dataset_card(build: DatasetBuild) -> dict[str, object]:
         "labeled_rows": len(build.labeled_rows),
         "label_horizon_minutes": build.label_horizon,
         "label_threshold_return": build.label_threshold,
+        "label_reason_buckets": list(LABEL_REASON_BUCKETS),
+        "label_reason_counts": label_reason_counts(build.labeled_rows),
         "gap_report": gap_report_dict(build.gap_report),
         "offline_only": True,
         "network_required": False,
@@ -366,6 +596,18 @@ def feature_matrix(build: DatasetBuild) -> tuple[list[list[float]], list[int]]:
 
 def feature_formula_registry() -> dict[str, object]:
     return {"features": [dict(row) for row in FEATURE_FORMULAS]}
+
+
+def max_feature_min_samples() -> int:
+    values: list[int] = []
+    for row in FEATURE_FORMULAS:
+        value = row.get("min_samples", 1)
+        if not isinstance(value, int):
+            raise ValueError("feature min_samples must be an integer")
+        if value <= 0:
+            raise ValueError("feature min_samples must be positive")
+        values.append(value)
+    return max(values, default=1)
 
 
 def gap_report_dict(report: GapReport) -> dict[str, object]:
@@ -395,14 +637,53 @@ def _ratio_to_mean(values: Sequence[float], index: int, window: int) -> float:
     return values[index] / average - 1.0
 
 
+def _rolling_return_std(values: Sequence[float], index: int, window: int) -> float:
+    if index < window:
+        return 0.0
+    returns = [_return(values, position, 1) for position in range(index + 1 - window, index + 1)]
+    return _stddev(returns)
+
+
+def _atr_pct(candles: Sequence[data.Candle], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    true_ranges: list[float] = []
+    for position in range(index + 1 - window, index + 1):
+        candle = candles[position]
+        previous_close = candles[position - 1].close if position > 0 else candle.close
+        true_ranges.append(max(candle.high - candle.low, abs(candle.high - previous_close), abs(candle.low - previous_close)))
+    close = candles[index].close
+    return mean(true_ranges) / close if close else 0.0
+
+
+def _zscore(values: Sequence[float], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    sample = values[index + 1 - window:index + 1]
+    scale = _stddev(sample)
+    if scale == 0.0:
+        return 0.0
+    return (values[index] - mean(sample)) / scale
+
+
+def _stddev(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    average = mean(values)
+    variance = mean([(value - average) ** 2 for value in values])
+    return sqrt(variance) if variance > 0.0 else 0.0
+
+
 def labeled_row_dict(row: LabeledRow, feature_names: Sequence[str]) -> dict[str, object]:
     output: dict[str, object] = {
         "index": row.index,
         "open_time": row.open_time.isoformat(),
         "label": row.label,
+        "label_reason": row.label_reason,
         "target_return": row.target_return,
         "gap_flag": row.gap_flag,
         "repaired": row.repaired,
+        "warmup_invalid": row.warmup_invalid,
     }
     for name in feature_names:
         output[name] = row.features[name]
@@ -411,3 +692,10 @@ def labeled_row_dict(row: LabeledRow, feature_names: Sequence[str]) -> dict[str,
 
 def rows_from_mapping(rows: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
     return [dict(row) for row in rows]
+
+
+def label_reason_counts(rows: Sequence[LabeledRow]) -> dict[str, int]:
+    counts = {reason: 0 for reason in LABEL_REASON_BUCKETS}
+    for row in rows:
+        counts[row.label_reason] = counts.get(row.label_reason, 0) + 1
+    return counts

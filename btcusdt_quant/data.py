@@ -135,10 +135,14 @@ class GapContaminationGovernance:
             return GapPolicyDecision("keep_as_state", "safety features retain gap state", threshold)
         if max_gap_run_value >= self.max_gap_run_threshold:
             return GapPolicyDecision("block_new_entries" if live else "drop_sample", "max_gap_run threshold breached", threshold)
+        if live:
+            if gap_ratio_value >= 0.20:
+                return GapPolicyDecision("block_new_entries", "live hard gap_ratio threshold breached", threshold)
+            if gap_ratio_value >= 0.10:
+                return GapPolicyDecision("warn", "live warning zone", threshold)
+            return GapPolicyDecision("allow", "gap policy passed", threshold)
         if gap_ratio_value >= threshold:
-            return GapPolicyDecision("block_new_entries" if live else "drop_sample", "gap_ratio threshold breached", threshold)
-        if live and gap_ratio_value >= 0.10:
-            return GapPolicyDecision("warn", "live warning zone", threshold)
+            return GapPolicyDecision("drop_sample", "gap_ratio threshold breached", threshold)
         return GapPolicyDecision("allow", "gap policy passed", threshold)
 
 

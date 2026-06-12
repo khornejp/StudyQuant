@@ -25,6 +25,17 @@ PIPELINE_STAGES = [
     "LIVE_DEPLOYMENT",
 ]
 
+FALLBACK_ACTION_CHAIN: tuple[str, ...] = (
+    "warn_only",
+    "raise_threshold",
+    "reduce_size",
+    "no_trade_current_bar",
+    "block_new_entries",
+    "rollback_to_champion",
+    "hard_kill",
+)
+FALLBACK_ACTIONS: tuple[str, ...] = ("allow",) + FALLBACK_ACTION_CHAIN
+
 
 class PipelineStageError(RuntimeError):
     pass
@@ -92,6 +103,8 @@ class SourceGradeManager:
 
 
 class MonitoringSLOEngine:
+    action_chain: tuple[str, ...] = FALLBACK_ACTION_CHAIN
+
     def evaluate(self, metrics: Mapping[str, float | bool | int]) -> dict[str, str]:
         return {metric: fallback_action(metric, value) for metric, value in metrics.items()}
 
@@ -113,6 +126,18 @@ class ADLMonitor:
 def fallback_action(metric: str, value: float | bool | int) -> str:
     if metric == "dataset_card_hash_mismatch" and bool(value):
         return "hard_kill"
+    if metric == "http_418_detected" and bool(value):
+        return "hard_kill"
+    if metric in {"champion_challenger_degradation", "model_degradation_requires_rollback"} and bool(value):
+        return "rollback_to_champion"
+    if metric in {"calibration_ece", "ece_drift"} and float(value) >= 0.10:
+        return "raise_threshold"
+    if metric == "rolling_7d_net_expectancy" and float(value) < 0.0:
+        return "reduce_size"
+    if metric == "mdd_limit_utilization" and float(value) >= 0.80:
+        return "reduce_size"
+    if metric == "ece_drift" and float(value) > 0.05:
+        return "warn_only"
     if metric == "schema_violation_count" and int(value) > 0:
         return "block_new_entries"
     if metric == "critical_feature_missing_rate_current_bar" and float(value) > 0.0:
@@ -121,8 +146,6 @@ def fallback_action(metric: str, value: float | bool | int) -> str:
         return "block_new_entries"
     if metric == "max_gap_run" and int(value) >= 3:
         return "block_new_entries"
-    if metric == "http_418_detected" and bool(value):
-        return "hard_kill"
     return "allow"
 
 
@@ -177,31 +200,45 @@ class ArtifactWriter:
                 writer.writerow(row)
         return path
 
-    def create_approval_package(self, run_summary: Mapping[str, object], clip_report: Sequence[Mapping[str, object]], stage_rows: Sequence[Mapping[str, object]]) -> list[Path]:
+    def create_approval_package(
+        self,
+        run_summary: Mapping[str, object],
+        clip_report: Sequence[Mapping[str, object]],
+        stage_rows: Sequence[Mapping[str, object]],
+        dataset_build: object | None = None,
+        training_result: object | Mapping[str, object] | None = None,
+        bootstrap_ci_report: Sequence[Mapping[str, object]] | None = None,
+        calibration_config: Mapping[str, object] | None = None,
+    ) -> list[Path]:
+        from . import dataset, features
+
+        dataset_card = dataset.dataset_card(dataset_build) if isinstance(dataset_build, dataset.DatasetBuild) else self._default_dataset_card(run_summary)
+        feature_registry = dataset.feature_formula_registry()
+        feature_names = list(dataset_build.feature_names) if isinstance(dataset_build, dataset.DatasetBuild) else list(dataset.FEATURE_NAMES)
+        calibration_payload = dict(calibration_config) if calibration_config is not None else self._default_calibration_config(training_result)
+        bootstrap_rows = list(bootstrap_ci_report) if bootstrap_ci_report is not None else features.BootstrapCIEngine().score_bin_ci([("demo", self._float_value(run_summary.get("mean_test_accuracy", 0.0)), bool(run_summary.get("orders_enabled", False)))])
+        security_payload = self._security_signoff(run_summary)
+        dataset_yaml = self._mapping_yaml({
+            "dataset_id": dataset_card.get("dataset_id", "btcusdt_offline_research_v1"),
+            "symbol": dataset_card.get("symbol", "BTCUSDT"),
+            "bar_interval": dataset_card.get("bar_interval", "1m"),
+            "train_live_feature_parity_passed": True,
+            "feature_count": len(feature_names),
+        })
+        calibration_yaml = self._mapping_yaml(calibration_payload)
+        security_yaml = self._mapping_yaml(security_payload)
         files = [
-            self.write_text("dataset_card.yaml", "dataset_id: local_btcusdt_fixture_v1\nsymbol: BTCUSDT\nbar_interval: 1m\ntrain_live_feature_parity_passed: true\n"),
-            self.write_json("dataset_card.json", {
-                "dataset_id": "local_btcusdt_fixture_v1",
-                "symbol": "BTCUSDT",
-                "bar_interval": "1m",
-                "timezone": "UTC",
-                "source": "local deterministic fixture",
-                "train_live_feature_parity_passed": True,
-            }),
-            self.write_text("model_card.yaml", "model_id: mock_no_trade_model_v1\nmodel_family: deterministic_mock\nforbidden_use: live trading or real order submission\n"),
+            self.write_text("dataset_card.yaml", dataset_yaml),
+            self.write_json("dataset_card.json", dataset_card),
+            self.write_text("model_card.yaml", "model_id: offline_governed_model_v1\nmodel_family: deterministic_local_scaffold\nforbidden_use: live trading or real order submission\n"),
             self.write_json("model_card.json", {
-                "model_id": "mock_no_trade_model_v1",
-                "model_family": "deterministic_mock",
+                "model_id": "offline_governed_model_v1",
+                "model_family": "deterministic_local_scaffold",
                 "intended_use": "local scaffold verification only",
                 "forbidden_use": "live trading or real order submission",
             }),
-            self.write_json("feature_formula_registry.json", {
-                "features": [
-                    {"feature_name": "return_1", "formula": "close_t / close_t-1 - 1", "lookback": 2, "min_samples": 2, "warmup_rule": "strict"},
-                    {"feature_name": "return_5_vol_adj", "formula": "return_5 / max(RV15,RV60,RV120,ATR_PCT,VOL_EPS)", "lookback": 121, "min_samples": 121, "warmup_rule": "strict"},
-                ]
-            }),
-            self.write_json("feature_dependency_graph.json", {"acyclic": True, "calculation_order": ["return_1", "return_5_vol_adj"]}),
+            self.write_json("feature_formula_registry.json", feature_registry),
+            self.write_json("feature_dependency_graph.json", {"acyclic": True, "calculation_order": feature_names}),
             self.write_csv("column_data_contract.csv", [
                 {"column_name": "open_time", "source": "klines_1m", "required_for_training": True, "required_for_live": True, "live_action": "block_new_entries"},
                 {"column_name": "volume", "source": "klines_1m", "required_for_training": True, "required_for_live": True, "live_action": "no_trade_current_bar"},
@@ -214,16 +251,16 @@ class ArtifactWriter:
                 {"source_name": "klines_1m", "availability_grade": "A", "train_live_feature_parity_passed": True},
                 {"source_name": "aggTrades", "availability_grade": "C", "train_live_feature_parity_passed": False},
             ]),
-            self.write_text("calibration_config.yaml", "calibrator_type: platt\nregularization: l2\nconvergence_status: scaffold_not_fitted\n"),
-            self.write_csv("bootstrap_ci_report.csv", [{"score_bin": "mock", "trade_count": 0, "net_return_ci_lower_95": 0.0, "net_return_ci_upper_95": 0.0}]),
+            self.write_text("calibration_config.yaml", calibration_yaml),
+            self.write_csv("bootstrap_ci_report.csv", bootstrap_rows),
             self.write_csv("data_quality_slo_report.csv", [{"schema_violation_count": 0, "critical_feature_missing_rate_current_bar": 0.0, "action": "allow"}]),
             self.write_csv("monitoring_slo_report.csv", [{"slo_category": "data_quality", "metric": "schema_violation_count", "condition": "0", "action": "allow"}]),
-            self.write_json("lineage_manifest.json", {"lineage": ["local_fixture", "features", "mock_model", "mock_order", "artifacts"]}),
-            self.write_text("serving_runtime_contract.yaml", "runtime_type: local_mock\nfallback_runtime: none\nhot_reload_allowed: false\n"),
+            self.write_json("lineage_manifest.json", {"lineage": ["local_fixture", "features", "offline_model", "local_order_adapter", "artifacts"]}),
+            self.write_text("serving_runtime_contract.yaml", "runtime_type: local_offline_adapter\nfallback_runtime: none\nhot_reload_allowed: false\n"),
             self.write_csv("feature_clip_report.csv", clip_report),
             self.write_csv("pipeline_stage_manifest.csv", stage_rows),
             self.write_json("run_summary.json", dict(run_summary)),
-            self.write_text("security_compliance_signoff.yaml", "security_signoff: local_mock_only\ncompliance_signoff: not_for_live_trading\n"),
+            self.write_text("security_compliance_signoff.yaml", security_yaml),
         ]
         manifest = []
         timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
@@ -238,6 +275,71 @@ class ArtifactWriter:
         manifest_path = self.write_json("artifact_manifest.json", {"artifacts": manifest})
         files.append(manifest_path)
         return files
+
+    def _default_dataset_card(self, run_summary: Mapping[str, object]) -> dict[str, object]:
+        return {
+            "dataset_id": "btcusdt_offline_research_v1",
+            "symbol": "BTCUSDT",
+            "bar_interval": "1m",
+            "timezone": "UTC",
+            "source": "local deterministic fixture",
+            "canonical_rows": self._int_value(run_summary.get("canonical_rows", 0)),
+            "train_live_feature_parity_passed": True,
+            "offline_only": True,
+            "network_required": False,
+        }
+
+    def _default_calibration_config(self, training_result: object | Mapping[str, object] | None) -> dict[str, object]:
+        if training_result is not None and hasattr(training_result, "fold_results"):
+            fold_results = getattr(training_result, "fold_results")
+            calibrators = [getattr(fold, "calibration_details", {}) for fold in fold_results]
+            if calibrators:
+                first = dict(calibrators[0])
+                convergence = dict(first.get("convergence", {})) if isinstance(first.get("convergence", {}), Mapping) else {}
+                return {
+                    "calibrator_type": first.get("method", "platt"),
+                    "regularization": "l2",
+                    "convergence_status": "converged" if convergence.get("converged") else "not_converged",
+                    "iterations": convergence.get("iterations", 0),
+                    "final_loss": convergence.get("final_loss", 0.0),
+                    "fold_count": len(calibrators),
+                }
+        return {
+            "calibrator_type": "platt",
+            "regularization": "l2",
+            "convergence_status": "not_run_for_local_demo",
+            "iterations": 0,
+            "final_loss": 0.0,
+        }
+
+    def _security_signoff(self, run_summary: Mapping[str, object]) -> dict[str, object]:
+        return {
+            "security_signoff": "offline_local_only",
+            "compliance_signoff": "not_for_live_trading",
+            "network_used": bool(run_summary.get("network_used", False)),
+            "orders_enabled": bool(run_summary.get("orders_enabled", False)),
+            "credentials_required": bool(run_summary.get("credentials_required", False)),
+        }
+
+    def _mapping_yaml(self, payload: Mapping[str, object]) -> str:
+        lines = []
+        for key, value in payload.items():
+            if isinstance(value, bool):
+                text = "true" if value else "false"
+            else:
+                text = str(value)
+            lines.append(f"{key}: {text}")
+        return "\n".join(lines) + "\n"
+
+    def _float_value(self, value: object) -> float:
+        if isinstance(value, (float, int, str)):
+            return float(value)
+        return 0.0
+
+    def _int_value(self, value: object) -> int:
+        if isinstance(value, (float, int, str)):
+            return int(value)
+        return 0
 
 
 def verify_manifest(output_dir: Path) -> tuple[bool, list[str]]:
