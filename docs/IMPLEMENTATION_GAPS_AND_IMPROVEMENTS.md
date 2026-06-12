@@ -4,9 +4,11 @@ This file records the security and completeness findings discovered while turnin
 
 ## Safety boundary decisions
 
-- Live Binance REST calls, WebSocket streams, account-state reads, and order submission are intentionally absent.
+- Credentialed/live Binance REST calls, WebSocket streams, account-state reads, and order submission are intentionally absent.
 - `MockExchangeAdapter` is the only exchange path in the demo and tests.
 - Generated artifacts state `forbidden_use: live trading or real order submission`.
+- The offline `train` command uses local CSV input or a deterministic fixture only; it performs no network I/O and requires no credentials.
+- The `collect` command defaults to deterministic fixture CSV output; unsigned public kline download requires explicit `--allow-public-network` and does not use credentials or order/account endpoints.
 
 ## Vulnerabilities avoided in this scaffold
 
@@ -19,12 +21,13 @@ This file records the security and completeness findings discovered while turnin
 
 ## Remaining implementation gaps before any real trading use
 
-- Binance API integration must remain testnet-only until signed requests, listenKey refresh, order reconciliation, unknown 503 retry semantics, and rate-limit headers are validated.
+- Binance signed/testnet API integration must remain disabled until signed requests, listenKey refresh, order reconciliation, unknown 503 retry semantics, and rate-limit headers are validated.
 - `wait_until_exit_orders_resolved` and ghost-fill cancellation timing require exchange-level failure-injection tests.
 - Funding blackout duration, shadow-mode minimum duration, MDD warning/hard limits, and Grade C promotion thresholds need operator-approved numeric policies.
-- ML model training is represented as governance scaffolding only; no production LightGBM/CatBoost model is trained in this local scaffold.
-- Feature formulas are represented by safety mechanisms and artifact templates; the full 70+ feature registry should be expanded before production research runs.
+- A stdlib-only offline classifier now exists for artifact-producing research tests, but no production LightGBM/CatBoost/Optuna model is trained in this local scaffold.
+- A compact feature formula registry now exists for the offline pipeline; the full 70+ feature registry should be expanded before production research runs.
 - NTP/clock drift monitoring and ADL indicator monitoring are noted by ProjectMD as high-risk items and are not implemented in the local-only scaffold.
+- Full public backfill pagination/checkpointing, Binance signed/testnet integration, WebSockets, live order safety tests, and train/live feature parity remain production-only gaps.
 
 ## Recommended next hardening steps
 
@@ -32,3 +35,4 @@ This file records the security and completeness findings discovered while turnin
 2. Expand `feature_formula_registry` into a complete generated artifact from ProjectMD feature definitions.
 3. Add virtual-time failure injection for 429 storms, 418 hard bans, WebSocket disconnects, and ghost-fill races.
 4. Add real ML pipeline adapters only after deterministic data contracts and lockbox governance are complete.
+5. Extend the offline training artifacts with larger lockbox windows, full bootstrap PnL confidence intervals, and optional LightGBM/CatBoost adapters with graceful fallbacks.
