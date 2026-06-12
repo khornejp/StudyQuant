@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Mapping, Sequence
+
+from . import data, features, governance, live
+
+
+def run_demo(output: Path) -> dict[str, object]:
+    candles = data.CanonicalTimelineBuilder().build(data.local_fixture())
+    policy = data.GapContaminationGovernance()
+    last = candles[-1]
+    gap_decision = policy.decide("volume_trade_flow_features", last.gap_ratio_20, last.max_gap_run_120, live=True)
+
+    ret = data.returns(candles)[-1]
+    clip_result = features.FeatureClipper().clip({
+        "return_1": ret,
+        "volume_ratio": 250.0,
+        "close_zscore_60": 12.0,
+        "return_5_vol_adj": 11.0,
+    })
+    nan_class = features.NaNSourceClassifier().classify({"gap_flag": 1}, "volume")
+
+    rate_limit = live.RateLimitManager(limit_per_minute=10)
+    rate_limit.acquire("GET /fapi/v1/klines", 1)
+    rate_action = rate_limit.observe_status(429)
+    data_quality = governance.DataQualityGate().evaluate(0, 0.0, False)
+    source_grade = governance.SourceGradeManager().grade("klines_1m", historical_backfill=True, local_archive_complete=True)
+    slo_actions = governance.MonitoringSLOEngine().evaluate({"schema_violation_count": 0, "gap_ratio_20": 0.20})
+    clock_action = governance.ClockDriftMonitor().action(10)
+    adl_action = governance.ADLMonitor().action(2)
+    rolling = features.RollingFeatureEngine().rolling_mean([1.0, 2.0, 3.0], 2)
+    calibrator = features.CalibrationModule().select_method(40)
+    splits = features.PurgedWalkForwardSplit().split(20, 5, 3, 3, 1)
+    core_features = features.FeatureSelectionPipeline().core_features([["return_1", "rv"], ["return_1"], ["return_1", "basis"]])
+    ci_lower, ci_upper = features.BootstrapCIEngine().ci95([-0.1, 0.0, 0.1])
+    budget = features.OptunaBudgetProfiles().get("practical_start")
+    promotion, promotion_reason = features.ChampionChallengerManager().can_promote(30, 100, -0.01, 0.01)
+    funding_blackout = live.FundingEventManager().blackout_active(3)
+    ghost_action = live.GhostFillPrevention().safe_market_exit(active_exit_orders=1, position_qty=0.1, cancel_resolved=True)
+    emergency_action = live.EmergencyCloseExecutor().close(priority=0, retries=0)
+
+    guard = live.OneWayPositionGuard()
+    can_enter, guard_reason = guard.can_enter(live.PositionState("BTCUSDT", 0.0), "BUY")
+    sizing = live.PositionSizer().fixed_notional(
+        entry_price=100000.0,
+        account_balance_usdt=10000.0,
+        trade_notional_ratio=0.05,
+        leverage=1.0,
+        min_qty=0.001,
+        qty_step=0.001,
+        max_notional_fraction=0.10,
+    )
+    exchange = live.MockExchangeAdapter()
+    order = exchange.submit_order("BTCUSDT", "BUY", "LIMIT", sizing.quantity)
+
+    enforcer = governance.PipelineStageEnforcer()
+    for stage in governance.PIPELINE_STAGES:
+        enforcer.complete(stage)
+
+    run_summary = {
+        "network_used": exchange.network_enabled,
+        "mock_exchange_order_status": order.status,
+        "canonical_rows": len(candles),
+        "gap_flags": sum(candle.gap_flag for candle in candles),
+        "gap_decision": gap_decision.action,
+        "nan_class": nan_class,
+        "rate_limit_action_after_429": rate_action,
+        "data_quality_action": data_quality.action,
+        "source_grade": source_grade["availability_grade"],
+        "monitoring_gap_action": slo_actions["gap_ratio_20"],
+        "clock_drift_action": clock_action,
+        "adl_action": adl_action,
+        "rolling_warmup_first": rolling[0],
+        "calibration_method_low_sample": calibrator,
+        "purged_split_count": len(splits),
+        "core_features": core_features,
+        "bootstrap_ci": [ci_lower, ci_upper],
+        "optuna_practical_trials": budget["trials"],
+        "challenger_promotion_allowed": promotion,
+        "challenger_promotion_reason": promotion_reason,
+        "funding_blackout_active": funding_blackout,
+        "ghost_exit_action": ghost_action,
+        "emergency_close_action": emergency_action,
+        "fallback_gap_ratio_20_0_20": governance.fallback_action("gap_ratio_20", 0.20),
+        "one_way_guard_allowed": can_enter,
+        "one_way_guard_reason": guard_reason,
+        "sizing_accepted": sizing.accepted,
+        "order_id": order.order_id,
+        "stages_completed": len(enforcer.completed),
+        "clipped_features": clip_result.values,
+    }
+    clip_report: Sequence[Mapping[str, object]] = clip_result.report
+    stage_rows: Sequence[Mapping[str, object]] = enforcer.manifest_rows()
+    governance.ArtifactWriter(output).create_approval_package(run_summary, clip_report, stage_rows)
+    return run_summary
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Safe local BTCUSDT v7.18 scaffold")
+    subparsers = parser.add_subparsers(dest="command")
+    demo = subparsers.add_parser("demo", help="run deterministic local dry-run demo")
+    demo.add_argument("--output", default="artifacts/demo", help="artifact output directory")
+    artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
+    artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "demo":
+        output = Path(args.output)
+        summary = run_demo(output)
+        print("BTCUSDT v7.18 local dry-run complete")
+        print(f"mock_exchange_order_status={summary['mock_exchange_order_status']}")
+        print(f"network_used={summary['network_used']}")
+        print(f"gap_decision={summary['gap_decision']}")
+        print(f"nan_class={summary['nan_class']}")
+        print(f"artifacts={output}")
+        return 0
+    if args.command == "artifacts":
+        ok, errors = governance.verify_manifest(Path(args.path))
+        if ok:
+            print("artifact verification passed")
+            return 0
+        for error in errors:
+            print(error)
+        return 1
+    parser.print_help()
+    return 0
