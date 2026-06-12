@@ -1,0 +1,1 @@
+{"features":[{"feature_name":"return_1","formula":"close_t / close_t-1 - 1","lookback":2,"min_samples":2,"warmup_rule":"strict"},{"feature_name":"return_5_vol_adj","formula":"return_5 / max(RV15,RV60,RV120,ATR_PCT,VOL_EPS)","lookback":121,"min_samples":121,"warmup_rule":"strict"}]}

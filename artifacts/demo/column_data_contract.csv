@@ -1,0 +1,3 @@
+column_name,live_action,required_for_live,required_for_training,source
+open_time,block_new_entries,True,True,klines_1m
+volume,no_trade_current_bar,True,True,klines_1m

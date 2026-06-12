@@ -1,0 +1,3 @@
+model_id: mock_no_trade_model_v1
+model_family: deterministic_mock
+forbidden_use: live trading or real order submission
