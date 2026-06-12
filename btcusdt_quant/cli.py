@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from . import data, features, governance, live
+from . import data, dataset, features, governance, live, training
 
 
 def run_demo(output: Path) -> dict[str, object]:
@@ -97,11 +98,35 @@ def run_demo(output: Path) -> dict[str, object]:
     return run_summary
 
 
+def run_train(output: Path, input_path: Path | None = None) -> dict[str, object]:
+    result = training.run_training(input_path, output)
+    return result.run_summary
+
+
+def run_collect(output: Path, rows: int, allow_public_network: bool = False) -> dict[str, object]:
+    result = dataset.collect_candles(output, rows=rows, allow_public_network=allow_public_network)
+    return {
+        "output_path": result.output_path.as_posix(),
+        "source": result.source,
+        "symbol": result.symbol,
+        "interval": result.interval,
+        "rows": result.rows,
+        "network_used": result.network_used,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Safe local BTCUSDT v7.18 scaffold")
     subparsers = parser.add_subparsers(dest="command")
     demo = subparsers.add_parser("demo", help="run deterministic local dry-run demo")
     demo.add_argument("--output", default="artifacts/demo", help="artifact output directory")
+    collect = subparsers.add_parser("collect", help="collect local fixture candles or explicitly allowed public klines to CSV")
+    collect.add_argument("--output", default="artifacts/collected/btcusdt_1m.csv", help="CSV output path")
+    collect.add_argument("--rows", type=int, default=240, help="number of fixture rows or public klines to write")
+    collect.add_argument("--allow-public-network", action="store_true", help="opt in to unsigned public Binance kline download")
+    train = subparsers.add_parser("train", help="run deterministic offline CSV/fixture training pipeline")
+    train.add_argument("--output", default="artifacts/training", help="training artifact output directory")
+    train.add_argument("--input", default=None, help="optional local CSV candles path; defaults to offline fixture")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -118,6 +143,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f"network_used={summary['network_used']}")
         print(f"gap_decision={summary['gap_decision']}")
         print(f"nan_class={summary['nan_class']}")
+        print(f"artifacts={output}")
+        return 0
+    if args.command == "collect":
+        output = Path(args.output)
+        try:
+            summary = run_collect(output, args.rows, args.allow_public_network)
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"collect failed: {error}", file=sys.stderr)
+            return 1
+        print("BTCUSDT candle collection complete")
+        print(f"source={summary['source']}")
+        print(f"network_used={summary['network_used']}")
+        print(f"rows={summary['rows']}")
+        print(f"output={summary['output_path']}")
+        return 0
+    if args.command == "train":
+        output = Path(args.output)
+        input_path = Path(args.input) if args.input else None
+        try:
+            summary = run_train(output, input_path)
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"training failed: {error}", file=sys.stderr)
+            return 1
+        print("BTCUSDT offline training complete")
+        print(f"network_used={summary['network_used']}")
+        print(f"orders_enabled={summary['orders_enabled']}")
+        print(f"labeled_rows={summary['labeled_rows']}")
+        print(f"fold_count={summary['fold_count']}")
+        print(f"mean_test_f1={summary['mean_test_f1']}")
         print(f"artifacts={output}")
         return 0
     if args.command == "artifacts":

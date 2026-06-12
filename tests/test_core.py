@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from btcusdt_quant import data, features, governance, live
-from btcusdt_quant.cli import run_demo
+from btcusdt_quant import data, dataset, features, governance, live, training
+from btcusdt_quant.cli import run_collect, run_demo, run_train
 
 
 class DataPipelineTests(unittest.TestCase):
@@ -21,6 +21,51 @@ class DataPipelineTests(unittest.TestCase):
     def test_gap_policy_blocks_trade_flow_contamination(self) -> None:
         decision = data.GapContaminationGovernance().decide("volume_trade_flow_features", 0.03, 1, live=True)
         self.assertEqual(decision.action, "block_new_entries")
+
+    def test_offline_fixture_dataset_builds_features_and_labels(self) -> None:
+        build = dataset.build_dataset()
+        self.assertEqual(build.source, "offline_expanded_fixture")
+        self.assertGreater(build.gap_report.repaired_rows, 0)
+        self.assertGreater(len(build.labeled_rows), 100)
+        self.assertEqual(set(build.feature_names), set(dataset.FEATURE_NAMES))
+        self.assertTrue({row.label for row in build.labeled_rows}.issubset({0, 1}))
+        self.assertGreater(sum(row.label for row in build.labeled_rows), 0)
+
+    def test_local_csv_dataset_builds_canonical_timeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "candles.csv"
+            lines = ["open_time,open,high,low,close,volume,quote_volume,number_of_trades"]
+            base = data.utc_minute(2026, 1, 1, 0, 0)
+            for index in range(18):
+                if index == 4:
+                    continue
+                price = 100000.0 + index * 20.0
+                lines.append(f"{(base.replace(minute=index)).isoformat()},{price},{price + 5.0},{price - 5.0},{price + 2.0},10.0,{price * 10.0},100")
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            build = dataset.build_dataset(path)
+            self.assertEqual(build.raw_rows, 17)
+            self.assertEqual(build.gap_report.repaired_rows, 1)
+            self.assertGreater(len(build.labeled_rows), 0)
+
+    def test_collect_writes_offline_fixture_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "collected.csv"
+            summary = run_collect(output, rows=32)
+            self.assertFalse(summary["network_used"])
+            self.assertEqual(summary["rows"], 32)
+            self.assertTrue(output.exists())
+            loaded = dataset.load_csv_candles(output)
+            self.assertEqual(len(loaded), 32)
+
+    def test_public_downloader_requires_explicit_network_opt_in(self) -> None:
+        downloader = dataset.PublicKlineDownloader()
+        with self.assertRaises(RuntimeError):
+            downloader.fetch_klines(limit=1)
+
+    def test_collect_rejects_non_positive_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                run_collect(Path(tmp) / "invalid.csv", rows=0)
 
 
 class FeatureGovernanceTests(unittest.TestCase):
@@ -124,6 +169,41 @@ class GovernanceTests(unittest.TestCase):
         self.assertTrue(live.FundingEventManager().blackout_active(3))
         self.assertEqual(live.GhostFillPrevention().safe_market_exit(1, 0.1, False), "hard_kill")
         self.assertEqual(live.EmergencyCloseExecutor().close(0, 0), "emergency_close_submitted")
+
+
+class OfflineTrainingTests(unittest.TestCase):
+    def test_purged_default_splits_have_no_overlap(self) -> None:
+        splits = training.default_splits(140, 3)
+        self.assertGreater(len(splits), 0)
+        for split in splits:
+            self.assertEqual(split.validation.start - split.train.stop, 3)
+            self.assertEqual(split.test.start - split.validation.stop, 3)
+            self.assertFalse(set(split.train) & set(split.validation))
+            self.assertFalse(set(split.validation) & set(split.test))
+            self.assertFalse(set(split.train) & set(split.test))
+
+    def test_training_run_generates_verifiable_offline_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            summary = run_train(output)
+            self.assertFalse(summary["network_used"])
+            self.assertFalse(summary["credentials_required"])
+            self.assertFalse(summary["orders_enabled"])
+            ok, errors = governance.verify_manifest(output)
+            self.assertTrue(ok, errors)
+            manifest = json.loads((output / "artifact_manifest.json").read_text(encoding="utf-8"))
+            paths = {artifact["path"] for artifact in manifest["artifacts"]}
+            self.assertIn("dataset_card.json", paths)
+            self.assertIn("model_card.json", paths)
+            self.assertIn("feature_formula_registry.json", paths)
+            self.assertIn("split_manifest.csv", paths)
+            self.assertIn("fold_metrics.csv", paths)
+            self.assertIn("calibration_report.json", paths)
+            self.assertIn("threshold_report.json", paths)
+            dataset_card = json.loads((output / "dataset_card.json").read_text(encoding="utf-8"))
+            model_card = json.loads((output / "model_card.json").read_text(encoding="utf-8"))
+            self.assertFalse(dataset_card["network_required"])
+            self.assertFalse(model_card["network_required"])
 
 
 if __name__ == "__main__":
