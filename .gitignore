@@ -9,3 +9,5 @@ venv/
 .env
 .env.*
 .sisyphus/
+ProjectMD/
+artifacts/demo_review/
