@@ -52,6 +52,7 @@ class FoldResult:
     split: features.Split
     threshold: float
     calibration_offset: float
+    calibration_details: dict[str, object]
     validation_metrics: dict[str, float]
     test_metrics: dict[str, float]
 
@@ -81,16 +82,19 @@ def run_training(input_path: Path | None, output_dir: Path) -> TrainingResult:
         model = fit_classifier(train_rows, build.feature_names)
         validation_probabilities = [model.probability(row.features) for row in validation_rows]
         offset = calibration_offset(validation_probabilities, [row.label for row in validation_rows])
-        calibrated_model = LinearClassifier(model.feature_names, model.standardizer, model.weights, model.intercept, offset)
-        calibrated_validation = [calibrated_model.probability(row.features) for row in validation_rows]
+        validation_labels = [row.label for row in validation_rows]
+        calibrator = features.CalibrationModule().fit(validation_probabilities, validation_labels, positive_samples=sum(validation_labels))
+        calibrated_validation = calibrator.transform(validation_probabilities)
         threshold = select_threshold(calibrated_validation, [row.label for row in validation_rows])
-        calibrated_test = [calibrated_model.probability(row.features) for row in test_rows]
+        test_probabilities = [model.probability(row.features) for row in test_rows]
+        calibrated_test = calibrator.transform(test_probabilities)
         fold_results.append(
             FoldResult(
                 fold_index=fold_index,
                 split=split,
                 threshold=threshold,
                 calibration_offset=offset,
+                calibration_details=calibrator.as_dict(),
                 validation_metrics=metrics(calibrated_validation, [row.label for row in validation_rows], threshold),
                 test_metrics=metrics(calibrated_test, [row.label for row in test_rows], threshold),
             )
@@ -101,6 +105,15 @@ def run_training(input_path: Path | None, output_dir: Path) -> TrainingResult:
     writer = governance.ArtifactWriter(output_dir)
     writer.write_json("run_summary.json", run_summary)
     manifest = write_manifest(output_dir, artifacts + ["run_summary.json"])
+    governance.ArtifactWriter(output_dir / "approval_package").create_approval_package(
+        run_summary,
+        clip_report=[],
+        stage_rows=[],
+        dataset_build=build,
+        training_result={"fold_results": fold_results},
+        bootstrap_ci_report=bootstrap_ci_report(fold_results),
+        calibration_config=calibration_config(fold_results),
+    )
     return TrainingResult(output_dir, build, splits, fold_results, run_summary, manifest)
 
 
@@ -241,6 +254,7 @@ def training_summary(build: dataset.DatasetBuild, splits: Sequence[features.Spli
         "source": build.source,
         "canonical_rows": len(build.canonical),
         "labeled_rows": len(build.labeled_rows),
+        "label_reason_counts": dataset.label_reason_counts(build.labeled_rows),
         "feature_count": len(build.feature_names),
         "fold_count": len(splits),
         "mean_test_f1": mean(test_f1_values) if test_f1_values else 0.0,
@@ -299,10 +313,36 @@ def fold_metric_rows(fold_results: Sequence[FoldResult]) -> list[dict[str, float
 
 def calibration_report(fold_results: Sequence[FoldResult]) -> dict[str, object]:
     return {
-        "method": "validation_base_rate_logit_offset",
+        "method": "fitted_probability_calibration",
         "selected_by": "purged walk-forward validation folds",
         "fold_offsets": [{"fold_index": fold.fold_index, "calibration_offset": fold.calibration_offset} for fold in fold_results],
+        "fold_calibrators": [{"fold_index": fold.fold_index, **fold.calibration_details} for fold in fold_results],
     }
+
+
+def calibration_config(fold_results: Sequence[FoldResult]) -> dict[str, object]:
+    if not fold_results:
+        return {"calibrator_type": "platt", "regularization": "l2", "convergence_status": "not_run", "iterations": 0, "final_loss": 0.0}
+    first = fold_results[0].calibration_details
+    convergence = first.get("convergence", {})
+    convergence_map = convergence if isinstance(convergence, Mapping) else {}
+    return {
+        "calibrator_type": first.get("method", "platt"),
+        "regularization": "l2",
+        "convergence_status": "converged" if convergence_map.get("converged") else "not_converged",
+        "iterations": convergence_map.get("iterations", 0),
+        "final_loss": convergence_map.get("final_loss", 0.0),
+        "fold_count": len(fold_results),
+    }
+
+
+def bootstrap_ci_report(fold_results: Sequence[FoldResult]) -> list[dict[str, object]]:
+    rows = []
+    for fold in fold_results:
+        net_return_proxy = fold.test_metrics.get("accuracy", 0.0) - 0.5
+        win_flag = fold.test_metrics.get("f1", 0.0) > 0.0
+        rows.append((f"fold_{fold.fold_index}", net_return_proxy, win_flag))
+    return [dict(row) for row in features.BootstrapCIEngine().score_bin_ci(rows)]
 
 
 def threshold_report(fold_results: Sequence[FoldResult]) -> dict[str, object]:
@@ -333,6 +373,7 @@ def dataset_card_markdown(build: dataset.DatasetBuild) -> str:
             f"- Source: `{build.source}`",
             f"- Canonical rows: {len(build.canonical)}",
             f"- Labeled rows: {len(build.labeled_rows)}",
+            f"- Label reasons: {dataset.label_reason_counts(build.labeled_rows)}",
             f"- Repaired rows: {build.gap_report.repaired_rows}",
             "- Network required: false",
             "",

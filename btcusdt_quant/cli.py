@@ -38,6 +38,11 @@ def run_demo(output: Path) -> dict[str, object]:
     ci_lower, ci_upper = features.BootstrapCIEngine().ci95([-0.1, 0.0, 0.1])
     budget = features.OptunaBudgetProfiles().get("practical_start")
     promotion, promotion_reason = features.ChampionChallengerManager().can_promote(30, 100, -0.01, 0.01)
+    approval_build = dataset.build_dataset()
+    fitted_calibrator = features.CalibrationModule().fit([0.40, 0.45, 0.55, 0.60], [0, 0, 1, 1], positive_samples=2)
+    fitted_calibration = fitted_calibrator.as_dict()
+    calibration_convergence = fitted_calibration.get("convergence", {})
+    bootstrap_report = features.BootstrapCIEngine().score_bin_ci([("demo", -0.01, 0), ("demo", 0.02, 1), ("demo", 0.01, 1)], n_iterations=100, seed=11)
     funding_blackout = live.FundingEventManager().blackout_active(3)
     ghost_action = live.GhostFillPrevention().safe_market_exit(active_exit_orders=1, position_qty=0.1, cancel_resolved=True)
     emergency_action = live.EmergencyCloseExecutor().close(priority=0, retries=0)
@@ -62,6 +67,7 @@ def run_demo(output: Path) -> dict[str, object]:
 
     run_summary = {
         "network_used": exchange.network_enabled,
+        "orders_enabled": False,
         "mock_exchange_order_status": order.status,
         "canonical_rows": len(candles),
         "gap_flags": sum(candle.gap_flag for candle in candles),
@@ -94,7 +100,20 @@ def run_demo(output: Path) -> dict[str, object]:
     }
     clip_report: Sequence[Mapping[str, object]] = clip_result.report
     stage_rows: Sequence[Mapping[str, object]] = enforcer.manifest_rows()
-    governance.ArtifactWriter(output).create_approval_package(run_summary, clip_report, stage_rows)
+    governance.ArtifactWriter(output).create_approval_package(
+        run_summary,
+        clip_report,
+        stage_rows,
+        dataset_build=approval_build,
+        bootstrap_ci_report=bootstrap_report,
+        calibration_config={
+            "calibrator_type": fitted_calibration["method"],
+            "regularization": "l2",
+            "convergence_status": "converged" if isinstance(calibration_convergence, Mapping) and calibration_convergence.get("converged") else "not_converged",
+            "iterations": calibration_convergence.get("iterations", 0) if isinstance(calibration_convergence, Mapping) else 0,
+            "final_loss": calibration_convergence.get("final_loss", 0.0) if isinstance(calibration_convergence, Mapping) else 0.0,
+        },
+    )
     return run_summary
 
 
