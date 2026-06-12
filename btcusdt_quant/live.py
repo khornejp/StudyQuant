@@ -1219,9 +1219,11 @@ def run_live(
         gap_action = governance.fallback_action("max_gap_run", latest_max_gap_run)
     # Use actual exchange adapter if provided (e.g., testnet), otherwise mock
     active_adapter = exchange_adapter or MockExchangeAdapter()
+    parity_passed = bool(source_report.get("train_live_feature_parity_passed", False))
     entry_action = safe_market_entry(
         "BTCUSDT", signal, 0.001 if signal in {"BUY", "SELL"} else 0.0,
         adapter=active_adapter,
+        source_parity_passed=parity_passed,
         gap_action=gap_action,
         monitor_decisions=monitor_decisions,
         allow_live_orders=not dry_run,
