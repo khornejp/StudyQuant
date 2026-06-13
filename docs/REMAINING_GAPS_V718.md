@@ -1,7 +1,7 @@
 # Remaining Production Gaps v7.18
 
 **Date**: 2026-06-13 (Updated)  
-**Status**: Offline scaffold implementation complete — all 107 features (F01–F12) are active and computed. 213 tests pass (skipped=1). All blocking and critical code gaps are resolved. Production deployment requires operational validation (testnet soak, security audit, human approval).
+**Status**: Offline scaffold implementation complete — all 107 features (F01–F12) are active and computed. 214 tests pass (skipped=1). All blocking and critical code gaps are resolved. Production deployment requires operational validation (testnet soak, security audit, human approval).
 
 This document lists **operational validation** items that require **real-world validation** before production deployment. These are NOT code gaps — they are operational and infrastructure requirements.
 
@@ -102,7 +102,7 @@ This document lists **operational validation** items that require **real-world v
 
 ## Code Status Summary
 
-- **182 tests pass** (120 original + 60 v7.18 + 2 integration)
+- **214 tests pass** (120 original + 94 v7.18)
 - **Zero compilation errors**
 - **Zero type errors** (basedpyright not installed, but stdlib-only)
 - **Mock-only by default** (safe for CI)
