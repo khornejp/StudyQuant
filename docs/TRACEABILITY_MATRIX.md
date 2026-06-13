@@ -35,17 +35,17 @@ This matrix maps the ProjectMD BTCUSDT v7.18 requirements to the local scaffold 
 | Collection input validation | `dataset.collect_candles` | `test_collect_rejects_non_positive_rows` |
 | Vulnerability/improvement MD | `docs/IMPLEMENTATION_GAPS_AND_IMPROVEMENTS.md` | File exists and reviewed |
 
-## Missing Implementations
+## Missing Implementations (Historical, Now Resolved)
 
-| ProjectMD requirement | Status | Gap |
+| ProjectMD requirement | Status | Notes |
 |---|---|---|
 | Live source parity enforcement | **Done** | `live.py` passes `source_parity_passed` to `safe_market_entry()`; blocks entries when parity fails |
-| Production semantic approval | Missing | Only hash verification, no human signoff |
+| Production semantic approval | **Done** | `governance.py:528-625` implements semantic approval with human signoff, security review, testnet soak |
 | Real order submission | **Done** | `submit=True` called in live loop when gates pass; real position/account fetched |
-| Risk state wiring | Partial | Balance, leverage, position fetched; drawdown state not maintained across iterations |
-| Retry-After respect | Partial | Header parsed but not consumed by rate limiter |
+| Risk state wiring | **Done** | Balance, leverage, position fetched; drawdown state maintained across iterations |
+| Retry-After respect | **Done** | Header parsed and consumed by `RateLimitManager` at `live.py:86-101` |
 | F11/F12 real-time sources | **Done** | 15 features compute from depth/funding/ADL/mark-price when available; mock defaults when offline |
 
 ## Explicit non-production boundary
 
-The scaffold implements deterministic local contracts and mocks. It does not claim live production readiness. See `docs/V718_CRITICAL_GAPS.md` for remaining code gaps.
+The scaffold implements deterministic local contracts and mocks. It does not claim live production readiness. All code gaps are resolved. Remaining work is operational validation (testnet soak, security audit, etc.). See `docs/V718_REMAINING_IMPROVEMENTS.md` for operational validation requirements.

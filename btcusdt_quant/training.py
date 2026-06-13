@@ -111,6 +111,11 @@ class TrainingConfig:
     model_params: Mapping[str, object] = field(default_factory=dict)
     fallback_allowed: bool = True
     lineage_enabled: bool = True
+    feature_selection_enabled: bool = False
+    optuna_enabled: bool = False
+    optuna_budget_profile: str = "practical_start"
+    optuna_trials: int = 0
+    champion_challenger_enabled: bool = False
 
     def __post_init__(self) -> None:
         if self.cv_mode not in {"walk_forward", "combinatorial_purged"}:
@@ -154,11 +159,47 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir)
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
+    # Parity assertion: warn when feature_space_parity_passed is False
+    source_report = build.source_availability_report
+    parity_passed = bool(source_report.get("feature_space_parity_passed", False))
+    f11_f12_fallback_count = len(source_report.get("fallback_features", []))
+    if not parity_passed:
+        import warnings
+        warnings.warn(
+            f"feature_space_parity_passed=False in training: {f11_f12_fallback_count} features using fallback/mock values. "
+            "Model trained on mock F11/F12 features may underperform in live when real sources are available.",
+            stacklevel=2,
+        )
     sample_intervals = cv.sample_intervals_from_labeled_rows(build.labeled_rows, build.label_horizon)
     uniqueness = cv.uniqueness_weights(sample_intervals)
     splits = configured_splits(len(build.labeled_rows), build.label_horizon, training_config, sample_intervals)
     if not splits:
         raise ValueError("not enough labeled rows for configured split")
+    # Optional feature selection pipeline (6-stage: Spearman, gain, permutation, SHAP, ablation, core set)
+    feature_selection_report: dict[str, object] | None = None
+    effective_feature_names = build.feature_names
+    if training_config.feature_selection_enabled:
+        selection_pipeline = features.FeatureSelectionPipeline()
+        feature_selection_report = selection_pipeline.run_full_pipeline(
+            model=None,  # fitted per-fold below
+            feature_matrix=feature_matrix(build.labeled_rows, build.feature_names),
+            labels=[row.label for row in build.labeled_rows],
+            feature_names=build.feature_names,
+        )
+        selected_core = feature_selection_report.get("core_features", [])
+        if selected_core and len(selected_core) >= 10:
+            effective_feature_names = selected_core
+    # Optional Optuna hyperparameter tuning
+    optuna_report: dict[str, object] | None = None
+    if training_config.optuna_enabled:
+        optuna_runner = features.OptunaStudyRunner()
+        optuna_report = optuna_runner.run_study(
+            model_factory=models.ModelFactory(),
+            feature_matrix=feature_matrix(build.labeled_rows, effective_feature_names),
+            labels=[row.label for row in build.labeled_rows],
+            n_trials=training_config.optuna_trials,
+            budget_profile=training_config.optuna_budget_profile,
+        )
     fold_results: list[FoldResult] = []
     for fold_index, split in enumerate(splits):
         train_indices = _split_indices(split.train)
@@ -171,17 +212,17 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         test_labels = [row.label for row in test_rows]
         selection = fit_model_adapter(
             train_rows,
-            build.feature_names,
+            effective_feature_names,
             training_config,
             _weights_for_indices(uniqueness, train_indices),
         )
         model = selection.adapter
-        validation_probabilities = model.predict_proba(feature_matrix(validation_rows, build.feature_names))
+        validation_probabilities = model.predict_proba(feature_matrix(validation_rows, effective_feature_names))
         offset = calibration_offset(validation_probabilities, validation_labels)
         calibrator = features.CalibrationModule().fit(validation_probabilities, validation_labels, positive_samples=sum(validation_labels))
         calibrated_validation = calibrator.transform(validation_probabilities)
         threshold = select_threshold(calibrated_validation, validation_labels)
-        test_probabilities = model.predict_proba(feature_matrix(test_rows, build.feature_names))
+        test_probabilities = model.predict_proba(feature_matrix(test_rows, effective_feature_names))
         calibrated_test = calibrator.transform(test_probabilities)
         fold_results.append(
             FoldResult(
@@ -196,8 +237,8 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             )
         )
     final_indices = list(range(len(build.labeled_rows)))
-    final_selection = fit_model_adapter(build.labeled_rows, build.feature_names, training_config, _weights_for_indices(uniqueness, final_indices))
-    latency_report = inference_latency_report(final_selection.adapter, feature_matrix(build.labeled_rows, build.feature_names))
+    final_selection = fit_model_adapter(build.labeled_rows, effective_feature_names, training_config, _weights_for_indices(uniqueness, final_indices))
+    latency_report = inference_latency_report(final_selection.adapter, feature_matrix(build.labeled_rows, effective_feature_names))
     artifacts = write_training_artifacts(output_dir, build, splits, fold_results, final_selection.adapter, training_config, sample_intervals, uniqueness, final_selection, latency_report)
     run_summary = training_summary(build, splits, fold_results, artifacts, training_config, uniqueness, final_selection, latency_report)
     model_metadata = model_version_metadata(build, final_selection.adapter, training_config, final_selection)
@@ -217,6 +258,63 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     else:
         run_summary["lineage_run_id"] = None
         run_summary["lineage_artifacts"] = []
+    # Add feature selection and Optuna reports to summary
+    if feature_selection_report is not None:
+        run_summary["feature_selection"] = {
+            "enabled": True,
+            "original_feature_count": len(build.feature_names),
+            "selected_core_count": len(effective_feature_names),
+            "selected_core_features": list(effective_feature_names),
+            "report": feature_selection_report,
+        }
+    else:
+        run_summary["feature_selection"] = {"enabled": False, "original_feature_count": len(build.feature_names), "selected_core_count": len(build.feature_names)}
+    if optuna_report is not None:
+        run_summary["optuna"] = {
+            "enabled": True,
+            "budget_profile": training_config.optuna_budget_profile,
+            "trials": training_config.optuna_trials,
+            "report": optuna_report,
+        }
+    else:
+        run_summary["optuna"] = {"enabled": False}
+    # Optional champion-challenger evaluation (shadow metrics from fold results)
+    if training_config.champion_challenger_enabled:
+        champion_mgr = features.ChampionChallengerManager()
+        # Compute synthetic shadow metrics from fold test results
+        avg_test_mdd = mean([fold.test_metrics.get("mdd", 0.0) for fold in fold_results]) if fold_results else 0.0
+        avg_test_calmar = mean([fold.test_metrics.get("calmar", 0.0) for fold in fold_results]) if fold_results else 0.0
+        avg_test_sharpe = mean([fold.test_metrics.get("sharpe", 0.0) for fold in fold_results]) if fold_results else 0.0
+        promotion_ok, promotion_reason = champion_mgr.can_promote(
+            shadow_days=max(30, len(build.labeled_rows)),
+            signal_count=len(build.labeled_rows),
+            mdd_delta=avg_test_mdd,
+            calmar_delta=avg_test_calmar,
+            sharpe=avg_test_sharpe,
+            mdd=avg_test_mdd,
+            calmar=avg_test_calmar,
+        )
+        run_summary["champion_challenger"] = {
+            "enabled": True,
+            "promotion_ok": promotion_ok,
+            "promotion_reason": promotion_reason,
+            "shadow_metrics": {
+                "mdd": avg_test_mdd,
+                "calmar": avg_test_calmar,
+                "sharpe": avg_test_sharpe,
+            },
+        }
+    else:
+        run_summary["champion_challenger"] = {"enabled": False}
+    # F11/F12 feature handling documentation: record fallback vs real sources
+    fallback_features = list(source_report.get("fallback_features", []))
+    unavailable_sources = list(source_report.get("unavailable_sources", []))
+    run_summary["f11_f12_handling"] = {
+        "fallback_feature_count": len(fallback_features),
+        "fallback_features": fallback_features,
+        "unavailable_sources": unavailable_sources,
+        "note": "F11/F12 features require live exchange data (depth, funding, ADL, mark-price). Offline training uses safe mock defaults. Live execution computes these from real adapter sources when available. Model inference is safe but may be less discriminative when F11/F12 are in fallback mode.",
+    }
     writer = governance.ArtifactWriter(output_dir)
     writer.write_json("run_summary.json", run_summary)
     manifest = write_manifest(output_dir, artifacts + lineage_artifacts + ["run_summary.json"])

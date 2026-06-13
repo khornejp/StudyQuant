@@ -1056,5 +1056,42 @@ class EndToEndPipelineV718Tests(unittest.TestCase):
             self.assertIsNotNone(inference.get("probability"), "probability should be computed from model")
 
 
+class E2ECLIV718Tests(unittest.TestCase):
+    def test_cli_collect_train_live_pipeline(self) -> None:
+        from btcusdt_quant import data
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = Path(tmpdir) / "btcusdt_1m.csv"
+            train_dir = Path(tmpdir) / "training"
+            live_dir = Path(tmpdir) / "live"
+            model_path = train_dir / "model.json"
+            # 1. CLI collect (default args, no network)
+            collect_result = subprocess.run(
+                [sys.executable, "-m", "btcusdt_quant", "collect", "--output", str(data_path), "--rows", "240"],
+                capture_output=True, text=True, timeout=30
+            )
+            self.assertEqual(collect_result.returncode, 0, f"collect failed: {collect_result.stderr}")
+            self.assertTrue(data_path.exists(), "collect should write CSV")
+            # 2. CLI train (default args, model_family=stdlib)
+            train_result = subprocess.run(
+                [sys.executable, "-m", "btcusdt_quant", "train", "--output", str(train_dir), "--input", str(data_path)],
+                capture_output=True, text=True, timeout=30
+            )
+            self.assertEqual(train_result.returncode, 0, f"train failed: {train_result.stderr}")
+            self.assertTrue(model_path.exists(), "train should write model.json")
+            # 3. CLI live (dry-run with model artifact)
+            live_result = subprocess.run(
+                [sys.executable, "-m", "btcusdt_quant", "live", "--dry-run", "--output", str(live_dir), "--model-artifact", str(model_path)],
+                capture_output=True, text=True, timeout=30
+            )
+            self.assertEqual(live_result.returncode, 0, f"live failed: {live_result.stderr}")
+            live_summary_path = live_dir / "live_summary.json"
+            self.assertTrue(live_summary_path.exists(), "live should write live_summary.json")
+            summary = json.loads(live_summary_path.read_text())
+            inference = summary.get("model_inference", {})
+            self.assertTrue(inference.get("model_loaded", False), "model should be loaded via CLI")
+            self.assertIsNotNone(inference.get("probability"), "probability should be computed")
+
 if __name__ == "__main__":
     unittest.main()

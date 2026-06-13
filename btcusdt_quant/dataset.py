@@ -195,6 +195,7 @@ class PublicKlineDownloader:
         limit: int = 500,
         start_time_ms: int | None = None,
         end_time_ms: int | None = None,
+        max_retries: int = 3,
     ) -> list[data.Candle]:
         if not self.allow_network:
             raise RuntimeError("public kline download requires explicit allow_network=True")
@@ -208,11 +209,19 @@ class PublicKlineDownloader:
         query = urllib.parse.urlencode(params)
         url = f"{self.base_url}/fapi/v1/klines?{query}"
         request = urllib.request.Request(url, headers={"User-Agent": "btcusdt-quant-offline-research/0.1"})
-        with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        if not isinstance(payload, list):
-            raise ValueError("unexpected kline response payload")
-        return [candle_from_kline_row(row) for row in payload]
+        last_error: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if not isinstance(payload, list):
+                    raise ValueError("unexpected kline response payload")
+                return [candle_from_kline_row(row) for row in payload]
+            except Exception as exc:
+                last_error = exc
+                if attempt < max_retries - 1:
+                    time.sleep(1.0 * (attempt + 1))
+        raise RuntimeError(f"public kline fetch failed after {max_retries} attempts: {last_error}")
 
     def fetch_klines_paginated(
         self,
@@ -243,6 +252,8 @@ class PublicKlineDownloader:
             current_start = last_open_time_ms + 1
             if end_time_ms is not None and current_start > end_time_ms:
                 break
+            # Rate-limit backoff between paginated batches to avoid 429 errors
+            time.sleep(0.5)
         return all_candles[:max_rows]
 
 
@@ -644,7 +655,14 @@ def collect_candles(
     if rows <= 0:
         raise ValueError("rows must be positive")
     if allow_public_network:
-        candles = PublicKlineDownloader(allow_network=True).fetch_klines(symbol=symbol, interval=interval, limit=rows)
+        downloader = PublicKlineDownloader(allow_network=True)
+        if rows > 1500:
+            # Use pagination for large requests with rate-limit backoff between batches
+            candles = downloader.fetch_klines_paginated(
+                symbol=symbol, interval=interval, max_rows=rows
+            )
+        else:
+            candles = downloader.fetch_klines(symbol=symbol, interval=interval, limit=rows)
         source = "binance_public_klines"
         network_used = True
     else:
