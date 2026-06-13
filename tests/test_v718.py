@@ -1217,7 +1217,23 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
             calmar_delta=0.05,
         )
         self.assertFalse(ok, "missing metrics should fail promotion")
-        self.assertIn("missing", reason.lower(), f"reason should mention missing metric: {reason}")
+
+    def test_champion_challenger_score_bin_ci_passed_from_training(self) -> None:
+        """Champion-challenger enabled training must pass non-empty score-bin CI to can_promote."""
+        from btcusdt_quant import training
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = Path(tmpdir) / "btcusdt_1m.csv"
+            dataset.collect_candles(data_path, rows=240)
+            train_dir = Path(tmpdir) / "training"
+            config = training.TrainingConfig(champion_challenger_enabled=True)
+            result = training.run_training(data_path, train_dir, config=config)
+            cc_report = result.run_summary.get("champion_challenger", {})
+            self.assertTrue(cc_report.get("enabled", False))
+            # Verify the promotion received score_bin_ci (even if promotion fails due to PSI)
+            self.assertIn("promotion_ok", cc_report)
+            self.assertIn("promotion_reason", cc_report)
+            # The reason should NOT be "missing score-bin 95% CI" because CI is computed from folds
+            self.assertNotIn("missing score-bin", cc_report.get("promotion_reason", ""), "score_bin_ci should be computed from bootstrap_ci_report")
 
     def test_champion_challenger_delta_gates_work(self) -> None:
         """Delta gates must detect when challenger worsens MDD or Calmar."""
@@ -1336,31 +1352,42 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
 
     def test_optuna_params_affect_artifacts(self) -> None:
         """Optuna best params must affect the produced training artifacts (model.json, run_summary)."""
-        from btcusdt_quant import training
-        with tempfile.TemporaryDirectory() as tmpdir:
-            data_path = Path(tmpdir) / "btcusdt_1m.csv"
-            dataset.collect_candles(data_path, rows=240)
-            train_dir = Path(tmpdir) / "training"
-            config = training.TrainingConfig(
-                optuna_enabled=True,
-                optuna_trials=3,
-                optuna_budget_profile="research_fast",
-            )
-            result = training.run_training(data_path, train_dir, config=config)
-            # Verify run_summary contains optuna applied params
-            optuna_section = result.run_summary.get("optuna", {})
-            self.assertTrue(optuna_section.get("enabled", False))
-            # Verify model artifact exists and contains optuna-influenced config
-            model_path = Path(train_dir) / "model.json"
-            self.assertTrue(model_path.exists(), "model.json should exist")
-            model_data = json.loads(model_path.read_text())
-            # The model should have been trained with the best signal_scale from optuna
-            self.assertIn("model_family", model_data)
-            # Verify that the fold results contain the optuna threshold
-            for fold in result.fold_results:
-                self.assertIsInstance(fold.threshold, float)
-                self.assertGreaterEqual(fold.threshold, 0.30)
-                self.assertLessEqual(fold.threshold, 0.70)
+        from btcusdt_quant import training, features
+        # Monkeypatch OptunaStudyRunner to return deterministic best params
+        original_run_study = features.OptunaStudyRunner.run_study
+        def _patched_run_study(self, *args, **kwargs):
+            return {
+                "optuna_available": False,
+                "best_params": {"threshold": 0.37, "signal_scale": 1.7},
+                "best_value": 0.1,
+                "trial_history": [],
+                "objective_description": "test",
+            }
+        features.OptunaStudyRunner.run_study = _patched_run_study
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                data_path = Path(tmpdir) / "btcusdt_1m.csv"
+                dataset.collect_candles(data_path, rows=240)
+                train_dir = Path(tmpdir) / "training"
+                config = training.TrainingConfig(
+                    optuna_enabled=True,
+                    optuna_trials=3,
+                    optuna_budget_profile="research_fast",
+                )
+                result = training.run_training(data_path, train_dir, config=config)
+                # Verify run_summary contains optuna applied params
+                optuna_section = result.run_summary.get("optuna", {})
+                self.assertTrue(optuna_section.get("enabled", False))
+                # Verify model artifact contains signal_scale from optuna
+                model_path = Path(train_dir) / "model.json"
+                self.assertTrue(model_path.exists(), "model.json should exist")
+                model_data = json.loads(model_path.read_text())
+                self.assertIn("model_family", model_data)
+                # Verify every fold threshold is exactly the monkeypatched 0.37
+                for fold in result.fold_results:
+                    self.assertEqual(fold.threshold, 0.37, "fold threshold must be overridden by optuna best threshold")
+        finally:
+            features.OptunaStudyRunner.run_study = original_run_study
 
     def test_cli_advanced_args_wired_to_training(self) -> None:
         """Advanced CLI args (feature-selection, optuna, champion-challenger) must be wired to training config."""

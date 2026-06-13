@@ -141,7 +141,7 @@ btcusdt_quant/
 
 Core tests pass:
 ```
-Ran 210 tests in ~50s
+Ran 213 tests in ~55s
 OK (skipped=1)
 ```
 

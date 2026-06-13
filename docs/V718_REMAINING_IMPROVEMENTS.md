@@ -4,7 +4,7 @@
 **Status**: Offline scaffold implementation complete. End-to-end pipeline (collect → train → live) verified for offline execution. Production deployment requires operational validation (testnet soak, security audit, human approval).
 **Scope**: This document lists non-blocking improvements, operational validation requirements, and production readiness items that are NOT code gaps but are required for real trading.
 
-**Latest verification**: 210 tests pass (skipped=1), including end-to-end pipeline test. Commit `80e2287`.
+**Latest verification**: 213 tests pass (skipped=1), including end-to-end pipeline test. Commit `e85900c`.
 
 ---
 
@@ -181,7 +181,7 @@ These items are NOT code gaps but are required operational steps before producti
 
 ## 3. Summary
 
-**Code**: 100% complete — all blocking and critical gaps resolved.  
+**Code**: Offline scaffold complete — all blocking and critical gaps resolved.  
 **Operational**: 10 items remain for production readiness.  
 **Next step**: Perform operational validation before production deployment.
 

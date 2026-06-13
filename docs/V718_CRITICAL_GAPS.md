@@ -2,7 +2,7 @@
 
 **Date**: 2026-06-12  
 **Scope**: Full codebase review after Oracle verification failure  
-**Status**: Offline scaffold implementation complete. Data collection and training pipeline operational. 205 tests pass. Production deployment requires operational validation (testnet soak, security audit, human approval).  
+**Status**: Offline scaffold implementation complete. Data collection and training pipeline operational. 213 tests pass. Production deployment requires operational validation (testnet soak, security audit, human approval).  
 
 ---
 
@@ -104,7 +104,7 @@
 ```python
 self.assertEqual(result.summary["entry_action"], "block_new_entries", "gap contamination should block entries when gap_ratio >= 0.20")
 ```
-The test passes (185 passed, 1 skipped) and proves that gap contamination blocks entries when gap_ratio ≥ 0.20.
+The test passes (213 passed, 1 skipped) and proves that gap contamination blocks entries when gap_ratio ≥ 0.20.
 
 **Files**: `tests/test_v718.py:733-757`  
 **Impact**: Test correctly proves the claimed behavior.
@@ -164,11 +164,11 @@ def observe_status(self, status_code: int, retry_after: float | None = None) -> 
 **What**: README claimed ~85% complete with 92 active features, but F11/F12 were excluded from active set.
 
 **Current state**: ✅ COMPLETE. README updated to reflect:
-- **100% implemented** — all blocking and critical gaps resolved
+- **Offline scaffold complete** — all blocking and critical code gaps resolved
 - **107 active features** (F01–F12), with F11–F12 computing from real-time sources when available
 - Clarified mock defaults vs real-time computation
 - Preserved "not for live trading" warnings
-- Updated test count: 185 passed, 1 skipped
+- Updated test count: 213 passed, 1 skipped
 
 **Files**: `README.md`  
 
@@ -194,7 +194,7 @@ def observe_status(self, status_code: int, retry_after: float | None = None) -> 
 **Current state**: ✅ COMPLETE. Document updated to reflect:
 - F11/F12 microstructure source integration marked as **Done** (`[x]`)
 - Remaining gaps accurately listed: pagination, WebSocket ingestion, train/live parity
-- Distinguishes offline training (100% implemented) from live integration gaps
+- Distinguishes offline training (scaffold complete) from live integration gaps
 
 **Files**: `docs/OFFLINE_TRAINING_PIPELINE.md`  
 
@@ -261,4 +261,4 @@ The CLI parser at `cli.py:310-320` adds `--allow-public-network` flag for the `c
 
 ---
 
-**Verification**: All items must be addressed before claiming 100% implementation.
+**Verification**: All items must be addressed before claiming offline scaffold complete.

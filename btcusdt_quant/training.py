@@ -335,9 +335,9 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         mdd_delta = avg_test_mdd - champion_mdd
         calmar_delta = avg_test_calmar - champion_calmar
         # Compute offline-available metrics for champion-challenger gates
-        # Score-bin CI from bootstrap report (if available)
+        # Score-bin CI from bootstrap report (full rows with net_return_ci_lower_95 / net_return_ci_upper_95)
         ci_report = bootstrap_ci_report(fold_results)
-        score_bin_ci = ci_report[0].get("ci", []) if ci_report else []
+        score_bin_ci = ci_report if ci_report else None
         # Latency P99 from latency report (if available)
         latency_p99 = latency_report.get("p99_ms") if latency_report else None
         # Threshold flip rate from fold threshold stability
