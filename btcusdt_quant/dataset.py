@@ -183,10 +183,11 @@ class ArchiveValidationError(ValueError):
 class PublicKlineDownloader:
     """Explicit opt-in downloader for unsigned public kline data only."""
 
-    def __init__(self, allow_network: bool = False, base_url: str = "https://fapi.binance.com", timeout_seconds: int = 10) -> None:
+    def __init__(self, allow_network: bool = False, base_url: str = "https://fapi.binance.com", timeout_seconds: int = 10, urlopen: Callable[..., object] | None = None) -> None:
         self.allow_network = allow_network
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self.urlopen = urlopen or urllib.request.urlopen
 
     def fetch_klines(
         self,
@@ -212,7 +213,7 @@ class PublicKlineDownloader:
         last_error: Exception | None = None
         for attempt in range(max_retries):
             try:
-                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                with self.urlopen(request, timeout=self.timeout_seconds) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                 if not isinstance(payload, list):
                     raise ValueError("unexpected kline response payload")
@@ -645,6 +646,11 @@ def write_candles_csv(path: Path, candles: Sequence[data.Candle]) -> None:
             )
 
 
+def _interval_to_ms(interval: str) -> int:
+    mapping = {"1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "6h": 21_600_000, "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000, "3d": 259_200_000, "1w": 604_800_000, "1M": 2_592_000_000}
+    return mapping.get(interval, 60_000)
+
+
 def collect_candles(
     output_path: Path,
     rows: int = 240,
@@ -658,8 +664,12 @@ def collect_candles(
         downloader = PublicKlineDownloader(allow_network=True)
         if rows > 1500:
             # Use pagination for large requests with rate-limit backoff between batches
+            # Compute start_time_ms to go back far enough to collect 'rows' candles
+            interval_ms = _interval_to_ms(interval)
+            end_time_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            start_time_ms = end_time_ms - (rows * interval_ms)
             candles = downloader.fetch_klines_paginated(
-                symbol=symbol, interval=interval, max_rows=rows
+                symbol=symbol, interval=interval, start_time_ms=start_time_ms, end_time_ms=end_time_ms, max_rows=rows
             )
         else:
             candles = downloader.fetch_klines(symbol=symbol, interval=interval, limit=rows)

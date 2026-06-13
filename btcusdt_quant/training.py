@@ -180,8 +180,13 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     effective_feature_names = build.feature_names
     if training_config.feature_selection_enabled:
         selection_pipeline = features.FeatureSelectionPipeline()
+        # Fit a quick baseline model for permutation/ablation importance
+        baseline_selection = fit_model_adapter(
+            build.labeled_rows, build.feature_names, training_config,
+            _weights_for_indices(uniqueness, list(range(len(build.labeled_rows)))),
+        )
         feature_selection_report = selection_pipeline.run_full_pipeline(
-            model=None,  # fitted per-fold below
+            model=baseline_selection.adapter,
             feature_matrix=feature_matrix(build.labeled_rows, build.feature_names),
             labels=[row.label for row in build.labeled_rows],
             feature_names=build.feature_names,
@@ -193,8 +198,16 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     optuna_report: dict[str, object] | None = None
     if training_config.optuna_enabled:
         optuna_runner = features.OptunaStudyRunner()
+        # Optuna requires a callable model_factory, not an instance
+        def _optuna_model_factory(params: Mapping[str, float] | None = None) -> models.ModelAdapter:
+            return models.ModelFactory().create(
+                family=training_config.model_family,
+                feature_names=effective_feature_names,
+                model_params=training_config.model_params,
+                fallback_allowed=training_config.fallback_allowed,
+            )
         optuna_report = optuna_runner.run_study(
-            model_factory=models.ModelFactory(),
+            model_factory=_optuna_model_factory,
             feature_matrix=feature_matrix(build.labeled_rows, effective_feature_names),
             labels=[row.label for row in build.labeled_rows],
             n_trials=training_config.optuna_trials,
@@ -476,9 +489,52 @@ def select_threshold(probabilities: Sequence[float], labels: Sequence[int]) -> f
     return best_threshold
 
 
+def _trading_pnl(probabilities: Sequence[float], labels: Sequence[int], threshold: float) -> list[float]:
+    """Simulate PnL from predictions: +0.001 on correct, -0.001 on wrong."""
+    pnl: list[float] = []
+    for prob, label in zip(probabilities, labels):
+        pred = 1 if prob >= threshold else 0
+        direction = 1.0 if pred == 1 else -1.0
+        outcome = 1.0 if label == 1 else -1.0
+        pnl.append(direction * outcome * 0.001)
+    return pnl
+
+
+def _mdd(pnl: Sequence[float]) -> float:
+    peak = 0.0
+    max_dd = 0.0
+    cumulative = 0.0
+    for value in pnl:
+        cumulative += value
+        peak = max(peak, cumulative)
+        max_dd = max(max_dd, peak - cumulative)
+    return max_dd
+
+
+def _sharpe(pnl: Sequence[float]) -> float:
+    if not pnl:
+        return 0.0
+    mean_pnl = mean(pnl)
+    variance = sum((x - mean_pnl) ** 2 for x in pnl) / len(pnl)
+    std = sqrt(variance) if variance > 0 else 0.0
+    if std == 0:
+        return 0.0
+    return mean_pnl / std * sqrt(len(pnl))
+
+
+def _calmar(pnl: Sequence[float]) -> float:
+    if not pnl:
+        return 0.0
+    total_return = sum(pnl)
+    mdd_value = _mdd(pnl)
+    if mdd_value == 0:
+        return 0.0
+    return total_return / mdd_value
+
+
 def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: float) -> dict[str, float]:
     if not probabilities or not labels:
-        return {"rows": 0.0, "accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "ece": 0.0, "expected_calibration_error": 0.0, "mce": 0.0, "brier": 0.0, "brier_score": 0.0, "brier_skill_score": 0.0, "positive_rate": 0.0, "predicted_positive_rate": 0.0}
+        return {"rows": 0.0, "accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "ece": 0.0, "expected_calibration_error": 0.0, "mce": 0.0, "brier": 0.0, "brier_score": 0.0, "brier_skill_score": 0.0, "positive_rate": 0.0, "predicted_positive_rate": 0.0, "mdd": 0.0, "sharpe": 0.0, "calmar": 0.0}
     predictions = [1 if probability >= threshold else 0 for probability in probabilities]
     tp = sum(1 for prediction, label in zip(predictions, labels) if prediction == 1 and label == 1)
     tn = sum(1 for prediction, label in zip(predictions, labels) if prediction == 0 and label == 0)
@@ -490,6 +546,8 @@ def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: fl
     calibration = monitoring.CalibrationDriftMonitor()
     brier = calibration.brier_score(probabilities, labels)
     ece = calibration.expected_calibration_error(probabilities, labels)
+    # Trading-derived metrics for champion-challenger evaluation
+    pnl = _trading_pnl(probabilities, labels, threshold)
     return {
         "rows": float(len(labels)),
         "accuracy": (tp + tn) / len(labels),
@@ -504,6 +562,9 @@ def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: fl
         "brier_skill_score": calibration.brier_skill_score(probabilities, labels),
         "positive_rate": sum(labels) / len(labels),
         "predicted_positive_rate": sum(predictions) / len(predictions),
+        "mdd": _mdd(pnl),
+        "sharpe": _sharpe(pnl),
+        "calmar": _calmar(pnl),
     }
 
 

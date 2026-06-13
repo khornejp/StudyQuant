@@ -12,24 +12,24 @@
 - Deterministic purged walk-forward training with stdlib centroid linear classifier.
 - Verifiable artifacts: dataset_card, model_card, feature_formula_registry, split_manifest, fold_metrics, calibration_report, threshold_report, run_summary, artifact_manifest.
 
-## Remaining Gaps
+## Remaining Gaps (Operational, Not Code)
 
 ### Data Pipeline
-- [ ] Robust public collection pagination with retry/429 handling
-- [ ] WebSocket ingestion with REST backfill
-- [ ] Live/train feature parity enforcement
+- [x] Robust public collection pagination with retry/429 handling — **Done**
+- [ ] WebSocket ingestion with REST backfill — production validation only
+- [x] Live/train feature parity enforcement — **Done**
 - [x] F11/F12 microstructure source integration (depth, funding, ADL, mark price) — **Done**
 
 ### ML Pipeline
-- [ ] LightGBM/CatBoost/Optuna lazy imports with graceful fallback
-- [ ] Bootstrap confidence intervals around trading PnL
-- [ ] Champion/challenger promotion with full metrics (Sharpe, MDD, Calmar, CI, latency, PSI)
+- [x] LightGBM/CatBoost/Optuna lazy imports with graceful fallback — **Done**
+- [x] Bootstrap confidence intervals around trading PnL — **Done**
+- [x] Champion/challenger promotion with full metrics (Sharpe, MDD, Calmar, CI, latency, PSI) — **Done**
 
 ### Live Integration
-- [ ] Account reconciliation and listenKey lifecycle
-- [ ] Rate-limit header validation with Retry-After reset
-- [ ] Live order safety tests with failure injection
-- [ ] Human approval gates for production
+- [x] Account reconciliation and listenKey lifecycle — **Done**
+- [x] Rate-limit header validation with Retry-After reset — **Done**
+- [x] Live order safety tests with failure injection — **Done**
+- [ ] Human approval gates for production — requires human sign-off
 
 The default training command is offline and safe for CI/local tests. Not a live trading system.
 

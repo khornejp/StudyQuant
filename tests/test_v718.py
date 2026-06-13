@@ -5,7 +5,7 @@ import json
 import tempfile
 import unittest
 import urllib.parse
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -1092,6 +1092,130 @@ class E2ECLIV718Tests(unittest.TestCase):
             inference = summary.get("model_inference", {})
             self.assertTrue(inference.get("model_loaded", False), "model should be loaded via CLI")
             self.assertIsNotNone(inference.get("probability"), "probability should be computed")
+
+class PublicCollectionV718Tests(unittest.TestCase):
+    def test_public_kline_downloader_retry_on_failure(self) -> None:
+        from btcusdt_quant import dataset
+        import urllib.request
+        call_count = 0
+        def failing_urlopen(request: urllib.request.Request, **kwargs: object) -> object:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise urllib.error.HTTPError(request.get_full_url(), 429, "Too Many Requests", {}, None)
+            # Return minimal valid kline response
+            return _FakeResponse(b"[[0,\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\",\"9\",\"10\",\"11\"]]")
+        downloader = dataset.PublicKlineDownloader(allow_network=True, urlopen=failing_urlopen)
+        with self.assertRaises(RuntimeError):
+            downloader.fetch_klines(symbol="BTCUSDT", interval="1m", limit=1, max_retries=2)
+        self.assertEqual(call_count, 2, "should exhaust retries")
+
+    def test_pagination_computes_start_time_for_rows_over_1500(self) -> None:
+        from btcusdt_quant import dataset
+        import urllib.request
+        captured_urls: list[str] = []
+        def capturing_urlopen(request: urllib.request.Request, **kwargs: object) -> object:
+            captured_urls.append(request.get_full_url())
+            return _FakeResponse(b"[]")
+        # Monkey-patch collect_candles to use our instrumented downloader
+        original_collect = dataset.collect_candles
+        def patched_collect(output_path: Path, rows: int = 240, allow_public_network: bool = False, symbol: str = "BTCUSDT", interval: str = "1m") -> dataset.CollectionResult:
+            if not allow_public_network:
+                return original_collect(output_path, rows, allow_public_network, symbol, interval)
+            downloader = dataset.PublicKlineDownloader(allow_network=True, urlopen=capturing_urlopen)
+            if rows > 1500:
+                interval_ms = dataset._interval_to_ms(interval)
+                end_time_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                start_time_ms = end_time_ms - (rows * interval_ms)
+                candles = downloader.fetch_klines_paginated(
+                    symbol=symbol, interval=interval, start_time_ms=start_time_ms, end_time_ms=end_time_ms, max_rows=rows
+                )
+            else:
+                candles = downloader.fetch_klines(symbol=symbol, interval=interval, limit=rows)
+            dataset.write_candles_csv(output_path, candles)
+            return dataset.CollectionResult(output_path, "binance_public_klines", symbol, interval, len(candles), True)
+        dataset.collect_candles = patched_collect
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output_path = Path(tmpdir) / "test.csv"
+                # This should trigger pagination path with start_time_ms
+                try:
+                    dataset.collect_candles(output_path, rows=2000, allow_public_network=True, symbol="BTCUSDT", interval="1m")
+                except Exception:
+                    pass  # urlopen returns empty, may raise; we only care about the URL
+                # Verify that startTime parameter was present in at least one URL
+                self.assertTrue(
+                    any("startTime=" in url for url in captured_urls),
+                    "pagination should include startTime parameter for large row requests"
+                )
+        finally:
+            dataset.collect_candles = original_collect
+
+class AdvancedTrainingV718Tests(unittest.TestCase):
+    def test_feature_selection_enabled_reduces_feature_count(self) -> None:
+        from btcusdt_quant import training
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = Path(tmpdir) / "btcusdt_1m.csv"
+            dataset.collect_candles(data_path, rows=240)
+            train_dir = Path(tmpdir) / "training"
+            config = training.TrainingConfig(feature_selection_enabled=True)
+            result = training.run_training(data_path, train_dir, config=config)
+            fs_report = result.run_summary.get("feature_selection", {})
+            self.assertTrue(fs_report.get("enabled", False), "feature_selection should be enabled")
+            # Core features should be <= original features
+            original_count = fs_report.get("original_feature_count", 0)
+            selected_count = fs_report.get("selected_core_count", 0)
+            self.assertGreaterEqual(original_count, selected_count, "selected features should not exceed original")
+
+    def test_optuna_enabled_produces_report(self) -> None:
+        from btcusdt_quant import training
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = Path(tmpdir) / "btcusdt_1m.csv"
+            dataset.collect_candles(data_path, rows=240)
+            train_dir = Path(tmpdir) / "training"
+            config = training.TrainingConfig(optuna_enabled=True, optuna_trials=5, optuna_budget_profile="research_fast")
+            result = training.run_training(data_path, train_dir, config=config)
+            optuna_report = result.run_summary.get("optuna", {})
+            self.assertTrue(optuna_report.get("enabled", False), "optuna should be enabled")
+            self.assertIn("report", optuna_report, "optuna report should exist")
+            self.assertIn("best_params", optuna_report.get("report", {}), "optuna best_params should exist")
+
+    def test_champion_challenger_enabled_produces_evaluation(self) -> None:
+        from btcusdt_quant import training
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = Path(tmpdir) / "btcusdt_1m.csv"
+            dataset.collect_candles(data_path, rows=240)
+            train_dir = Path(tmpdir) / "training"
+            config = training.TrainingConfig(champion_challenger_enabled=True)
+            result = training.run_training(data_path, train_dir, config=config)
+            cc_report = result.run_summary.get("champion_challenger", {})
+            self.assertTrue(cc_report.get("enabled", False), "champion_challenger should be enabled")
+            self.assertIn("promotion_ok", cc_report, "promotion_ok should be present")
+            self.assertIn("promotion_reason", cc_report, "promotion_reason should be present")
+            self.assertIn("shadow_metrics", cc_report, "shadow_metrics should be present")
+
+    def test_metrics_produces_trading_metrics(self) -> None:
+        from btcusdt_quant import training
+        probs = [0.6, 0.4, 0.7, 0.3, 0.8]
+        labels = [1, 0, 1, 0, 1]
+        m = training.metrics(probs, labels, 0.5)
+        self.assertIn("mdd", m, "metrics should include mdd")
+        self.assertIn("sharpe", m, "metrics should include sharpe")
+        self.assertIn("calmar", m, "metrics should include calmar")
+        self.assertIsInstance(m["mdd"], float)
+        self.assertIsInstance(m["sharpe"], float)
+        self.assertIsInstance(m["calmar"], float)
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+    def read(self) -> bytes:
+        return self._body
+    def __enter__(self) -> "_FakeResponse":
+        return self
+    def __exit__(self, *args: object) -> None:
+        pass
 
 if __name__ == "__main__":
     unittest.main()

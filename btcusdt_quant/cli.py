@@ -136,6 +136,11 @@ def run_train(
     test_group_count: int = 1,
     fallback_allowed: bool = True,
     model_params: Mapping[str, object] | None = None,
+    feature_selection_enabled: bool = False,
+    optuna_enabled: bool = False,
+    optuna_trials: int = 0,
+    optuna_budget_profile: str = "practical_start",
+    champion_challenger_enabled: bool = False,
 ) -> dict[str, object]:
     config = training.TrainingConfig(
         cv_mode=cv_mode,
@@ -145,6 +150,11 @@ def run_train(
         model_family=model_family,
         model_params=dict(model_params or {}),
         fallback_allowed=fallback_allowed,
+        feature_selection_enabled=feature_selection_enabled,
+        optuna_enabled=optuna_enabled,
+        optuna_trials=optuna_trials,
+        optuna_budget_profile=optuna_budget_profile,
+        champion_challenger_enabled=champion_challenger_enabled,
     )
     archive_dir = None
     if input_path is not None and input_path.is_dir():
@@ -270,6 +280,11 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--n-groups", type=int, default=5, help="sequential groups for combinatorial purged CV")
     train.add_argument("--test-group-count", type=int, default=1, help="number of groups selected for each combinatorial test fold")
     train.add_argument("--no-model-fallback", action="store_true", help="disable optional model fallback and fail if the requested family is unavailable")
+    train.add_argument("--feature-selection", action="store_true", help="enable 6-stage feature selection pipeline (Spearman, gain, permutation, SHAP, ablation, core set)")
+    train.add_argument("--optuna", action="store_true", help="enable Optuna hyperparameter tuning for threshold and signal scale")
+    train.add_argument("--optuna-trials", type=int, default=0, help="number of Optuna trials (0 uses budget profile default)")
+    train.add_argument("--optuna-budget", default="practical_start", choices=("research_fast", "practical_start", "full_audit_budget"), help="Optuna budget profile")
+    train.add_argument("--champion-challenger", action="store_true", help="enable champion-challenger promotion evaluation from fold test metrics")
     live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
     live_parser.add_argument("--output", default="artifacts/live", help="live artifact output directory")
     live_parser.add_argument("--dry-run", action="store_true", help="use deterministic fixture WebSocket and REST backfill")
@@ -331,7 +346,15 @@ def main(argv: list[str] | None = None) -> int:
         output = Path(args.output)
         input_path = Path(args.input) if args.input else None
         try:
-            summary = run_train(output, input_path, args.model_family, args.cv_mode, args.embargo_size, args.n_groups, args.test_group_count, not args.no_model_fallback)
+            summary = run_train(
+                output, input_path, args.model_family, args.cv_mode, args.embargo_size, args.n_groups, args.test_group_count,
+                not args.no_model_fallback,
+                feature_selection_enabled=args.feature_selection,
+                optuna_enabled=args.optuna,
+                optuna_trials=args.optuna_trials,
+                optuna_budget_profile=args.optuna_budget,
+                champion_challenger_enabled=args.champion_challenger,
+            )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)
             return 1
