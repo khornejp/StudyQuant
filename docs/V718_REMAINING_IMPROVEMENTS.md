@@ -4,7 +4,7 @@
 **Status**: Offline scaffold implementation complete. End-to-end pipeline (collect → train → live) verified for offline execution. Production deployment requires operational validation (testnet soak, security audit, human approval).
 **Scope**: This document lists non-blocking improvements, operational validation requirements, and production readiness items that are NOT code gaps but are required for real trading.
 
-**Latest verification**: 214 tests pass (skipped=1), including end-to-end pipeline test. Commit `b9b3755`.
+**Latest verification**: 214 tests pass (skipped=1), including end-to-end pipeline test. See `git log` for latest commit hash.
 
 ---
 
