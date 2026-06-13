@@ -107,7 +107,7 @@ class TrainingConfig:
     embargo_size: int = 0
     n_groups: int = 5
     test_group_count: int = 1
-    model_family: str = "auto"
+    model_family: str = "stdlib"
     model_params: Mapping[str, object] = field(default_factory=dict)
     fallback_allowed: bool = True
     lineage_enabled: bool = True

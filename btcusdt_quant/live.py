@@ -1176,7 +1176,12 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> training.Lin
         if strict:
             raise ValueError(f"model artifact is not a JSON object: {path}")
         return None
-    return training.LinearClassifier.from_dict(payload)
+    try:
+        return training.LinearClassifier.from_dict(payload)
+    except ValueError as error:
+        if strict:
+            raise ValueError(f"model artifact validation failed: {error}") from error
+        return None
 
 
 def run_live(
