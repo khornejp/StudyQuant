@@ -35,7 +35,7 @@
 - **F11/F12 real-time sources**: Depth, funding, ADL, mark price fetched from exchange adapter and passed to feature computation
 - **Source parity**: Train/live feature parity enforced in entry gates — blocks entries when parity fails
 - **Model artifact loading**: `run_live()` accepts `--model-artifact` path; loads `LinearClassifier` from JSON and uses `probability()` for signal generation
-- **TP/SL bracket wiring**: `submit_entry_with_brackets()` called after successful `safe_market_entry()` with 1% TP / 0.5% SL prices
+- **TP/SL bracket wiring**: `submit_take_profit_stop_loss()` called after successful `safe_market_entry()` with 1% TP / 0.5% SL prices; atomic submission with cancel-on-failure for partial success protection
 
 ### Operational Monitoring (Scaffold Complete)
 - **Clock drift**: NTP-style monitoring, thresholds at 100ms/500ms/1000ms
@@ -132,16 +132,16 @@ btcusdt_quant/
 ├── failure_injection.py # Deterministic fault scenarios for testing
 ├── secrets.py           # Credential loading, masking
 ├── cli.py               # CLI entry point
-└── tests/
-    ├── test_core.py     # 120+ original tests
-    └── test_v718.py     # 60+ v7.18 regression tests
+    └── tests/
+    ├── test_core.py     # 120 original tests
+    └── test_v718.py     # 78 v7.18 regression tests
 ```
 
 ## Verification
 
 Core tests pass:
 ```
-Ran 185 tests in 92.65s
+Ran 197 tests in 28.917s
 OK (skipped=1)
 ```
 

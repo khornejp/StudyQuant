@@ -403,29 +403,42 @@ def submit_take_profit_stop_loss(
     _ensure_order_submission_allowed(exchange_adapter, allow_live_orders)
     exit_side = _exit_side(position_side)
     prefix = _client_order_prefix(exchange_adapter, symbol, position_side, client_order_id_prefix)
-    take_profit = exchange_adapter.submit_order(
-        ExchangeOrder(
-            symbol,
-            exit_side,
-            TAKE_PROFIT_MARKET,
-            quantity,
-            reduce_only=True,
-            client_order_id=f"{prefix}_tp",
-            stop_price=take_profit_price,
+    tp_order: ExchangeOrder | None = None
+    try:
+        tp_order = exchange_adapter.submit_order(
+            ExchangeOrder(
+                symbol,
+                exit_side,
+                TAKE_PROFIT_MARKET,
+                quantity,
+                reduce_only=True,
+                client_order_id=f"{prefix}_tp",
+                stop_price=take_profit_price,
+            )
         )
-    )
-    stop_loss = exchange_adapter.submit_order(
-        ExchangeOrder(
-            symbol,
-            exit_side,
-            STOP_MARKET,
-            quantity,
-            reduce_only=True,
-            client_order_id=f"{prefix}_sl",
-            stop_price=stop_loss_price,
+        sl_order = exchange_adapter.submit_order(
+            ExchangeOrder(
+                symbol,
+                exit_side,
+                STOP_MARKET,
+                quantity,
+                reduce_only=True,
+                client_order_id=f"{prefix}_sl",
+                stop_price=stop_loss_price,
+            )
         )
-    )
-    return take_profit, stop_loss
+        return tp_order, sl_order
+    except Exception:
+        # If SL (or TP) fails, cancel the already-submitted TP to avoid leaving
+        # an open position with only one protective order.
+        if tp_order is not None:
+            cancel_order = getattr(exchange_adapter, "cancel_order", None)
+            if callable(cancel_order):
+                try:
+                    cancel_order(symbol, order_id=tp_order.order_id, client_order_id=tp_order.client_order_id)
+                except Exception:
+                    pass
+        raise
 
 
 def wait_until_exit_orders_resolved(
@@ -1338,6 +1351,9 @@ def run_live(
     position = active_adapter.get_position("BTCUSDT")
     account = active_adapter.get_account()
     entry_quantity = 0.001 if signal in {"BUY", "SELL"} else 0.0
+    # Compute realistic notional for risk gate: quantity * entry_price
+    entry_price_for_notional = canonical[-1].close if canonical else 0.0
+    entry_notional = entry_quantity * entry_price_for_notional
     entry_action = safe_market_entry(
         position, signal, entry_quantity,
         adapter=active_adapter,
@@ -1345,7 +1361,7 @@ def run_live(
         gap_action=gap_action,
         account_balance_usdt=account.available_balance,
         leverage=position.leverage,
-        notional=entry_quantity,
+        notional=entry_notional,
         drawdown_state=drawdown_state,
         monitor_decisions=monitor_decisions,
         allow_live_orders=not dry_run,
@@ -1356,6 +1372,7 @@ def run_live(
     # so we only submit TP/SL exit orders here to avoid duplicate market entries.
     bracket_orders: tuple[ExchangeOrder, ExchangeOrder, ExchangeOrder] | None = None
     bracket_error: str | None = None
+    emergency_close_order: ExchangeOrder | None = None
     if entry_action == "market_entry_submitted" and signal in {"BUY", "SELL"}:
         try:
             # Use canonical close price for entry price; fallback to adapter fill price if available
@@ -1400,6 +1417,20 @@ def run_live(
             bracket_error = str(bracket_exc)
             # Fail-safe: bracket failure leaves position unprotected — trigger hard_kill
             entry_action = "hard_kill"
+            # Submit emergency reduce-only market close to flatten the position
+            emergency_close_order: ExchangeOrder | None = None
+            try:
+                emergency_exit_side = "SELL" if signal == "BUY" else "BUY"
+                emergency_close_order = active_adapter.submit_order(
+                    "BTCUSDT",
+                    emergency_exit_side,
+                    MARKET,
+                    entry_quantity,
+                    reduce_only=True,
+                    client_order_id=f"emergency_close_{int(monotonic())}",
+                )
+            except Exception:
+                pass
     exit_action = gap_cross_exit(0.0, False, monitor_decisions=monitor_decisions)
     output.mkdir(parents=True, exist_ok=True)
     dataset.write_candles_csv(output / "live_candles.csv", canonical)
@@ -1431,6 +1462,7 @@ def run_live(
             "sl_order_id": bracket_orders[2].order_id if bracket_orders else None,
         } if bracket_orders else None,
         "bracket_error": bracket_error,
+        "emergency_close_order_id": emergency_close_order.order_id if emergency_close_order else None,
         "drawdown_state": {
             "peak_equity": drawdown_state.peak_equity,
             "current_equity": drawdown_state.current_equity,

@@ -264,7 +264,7 @@ def build_parser() -> argparse.ArgumentParser:
     train = subparsers.add_parser("train", help="run deterministic offline CSV/fixture training pipeline")
     train.add_argument("--output", default="artifacts/training", help="training artifact output directory")
     train.add_argument("--input", default=None, help="optional local CSV candles path; defaults to offline fixture")
-    train.add_argument("--model-family", default="auto", help="model family selector; auto keeps the deterministic stdlib model")
+    train.add_argument("--model-family", default="stdlib", help="model family selector; stdlib uses deterministic centroid linear classifier (default); auto tries lightgbm/catboost first if installed")
     train.add_argument("--cv-mode", choices=("walk_forward", "combinatorial_purged"), default="walk_forward", help="cross-validation splitter mode")
     train.add_argument("--embargo-size", type=int, default=0, help="bars to embargo after combinatorial test windows")
     train.add_argument("--n-groups", type=int, default=5, help="sequential groups for combinatorial purged CV")

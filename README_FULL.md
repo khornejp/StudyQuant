@@ -36,10 +36,11 @@
 - **F11/F12 real-time sources** — depth, funding, ADL, mark price fetched from exchange adapter
 - **Source parity** — enforced in entry gates, blocks entries when parity fails
 - **Model inference in live** — `run_live()` loads model artifact and uses `probability()` instead of `last_return` for signal generation; fail-closed when artifact path is explicitly provided but missing/invalid
-- **TP/SL bracket wiring** — `submit_take_profit_stop_loss()` called after successful `safe_market_entry()` with 1% TP / 0.5% SL (no duplicate market entry)
-- **Bracket failure handling** — bracket errors trigger `hard_kill` fail-safe instead of silent swallow
+- **TP/SL bracket wiring** — `submit_take_profit_stop_loss()` called after successful `safe_market_entry()` with 1% TP / 0.5% SL (no duplicate market entry); atomic submission with cancel-on-failure for partial success protection
+- **Bracket failure handling** — bracket errors trigger `hard_kill` fail-safe and submit emergency reduce-only market close to flatten the position; `bracket_error` and `emergency_close_order_id` recorded in summary
 - **External source evaluation** — `source_report` now evaluates `external_sources` availability
-- **Model artifact validation** — `LinearClassifier.from_dict()` validates feature names, finite values, non-zero scales, and model family
+- **Model artifact validation** — `LinearClassifier.from_dict()` validates feature names, finite values, non-zero scales, and model family; `load_model_artifact()` catches `ValueError` for unsupported families
+- **Default model family** — `TrainingConfig` and CLI default to `stdlib` to ensure end-to-end compatibility with `LinearClassifier`
 
 ### ⚠️ Operational Monitoring (Scaffold Complete)
 - Clock drift, ADL, funding, calibration drift — all implemented but not stress-tested with real network
@@ -101,6 +102,7 @@
 | Monitoring (clock/ADL/funding) | ✅ Complete | Scaffold ready |
 | Governance (13-stage pipeline) | ✅ Complete | Stage enforcement |
 | Artifact verification (SHA-256) | ✅ Complete | Manifest generation |
+| End-to-end pipeline (collect→train→live) | ✅ Complete | Verified with default CLI args |
 | Lineage (MLflow/DVC) | ⚠️ Partial | Optional adapters, local fallback |
 
 ## CLI Commands
@@ -119,7 +121,7 @@ python -m btcusdt_quant collect-archive --start 2024-01-01 --end 2024-01-31 --ou
 # Offline training (fixture or local CSV)
 python -m btcusdt_quant train --output artifacts/training
 python -m btcusdt_quant train --input path\to\local_candles.csv --output artifacts/training_csv
-python -m btcusdt_quant train --model-family auto --output artifacts/training_ml
+python -m btcusdt_quant train --model-family stdlib --output artifacts/training_ml
 
 # Live execution (mock WebSocket, gap repair, backfill)
 python -m btcusdt_quant live --dry-run --output artifacts/live

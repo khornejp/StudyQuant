@@ -11,7 +11,7 @@ from typing import cast
 
 from dataclasses import replace
 
-from btcusdt_quant import dataset, features, governance, live, parity, sources
+from btcusdt_quant import dataset, features, governance, live, parity, sources, training
 
 
 class FeatureRegistryV718Tests(unittest.TestCase):
@@ -958,8 +958,8 @@ class ModelArtifactV718Tests(unittest.TestCase):
             # Bracket failure should set entry_action to hard_kill
             self.assertEqual(result.summary["entry_action"], "hard_kill", "bracket failure should trigger hard_kill")
             self.assertIsNotNone(result.summary.get("bracket_error"), "bracket_error should be recorded")
-            # Only one market entry should exist, no TP/SL orders
-            market_orders = [order for order in adapter.orders if order.order_type == exchange.MARKET]
+            # Only one market entry should exist, no TP/SL orders (exclude reduce-only emergency close)
+            market_orders = [order for order in adapter.orders if order.order_type == exchange.MARKET and not getattr(order, "reduce_only", False)]
             self.assertEqual(len(market_orders), 1, "exactly one market entry should exist")
             exit_orders = [order for order in adapter.orders if order.order_type in (exchange.TAKE_PROFIT_MARKET, exchange.STOP_MARKET)]
             self.assertEqual(len(exit_orders), 0, "no TP/SL orders should exist after rejection")
@@ -996,12 +996,64 @@ class ModelArtifactV718Tests(unittest.TestCase):
             ]
             adapter = RejectBracketAdapter()
             result = live.run_live(output, dry_run=False, allow_public_network=True, max_candles=12, custom_candles=candles, exchange_adapter=adapter, source_parity_passed=True)
-            # Should have exactly one market entry, no duplicate
-            market_orders = [order for order in adapter.orders if order.order_type == exchange.MARKET]
+            # Should have exactly one market entry, no duplicate (exclude reduce-only emergency close)
+            market_orders = [order for order in adapter.orders if order.order_type == exchange.MARKET and not getattr(order, "reduce_only", False)]
             self.assertEqual(len(market_orders), 1, "no duplicate market entries should exist")
             # Should be hard_kill due to bracket failure
             self.assertEqual(result.summary["entry_action"], "hard_kill")
             self.assertIsNotNone(result.summary.get("bracket_error"))
+
+
+class EndToEndPipelineV718Tests(unittest.TestCase):
+    def test_end_to_end_default_cli_path_collect_train_live(self) -> None:
+        from btcusdt_quant import data, exchange
+        # Verify the documented default CLI path works end-to-end:
+        # collect (default args) -> train (default args) -> live (with model.json)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Collect data with default args (240 rows)
+            data_path = Path(tmpdir) / "btcusdt_1m.csv"
+            collect_result = dataset.collect_candles(data_path, rows=240)
+            self.assertGreaterEqual(collect_result.rows, 200, "collect should produce at least 200 rows")
+            
+            # 2. Train with default args (model_family defaults to stdlib)
+            train_dir = Path(tmpdir) / "training"
+            train_result = training.run_training(data_path, train_dir)
+            self.assertGreaterEqual(len(train_result.dataset_build.labeled_rows), 80, "training should produce at least 80 labeled rows")
+            
+            # Verify model.json exists and is compatible with live.py
+            model_path = train_dir / "model.json"
+            self.assertTrue(model_path.exists(), "model.json should be created after training")
+            
+            # 3. Run live with the trained model artifact
+            live_dir = Path(tmpdir) / "live"
+            adapter = exchange.MockExchangeAdapter()
+            candles = [
+                data.Candle(
+                    open_time=data.utc_minute(2026, 1, 1, 0, 0) + timedelta(minutes=index),
+                    open=100.0 + index,
+                    high=101.0 + index,
+                    low=99.0 + index,
+                    close=100.5 + index,
+                    volume=10.0,
+                    quote_volume=1000.0,
+                    number_of_trades=100,
+                    taker_buy_base_volume=5.0,
+                    taker_buy_quote_volume=500.0,
+                )
+                for index in range(200)
+            ]
+            live_result = live.run_live(
+                live_dir,
+                dry_run=True,
+                max_candles=12,
+                custom_candles=candles,
+                exchange_adapter=adapter,
+                model_artifact_path=model_path,
+            )
+            # Verify model was loaded successfully
+            inference = live_result.summary.get("model_inference", {})
+            self.assertTrue(inference.get("model_loaded", False), "model should be loaded from artifact")
+            self.assertIsNotNone(inference.get("probability"), "probability should be computed from model")
 
 
 if __name__ == "__main__":
