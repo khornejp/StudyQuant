@@ -200,14 +200,17 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             effective_feature_names = selected_core
     # Optional Optuna hyperparameter tuning
     optuna_report: dict[str, object] | None = None
+    optuna_threshold: float | None = None
     if training_config.optuna_enabled:
         optuna_runner = features.OptunaStudyRunner()
         # Optuna requires a callable model_factory, not an instance
+        # Only signal_scale is a model constructor param; threshold is a decision param
         def _optuna_model_factory(params: Mapping[str, float] | None = None) -> models.ModelAdapter:
-            # Merge Optuna params into model_params so the model actually uses them
             merged_params = dict(training_config.model_params)
             if params is not None:
-                merged_params.update(params)
+                # Only pass signal_scale to model constructor; threshold is decision param
+                model_params = {k: v for k, v in params.items() if k != "threshold"}
+                merged_params.update(model_params)
             return models.ModelFactory().create(
                 family=training_config.model_family,
                 feature_names=effective_feature_names,
@@ -221,6 +224,17 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             n_trials=training_config.optuna_trials,
             budget_profile=training_config.optuna_budget_profile,
         )
+        # Apply best params to actual training config
+        best_params = optuna_report.get("best_params", {})
+        if best_params:
+            optuna_threshold = float(best_params.get("threshold", 0.5))
+            # Update training_config model_params with signal_scale for fold/final training
+            if "signal_scale" in best_params:
+                from dataclasses import replace
+                training_config = replace(
+                    training_config,
+                    model_params={**dict(training_config.model_params), "signal_scale": float(best_params["signal_scale"])},
+                )
     fold_results: list[FoldResult] = []
     for fold_index, split in enumerate(splits):
         train_indices = _split_indices(split.train)
@@ -243,6 +257,9 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         calibrator = features.CalibrationModule().fit(validation_probabilities, validation_labels, positive_samples=sum(validation_labels))
         calibrated_validation = calibrator.transform(validation_probabilities)
         threshold = select_threshold(calibrated_validation, validation_labels)
+        # Override with Optuna best threshold if available (decision param, not model param)
+        if optuna_threshold is not None:
+            threshold = optuna_threshold
         test_probabilities = model.predict_proba(feature_matrix(test_rows, effective_feature_names))
         calibrated_test = calibrator.transform(test_probabilities)
         train_probabilities = model.predict_proba(feature_matrix(train_rows, effective_feature_names))
@@ -317,6 +334,16 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         champion_calmar = champion_baseline.get("calmar", avg_test_calmar)
         mdd_delta = avg_test_mdd - champion_mdd
         calmar_delta = avg_test_calmar - champion_calmar
+        # Compute offline-available metrics for champion-challenger gates
+        # Score-bin CI from bootstrap report (if available)
+        ci_report = bootstrap_ci_report(fold_results)
+        score_bin_ci = ci_report[0].get("ci", []) if ci_report else []
+        # Latency P99 from latency report (if available)
+        latency_p99 = latency_report.get("p99_ms") if latency_report else None
+        # Threshold flip rate from fold threshold stability
+        thresholds = [fold.threshold for fold in fold_results]
+        threshold_flip_rate = _compute_threshold_flip_rate(thresholds) if len(thresholds) > 1 else 0.0
+        # PSI is not computable offline without production data; mark as live-only
         promotion_ok, promotion_reason = champion_mgr.can_promote(
             shadow_days=max(30, len(build.labeled_rows)),
             signal_count=len(build.labeled_rows),
@@ -325,6 +352,10 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             sharpe=avg_test_sharpe,
             mdd=avg_test_mdd,
             calmar=avg_test_calmar,
+            score_bin_ci=score_bin_ci,
+            threshold_flip_rate=threshold_flip_rate,
+            latency_p99_ms=latency_p99,
+            psi=None,  # PSI requires live production data; offline training cannot compute it
         )
         run_summary["champion_challenger"] = {
             "enabled": True,
@@ -335,6 +366,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 "calmar": avg_test_calmar,
                 "sharpe": avg_test_sharpe,
             },
+            "note": "Offline champion-challenger is a scaffold. PSI and some live-only metrics require production data. Promotion will fail on missing live metrics until testnet soak provides real values.",
         }
     else:
         run_summary["champion_challenger"] = {"enabled": False}
@@ -885,6 +917,14 @@ def inference_latency_report(model: models.ModelAdapter | LinearClassifier, matr
 
 def empty_latency_report() -> dict[str, object]:
     return {"metric": "single_row_predict_proba_latency_ms", "rows_measured": 0, "p50_ms": 0.0, "p95_ms": 0.0, "p99_ms": 0.0, "max_ms": 0.0}
+
+
+def _compute_threshold_flip_rate(thresholds: Sequence[float]) -> float:
+    """Compute threshold flip rate as fraction of adjacent folds where threshold changes sign."""
+    if len(thresholds) < 2:
+        return 0.0
+    flips = sum(1 for i in range(1, len(thresholds)) if thresholds[i] != thresholds[i - 1])
+    return flips / (len(thresholds) - 1)
 
 
 def percentile(values: Sequence[float], quantile: float) -> float:

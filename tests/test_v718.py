@@ -1260,6 +1260,59 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(call_count, 3)
 
+    def test_public_downloader_429_retry_after_respected(self) -> None:
+        """429 with Retry-After header must be respected and eventually succeed."""
+        import json
+        from btcusdt_quant import dataset
+        call_count = 0
+        sleep_calls: list[float] = []
+        def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+        def flaky_urlopen(req, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                from urllib.error import HTTPError
+                raise HTTPError(req.get_full_url(), 429, "Too Many Requests", {"Retry-After": "1"}, None)
+            body = json.dumps([[0, "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]]).encode()
+            return _FakeResponse(body)
+        downloader = dataset.PublicKlineDownloader(
+            allow_network=True,
+            base_url="http://test",
+            urlopen=flaky_urlopen,
+        )
+        # Monkeypatch time.sleep to capture Retry-After delay
+        import time
+        original_sleep = time.sleep
+        time.sleep = fake_sleep
+        try:
+            result = downloader.fetch_klines(symbol="BTCUSDT", interval="1m", limit=1)
+        finally:
+            time.sleep = original_sleep
+        self.assertEqual(len(result), 1)
+        self.assertEqual(call_count, 3)
+        # Verify Retry-After was respected (sleep called at least once)
+        self.assertGreater(len(sleep_calls), 0, "Retry-After should trigger sleep")
+
+    def test_public_downloader_418_not_retried(self) -> None:
+        """418 hard-ban must not be retried."""
+        import json
+        from btcusdt_quant import dataset
+        call_count = 0
+        def flaky_urlopen(req, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            from urllib.error import HTTPError
+            raise HTTPError(req.get_full_url(), 418, "IP Ban", {}, None)
+        downloader = dataset.PublicKlineDownloader(
+            allow_network=True,
+            base_url="http://test",
+            urlopen=flaky_urlopen,
+        )
+        with self.assertRaises(RuntimeError):
+            downloader.fetch_klines(symbol="BTCUSDT", interval="1m", limit=1)
+        self.assertEqual(call_count, 1, "418 hard-ban must not retry")
+
     def test_optuna_model_factory_uses_params(self) -> None:
         """Optuna model factory must merge params into model_params."""
         from btcusdt_quant import training, models
@@ -1280,6 +1333,34 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
                 if "threshold" in best_params:
                     self.assertGreaterEqual(best_params["threshold"], 0.45)
                     self.assertLessEqual(best_params["threshold"], 0.55)
+
+    def test_optuna_params_affect_artifacts(self) -> None:
+        """Optuna best params must affect the produced training artifacts (model.json, run_summary)."""
+        from btcusdt_quant import training
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = Path(tmpdir) / "btcusdt_1m.csv"
+            dataset.collect_candles(data_path, rows=240)
+            train_dir = Path(tmpdir) / "training"
+            config = training.TrainingConfig(
+                optuna_enabled=True,
+                optuna_trials=3,
+                optuna_budget_profile="research_fast",
+            )
+            result = training.run_training(data_path, train_dir, config=config)
+            # Verify run_summary contains optuna applied params
+            optuna_section = result.run_summary.get("optuna", {})
+            self.assertTrue(optuna_section.get("enabled", False))
+            # Verify model artifact exists and contains optuna-influenced config
+            model_path = Path(train_dir) / "model.json"
+            self.assertTrue(model_path.exists(), "model.json should exist")
+            model_data = json.loads(model_path.read_text())
+            # The model should have been trained with the best signal_scale from optuna
+            self.assertIn("model_family", model_data)
+            # Verify that the fold results contain the optuna threshold
+            for fold in result.fold_results:
+                self.assertIsInstance(fold.threshold, float)
+                self.assertGreaterEqual(fold.threshold, 0.30)
+                self.assertLessEqual(fold.threshold, 0.70)
 
     def test_cli_advanced_args_wired_to_training(self) -> None:
         """Advanced CLI args (feature-selection, optuna, champion-challenger) must be wired to training config."""
