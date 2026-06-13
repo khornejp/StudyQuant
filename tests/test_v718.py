@@ -1220,20 +1220,32 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
 
     def test_champion_challenger_score_bin_ci_passed_from_training(self) -> None:
         """Champion-challenger enabled training must pass non-empty score-bin CI to can_promote."""
-        from btcusdt_quant import training
-        with tempfile.TemporaryDirectory() as tmpdir:
-            data_path = Path(tmpdir) / "btcusdt_1m.csv"
-            dataset.collect_candles(data_path, rows=240)
-            train_dir = Path(tmpdir) / "training"
-            config = training.TrainingConfig(champion_challenger_enabled=True)
-            result = training.run_training(data_path, train_dir, config=config)
-            cc_report = result.run_summary.get("champion_challenger", {})
-            self.assertTrue(cc_report.get("enabled", False))
-            # Verify the promotion received score_bin_ci (even if promotion fails due to PSI)
-            self.assertIn("promotion_ok", cc_report)
-            self.assertIn("promotion_reason", cc_report)
-            # The reason should NOT be "missing score-bin 95% CI" because CI is computed from folds
-            self.assertNotIn("missing score-bin", cc_report.get("promotion_reason", ""), "score_bin_ci should be computed from bootstrap_ci_report")
+        from btcusdt_quant import training, features
+        captured_ci: list[list[dict[str, object]]] = []
+        original_can_promote = features.ChampionChallengerManager.can_promote
+        def _patched_can_promote(self, *args, **kwargs):
+            ci = kwargs.get("score_bin_ci")
+            captured_ci.append(list(ci) if ci is not None else [])
+            return original_can_promote(self, *args, **kwargs)
+        features.ChampionChallengerManager.can_promote = _patched_can_promote
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                data_path = Path(tmpdir) / "btcusdt_1m.csv"
+                dataset.collect_candles(data_path, rows=240)
+                train_dir = Path(tmpdir) / "training"
+                config = training.TrainingConfig(champion_challenger_enabled=True)
+                result = training.run_training(data_path, train_dir, config=config)
+                cc_report = result.run_summary.get("champion_challenger", {})
+                self.assertTrue(cc_report.get("enabled", False))
+                # Verify captured score_bin_ci is non-empty and contains correct keys
+                self.assertTrue(len(captured_ci) > 0, "can_promote must be called with score_bin_ci")
+                ci_rows = captured_ci[0]
+                self.assertTrue(len(ci_rows) > 0, "score_bin_ci must not be empty")
+                for row in ci_rows:
+                    self.assertIn("net_return_ci_lower_95", row, "CI row must contain net_return_ci_lower_95")
+                    self.assertIn("net_return_ci_upper_95", row, "CI row must contain net_return_ci_upper_95")
+        finally:
+            features.ChampionChallengerManager.can_promote = original_can_promote
 
     def test_champion_challenger_delta_gates_work(self) -> None:
         """Delta gates must detect when challenger worsens MDD or Calmar."""
@@ -1378,11 +1390,16 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
                 # Verify run_summary contains optuna applied params
                 optuna_section = result.run_summary.get("optuna", {})
                 self.assertTrue(optuna_section.get("enabled", False))
-                # Verify model artifact contains signal_scale from optuna
+                # Verify model artifact contains signal_scale from optuna (model constructor param)
                 model_path = Path(train_dir) / "model.json"
                 self.assertTrue(model_path.exists(), "model.json should exist")
                 model_data = json.loads(model_path.read_text())
                 self.assertIn("model_family", model_data)
+                # signal_scale must be in model_params (passed to model constructor)
+                model_params = model_data.get("model_params", {})
+                self.assertEqual(model_params.get("signal_scale"), 1.7, "model artifact must contain optuna signal_scale")
+                # threshold must NOT be in model_params (it's a decision param, not model constructor param)
+                self.assertNotIn("threshold", model_params, "threshold must not be in model_params")
                 # Verify every fold threshold is exactly the monkeypatched 0.37
                 for fold in result.fold_results:
                     self.assertEqual(fold.threshold, 0.37, "fold threshold must be overridden by optuna best threshold")
