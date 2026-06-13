@@ -1,8 +1,10 @@
 # v7.18 Remaining Improvements and Operational Validation
 
-**Date**: 2026-06-13  
-**Status**: 100% implementation complete — all blocking and critical gaps resolved.  
+**Date**: 2026-06-13 (Updated)  
+**Status**: 100% implementation complete — all blocking and critical gaps resolved. End-to-end pipeline (collect → train → live) verified.  
 **Scope**: This document lists non-blocking improvements, operational validation requirements, and production readiness items that are NOT code gaps but are required for real trading.
+
+**Latest verification**: 198 tests pass (skipped=1), including end-to-end pipeline test. Commit `b675bf8`.
 
 ---
 
