@@ -397,6 +397,10 @@ class BinanceUsdMFuturesProdAdapter(BinanceUsdMFuturesTestnetAdapter):
         if not ok:
             joined = "; ".join(errors)
             raise RuntimeError(f"production adapter requires valid approval artifacts: {joined}")
+        semantic_ok, semantic_errors = governance.ApprovalValidator().validate(Path(approval_artifacts))
+        if not semantic_ok:
+            joined = "; ".join(semantic_errors)
+            raise RuntimeError(f"production adapter requires semantic approval validation: {joined}")
         super().__init__(credentials, base_url=self.BASE_URL, **kwargs)
 
 

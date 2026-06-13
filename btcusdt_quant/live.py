@@ -63,9 +63,12 @@ class RateLimitManager:
         self.normal_bucket = TokenBucket(normal_capacity, normal_capacity / 60.0, clock)
         self.emergency_bucket = TokenBucket(emergency_capacity, emergency_capacity / 60.0, clock)
         self.backoff_active = False
+        self.backoff_reset_time = 0.0
         self.hard_ban_active = False
+        self._clock = clock
 
     def acquire(self, endpoint: str, weight: int) -> None:
+        self._check_backoff_expired()
         if self.hard_ban_active:
             raise RateLimitHardBanActive(endpoint)
         if self.backoff_active:
@@ -74,19 +77,29 @@ class RateLimitManager:
             raise RateLimitBudgetExceeded(endpoint)
 
     def acquire_emergency(self, endpoint: str, weight: int) -> None:
+        self._check_backoff_expired()
         if self.hard_ban_active:
             raise RateLimitHardBanActive(endpoint)
         if not self.emergency_bucket.consume(weight):
             raise RateLimitBudgetExceeded(endpoint)
 
-    def observe_status(self, status_code: int) -> str:
+    def observe_status(self, status_code: int, retry_after: float | None = None) -> str:
         if status_code == 418:
             self.hard_ban_active = True
             return "hard_kill"
         if status_code == 429:
             self.backoff_active = True
+            if retry_after is not None and retry_after > 0:
+                self.backoff_reset_time = self._clock() + retry_after
+            else:
+                self.backoff_reset_time = self._clock() + 60.0  # default 60s
             return "block_new_entries"
         return "allow"
+
+    def _check_backoff_expired(self) -> None:
+        if self.backoff_active and self._clock() >= self.backoff_reset_time:
+            self.backoff_active = False
+            self.backoff_reset_time = 0.0
 
 
 @dataclass(frozen=True)
@@ -1158,11 +1171,18 @@ def run_live(
     max_candles: int = 12,
     idle_timeout_seconds: float = 0.2,
     exchange_adapter: ExchangeAdapter | None = None,
+    custom_candles: Sequence[data.Candle] | None = None,
 ) -> LiveRunResult:
     if not dry_run and not allow_public_network:
         raise RuntimeError("live mode without --dry-run requires --allow-public-network")
-    fixture = _live_fixture(max(max_candles + 4, 12))
-    if dry_run:
+    if custom_candles is not None:
+        fixture = list(custom_candles)
+        stream_fixture = fixture[:max_candles]
+        client: WebSocketClient = MockWebSocketClient(stream_fixture)
+        fixture_by_time = {candle.open_time: candle for candle in fixture}
+        backfill = RESTBackfill(fetcher=lambda open_times: [fixture_by_time[open_time] for open_time in open_times if open_time in fixture_by_time])
+    elif dry_run:
+        fixture = _live_fixture(max(max_candles + 4, 12))
         omitted = {5, 6, 9}
         stream_fixture = [candle for index, candle in enumerate(fixture[:max_candles]) if index not in omitted]
         client: WebSocketClient = MockWebSocketClient(stream_fixture)
@@ -1220,13 +1240,20 @@ def run_live(
     # Use actual exchange adapter if provided (e.g., testnet), otherwise mock
     active_adapter = exchange_adapter or MockExchangeAdapter()
     parity_passed = bool(source_report.get("train_live_feature_parity_passed", False))
+    # Fetch real position and account state from exchange adapter
+    position = active_adapter.get_position("BTCUSDT")
+    account = active_adapter.get_account()
     entry_action = safe_market_entry(
-        "BTCUSDT", signal, 0.001 if signal in {"BUY", "SELL"} else 0.0,
+        position, signal, 0.001 if signal in {"BUY", "SELL"} else 0.0,
         adapter=active_adapter,
         source_parity_passed=parity_passed,
         gap_action=gap_action,
+        account_balance_usdt=account.available_balance,
+        leverage=position.leverage,
+        notional=0.001 if signal in {"BUY", "SELL"} else 0.0,
         monitor_decisions=monitor_decisions,
         allow_live_orders=not dry_run,
+        submit=not dry_run and signal in {"BUY", "SELL"},
     )
     exit_action = gap_cross_exit(0.0, False, monitor_decisions=monitor_decisions)
     output.mkdir(parents=True, exist_ok=True)

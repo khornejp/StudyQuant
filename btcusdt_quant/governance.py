@@ -525,6 +525,106 @@ class ArtifactWriter:
         return 0
 
 
+class ApprovalValidator:
+    """Semantic validation for production approval artifacts.
+    
+    Verifies that approval artifacts contain required human signoff,
+    security review completion, testnet soak evidence, and that
+    LIVE_DEPLOYMENT stage was reached through proper pipeline progression.
+    """
+
+    def validate(self, output_dir: Path) -> tuple[bool, list[str]]:
+        """Validate approval artifacts with semantic checks.
+        
+        Returns (passed, list_of_errors).
+        """
+        errors: list[str] = []
+        base = output_dir.resolve()
+        
+        # Check manifest integrity first
+        manifest_ok, manifest_errors = verify_manifest(base)
+        if not manifest_ok:
+            errors.extend(manifest_errors)
+            return False, errors
+        
+        # Check LIVE_DEPLOYMENT stage reached
+        stages_path = base / "pipeline_stage_manifest.csv"
+        if not stages_path.exists():
+            errors.append("pipeline_stage_manifest.csv missing — LIVE_DEPLOYMENT not verified")
+        else:
+            stages = self._read_csv_stages(stages_path)
+            if "LIVE_DEPLOYMENT" not in stages:
+                errors.append("LIVE_DEPLOYMENT stage not reached — pipeline incomplete")
+        
+        # Check human signoff attestation
+        signoff_path = base / "security_compliance_signoff.yaml"
+        if not signoff_path.exists():
+            errors.append("security_compliance_signoff.yaml missing — human signoff not found")
+        else:
+            signoff = signoff_path.read_text(encoding="utf-8")
+            if "human_signoff: confirmed" not in signoff:
+                errors.append("human signoff not confirmed — requires human_signoff: confirmed")
+        
+        # Check security review completion
+        if not self._check_security_review(base):
+            errors.append("security review not completed — requires security_review_complete: true")
+        
+        # Check testnet soak evidence (minimum 7 days)
+        if not self._check_testnet_soak(base):
+            errors.append("testnet soak evidence insufficient — requires 7+ days testnet trading")
+        
+        # Check for demo/offline markers
+        if self._check_offline_markers(base):
+            errors.append("offline/demo markers detected — not production ready")
+        
+        return not errors, errors
+    
+    def _read_csv_stages(self, path: Path) -> list[str]:
+        import csv
+        stages: list[str] = []
+        with path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                stage = row.get("stage_name", "")
+                if stage:
+                    stages.append(stage)
+        return stages
+    
+    def _check_security_review(self, base: Path) -> bool:
+        # Check for security review attestation
+        for ext in (".json", ".yaml"):
+            path = base / f"security_review{ext}"
+            if path.exists():
+                text = path.read_text(encoding="utf-8")
+                return "security_review_complete: true" in text or '"security_review_complete": true' in text
+        return False
+    
+    def _check_testnet_soak(self, base: Path) -> bool:
+        # Check for testnet soak evidence file
+        soak_path = base / "testnet_soak_evidence.json"
+        if not soak_path.exists():
+            return False
+        try:
+            payload = json.loads(soak_path.read_text(encoding="utf-8"))
+            days = float(payload.get("days", 0))
+            return days >= 7.0
+        except (json.JSONDecodeError, ValueError, AttributeError):
+            return False
+    
+    def _check_offline_markers(self, base: Path) -> bool:
+        # Check for offline/demo markers in model card
+        model_card_path = base / "model_card.json"
+        if model_card_path.exists():
+            try:
+                payload = json.loads(model_card_path.read_text(encoding="utf-8"))
+                forbidden = str(payload.get("forbidden_use", ""))
+                if "live trading" in forbidden.lower():
+                    return True
+            except json.JSONDecodeError:
+                pass
+        return False
+
+
 def verify_manifest(output_dir: Path) -> tuple[bool, list[str]]:
     base = output_dir.resolve()
     manifest_path = base / "artifact_manifest.json"

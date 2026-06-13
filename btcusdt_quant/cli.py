@@ -37,7 +37,16 @@ def run_demo(output: Path) -> dict[str, object]:
     core_features = features.FeatureSelectionPipeline().core_features([["return_1", "rv"], ["return_1"], ["return_1", "basis"]])
     ci_lower, ci_upper = features.BootstrapCIEngine().ci95([-0.1, 0.0, 0.1])
     budget = features.OptunaBudgetProfiles().get("practical_start")
-    promotion, promotion_reason = features.ChampionChallengerManager().can_promote(30, 100, -0.01, 0.01)
+    promotion, promotion_reason = features.ChampionChallengerManager().can_promote(
+        30, 100, -0.01, 0.01,
+        sharpe=1.5,
+        mdd=0.10,
+        calmar=2.5,
+        score_bin_ci=[(0.02, 0.08)],
+        threshold_flip_rate=0.02,
+        latency_p99_ms=50.0,
+        psi=0.05,
+    )
     approval_build = dataset.build_dataset()
     fitted_calibrator = features.CalibrationModule().fit([0.40, 0.45, 0.55, 0.60], [0, 0, 1, 1], positive_samples=2)
     fitted_calibration = fitted_calibrator.as_dict()
@@ -155,7 +164,9 @@ def run_collect(output: Path, rows: int, allow_public_network: bool = False) -> 
     }
 
 
-def run_collect_archive(start: str, end: str, output: Path, checkpoint: Path | None = None) -> dict[str, object]:
+def run_collect_archive(start: str, end: str, output: Path, checkpoint: Path | None = None, allow_public_network: bool = False) -> dict[str, object]:
+    if not allow_public_network:
+        raise RuntimeError("archive collection requires --allow-public-network")
     summary = dataset.BinanceArchiveDownloader().download_range(start, end, output, checkpoint)
     return {
         "output_dir": summary.output_dir.as_posix(),
@@ -243,6 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect_archive.add_argument("--end", required=True, help="inclusive end date YYYY-MM-DD")
     collect_archive.add_argument("--output", default="artifacts/archive", help="archive output directory")
     collect_archive.add_argument("--checkpoint", default=None, help="optional checkpoint JSON path; defaults to output/checkpoint.json")
+    collect_archive.add_argument("--allow-public-network", action="store_true", help="opt in to public Binance archive download")
     train = subparsers.add_parser("train", help="run deterministic offline CSV/fixture training pipeline")
     train.add_argument("--output", default="artifacts/training", help="training artifact output directory")
     train.add_argument("--input", default=None, help="optional local CSV candles path; defaults to offline fixture")
@@ -297,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
         output = Path(args.output)
         checkpoint = Path(args.checkpoint) if args.checkpoint else None
         try:
-            summary = run_collect_archive(args.start, args.end, output, checkpoint)
+            summary = run_collect_archive(args.start, args.end, output, checkpoint, args.allow_public_network)
         except (OSError, RuntimeError, ValueError) as error:
             print(f"archive collection failed: {error}", file=sys.stderr)
             return 1

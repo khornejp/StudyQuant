@@ -159,10 +159,10 @@ class DataPipelineTests(unittest.TestCase):
     def test_feature_registry_scaffold_status(self) -> None:
         registry = dataset.feature_formula_registry()
         registry_features = cast(list[dict[str, object]], registry["features"])
-        mock_features = [feature for feature in registry_features if feature.get("scaffold_status") == "mock_implemented"]
-        self.assertTrue(mock_features)
-        self.assertTrue({"spread", "bid_ask_imbalance", "adl_indicator", "funding_rate"}.issubset({feature["feature_name"] for feature in mock_features}))
-        self.assertTrue(set(dataset.FEATURE_NAMES) & {feature["feature_name"] for feature in mock_features})
+        pending_features = [feature for feature in registry_features if feature.get("scaffold_status") == "pending_data_source"]
+        self.assertTrue(pending_features)
+        self.assertTrue({"spread", "bid_ask_imbalance", "adl_indicator", "funding_rate"}.issubset({feature["feature_name"] for feature in pending_features}))
+        self.assertFalse(set(dataset.FEATURE_NAMES) & {feature["feature_name"] for feature in pending_features})
 
     def test_warmup_invalid_derived_from_feature_registry(self) -> None:
         original_formulas = dataset.FEATURE_FORMULAS
@@ -400,7 +400,7 @@ class ArchiveDownloaderTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch("btcusdt_quant.cli.dataset.BinanceArchiveDownloader", return_value=FakeDownloader()):
-                code = main(["collect-archive", "--start", "2024-01-01", "--end", "2024-01-01", "--output", tmp])
+                code = main(["collect-archive", "--start", "2024-01-01", "--end", "2024-01-01", "--output", tmp, "--allow-public-network"])
             self.assertEqual(code, 0)
             self.assertTrue((Path(tmp) / "checkpoint.json").exists())
 
