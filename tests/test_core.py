@@ -998,7 +998,12 @@ class GovernanceTests(unittest.TestCase):
         self.assertEqual(profile["bootstrap_samples"], 500)
 
     def test_champion_challenger_manager_promotion_gates(self) -> None:
-        accepted, reason = features.ChampionChallengerManager().can_promote(30, 100, -0.01, 0.01)
+        accepted, reason = features.ChampionChallengerManager().can_promote(
+            30, 100, -0.01, 0.01,
+            sharpe=1.5, mdd=0.10, calmar=2.5,
+            score_bin_ci=[{"lower": 0.01, "upper": 0.05}],
+            threshold_flip_rate=0.02, latency_p99_ms=50.0, psi=0.05,
+        )
         self.assertTrue(accepted)
         self.assertEqual(reason, "promotion gates passed")
 
@@ -1054,7 +1059,7 @@ class GovernanceTests(unittest.TestCase):
         self.assertEqual(features.FeatureSelectionPipeline().core_features([["a", "b"], ["a"], ["a", "c"]]), ["a"])
         self.assertEqual(features.BootstrapCIEngine().ci95([-0.1, 0.0, 0.1]), (-0.1, 0.0))
         self.assertEqual(features.OptunaBudgetProfiles().get("practical_start")["trials"], 200)
-        self.assertTrue(features.ChampionChallengerManager().can_promote(30, 100, -0.01, 0.01)[0])
+        self.assertTrue(features.ChampionChallengerManager().can_promote(30, 100, -0.01, 0.01, sharpe=1.5, mdd=0.10, calmar=2.5, score_bin_ci=[{"lower": 0.01, "upper": 0.05}], threshold_flip_rate=0.02, latency_p99_ms=50.0, psi=0.05)[0])
         self.assertEqual(governance.DataQualityGate().evaluate(1, 0.0, False).action, "block_new_entries")
         self.assertTrue(governance.SourceGradeManager().grade("klines_1m", True, True)["train_live_feature_parity_passed"])
         self.assertEqual(governance.MonitoringSLOEngine().evaluate({"gap_ratio_20": 0.20})["gap_ratio_20"], "block_new_entries")

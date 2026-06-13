@@ -218,10 +218,31 @@ class PublicKlineDownloader:
                 if not isinstance(payload, list):
                     raise ValueError("unexpected kline response payload")
                 return [candle_from_kline_row(row) for row in payload]
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                if exc.code == 418:
+                    # Hard ban: do not retry
+                    raise RuntimeError(f"public kline hard ban (418) on {url}: {exc}") from exc
+                if exc.code == 429 and attempt < max_retries - 1:
+                    # Honor Retry-After if present
+                    retry_after = exc.headers.get("Retry-After")
+                    if retry_after is not None:
+                        try:
+                            sleep_seconds = float(retry_after)
+                        except (ValueError, TypeError):
+                            sleep_seconds = 1.0 * (attempt + 1)
+                    else:
+                        sleep_seconds = 1.0 * (attempt + 1)
+                    time.sleep(sleep_seconds)
+                    continue
+                if attempt < max_retries - 1:
+                    time.sleep(1.0 * (attempt + 1))
+                    continue
             except Exception as exc:
                 last_error = exc
                 if attempt < max_retries - 1:
                     time.sleep(1.0 * (attempt + 1))
+                    continue
         raise RuntimeError(f"public kline fetch failed after {max_retries} attempts: {last_error}")
 
     def fetch_klines_paginated(

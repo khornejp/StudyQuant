@@ -843,25 +843,25 @@ class ChampionChallengerManager:
 
         sharpe = self._optional_float(payload, "sharpe", "sharpe_ratio")
         if sharpe is None:
-            scaffold_status["sharpe"] = "unavailable"
+            reasons.append("missing Sharpe")
         elif sharpe < 1.0:
             reasons.append("Sharpe below 1.0")
 
         mdd = self._optional_float(payload, "mdd", "max_drawdown", "challenger_mdd")
         if mdd is None:
-            scaffold_status["mdd"] = "unavailable"
+            reasons.append("missing MDD")
         elif abs(mdd) >= 0.15:
             reasons.append("MDD exceeds 15%")
 
         calmar = self._optional_float(payload, "calmar", "calmar_ratio", "challenger_calmar")
         if calmar is None:
-            scaffold_status["calmar"] = "unavailable"
+            reasons.append("missing Calmar")
         elif calmar <= 2.0:
             reasons.append("Calmar not above 2.0")
 
         score_bin_ci = payload.get("score_bin_ci", payload.get("score_bin_95_ci"))
         if score_bin_ci is None:
-            scaffold_status["score_bin_95_ci"] = "unavailable"
+            reasons.append("missing score-bin 95% CI")
         else:
             for lower, upper in self._ci_bounds(score_bin_ci):
                 if lower <= 0.0 <= upper:
@@ -870,19 +870,19 @@ class ChampionChallengerManager:
 
         threshold_flip_rate = self._optional_float(payload, "threshold_flip_rate")
         if threshold_flip_rate is None:
-            scaffold_status["threshold_flip_rate"] = "unavailable"
+            reasons.append("missing threshold flip rate")
         elif threshold_flip_rate >= 0.05:
             reasons.append("threshold flip rate exceeds 5%")
 
         latency_p99_ms = self._optional_float(payload, "latency_p99_ms", "latency_p99")
         if latency_p99_ms is None:
-            scaffold_status["latency_p99_ms"] = "scaffold_unavailable"
+            reasons.append("missing latency P99")
         elif latency_p99_ms >= 100.0:
             reasons.append("latency P99 exceeds 100ms")
 
         psi = self._optional_float(payload, "psi", "population_stability_index")
         if psi is None:
-            scaffold_status["psi"] = "scaffold_unavailable"
+            reasons.append("missing PSI")
         elif psi >= 0.10:
             reasons.append("PSI exceeds 0.1")
 

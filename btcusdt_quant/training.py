@@ -141,6 +141,7 @@ class FoldResult:
     calibration_details: dict[str, object]
     validation_metrics: dict[str, float]
     test_metrics: dict[str, float]
+    train_metrics: dict[str, float]
     model_selection: dict[str, object]
 
 
@@ -176,19 +177,22 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     if not splits:
         raise ValueError("not enough labeled rows for configured split")
     # Optional feature selection pipeline (6-stage: Spearman, gain, permutation, SHAP, ablation, core set)
+    # Nested selection: use only the first fold's training data to avoid leakage
     feature_selection_report: dict[str, object] | None = None
     effective_feature_names = build.feature_names
     if training_config.feature_selection_enabled:
         selection_pipeline = features.FeatureSelectionPipeline()
-        # Fit a quick baseline model for permutation/ablation importance
+        # Use first fold's training data only to prevent test-data leakage
+        first_fold_train_indices = _split_indices(splits[0].train) if splits else list(range(len(build.labeled_rows)))
+        first_train_rows = [build.labeled_rows[index] for index in first_fold_train_indices]
         baseline_selection = fit_model_adapter(
-            build.labeled_rows, build.feature_names, training_config,
-            _weights_for_indices(uniqueness, list(range(len(build.labeled_rows)))),
+            first_train_rows, build.feature_names, training_config,
+            _weights_for_indices(uniqueness, first_fold_train_indices),
         )
         feature_selection_report = selection_pipeline.run_full_pipeline(
             model=baseline_selection.adapter,
-            feature_matrix=feature_matrix(build.labeled_rows, build.feature_names),
-            labels=[row.label for row in build.labeled_rows],
+            feature_matrix=feature_matrix(first_train_rows, build.feature_names),
+            labels=[row.label for row in first_train_rows],
             feature_names=build.feature_names,
         )
         selected_core = feature_selection_report.get("core_features", [])
@@ -200,10 +204,14 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         optuna_runner = features.OptunaStudyRunner()
         # Optuna requires a callable model_factory, not an instance
         def _optuna_model_factory(params: Mapping[str, float] | None = None) -> models.ModelAdapter:
+            # Merge Optuna params into model_params so the model actually uses them
+            merged_params = dict(training_config.model_params)
+            if params is not None:
+                merged_params.update(params)
             return models.ModelFactory().create(
                 family=training_config.model_family,
                 feature_names=effective_feature_names,
-                model_params=training_config.model_params,
+                model_params=merged_params,
                 fallback_allowed=training_config.fallback_allowed,
             )
         optuna_report = optuna_runner.run_study(
@@ -237,6 +245,9 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         threshold = select_threshold(calibrated_validation, validation_labels)
         test_probabilities = model.predict_proba(feature_matrix(test_rows, effective_feature_names))
         calibrated_test = calibrator.transform(test_probabilities)
+        train_probabilities = model.predict_proba(feature_matrix(train_rows, effective_feature_names))
+        calibrated_train = calibrator.transform(train_probabilities)
+        train_labels = [row.label for row in train_rows]
         fold_results.append(
             FoldResult(
                 fold_index=fold_index,
@@ -246,6 +257,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 calibration_details=calibrator.as_dict(),
                 validation_metrics=metrics(calibrated_validation, validation_labels, threshold),
                 test_metrics=metrics(calibrated_test, test_labels, threshold),
+                train_metrics=metrics(calibrated_train, train_labels, threshold),
                 model_selection=selection.as_dict(),
             )
         )
@@ -298,11 +310,18 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         avg_test_mdd = mean([fold.test_metrics.get("mdd", 0.0) for fold in fold_results]) if fold_results else 0.0
         avg_test_calmar = mean([fold.test_metrics.get("calmar", 0.0) for fold in fold_results]) if fold_results else 0.0
         avg_test_sharpe = mean([fold.test_metrics.get("sharpe", 0.0) for fold in fold_results]) if fold_results else 0.0
+        # Compute baseline metrics from training (champion) data for delta comparison
+        # Use last fold's train_metrics as the champion baseline (model trained on all prior data)
+        champion_baseline = fold_results[-1].train_metrics if fold_results else {}
+        champion_mdd = champion_baseline.get("mdd", avg_test_mdd)
+        champion_calmar = champion_baseline.get("calmar", avg_test_calmar)
+        mdd_delta = avg_test_mdd - champion_mdd
+        calmar_delta = avg_test_calmar - champion_calmar
         promotion_ok, promotion_reason = champion_mgr.can_promote(
             shadow_days=max(30, len(build.labeled_rows)),
             signal_count=len(build.labeled_rows),
-            mdd_delta=avg_test_mdd,
-            calmar_delta=avg_test_calmar,
+            mdd_delta=mdd_delta,
+            calmar_delta=calmar_delta,
             sharpe=avg_test_sharpe,
             mdd=avg_test_mdd,
             calmar=avg_test_calmar,

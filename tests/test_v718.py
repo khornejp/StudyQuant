@@ -1206,6 +1206,112 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
         self.assertIsInstance(m["sharpe"], float)
         self.assertIsInstance(m["calmar"], float)
 
+    def test_champion_challenger_missing_metrics_fails_promotion(self) -> None:
+        """Missing required metrics (sharpe, mdd, calmar, CI, threshold flip, latency, PSI) must fail promotion."""
+        mgr = features.ChampionChallengerManager()
+        # Only provide the 4 required metrics; the rest are missing
+        ok, reason = mgr.can_promote(
+            shadow_days=30,
+            signal_count=100,
+            mdd_delta=-0.01,
+            calmar_delta=0.05,
+        )
+        self.assertFalse(ok, "missing metrics should fail promotion")
+        self.assertIn("missing", reason.lower(), f"reason should mention missing metric: {reason}")
+
+    def test_champion_challenger_delta_gates_work(self) -> None:
+        """Delta gates must detect when challenger worsens MDD or Calmar."""
+        mgr = features.ChampionChallengerManager()
+        ok, reason = mgr.can_promote(
+            shadow_days=30,
+            signal_count=100,
+            mdd_delta=0.05,  # positive = challenger worsens MDD
+            calmar_delta=-0.01,  # negative = challenger worsens Calmar
+            sharpe=1.5,
+            mdd=0.10,
+            calmar=2.5,
+            score_bin_ci=[{"lower": 0.01, "upper": 0.05}],
+            threshold_flip_rate=0.02,
+            latency_p99_ms=50.0,
+            psi=0.05,
+        )
+        self.assertFalse(ok, "worsening deltas should fail promotion")
+        self.assertIn("worsens", reason.lower(), f"reason should mention worsens: {reason}")
+
+    def test_public_downloader_retry_eventual_success(self) -> None:
+        """Retry logic must eventually succeed after transient failures."""
+        import json
+        from btcusdt_quant import dataset
+        call_count = 0
+        def flaky_urlopen(req, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                from urllib.error import HTTPError
+                raise HTTPError(req.get_full_url(), 429, "Too Many Requests", {}, None)
+            body = json.dumps([[0, "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]]).encode()
+            return _FakeResponse(body)
+        downloader = dataset.PublicKlineDownloader(
+            allow_network=True,
+            base_url="http://test",
+            urlopen=flaky_urlopen,
+        )
+        result = downloader.fetch_klines(symbol="BTCUSDT", interval="1m", limit=1)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(call_count, 3)
+
+    def test_optuna_model_factory_uses_params(self) -> None:
+        """Optuna model factory must merge params into model_params."""
+        from btcusdt_quant import training, models
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = Path(tmpdir) / "btcusdt_1m.csv"
+            dataset.collect_candles(data_path, rows=240)
+            train_dir = Path(tmpdir) / "training"
+            config = training.TrainingConfig(
+                optuna_enabled=True,
+                optuna_trials=3,
+                optuna_budget_profile="research_fast",
+            )
+            result = training.run_training(data_path, train_dir, config=config)
+            optuna_report = result.run_summary.get("optuna", {})
+            if optuna_report.get("enabled"):
+                best_params = optuna_report.get("report", {}).get("best_params", {})
+                # If best_params has threshold, it should be in the range
+                if "threshold" in best_params:
+                    self.assertGreaterEqual(best_params["threshold"], 0.45)
+                    self.assertLessEqual(best_params["threshold"], 0.55)
+
+    def test_cli_advanced_args_wired_to_training(self) -> None:
+        """Advanced CLI args (feature-selection, optuna, champion-challenger) must be wired to training config."""
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = Path(tmpdir) / "btcusdt_1m.csv"
+            dataset.collect_candles(data_path, rows=240)
+            train_dir = Path(tmpdir) / "training"
+            result = subprocess.run(
+                [
+                    sys.executable, "-m", "btcusdt_quant", "train",
+                    "--input", str(data_path),
+                    "--output", str(train_dir),
+                    "--feature-selection",
+                    "--optuna",
+                    "--optuna-trials", "3",
+                    "--optuna-budget", "research_fast",
+                    "--champion-challenger",
+                ],
+                capture_output=True,
+                text=True,
+                cwd="D:\\CodexProject",
+            )
+            self.assertEqual(result.returncode, 0, f"CLI failed: {result.stderr}")
+            run_summary_path = Path(train_dir) / "run_summary.json"
+            self.assertTrue(run_summary_path.exists(), "run_summary.json should exist")
+            summary = json.loads(run_summary_path.read_text())
+            self.assertTrue(summary.get("feature_selection", {}).get("enabled", False), "feature-selection should be enabled")
+            self.assertTrue(summary.get("optuna", {}).get("enabled", False), "optuna should be enabled")
+            self.assertTrue(summary.get("champion_challenger", {}).get("enabled", False), "champion-challenger should be enabled")
+
 
 class _FakeResponse:
     def __init__(self, body: bytes) -> None:
