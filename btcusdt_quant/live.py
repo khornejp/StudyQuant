@@ -13,7 +13,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Callable, Mapping, Sequence
 
-from . import data, dataset, governance, monitoring, sources
+from . import data, dataset, governance, monitoring, sources, training
 from .exchange import MARKET, STOP_MARKET, TAKE_PROFIT_MARKET, ExchangeAdapter, ExchangeOrder, MockExchangeAdapter, MockOrder
 from .risk import DrawdownProtocol, DrawdownState, RiskDecision, RiskPolicy
 
@@ -1164,6 +1164,21 @@ class RESTBackfill:
         return replace(candle, repaired=True, gap_flag=1)
 
 
+def load_model_artifact(path: Path | None, strict: bool = False) -> training.LinearClassifier | None:
+    if path is None:
+        return None
+    if not path.exists():
+        if strict:
+            raise FileNotFoundError(f"model artifact not found: {path}")
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        if strict:
+            raise ValueError(f"model artifact is not a JSON object: {path}")
+        return None
+    return training.LinearClassifier.from_dict(payload)
+
+
 def run_live(
     output: Path,
     dry_run: bool = True,
@@ -1172,6 +1187,8 @@ def run_live(
     idle_timeout_seconds: float = 0.2,
     exchange_adapter: ExchangeAdapter | None = None,
     custom_candles: Sequence[data.Candle] | None = None,
+    model_artifact_path: Path | None = None,
+    source_parity_passed: bool | None = None,
 ) -> LiveRunResult:
     if not dry_run and not allow_public_network:
         raise RuntimeError("live mode without --dry-run requires --allow-public-network")
@@ -1195,6 +1212,15 @@ def run_live(
     detector = StreamGapDetector()
     anomalies: list[str] = []
     desync_events = 0
+    # Initialize drawdown tracking with account balance as peak equity
+    active_adapter = exchange_adapter or MockExchangeAdapter()
+    try:
+        initial_account = active_adapter.get_account()
+        initial_equity = initial_account.available_balance
+    except Exception:
+        initial_equity = 0.0
+    drawdown_state = DrawdownState(peak_equity=initial_equity, current_equity=initial_equity)
+    drawdown_protocol = DrawdownProtocol()
     client.start()
     try:
         processed = 0
@@ -1216,6 +1242,13 @@ def run_live(
                     anomalies.append(detection.anomaly)
                 for repaired in backfill.backfill_missing(detection.missing_open_times):
                     client.add_candle(repaired)
+            # Update drawdown state after each candle using current price as equity proxy
+            try:
+                current_account = active_adapter.get_account()
+                current_equity = current_account.available_balance
+            except Exception:
+                current_equity = candle.close
+            drawdown_state = drawdown_state.update(current_equity)
             processed += 1
     finally:
         client.close()
@@ -1227,10 +1260,66 @@ def run_live(
     funding_monitor_row = monitoring.FundingMonitorService().evaluate(source_bundle.funding_rate)
     calibration_monitor_row = monitoring.CalibrationDriftMonitor().evaluate([], [])
     monitor_decisions = (clock_monitor_row, adl_monitor_row, funding_monitor_row, calibration_monitor_row)
-    feature_rows = dataset.build_feature_rows(canonical, source_bundle=source_bundle)
-    source_report = sources.train_live_feature_parity_report(dataset.FEATURE_NAMES, source_bundle=source_bundle, feature_registry=dataset.feature_formula_registry()["features"])
-    last_return = data.returns(canonical)[-1] if canonical else 0.0
-    signal = "BUY" if last_return > 0 else "SELL" if last_return < 0 else "HOLD"
+    # Fetch real-time F11/F12 data from exchange adapter if available
+    active_adapter = exchange_adapter or MockExchangeAdapter()
+    external_sources: dict[str, object] = {}
+    try:
+        depth = active_adapter.get_depth("BTCUSDT")
+        external_sources["depth_snapshot"] = {
+            "best_bid": depth.best_bid,
+            "best_ask": depth.best_ask,
+            "bid_qty": depth.bid_qty,
+            "ask_qty": depth.ask_qty,
+            "microprice": depth.microprice,
+        }
+    except Exception:
+        pass
+    try:
+        funding = active_adapter.get_funding_rate("BTCUSDT")
+        external_sources["funding_rate"] = {
+            "current_rate": funding.current_rate,
+            "next_rate": funding.next_rate,
+            "minutes_to_next": funding.minutes_to_next,
+        }
+    except Exception:
+        pass
+    try:
+        adl = active_adapter.get_adl_quantile("BTCUSDT")
+        external_sources["adl_quantile"] = {"adl_quantile": adl.adl_quantile}
+    except Exception:
+        pass
+    try:
+        mark = active_adapter.get_mark_price("BTCUSDT")
+        external_sources["mark_price_1m"] = {
+            "mark_price": mark.mark_price,
+            "premium_index": mark.premium_index,
+        }
+    except Exception:
+        pass
+    feature_rows = dataset.build_feature_rows(canonical, source_bundle=source_bundle, external_sources=external_sources)
+    # Evaluate source parity including external_sources availability
+    source_report = sources.train_live_feature_parity_report(
+        dataset.FEATURE_NAMES,
+        source_bundle=source_bundle,
+        feature_registry=dataset.feature_formula_registry()["features"],
+        external_sources=external_sources,
+    )
+    # Load model artifact and generate signal from model inference
+    strict_artifact = model_artifact_path is not None
+    model = load_model_artifact(model_artifact_path, strict=strict_artifact)
+    if model is not None and feature_rows:
+        latest_features = feature_rows[-1].features
+        try:
+            probability = model.probability(latest_features)
+            signal = "BUY" if probability > 0.5 else "SELL" if probability < 0.5 else "HOLD"
+            model_inference = {"probability": probability, "signal": signal, "model_loaded": True}
+        except Exception as inference_error:
+            signal = "HOLD"
+            model_inference = {"probability": None, "signal": signal, "model_loaded": True, "error": str(inference_error)}
+    else:
+        last_return = data.returns(canonical)[-1] if canonical else 0.0
+        signal = "BUY" if last_return > 0 else "SELL" if last_return < 0 else "HOLD"
+        model_inference = {"probability": None, "signal": signal, "model_loaded": False, "fallback": "last_return"}
     # Determine gap-contamination action from actual gap metrics in the latest feature row
     latest_gap_ratio = float(feature_rows[-1].features.get("gap_ratio_20", 0.0)) if feature_rows else 0.0
     latest_max_gap_run = float(feature_rows[-1].features.get("max_gap_run_120", 0.0)) if feature_rows else 0.0
@@ -1239,22 +1328,73 @@ def run_live(
         gap_action = governance.fallback_action("max_gap_run", latest_max_gap_run)
     # Use actual exchange adapter if provided (e.g., testnet), otherwise mock
     active_adapter = exchange_adapter or MockExchangeAdapter()
-    parity_passed = bool(source_report.get("train_live_feature_parity_passed", False))
+    parity_passed = source_parity_passed if source_parity_passed is not None else bool(source_report.get("train_live_feature_parity_passed", False))
     # Fetch real position and account state from exchange adapter
     position = active_adapter.get_position("BTCUSDT")
     account = active_adapter.get_account()
+    entry_quantity = 0.001 if signal in {"BUY", "SELL"} else 0.0
     entry_action = safe_market_entry(
-        position, signal, 0.001 if signal in {"BUY", "SELL"} else 0.0,
+        position, signal, entry_quantity,
         adapter=active_adapter,
         source_parity_passed=parity_passed,
         gap_action=gap_action,
         account_balance_usdt=account.available_balance,
         leverage=position.leverage,
-        notional=0.001 if signal in {"BUY", "SELL"} else 0.0,
+        notional=entry_quantity,
+        drawdown_state=drawdown_state,
         monitor_decisions=monitor_decisions,
         allow_live_orders=not dry_run,
         submit=not dry_run and signal in {"BUY", "SELL"},
     )
+    # Wire TP/SL bracket orders after successful market entry
+    # Note: safe_market_entry already submitted the market entry when submit=True,
+    # so we only submit TP/SL exit orders here to avoid duplicate market entries.
+    bracket_orders: tuple[ExchangeOrder, ExchangeOrder, ExchangeOrder] | None = None
+    bracket_error: str | None = None
+    if entry_action == "market_entry_submitted" and signal in {"BUY", "SELL"}:
+        try:
+            # Use canonical close price for entry price; fallback to adapter fill price if available
+            entry_price = canonical[-1].close if canonical else 0.0
+            if entry_price <= 0.0:
+                # Try to get fill price from the most recent market order on the adapter
+                recent_market_orders = [
+                    order for order in getattr(active_adapter, "orders", ())
+                    if order.symbol == "BTCUSDT" and order.side == signal and order.order_type == MARKET
+                ]
+                if recent_market_orders:
+                    entry_price = float(getattr(recent_market_orders[-1], "avg_fill_price", 0.0) or getattr(recent_market_orders[-1], "price", 0.0) or 0.0)
+            if entry_price > 0.0:
+                if signal == "BUY":
+                    tp_price = entry_price * 1.01
+                    sl_price = entry_price * 0.995
+                else:
+                    tp_price = entry_price * 0.99
+                    sl_price = entry_price * 1.005
+                tp_order, sl_order = submit_take_profit_stop_loss(
+                    adapter=active_adapter,
+                    symbol="BTCUSDT",
+                    position_side=signal,
+                    quantity=entry_quantity,
+                    take_profit_price=round(tp_price, 2),
+                    stop_loss_price=round(sl_price, 2),
+                    allow_live_orders=not dry_run,
+                )
+                # Reconstruct the entry order from the adapter for consistency
+                entry_orders = [
+                    order for order in getattr(active_adapter, "orders", ())
+                    if order.symbol == "BTCUSDT" and order.side == signal and order.order_type == MARKET
+                ]
+                entry_order = entry_orders[-1] if entry_orders else ExchangeOrder(
+                    "BTCUSDT", signal, MARKET, entry_quantity
+                )
+                bracket_orders = (entry_order, tp_order, sl_order)
+            else:
+                bracket_error = "bracket_pricing_failed: no valid entry_price from canonical or adapter"
+                entry_action = "hard_kill"
+        except Exception as bracket_exc:
+            bracket_error = str(bracket_exc)
+            # Fail-safe: bracket failure leaves position unprotected — trigger hard_kill
+            entry_action = "hard_kill"
     exit_action = gap_cross_exit(0.0, False, monitor_decisions=monitor_decisions)
     output.mkdir(parents=True, exist_ok=True)
     dataset.write_candles_csv(output / "live_candles.csv", canonical)
@@ -1276,9 +1416,22 @@ def run_live(
         "unavailable_sources": list(source_report.get("unavailable_sources", ())),
         "train_live_feature_parity_passed": bool(source_report.get("train_live_feature_parity_passed", False)),
         "signal": signal,
+        "model_inference": model_inference,
         "monitoring_actions": [str(row.get("action", "allow")) for row in monitor_decisions],
         "entry_action": entry_action,
         "exit_action": exit_action,
+        "bracket_orders": {
+            "entry_order_id": bracket_orders[0].order_id if bracket_orders else None,
+            "tp_order_id": bracket_orders[1].order_id if bracket_orders else None,
+            "sl_order_id": bracket_orders[2].order_id if bracket_orders else None,
+        } if bracket_orders else None,
+        "bracket_error": bracket_error,
+        "drawdown_state": {
+            "peak_equity": drawdown_state.peak_equity,
+            "current_equity": drawdown_state.current_equity,
+            "max_drawdown": drawdown_state.max_drawdown,
+            "tier": drawdown_state.tier,
+        },
         "output": output.as_posix(),
     }
     (output / "live_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")

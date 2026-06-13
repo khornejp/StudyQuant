@@ -6,7 +6,7 @@
 
 | Gap | Status | File |
 |-----|--------|------|
-| F11/F12 real-time source integration | Pending | `feature_registry.py` |
+| F11/F12 real-time source integration | **Done** | `dataset.py`, `live.py`, `exchange.py` |
 | Live source parity enforcement | Missing | `live.py` |
 | Production semantic approval | Missing | `exchange.py`, `governance.py` |
 | Live order submission | Missing | `live.py` |

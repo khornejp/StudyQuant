@@ -39,12 +39,12 @@ This matrix maps the ProjectMD BTCUSDT v7.18 requirements to the local scaffold 
 
 | ProjectMD requirement | Status | Gap |
 |---|---|---|
-| Live source parity enforcement | Missing | `live.py` does not block entries on missing sources |
+| Live source parity enforcement | **Done** | `live.py` passes `source_parity_passed` to `safe_market_entry()`; blocks entries when parity fails |
 | Production semantic approval | Missing | Only hash verification, no human signoff |
-| Real order submission | Missing | `submit=True` not called in live loop |
-| Risk state wiring | Missing | Balance, leverage, drawdown not fetched |
+| Real order submission | **Done** | `submit=True` called in live loop when gates pass; real position/account fetched |
+| Risk state wiring | Partial | Balance, leverage, position fetched; drawdown state not maintained across iterations |
 | Retry-After respect | Partial | Header parsed but not consumed by rate limiter |
-| F11/F12 real-time sources | Pending | 15 features require depth/funding/ADL/mark-price |
+| F11/F12 real-time sources | **Done** | 15 features compute from depth/funding/ADL/mark-price when available; mock defaults when offline |
 
 ## Explicit non-production boundary
 

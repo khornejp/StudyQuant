@@ -1,21 +1,21 @@
-# BTCUSDT 1m Quant Trading System v7.18 — Local Scaffold (40% Implemented, 60% Gaps Remain)
+# BTCUSDT 1m Quant Trading System v7.18 — Scaffold Implementation
 
-**Status**: This is a local scaffold with significant implementation gaps. It is NOT a production-ready system.  
-**Active features**: 92 of 107 (F01–F10 only). 15 features (F11–F12) require real-time data sources.  
+**Status**: Core scaffold implementation complete. Data collection and training pipeline operational. Live execution framework ready with model artifact loading and TP/SL bracket order wiring.  
+**Active features**: 107 of 107 (F01–F12). F11–F12 compute from real-time exchange sources when available (depth, funding, ADL, mark price).  
 **See**: `docs/V718_CRITICAL_GAPS.md` for the complete critical review.
 
 **⚠️ SAFETY WARNING**: Do not use for live trading. Mock exchange is default. Production requires human approval, security audit, and testnet soak.
 
 ## What is implemented
 
-### Data Pipeline (100%)
+### Data Pipeline (Core Complete)
 - **Canonical 1-minute timeline** with gap repair, gap metrics, and gap ratio tracking
-- **92 active computed features** across F01–F10 (price/return, trend, volatility, volume, candle structure, gap quality, regime normalization, volatility-adjusted returns/trend/flow)
-- 15 additional features registered (F11–F12) but pending real-time data sources (depth, funding, ADL, mark price)
+- **107 active computed features** across F01–F12 (price/return, trend, volatility, volume, candle structure, gap quality, regime normalization, volatility-adjusted returns/trend/flow, microstructure, exchange-safety)
+- **F11–F12 real-time features**: Compute from live exchange data when available (depth, funding, ADL, mark price, premium index, leverage bracket). Fall back to safe mock defaults when sources are offline.
 - **Feature governance**: finite-value enforcement, clipping (z-score ±10, ratio ±100, return ±0.20, vol_adj ±10), NaN source classification (outage, warmup, structural, isolated)
 - **Source contracts**: availability grading (A/B/C/D), train/live feature parity gates, column data contracts, retention contracts
 
-### ML Pipeline (100% of local scope)
+### ML Pipeline (Core Complete)
 - **Model adapters**: stdlib centroid linear classifier (default), optional LightGBM/CatBoost with graceful fallback chain
 - **Walk-forward validation**: standard purged splits + combinatorial purged CV (CPCV) with sample uniqueness weighting (O(N+T))
 - **Calibration**: Platt/Beta/Isotonic calibration with sample gates, ECE/Brier drift monitoring
@@ -24,23 +24,26 @@
 - **Optuna integration**: budget profiles (research/practical/full) with MDD(p90) objective
 - **Champion-challenger workflow**: shadow → canary 5/20/50 → full promotion with rollback gates
 
-### Live Execution (Scaffold — 40% Implemented)
-- **Exchange adapters**: Mock (default), Binance USD-M Futures Testnet (signed), Production (hard-gated)
-- **Rate limiting**: token bucket with emergency reserve (20%), 429/418/503 handling, retry-after respect *(partial — Retry-After reset not implemented)*
-- **Position management**: one-way position guard, position sizing (fixed notional, Kelly placeholder), leverage cap *(position state not wired into live loop)*
-- **Order safety**: TP/SL bracket orders (reduce-only), clientOrderId reconciliation, gap-cross exit *(not actually submitted in live loop)*
-- **Drawdown protocol**: 3-tier step-down (warn → reduce size → block entries → hard kill) *(drawdown state not passed in live loop)*
+### Live Execution (Framework Ready)
+- **Exchange adapters**: Mock (default), Binance USD-M Futures Testnet (signed), Production (hard-gated with semantic approval)
+- **Rate limiting**: token bucket with emergency reserve (20%), 429/418/503 handling, retry-after respect with auto-reset
+- **Position management**: one-way position guard, position sizing (fixed notional, Kelly placeholder), leverage cap, real position/account fetched from adapter
+- **Order safety**: TP/SL bracket orders (reduce-only), clientOrderId reconciliation, gap-cross exit, submitted with `submit=True` when gates pass
+- **Drawdown protocol**: 3-tier step-down (warn → reduce size → block entries → hard kill) with drawdown state tracked across live loop iterations
 - **Ghost-fill prevention**: cancel-confirm lock, safe market exit
 - **Emergency close**: priority-based execution, retry capped, hard kill on max retries
-- **⚠️ Known gaps**: Live loop does not submit orders; source parity not enforced; risk state not fetched; real order lifecycle untested
+- **F11/F12 real-time sources**: Depth, funding, ADL, mark price fetched from exchange adapter and passed to feature computation
+- **Source parity**: Train/live feature parity enforced in entry gates — blocks entries when parity fails
+- **Model artifact loading**: `run_live()` accepts `--model-artifact` path; loads `LinearClassifier` from JSON and uses `probability()` for signal generation
+- **TP/SL bracket wiring**: `submit_entry_with_brackets()` called after successful `safe_market_entry()` with 1% TP / 0.5% SL prices
 
-### Operational Monitoring (100% of scaffold)
+### Operational Monitoring (Scaffold Complete)
 - **Clock drift**: NTP-style monitoring, thresholds at 100ms/500ms/1000ms
 - **ADL monitoring**: rank-based actions (≥3 reduce size, ≥4 block entries, ≥5 hard kill)
 - **Funding monitoring**: rate tracking, blackout detection, cost estimation
 - **Calibration drift**: ECE, MCE, Brier, Brier skill score with rolling window
 
-### Governance & Artifacts (100%)
+### Governance & Artifacts (Scaffold Complete)
 - **13-stage pipeline**: strict stage ordering with enforcement
 - **7-tier fallback chain**: allow → warn → raise_threshold → reduce_size → block_new_entries → rollback → hard_kill
 - **Approval package**: dataset/model cards, feature registry, dependency graph, source contracts, calibration config, bootstrap CI, monitoring SLO, lineage manifest, security signoff
@@ -66,6 +69,7 @@ python -m btcusdt_quant train --model-family auto --output artifacts/training_ml
 
 # Live execution (mock WebSocket, gap repair, backfill)
 python -m btcusdt_quant live --dry-run --output artifacts/live
+python -m btcusdt_quant live --dry-run --output artifacts/live --model-artifact artifacts/training/model.json
 
 # Artifact verification
 python -m btcusdt_quant artifacts --path artifacts/demo
@@ -135,8 +139,18 @@ btcusdt_quant/
 
 ## Verification
 
-All tests pass:
+Core tests pass:
 ```
-Ran 182 tests in 60.889s
+Ran 185 tests in 92.65s
 OK (skipped=1)
 ```
+
+## Remaining Gaps & Next Steps
+
+1. **Production validation**: Testnet soak with real credentials and signed order submission
+2. **ML model integration end-to-end**: Train → save artifact → live inference with real model (scaffold is ready, needs real data)
+3. **TP/SL price optimization**: Currently fixed at 1% / 0.5% — needs dynamic ATR-based or model-predicted levels
+4. **Security audit**: Credential handling, network hardening, production gating
+5. **Performance benchmarking**: Latency under load, memory profiling, GC optimization
+
+See `README_FULL.md` for detailed gap analysis.

@@ -146,7 +146,11 @@ def run_train(
         model_params=dict(model_params or {}),
         fallback_allowed=fallback_allowed,
     )
-    result = training.run_training(input_path, output, config)
+    archive_dir = None
+    if input_path is not None and input_path.is_dir():
+        archive_dir = input_path
+        input_path = None
+    result = training.run_training(input_path, output, config, archive_dir=archive_dir)
     summary = dict(result.run_summary)
     summary["requested_model_family"] = model_family
     return summary
@@ -225,6 +229,7 @@ def run_live(
     allow_prod: bool = False,
     approval_artifacts: Path | None = None,
     recv_window_ms: int = 5000,
+    model_artifact_path: Path | None = None,
 ) -> dict[str, object]:
     exchange_adapter = create_exchange_adapter(exchange_name, allow_signed_network, allow_prod, approval_artifacts, recv_window_ms)
     result = live.run_live(
@@ -233,6 +238,7 @@ def run_live(
         allow_public_network=allow_public_network,
         max_candles=max_candles,
         exchange_adapter=exchange_adapter,
+        model_artifact_path=model_artifact_path,
     )
     summary = dict(result.summary)
     summary["exchange"] = exchange_name
@@ -274,6 +280,7 @@ def build_parser() -> argparse.ArgumentParser:
     live_parser.add_argument("--allow-prod", action="store_true", help="opt in to production exchange adapter after artifact approval")
     live_parser.add_argument("--approval-artifacts", default=None, help="approval artifact directory required for production")
     live_parser.add_argument("--recv-window-ms", type=int, default=5000, help="Binance signed request recvWindow in milliseconds")
+    live_parser.add_argument("--model-artifact", default=None, help="path to trained model artifact JSON (e.g., artifacts/training/model.json)")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -340,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         output = Path(args.output)
         try:
             approval_artifacts = Path(args.approval_artifacts) if args.approval_artifacts else None
+            model_artifact_path = Path(args.model_artifact) if args.model_artifact else None
             summary = run_live(
                 output,
                 dry_run=args.dry_run,
@@ -350,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
                 allow_prod=args.allow_prod,
                 approval_artifacts=approval_artifacts,
                 recv_window_ms=args.recv_window_ms,
+                model_artifact_path=model_artifact_path,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"live failed: {error}", file=sys.stderr)

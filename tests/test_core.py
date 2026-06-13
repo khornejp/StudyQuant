@@ -156,13 +156,16 @@ class DataPipelineTests(unittest.TestCase):
         categories = {feature["category"] for feature in registry_features}
         self.assertEqual(categories, {f"F{index:02d}" for index in range(1, 13)})
 
-    def test_feature_registry_scaffold_status(self) -> None:
+    def test_feature_registry_all_features_active(self) -> None:
         registry = dataset.feature_formula_registry()
         registry_features = cast(list[dict[str, object]], registry["features"])
         pending_features = [feature for feature in registry_features if feature.get("scaffold_status") == "pending_data_source"]
-        self.assertTrue(pending_features)
-        self.assertTrue({"spread", "bid_ask_imbalance", "adl_indicator", "funding_rate"}.issubset({feature["feature_name"] for feature in pending_features}))
-        self.assertFalse(set(dataset.FEATURE_NAMES) & {feature["feature_name"] for feature in pending_features})
+        # F11/F12 are now active — no pending features should remain
+        self.assertFalse(pending_features, "all features should be active; no pending_data_source features")
+        active_names = set(dataset.FEATURE_NAMES)
+        all_names = {feature["feature_name"] for feature in registry_features}
+        self.assertEqual(active_names, all_names, "FEATURE_NAMES must include all registered features")
+        self.assertTrue({"spread", "bid_ask_imbalance", "adl_indicator", "funding_rate"}.issubset(active_names), "F11/F12 features must be active")
 
     def test_warmup_invalid_derived_from_feature_registry(self) -> None:
         original_formulas = dataset.FEATURE_FORMULAS
@@ -324,15 +327,15 @@ class ArchiveDownloaderTests(unittest.TestCase):
             summary = downloader.download_range("2024-01-01", "2024-01-01", Path(tmp), Path(tmp) / "checkpoint.json")
             self.assertEqual(summary.downloaded_days, 1)
             self.assertEqual(summary.failed_days, 0)
-            self.assertTrue((Path(tmp) / "2024-01-01_BTCUSDT-1m.zip").exists())
-            self.assertTrue((Path(tmp) / "2024-01-01_BTCUSDT-1m.csv").exists())
+            self.assertTrue((Path(tmp) / "BTCUSDT-1m-2024-01-01.zip").exists())
+            self.assertTrue((Path(tmp) / "BTCUSDT-1m-2024-01-01.csv").exists())
             self.assertEqual(len(dataset.load_archive_candles(Path(tmp))), 2)
 
     def test_archive_downloader_resumes_from_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint = Path(tmp) / "checkpoint.json"
             checkpoint.write_text(
-                json.dumps({"last_completed_date": "2024-01-01", "downloaded_files": ["2024-01-01_BTCUSDT-1m.zip"], "failed_dates": []}),
+                json.dumps({"last_completed_date": "2024-01-01", "downloaded_files": ["BTCUSDT-1m-2024-01-01.zip"], "failed_dates": []}),
                 encoding="utf-8",
             )
             payload = make_archive_zip(make_archive_csv(day="2024-01-02", rows=1))
@@ -341,7 +344,7 @@ class ArchiveDownloaderTests(unittest.TestCase):
             summary = downloader.download_range("2024-01-01", "2024-01-02", Path(tmp), checkpoint)
             self.assertEqual(urlopen.call_count, 1)
             self.assertEqual(summary.last_completed_date, "2024-01-02")
-            self.assertIn("2024-01-02_BTCUSDT-1m.zip", summary.downloaded_files)
+            self.assertIn("BTCUSDT-1m-2024-01-02.zip", summary.downloaded_files)
 
     def test_archive_downloader_retry_on_429(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -363,7 +366,7 @@ class ArchiveDownloaderTests(unittest.TestCase):
             summary = downloader.download_range("2024-01-01", "2024-01-01", Path(tmp), Path(tmp) / "checkpoint.json")
             self.assertEqual(summary.downloaded_days, 0)
             self.assertEqual(summary.failed_dates, ("2024-01-01",))
-            self.assertFalse((Path(tmp) / "2024-01-01_BTCUSDT-1m.csv").exists())
+            self.assertFalse((Path(tmp) / "BTCUSDT-1m-2024-01-01.csv").exists())
 
     def test_archive_downloader_checkpoint_format(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -374,13 +377,13 @@ class ArchiveDownloaderTests(unittest.TestCase):
             payload = json.loads(checkpoint.read_text(encoding="utf-8"))
             self.assertEqual(set(payload), {"last_completed_date", "downloaded_files", "failed_dates"})
             self.assertEqual(payload["last_completed_date"], "2024-01-01")
-            self.assertEqual(payload["downloaded_files"], ["2024-01-01_BTCUSDT-1m.zip"])
+            self.assertEqual(payload["downloaded_files"], ["BTCUSDT-1m-2024-01-01.zip"])
             self.assertEqual(payload["failed_dates"], [])
 
     def test_build_dataset_from_archive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp)
-            (archive / "2024-01-01_BTCUSDT-1m.csv").write_text(make_archive_csv(rows=30), encoding="utf-8")
+            (archive / "BTCUSDT-1m-2024-01-01.csv").write_text(make_archive_csv(rows=30), encoding="utf-8")
             build = dataset.build_dataset(archive_dir=archive)
             self.assertEqual(build.source, archive.as_posix())
             self.assertEqual(build.raw_rows, 30)
@@ -493,11 +496,13 @@ class DataQualityEdgeTests(unittest.TestCase):
         self.assertEqual(len(rows), 3)
         registry = dataset.feature_formula_registry()
         mock_features = {str(f["feature_name"]) for f in registry["features"] if f.get("scaffold_status") == "mock_implemented"}
+        # F11/F12 features compute from external_sources (or fallback defaults) and do not depend on OHLCV
+        external_source_features = {str(f["feature_name"]) for f in registry["features"] if f.get("source") in {"depth_snapshot", "adl_quantile", "funding_rate", "mark_price_1m", "premium_index_1m", "leverage_bracket"}}
         for row in rows:
             self.assertEqual(set(row.features), set(dataset.FEATURE_NAMES))
             for name, value in row.features.items():
-                if name in mock_features:
-                    # Mock features return hardcoded defaults even when inputs are all NaN
+                if name in mock_features or name in external_source_features:
+                    # Features with mock defaults or external source fallbacks return values even when OHLCV inputs are NaN
                     self.assertIsNotNone(value)
                 else:
                     self.assertTrue(value == 0.0 or value != value or value is None, f"feature {name} must be 0.0 or NaN or None when all inputs are NaN")

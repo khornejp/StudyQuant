@@ -18,7 +18,7 @@
 - [ ] Robust public collection pagination with retry/429 handling
 - [ ] WebSocket ingestion with REST backfill
 - [ ] Live/train feature parity enforcement
-- [ ] F11/F12 microstructure source integration (depth, funding, ADL)
+- [x] F11/F12 microstructure source integration (depth, funding, ADL, mark price) — **Done**
 
 ### ML Pipeline
 - [ ] LightGBM/CatBoost/Optuna lazy imports with graceful fallback

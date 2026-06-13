@@ -87,6 +87,42 @@ class ListenKeyState:
     raw: Mapping[str, object] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class DepthSnapshot:
+    symbol: str
+    best_bid: float
+    best_ask: float
+    bid_qty: float
+    ask_qty: float
+    microprice: float
+    raw: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class FundingRate:
+    symbol: str
+    current_rate: float
+    next_rate: float
+    next_funding_time: int
+    minutes_to_next: float
+    raw: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ADLQuantile:
+    symbol: str
+    adl_quantile: int
+    raw: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MarkPrice:
+    symbol: str
+    mark_price: float
+    premium_index: float
+    raw: Mapping[str, object] = field(default_factory=dict)
+
+
 class ExchangeAdapter(Protocol):
     network_enabled: bool
 
@@ -117,6 +153,18 @@ class ExchangeAdapter(Protocol):
         ...
 
     def delete_listen_key(self, listen_key: str) -> ListenKeyState:
+        ...
+
+    def get_depth(self, symbol: str, limit: int = 5) -> DepthSnapshot:
+        ...
+
+    def get_funding_rate(self, symbol: str) -> FundingRate:
+        ...
+
+    def get_adl_quantile(self, symbol: str) -> ADLQuantile:
+        ...
+
+    def get_mark_price(self, symbol: str) -> MarkPrice:
         ...
 
 
@@ -190,6 +238,39 @@ class MockExchangeAdapter:
             raise ValueError("invalid order type")
         if order.quantity <= 0:
             raise ValueError("quantity must be positive")
+
+    def get_depth(self, symbol: str, limit: int = 5) -> DepthSnapshot:
+        if symbol != "BTCUSDT":
+            raise ValueError("only BTCUSDT fixture is supported")
+        return DepthSnapshot(
+            symbol=symbol,
+            best_bid=100_000.0,
+            best_ask=100_010.0,
+            bid_qty=1.5,
+            ask_qty=1.2,
+            microprice=100_005.0,
+        )
+
+    def get_funding_rate(self, symbol: str) -> FundingRate:
+        if symbol != "BTCUSDT":
+            raise ValueError("only BTCUSDT fixture is supported")
+        return FundingRate(
+            symbol=symbol,
+            current_rate=0.0001,
+            next_rate=0.0001,
+            next_funding_time=int(time.time()) + 28800,
+            minutes_to_next=480.0,
+        )
+
+    def get_adl_quantile(self, symbol: str) -> ADLQuantile:
+        if symbol != "BTCUSDT":
+            raise ValueError("only BTCUSDT fixture is supported")
+        return ADLQuantile(symbol=symbol, adl_quantile=0)
+
+    def get_mark_price(self, symbol: str) -> MarkPrice:
+        if symbol != "BTCUSDT":
+            raise ValueError("only BTCUSDT fixture is supported")
+        return MarkPrice(symbol=symbol, mark_price=100_005.0, premium_index=0.0001)
 
 
 class BinanceUsdMFuturesTestnetAdapter:
@@ -305,6 +386,52 @@ class BinanceUsdMFuturesTestnetAdapter:
         response = self._send("DELETE", "/fapi/v1/listenKey", {"listenKey": listen_key}, signed=False, api_key_required=True)
         status = "DELETED" if 200 <= response.status_code < 300 else "ERROR"
         return ListenKeyState(listen_key, status=status, raw=_mapping_payload(response.payload, response.status_code))
+
+    def get_depth(self, symbol: str, limit: int = 5) -> DepthSnapshot:
+        response = self._send("GET", "/fapi/v1/depth", {"symbol": symbol, "limit": limit}, signed=False, api_key_required=False)
+        payload = response.payload
+        if isinstance(payload, Mapping):
+            bids = payload.get("bids", [])
+            asks = payload.get("asks", [])
+            if isinstance(bids, Sequence) and len(bids) > 0 and isinstance(asks, Sequence) and len(asks) > 0:
+                best_bid = float(bids[0][0]) if isinstance(bids[0], Sequence) and len(bids[0]) > 0 else 0.0
+                best_ask = float(asks[0][0]) if isinstance(asks[0], Sequence) and len(asks[0]) > 0 else 0.0
+                bid_qty = float(bids[0][1]) if isinstance(bids[0], Sequence) and len(bids[0]) > 1 else 0.0
+                ask_qty = float(asks[0][1]) if isinstance(asks[0], Sequence) and len(asks[0]) > 1 else 0.0
+                microprice = (best_bid + best_ask) / 2.0
+                return DepthSnapshot(symbol=symbol, best_bid=best_bid, best_ask=best_ask, bid_qty=bid_qty, ask_qty=ask_qty, microprice=microprice, raw=payload)
+        return DepthSnapshot(symbol=symbol, best_bid=0.0, best_ask=0.0, bid_qty=0.0, ask_qty=0.0, microprice=0.0, raw={"http_status": response.status_code})
+
+    def get_funding_rate(self, symbol: str) -> FundingRate:
+        response = self._send("GET", "/fapi/v1/premiumIndex", {"symbol": symbol}, signed=False, api_key_required=False)
+        payload = response.payload
+        if isinstance(payload, Mapping):
+            current_rate = _float_value(payload.get("lastFundingRate"))
+            next_rate = _float_value(payload.get("lastFundingRate"))
+            next_funding_time = int(payload.get("nextFundingTime", 0))
+            minutes_to_next = max(0.0, (next_funding_time - int(self.clock() * 1000)) / 60000.0)
+            return FundingRate(symbol=symbol, current_rate=current_rate, next_rate=next_rate, next_funding_time=next_funding_time, minutes_to_next=minutes_to_next, raw=payload)
+        return FundingRate(symbol=symbol, current_rate=0.0, next_rate=0.0, next_funding_time=0, minutes_to_next=0.0, raw={"http_status": response.status_code})
+
+    def get_adl_quantile(self, symbol: str) -> ADLQuantile:
+        response = self._send("GET", "/fapi/v1/adlQuantile", {"symbol": symbol}, signed=True, api_key_required=True)
+        payload = response.payload
+        if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes)):
+            for row in payload:
+                if isinstance(row, Mapping) and row.get("symbol") == symbol:
+                    return ADLQuantile(symbol=symbol, adl_quantile=int(row.get("adlQuantile", 0)), raw=row)
+        if isinstance(payload, Mapping):
+            return ADLQuantile(symbol=symbol, adl_quantile=int(payload.get("adlQuantile", 0)), raw=payload)
+        return ADLQuantile(symbol=symbol, adl_quantile=0, raw={"http_status": response.status_code})
+
+    def get_mark_price(self, symbol: str) -> MarkPrice:
+        response = self._send("GET", "/fapi/v1/premiumIndex", {"symbol": symbol}, signed=False, api_key_required=False)
+        payload = response.payload
+        if isinstance(payload, Mapping):
+            mark_price = _float_value(payload.get("markPrice"))
+            premium_index = _float_value(payload.get("lastFundingRate"))
+            return MarkPrice(symbol=symbol, mark_price=mark_price, premium_index=premium_index, raw=payload)
+        return MarkPrice(symbol=symbol, mark_price=0.0, premium_index=0.0, raw={"http_status": response.status_code})
 
     def _send(
         self,

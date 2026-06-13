@@ -46,6 +46,60 @@ class LinearClassifier:
             "calibration_offset": self.calibration_offset,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> LinearClassifier:
+        model_family = payload.get("model_family", "")
+        if not isinstance(model_family, str) or "deterministic_centroid_linear" not in model_family:
+            raise ValueError(f"unsupported model_family for LinearClassifier: {model_family}")
+        feature_names = payload.get("feature_names", ())
+        if isinstance(feature_names, str):
+            feature_names = (feature_names,)
+        feature_names = tuple(str(name) for name in feature_names)
+        if not feature_names:
+            raise ValueError("feature_names must be non-empty")
+        means = payload.get("standardizer_means", {})
+        scales = payload.get("standardizer_scales", {})
+        weights = payload.get("weights", {})
+        intercept = float(payload.get("intercept", 0.0))
+        calibration_offset = float(payload.get("calibration_offset", 0.0))
+        if not isinstance(means, Mapping):
+            raise ValueError("standardizer_means must be a mapping")
+        if not isinstance(scales, Mapping):
+            raise ValueError("standardizer_scales must be a mapping")
+        if not isinstance(weights, Mapping):
+            raise ValueError("weights must be a mapping")
+        # Validate every feature has required entries
+        for name in feature_names:
+            if name not in means:
+                raise ValueError(f"missing standardizer_means for feature: {name}")
+            if name not in scales:
+                raise ValueError(f"missing standardizer_scales for feature: {name}")
+            if name not in weights:
+                raise ValueError(f"missing weight for feature: {name}")
+        # Validate finite floats and non-zero scales
+        float_means = {str(k): float(v) for k, v in means.items()}
+        float_scales = {str(k): float(v) for k, v in scales.items()}
+        float_weights = {str(k): float(v) for k, v in weights.items()}
+        for name in feature_names:
+            if not isfinite(float_means[name]):
+                raise ValueError(f"non-finite mean for feature: {name}")
+            if not isfinite(float_scales[name]) or float_scales[name] == 0.0:
+                raise ValueError(f"non-finite or zero scale for feature: {name}")
+            if not isfinite(float_weights[name]):
+                raise ValueError(f"non-finite weight for feature: {name}")
+        if not isfinite(intercept):
+            raise ValueError("intercept must be finite")
+        if not isfinite(calibration_offset):
+            raise ValueError("calibration_offset must be finite")
+        standardizer = Standardizer(float_means, float_scales)
+        return cls(
+            feature_names=feature_names,
+            standardizer=standardizer,
+            weights=float_weights,
+            intercept=intercept,
+            calibration_offset=calibration_offset,
+        )
+
 
 @dataclass(frozen=True)
 class TrainingConfig:
@@ -95,9 +149,9 @@ class TrainingResult:
     artifacts: list[str]
 
 
-def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None) -> TrainingResult:
+def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None) -> TrainingResult:
     training_config = config or TrainingConfig()
-    build = dataset.build_dataset(input_path=input_path)
+    build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir)
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
     sample_intervals = cv.sample_intervals_from_labeled_rows(build.labeled_rows, build.label_horizon)

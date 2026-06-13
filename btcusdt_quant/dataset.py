@@ -188,12 +188,24 @@ class PublicKlineDownloader:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
 
-    def fetch_klines(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 500) -> list[data.Candle]:
+    def fetch_klines(
+        self,
+        symbol: str = "BTCUSDT",
+        interval: str = "1m",
+        limit: int = 500,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+    ) -> list[data.Candle]:
         if not self.allow_network:
             raise RuntimeError("public kline download requires explicit allow_network=True")
         if limit <= 0 or limit > 1500:
             raise ValueError("limit must be between 1 and 1500")
-        query = urllib.parse.urlencode({"symbol": symbol, "interval": interval, "limit": limit})
+        params: dict[str, object] = {"symbol": symbol, "interval": interval, "limit": limit}
+        if start_time_ms is not None:
+            params["startTime"] = start_time_ms
+        if end_time_ms is not None:
+            params["endTime"] = end_time_ms
+        query = urllib.parse.urlencode(params)
         url = f"{self.base_url}/fapi/v1/klines?{query}"
         request = urllib.request.Request(url, headers={"User-Agent": "btcusdt-quant-offline-research/0.1"})
         with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
@@ -201,6 +213,37 @@ class PublicKlineDownloader:
         if not isinstance(payload, list):
             raise ValueError("unexpected kline response payload")
         return [candle_from_kline_row(row) for row in payload]
+
+    def fetch_klines_paginated(
+        self,
+        symbol: str = "BTCUSDT",
+        interval: str = "1m",
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+        max_rows: int = 10000,
+    ) -> list[data.Candle]:
+        if not self.allow_network:
+            raise RuntimeError("public kline download requires explicit allow_network=True")
+        all_candles: list[data.Candle] = []
+        current_start = start_time_ms
+        while len(all_candles) < max_rows:
+            batch = self.fetch_klines(
+                symbol=symbol,
+                interval=interval,
+                limit=1500,
+                start_time_ms=current_start,
+                end_time_ms=end_time_ms,
+            )
+            if not batch:
+                break
+            all_candles.extend(batch)
+            if len(batch) < 1500:
+                break
+            last_open_time_ms = int(batch[-1].open_time.timestamp() * 1000)
+            current_start = last_open_time_ms + 1
+            if end_time_ms is not None and current_start > end_time_ms:
+                break
+        return all_candles[:max_rows]
 
 
 class BinanceArchiveDownloader:
@@ -278,8 +321,8 @@ class BinanceArchiveDownloader:
         return _archive_summary(destination, checkpoint_path, start, end, checkpoint)
 
     def _download_day(self, day: date, output_dir: Path) -> str:
-        zip_name = f"{day.isoformat()}_{self.symbol}-{self.interval}.zip"
-        csv_name = f"{day.isoformat()}_{self.symbol}-{self.interval}.csv"
+        zip_name = f"{self.symbol}-{self.interval}-{day.isoformat()}.zip"
+        csv_name = f"{self.symbol}-{self.interval}-{day.isoformat()}.csv"
         url = f"{self.base_url}/{zip_name}"
         request = urllib.request.Request(url, headers={"User-Agent": "btcusdt-quant-archive-crawler/0.1"})
         backoff_seconds = 1.0
@@ -473,7 +516,7 @@ def _archive_summary(output_dir: Path, checkpoint_file: Path, start: date, end: 
     requested_dates = {day.isoformat() for day in _iter_archive_dates(start, end)}
     downloaded_files = tuple(_string_list(checkpoint.get("downloaded_files")))
     failed_dates = tuple(_string_list(checkpoint.get("failed_dates")))
-    downloaded_days = sum(1 for filename in downloaded_files if filename[:10] in requested_dates)
+    downloaded_days = sum(1 for filename in downloaded_files if _extract_date_from_archive_filename(filename) in requested_dates)
     failed_days = sum(1 for failed_date in failed_dates if failed_date in requested_dates)
     last_completed = checkpoint.get("last_completed_date")
     return ArchiveDownloadSummary(
@@ -488,6 +531,13 @@ def _archive_summary(output_dir: Path, checkpoint_file: Path, start: date, end: 
         downloaded_files=downloaded_files,
         failed_dates=failed_dates,
     )
+
+
+def _extract_date_from_archive_filename(filename: str) -> str:
+    # Extract date from BTCUSDT-1m-YYYY-MM-DD.zip or YYYY-MM-DD_BTCUSDT-1m.zip
+    from re import search
+    match = search(r"\d{4}-\d{2}-\d{2}", filename)
+    return match.group(0) if match else filename[:10]
 
 
 def load_csv_candles(path: Path) -> list[data.Candle]:
@@ -885,23 +935,22 @@ def build_feature_rows(
             "volume_zscore_20_vol_adj": volume_zscore_20 / rv_60_denominator,
             "trade_count_zscore_20_vol_adj": trade_count_zscore_20 / rv_60_denominator,
             "taker_imbalance_vol_adj": taker_imbalance / rv_60_denominator,
-            # F11 microstructure features — mock values when real-time depth unavailable
-            "spread": 0.0001,
-            "spread_bps": 1.0,
-            "bid_ask_imbalance": 0.0,
-            "best_bid_qty_ratio": 0.5,
-            "best_ask_qty_ratio": 0.5,
-            "microprice_deviation": 0.0,
-            "order_book_pressure": 0.0,
-            # F12 exchange-safety features — mock values when real-time exchange data unavailable
-            "adl_indicator": 0.0,
-            "funding_rate": 0.0,
-            "next_funding_rate": 0.0,
-            "minutes_to_next_funding": 480.0,
-            "funding_blackout_active": 0.0,
-            "mark_price_basis": 0.0,
-            "premium_index": 0.0,
-            "leverage_bracket_utilization": 0.0,
+            # F11/F12 features — use external_sources if available, else mock defaults
+            "spread": _spread_value(external_sources, candle.close),
+            "spread_bps": _spread_bps_value(external_sources, candle.close),
+            "bid_ask_imbalance": _bid_ask_imbalance_value(external_sources),
+            "best_bid_qty_ratio": _best_bid_qty_ratio_value(external_sources),
+            "best_ask_qty_ratio": _best_ask_qty_ratio_value(external_sources),
+            "microprice_deviation": _microprice_deviation_value(external_sources, candle.close),
+            "order_book_pressure": _order_book_pressure_value(external_sources),
+            "adl_indicator": _adl_indicator_value(external_sources),
+            "funding_rate": _funding_rate_value(external_sources),
+            "next_funding_rate": _next_funding_rate_value(external_sources),
+            "minutes_to_next_funding": _minutes_to_next_funding_value(external_sources),
+            "funding_blackout_active": _funding_blackout_active_value(external_sources),
+            "mark_price_basis": _mark_price_basis_value(external_sources, candle.close),
+            "premium_index": _premium_index_value(external_sources),
+            "leverage_bracket_utilization": _leverage_bracket_utilization_value(external_sources),
         }
         clipper = features.FeatureClipper()
         clipped = clipper.clip({name: values[name] for name in FEATURE_NAMES})
@@ -1407,3 +1456,144 @@ def label_reason_counts(rows: Sequence[LabeledRow]) -> dict[str, int]:
     for row in rows:
         counts[row.label_reason] = counts.get(row.label_reason, 0) + 1
     return counts
+
+
+def _depth_value(external_sources: Mapping[str, object] | None, key: str) -> float:
+    if external_sources is None:
+        return 0.0
+    depth = external_sources.get("depth_snapshot")
+    if not isinstance(depth, Mapping):
+        return 0.0
+    return float(depth.get(key, 0.0))
+
+
+def _spread_value(external_sources: Mapping[str, object] | None, close: float) -> float:
+    best_bid = _depth_value(external_sources, "best_bid")
+    best_ask = _depth_value(external_sources, "best_ask")
+    if best_bid > 0 and best_ask > 0:
+        mid = (best_bid + best_ask) / 2
+        return (best_ask - best_bid) / mid if mid > 0 else 0.0
+    return 0.0001
+
+
+def _spread_bps_value(external_sources: Mapping[str, object] | None, close: float) -> float:
+    return _spread_value(external_sources, close) * 10000.0
+
+
+def _bid_ask_imbalance_value(external_sources: Mapping[str, object] | None) -> float:
+    bid_qty = _depth_value(external_sources, "bid_qty")
+    ask_qty = _depth_value(external_sources, "ask_qty")
+    if bid_qty > 0 or ask_qty > 0:
+        return (bid_qty - ask_qty) / max(bid_qty + ask_qty, 1e-12)
+    return 0.0
+
+
+def _best_bid_qty_ratio_value(external_sources: Mapping[str, object] | None) -> float:
+    bid_qty = _depth_value(external_sources, "bid_qty")
+    ask_qty = _depth_value(external_sources, "ask_qty")
+    if bid_qty > 0 or ask_qty > 0:
+        return bid_qty / max(bid_qty + ask_qty, 1e-12)
+    return 0.5
+
+
+def _best_ask_qty_ratio_value(external_sources: Mapping[str, object] | None) -> float:
+    bid_qty = _depth_value(external_sources, "bid_qty")
+    ask_qty = _depth_value(external_sources, "ask_qty")
+    if bid_qty > 0 or ask_qty > 0:
+        return ask_qty / max(bid_qty + ask_qty, 1e-12)
+    return 0.5
+
+
+def _microprice_deviation_value(external_sources: Mapping[str, object] | None, close: float) -> float:
+    best_bid = _depth_value(external_sources, "best_bid")
+    best_ask = _depth_value(external_sources, "best_ask")
+    microprice = _depth_value(external_sources, "microprice")
+    if best_bid > 0 and best_ask > 0 and microprice > 0:
+        mid = (best_bid + best_ask) / 2
+        return (microprice - mid) / mid if mid > 0 else 0.0
+    return 0.0
+
+
+def _order_book_pressure_value(external_sources: Mapping[str, object] | None) -> float:
+    bid_qty = _depth_value(external_sources, "bid_qty")
+    ask_qty = _depth_value(external_sources, "ask_qty")
+    if bid_qty > 0 or ask_qty > 0:
+        return (bid_qty - ask_qty) / max(bid_qty + ask_qty, 1e-12)
+    return 0.0
+
+
+def _adl_indicator_value(external_sources: Mapping[str, object] | None) -> float:
+    if external_sources is None:
+        return 0.0
+    adl = external_sources.get("adl_quantile")
+    if isinstance(adl, Mapping):
+        return float(adl.get("adl_quantile", 0.0))
+    return 0.0
+
+
+def _funding_rate_value(external_sources: Mapping[str, object] | None) -> float:
+    if external_sources is None:
+        return 0.0
+    funding = external_sources.get("funding_rate")
+    if isinstance(funding, Mapping):
+        return float(funding.get("current_rate", 0.0))
+    return 0.0
+
+
+def _next_funding_rate_value(external_sources: Mapping[str, object] | None) -> float:
+    if external_sources is None:
+        return 0.0
+    funding = external_sources.get("funding_rate")
+    if isinstance(funding, Mapping):
+        return float(funding.get("next_rate", 0.0))
+    return 0.0
+
+
+def _minutes_to_next_funding_value(external_sources: Mapping[str, object] | None) -> float:
+    if external_sources is None:
+        return 480.0
+    funding = external_sources.get("funding_rate")
+    if isinstance(funding, Mapping):
+        return float(funding.get("minutes_to_next", 480.0))
+    return 480.0
+
+
+def _funding_blackout_active_value(external_sources: Mapping[str, object] | None) -> float:
+    if external_sources is None:
+        return 0.0
+    funding = external_sources.get("funding_rate")
+    if isinstance(funding, Mapping):
+        minutes = float(funding.get("minutes_to_next", 480.0))
+        return 1.0 if minutes <= 60.0 else 0.0
+    return 0.0
+
+
+def _mark_price_basis_value(external_sources: Mapping[str, object] | None, close: float) -> float:
+    if external_sources is None:
+        return 0.0
+    mark = external_sources.get("mark_price_1m")
+    if isinstance(mark, Mapping):
+        mark_price = float(mark.get("mark_price", 0.0))
+        if mark_price > 0 and close > 0:
+            return (mark_price - close) / close
+    return 0.0
+
+
+def _premium_index_value(external_sources: Mapping[str, object] | None) -> float:
+    if external_sources is None:
+        return 0.0
+    mark = external_sources.get("mark_price_1m")
+    if isinstance(mark, Mapping):
+        return float(mark.get("premium_index", 0.0))
+    return 0.0
+
+
+def _leverage_bracket_utilization_value(external_sources: Mapping[str, object] | None) -> float:
+    if external_sources is None:
+        return 0.0
+    leverage = external_sources.get("leverage_bracket")
+    if isinstance(leverage, Mapping):
+        position_notional = float(leverage.get("position_notional", 0.0))
+        bracket_cap = float(leverage.get("bracket_cap", 1e-12))
+        return position_notional / max(bracket_cap, 1e-12)
+    return 0.0

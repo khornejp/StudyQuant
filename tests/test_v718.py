@@ -781,5 +781,228 @@ class BehavioralV718Tests(unittest.TestCase):
             self.assertEqual(present, active_names, f"active features must match exactly: {active_names - present}")
 
 
+class ModelArtifactV718Tests(unittest.TestCase):
+    def test_load_model_artifact_from_valid_json(self) -> None:
+        from btcusdt_quant import training
+        classifier = training.LinearClassifier(
+            feature_names=("return_1", "volume_ratio"),
+            standardizer=training.Standardizer(
+                {"return_1": 0.0, "volume_ratio": 10.0},
+                {"return_1": 0.01, "volume_ratio": 5.0},
+            ),
+            weights={"return_1": 1.0, "volume_ratio": -0.5},
+            intercept=0.0,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "model.json"
+            path.write_text(json.dumps(classifier.as_dict()), encoding="utf-8")
+            loaded = live.load_model_artifact(path)
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(loaded.feature_names, ("return_1", "volume_ratio"))
+            self.assertAlmostEqual(loaded.intercept, 0.0)
+
+    def test_load_model_artifact_missing_path_returns_none(self) -> None:
+        self.assertIsNone(live.load_model_artifact(None))
+
+    def test_load_model_artifact_strict_raises_on_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "nonexistent.json"
+            with self.assertRaises(FileNotFoundError):
+                live.load_model_artifact(path, strict=True)
+
+    def test_linear_classifier_from_dict_rejects_empty_features(self) -> None:
+        from btcusdt_quant import training
+        with self.assertRaises(ValueError):
+            training.LinearClassifier.from_dict({"model_family": "deterministic_centroid_linear_classifier", "feature_names": []})
+
+    def test_linear_classifier_from_dict_rejects_missing_mean(self) -> None:
+        from btcusdt_quant import training
+        payload = {
+            "model_family": "deterministic_centroid_linear_classifier",
+            "feature_names": ["return_1", "volume_ratio"],
+            "standardizer_means": {"return_1": 0.0},
+            "standardizer_scales": {"return_1": 0.01, "volume_ratio": 5.0},
+            "weights": {"return_1": 1.0, "volume_ratio": -0.5},
+            "intercept": 0.0,
+        }
+        with self.assertRaises(ValueError):
+            training.LinearClassifier.from_dict(payload)
+
+    def test_linear_classifier_from_dict_rejects_zero_scale(self) -> None:
+        from btcusdt_quant import training
+        payload = {
+            "model_family": "deterministic_centroid_linear_classifier",
+            "feature_names": ["return_1"],
+            "standardizer_means": {"return_1": 0.0},
+            "standardizer_scales": {"return_1": 0.0},
+            "weights": {"return_1": 1.0},
+            "intercept": 0.0,
+        }
+        with self.assertRaises(ValueError):
+            training.LinearClassifier.from_dict(payload)
+
+    def test_linear_classifier_from_dict_rejects_wrong_family(self) -> None:
+        from btcusdt_quant import training
+        with self.assertRaises(ValueError):
+            training.LinearClassifier.from_dict({"model_family": "lightgbm", "feature_names": ["return_1"]})
+
+    def test_live_run_with_model_artifact_uses_inference(self) -> None:
+        from btcusdt_quant import data, training
+        classifier = training.LinearClassifier(
+            feature_names=("return_1",),
+            standardizer=training.Standardizer({"return_1": 0.0}, {"return_1": 0.01}),
+            weights={"return_1": 10.0},
+            intercept=0.0,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_path = Path(tmpdir) / "model.json"
+            model_path.write_text(json.dumps(classifier.as_dict()), encoding="utf-8")
+            output = Path(tmpdir) / "live"
+            base = data.utc_minute(2026, 1, 1, 0, 0)
+            candles = [
+                data.Candle(
+                    open_time=base + timedelta(minutes=index),
+                    open=100.0 + index,
+                    high=101.0 + index,
+                    low=99.0 + index,
+                    close=100.5 + index,
+                    volume=10.0,
+                    quote_volume=1000.0,
+                    number_of_trades=100,
+                    taker_buy_base_volume=5.0,
+                    taker_buy_quote_volume=500.0,
+                )
+                for index in range(200)
+            ]
+            result = live.run_live(output, dry_run=True, max_candles=12, custom_candles=candles, model_artifact_path=model_path)
+            inference = result.summary.get("model_inference", {})
+            self.assertTrue(inference.get("model_loaded", False), "model should be loaded")
+            self.assertIsNotNone(inference.get("probability"), "probability should be computed")
+
+    def test_live_run_bracket_orders_no_duplicate_market_entry(self) -> None:
+        from btcusdt_quant import data, exchange
+        class LeveragedMockAdapter(exchange.MockExchangeAdapter):
+            def get_position(self, symbol: str) -> exchange.ExchangePosition:
+                pos = super().get_position(symbol)
+                return exchange.ExchangePosition(symbol, pos.quantity, leverage=1.0)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "live"
+            base = data.utc_minute(2026, 1, 1, 0, 0)
+            candles = [
+                data.Candle(
+                    open_time=base + timedelta(minutes=index),
+                    open=100.0 + index,
+                    high=101.0 + index,
+                    low=99.0 + index,
+                    close=100.5 + index,
+                    volume=10.0,
+                    quote_volume=1000.0,
+                    number_of_trades=100,
+                    taker_buy_base_volume=5.0,
+                    taker_buy_quote_volume=500.0,
+                )
+                for index in range(200)
+            ]
+            adapter = LeveragedMockAdapter()
+            result = live.run_live(output, dry_run=False, allow_public_network=True, max_candles=12, custom_candles=candles, exchange_adapter=adapter, source_parity_passed=True)
+            orders = list(adapter.orders)
+            market_orders = [order for order in orders if order.order_type == exchange.MARKET]
+            exit_orders = [order for order in orders if order.order_type in (exchange.TAKE_PROFIT_MARKET, exchange.STOP_MARKET)]
+            # Exactly one market entry should be submitted (no duplicate)
+            self.assertEqual(len(market_orders), 1, "exactly one market entry should exist")
+            # Exactly two exit orders (TP + SL) should be submitted
+            self.assertEqual(len(exit_orders), 2, "exactly two exit orders (TP + SL) should exist")
+            # All exit orders should be reduce-only
+            for order in exit_orders:
+                self.assertTrue(order.reduce_only, "exit orders must be reduce-only")
+            bracket = result.summary.get("bracket_orders")
+            self.assertIsNotNone(bracket, "bracket_orders should be present")
+            self.assertIsNotNone(bracket.get("tp_order_id"), "TP order should be present")
+            self.assertIsNotNone(bracket.get("sl_order_id"), "SL order should be present")
+
+    def test_live_run_bracket_failure_records_error(self) -> None:
+        # Adapter that rejects TP/SL submission to simulate bracket failure
+        from btcusdt_quant import data, exchange
+        class RejectTPExchangeAdapter(exchange.MockExchangeAdapter):
+            def get_position(self, symbol: str) -> exchange.ExchangePosition:
+                pos = super().get_position(symbol)
+                return exchange.ExchangePosition(symbol, pos.quantity, leverage=1.0)
+            def submit_order(self, *args: object, **kwargs: object) -> exchange.ExchangeOrder:
+                order = super().submit_order(*args, **kwargs)
+                if order.order_type in (exchange.TAKE_PROFIT_MARKET, exchange.STOP_MARKET):
+                    # Remove the rejected order from the adapter's orders list
+                    self.orders = [o for o in self.orders if o.order_id != order.order_id]
+                    raise RuntimeError("simulated TP/SL rejection")
+                return order
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "live"
+            base = data.utc_minute(2026, 1, 1, 0, 0)
+            candles = [
+                data.Candle(
+                    open_time=base + timedelta(minutes=index),
+                    open=100.0 + index,
+                    high=101.0 + index,
+                    low=99.0 + index,
+                    close=100.5 + index,
+                    volume=10.0,
+                    quote_volume=1000.0,
+                    number_of_trades=100,
+                    taker_buy_base_volume=5.0,
+                    taker_buy_quote_volume=500.0,
+                )
+                for index in range(200)
+            ]
+            adapter = RejectTPExchangeAdapter()
+            result = live.run_live(output, dry_run=False, allow_public_network=True, max_candles=12, custom_candles=candles, exchange_adapter=adapter, source_parity_passed=True)
+            # Bracket failure should set entry_action to hard_kill
+            self.assertEqual(result.summary["entry_action"], "hard_kill", "bracket failure should trigger hard_kill")
+            self.assertIsNotNone(result.summary.get("bracket_error"), "bracket_error should be recorded")
+            # Only one market entry should exist, no TP/SL orders
+            market_orders = [order for order in adapter.orders if order.order_type == exchange.MARKET]
+            self.assertEqual(len(market_orders), 1, "exactly one market entry should exist")
+            exit_orders = [order for order in adapter.orders if order.order_type in (exchange.TAKE_PROFIT_MARKET, exchange.STOP_MARKET)]
+            self.assertEqual(len(exit_orders), 0, "no TP/SL orders should exist after rejection")
+
+    def test_live_run_bracket_failure_triggers_hard_kill_no_duplicate_entry(self) -> None:
+        # Verify that bracket failure does not leave duplicate market entries
+        from btcusdt_quant import data, exchange
+        class RejectBracketAdapter(exchange.MockExchangeAdapter):
+            def get_position(self, symbol: str) -> exchange.ExchangePosition:
+                pos = super().get_position(symbol)
+                return exchange.ExchangePosition(symbol, pos.quantity, leverage=1.0)
+            def submit_order(self, *args: object, **kwargs: object) -> exchange.ExchangeOrder:
+                order = super().submit_order(*args, **kwargs)
+                if order.order_type in (exchange.TAKE_PROFIT_MARKET, exchange.STOP_MARKET):
+                    raise RuntimeError("bracket rejection")
+                return order
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "live"
+            base = data.utc_minute(2026, 1, 1, 0, 0)
+            candles = [
+                data.Candle(
+                    open_time=base + timedelta(minutes=index),
+                    open=100.0 + index,
+                    high=101.0 + index,
+                    low=99.0 + index,
+                    close=100.5 + index,
+                    volume=10.0,
+                    quote_volume=1000.0,
+                    number_of_trades=100,
+                    taker_buy_base_volume=5.0,
+                    taker_buy_quote_volume=500.0,
+                )
+                for index in range(200)
+            ]
+            adapter = RejectBracketAdapter()
+            result = live.run_live(output, dry_run=False, allow_public_network=True, max_candles=12, custom_candles=candles, exchange_adapter=adapter, source_parity_passed=True)
+            # Should have exactly one market entry, no duplicate
+            market_orders = [order for order in adapter.orders if order.order_type == exchange.MARKET]
+            self.assertEqual(len(market_orders), 1, "no duplicate market entries should exist")
+            # Should be hard_kill due to bracket failure
+            self.assertEqual(result.summary["entry_action"], "hard_kill")
+            self.assertIsNotNone(result.summary.get("bracket_error"))
+
+
 if __name__ == "__main__":
     unittest.main()
