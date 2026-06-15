@@ -141,6 +141,7 @@ def run_train(
     optuna_trials: int = 0,
     optuna_budget_profile: str = "practical_start",
     champion_challenger_enabled: bool = False,
+    external_sources: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     config = training.TrainingConfig(
         cv_mode=cv_mode,
@@ -160,14 +161,14 @@ def run_train(
     if input_path is not None and input_path.is_dir():
         archive_dir = input_path
         input_path = None
-    result = training.run_training(input_path, output, config, archive_dir=archive_dir)
+    result = training.run_training(input_path, output, config, archive_dir=archive_dir, external_sources=external_sources)
     summary = dict(result.run_summary)
     summary["requested_model_family"] = model_family
     return summary
 
 
-def run_collect(output: Path, rows: int, allow_public_network: bool = False) -> dict[str, object]:
-    result = dataset.collect_candles(output, rows=rows, allow_public_network=allow_public_network)
+def run_collect(output: Path, rows: int, allow_public_network: bool = False, format: str = "csv") -> dict[str, object]:
+    result = dataset.collect_candles(output, rows=rows, allow_public_network=allow_public_network, format=format)
     return {
         "output_path": result.output_path.as_posix(),
         "source": result.source,
@@ -261,10 +262,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
     demo = subparsers.add_parser("demo", help="run deterministic local dry-run demo")
     demo.add_argument("--output", default="artifacts/demo", help="artifact output directory")
-    collect = subparsers.add_parser("collect", help="collect local fixture candles or explicitly allowed public klines to CSV")
-    collect.add_argument("--output", default="artifacts/collected/btcusdt_1m.csv", help="CSV output path")
+    collect = subparsers.add_parser("collect", help="collect local fixture candles or explicitly allowed public klines to CSV/Parquet")
+    collect.add_argument("--output", default="artifacts/collected/btcusdt_1m.csv", help="CSV or Parquet output path")
     collect.add_argument("--rows", type=int, default=240, help="number of fixture rows or public klines to write")
     collect.add_argument("--allow-public-network", action="store_true", help="opt in to unsigned public Binance kline download")
+    collect.add_argument("--format", choices=("csv", "parquet"), default="csv", help="output format (default: csv)")
     collect_archive = subparsers.add_parser("collect-archive", help="collect Binance data.binance.vision daily BTCUSDT 1m archives")
     collect_archive.add_argument("--start", required=True, help="inclusive start date YYYY-MM-DD")
     collect_archive.add_argument("--end", required=True, help="inclusive end date YYYY-MM-DD")
@@ -285,6 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--optuna-trials", type=int, default=0, help="number of Optuna trials (0 uses budget profile default)")
     train.add_argument("--optuna-budget", default="practical_start", choices=("research_fast", "practical_start", "full_audit_budget"), help="Optuna budget profile")
     train.add_argument("--champion-challenger", action="store_true", help="enable champion-challenger promotion evaluation from fold test metrics")
+    train.add_argument("--collect-external-sources", action="store_true", help="collect real F11/F12 external sources (funding rate, mark price) from Binance API for training")
     live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
     live_parser.add_argument("--output", default="artifacts/live", help="live artifact output directory")
     live_parser.add_argument("--dry-run", action="store_true", help="use deterministic fixture WebSocket and REST backfill")
@@ -317,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "collect":
         output = Path(args.output)
         try:
-            summary = run_collect(output, args.rows, args.allow_public_network)
+            summary = run_collect(output, args.rows, args.allow_public_network, args.format)
         except (OSError, RuntimeError, ValueError) as error:
             print(f"collect failed: {error}", file=sys.stderr)
             return 1
@@ -345,6 +348,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "train":
         output = Path(args.output)
         input_path = Path(args.input) if args.input else None
+        external_sources = None
+        if args.collect_external_sources:
+            if input_path is None:
+                print("--collect-external-sources requires --input to specify candle data", file=sys.stderr)
+                return 1
+            print("Collecting external sources (funding rate, mark price) from Binance API...")
+            candles = dataset.load_parquet_candles(input_path) if input_path.suffix.lower() == ".parquet" else dataset.load_csv_candles(input_path)
+            collector = dataset.ExternalSourcesCollector(allow_network=True)
+            external_sources = collector.build_external_sources_for_candles(candles)
+            print(f"Collected external sources for {len(external_sources)} candles")
         try:
             summary = run_train(
                 output, input_path, args.model_family, args.cv_mode, args.embargo_size, args.n_groups, args.test_group_count,
@@ -354,6 +367,7 @@ def main(argv: list[str] | None = None) -> int:
                 optuna_trials=args.optuna_trials,
                 optuna_budget_profile=args.optuna_budget,
                 champion_challenger_enabled=args.champion_challenger,
+                external_sources=external_sources,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)

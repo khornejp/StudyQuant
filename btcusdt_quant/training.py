@@ -155,9 +155,9 @@ class TrainingResult:
     artifacts: list[str]
 
 
-def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None) -> TrainingResult:
+def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None) -> TrainingResult:
     training_config = config or TrainingConfig()
-    build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir)
+    build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir, external_sources=external_sources)
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
     # Parity assertion: warn when feature_space_parity_passed is False

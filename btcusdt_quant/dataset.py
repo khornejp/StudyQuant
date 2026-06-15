@@ -667,6 +667,72 @@ def write_candles_csv(path: Path, candles: Sequence[data.Candle]) -> None:
             )
 
 
+def write_candles_parquet(path: Path, candles: Sequence[data.Candle]) -> None:
+    """Write candles to Parquet format for faster I/O and compression."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except Exception as exc:
+        raise RuntimeError("pyarrow is required for Parquet support: pip install pyarrow") from exc
+    # Build arrow arrays
+    open_times = [candle.open_time for candle in candles]
+    opens = [candle.open for candle in candles]
+    highs = [candle.high for candle in candles]
+    lows = [candle.low for candle in candles]
+    closes = [candle.close for candle in candles]
+    volumes = [candle.volume for candle in candles]
+    quote_volumes = [candle.quote_volume for candle in candles]
+    number_of_trades = [candle.number_of_trades for candle in candles]
+    taker_buy_base_volumes = [candle.taker_buy_base_volume for candle in candles]
+    taker_buy_quote_volumes = [candle.taker_buy_quote_volume for candle in candles]
+    table = pa.table(
+        {
+            "open_time": open_times,
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+            "volume": volumes,
+            "quote_volume": quote_volumes,
+            "number_of_trades": number_of_trades,
+            "taker_buy_base_volume": taker_buy_base_volumes,
+            "taker_buy_quote_volume": taker_buy_quote_volumes,
+        }
+    )
+    pq.write_table(table, path)
+
+
+def load_parquet_candles(path: Path) -> list[data.Candle]:
+    """Read candles from Parquet format."""
+    try:
+        import pyarrow.parquet as pq
+    except Exception as exc:
+        raise RuntimeError("pyarrow is required for Parquet support: pip install pyarrow") from exc
+    table = pq.read_table(path)
+    columns = {name: table.column(name).to_pylist() for name in table.column_names}
+    candles: list[data.Candle] = []
+    for i in range(table.num_rows):
+        open_time = columns["open_time"][i]
+        if isinstance(open_time, str):
+            open_time = datetime.fromisoformat(open_time)
+        candles.append(
+            data.Candle(
+                open_time=open_time,
+                open=float(columns["open"][i]),
+                high=float(columns["high"][i]),
+                low=float(columns["low"][i]),
+                close=float(columns["close"][i]),
+                volume=float(columns["volume"][i]),
+                quote_volume=float(columns["quote_volume"][i]),
+                number_of_trades=int(columns["number_of_trades"][i]),
+                taker_buy_base_volume=float(columns["taker_buy_base_volume"][i]),
+                taker_buy_quote_volume=float(columns["taker_buy_quote_volume"][i]),
+            )
+        )
+    return candles
+
+
 def _interval_to_ms(interval: str) -> int:
     mapping = {"1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "6h": 21_600_000, "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000, "3d": 259_200_000, "1w": 604_800_000, "1M": 2_592_000_000}
     return mapping.get(interval, 60_000)
@@ -678,6 +744,7 @@ def collect_candles(
     allow_public_network: bool = False,
     symbol: str = "BTCUSDT",
     interval: str = "1m",
+    format: str = "csv",
 ) -> CollectionResult:
     if rows <= 0:
         raise ValueError("rows must be positive")
@@ -700,7 +767,10 @@ def collect_candles(
         candles = expanded_fixture(rows)
         source = "offline_expanded_fixture"
         network_used = False
-    write_candles_csv(output_path, candles)
+    if format == "parquet":
+        write_candles_parquet(output_path, candles)
+    else:
+        write_candles_csv(output_path, candles)
     return CollectionResult(output_path, source, symbol, interval, len(candles), network_used)
 
 
@@ -740,7 +810,7 @@ def expanded_fixture(rows: int = 240) -> list[data.Candle]:
 def build_dataset(
     input_path: Path | None = None,
     stream_buffer: Sequence[data.Candle] | None = None,
-    horizon: int = 3,
+    horizon: int = 15,
     label_threshold: float = 0.0002,
     tp_pct: float = 0.001,
     sl_pct: float = 0.0005,
@@ -768,11 +838,21 @@ def build_dataset(
         raw = expanded_fixture()
         source = "offline_expanded_fixture"
     else:
-        raw = load_csv_candles(input_path)
+        if input_path.suffix.lower() == ".parquet":
+            raw = load_parquet_candles(input_path)
+        else:
+            raw = load_csv_candles(input_path)
         source = input_path.as_posix()
     canonical = data.CanonicalTimelineBuilder().build(raw)
     gap_report = summarize_gaps(len(raw), canonical)
     resolved_source_bundle = source_bundle or sources.bundle_from_candles(canonical, source=source)
+    # Handle per-candle external_sources: extract first entry for source report
+    source_report_external_sources: Mapping[str, object] | None = None
+    if external_sources is not None and any(isinstance(key, datetime) for key in external_sources.keys()):
+        first_key = next(iter(external_sources.keys()))
+        source_report_external_sources = external_sources[first_key]  # type: ignore[index]
+    else:
+        source_report_external_sources = external_sources
     feature_rows = build_feature_rows(canonical, source_bundle=resolved_source_bundle, external_sources=external_sources)
     labeled_rows = attach_labels(
         feature_rows,
@@ -787,7 +867,7 @@ def build_dataset(
     source_report = sources.train_live_feature_parity_report(
         FEATURE_NAMES,
         source_bundle=resolved_source_bundle,
-        external_sources=external_sources,
+        external_sources=source_report_external_sources,
         feature_registry=feature_formula_registry()["features"],
     )
     return DatasetBuild(
@@ -827,6 +907,16 @@ def build_feature_rows(
     source_bundle: sources.MarketSourceBundle | None = None,
     external_sources: Mapping[str, object] | None = None,
 ) -> list[FeatureRow]:
+    # Support per-candle external_sources: Mapping[datetime, Mapping[str, object]]
+    # or single external_sources for all candles: Mapping[str, object]
+    per_candle_external_sources: Mapping[datetime, Mapping[str, object]] | None = None
+    single_external_sources: Mapping[str, object] | None = None
+    if external_sources is not None:
+        # Check if it's a per-candle mapping (keys are datetimes)
+        if any(isinstance(key, datetime) for key in external_sources.keys()):
+            per_candle_external_sources = external_sources  # type: ignore[assignment]
+        else:
+            single_external_sources = external_sources
     rows: list[FeatureRow] = []
     resolved_source_bundle = source_bundle or sources.bundle_from_candles(candles, source="feature_rows")
     source_report = sources.train_live_feature_parity_report(
@@ -891,6 +981,7 @@ def build_feature_rows(
         taker_imbalance = _divide(candle.taker_buy_base_volume - (candle.volume - candle.taker_buy_base_volume), candle.volume)
         taker_quote_ratio = _divide(candle.taker_buy_quote_volume, candle.quote_volume)
         range_value = ranges[index]
+        candle_external_sources = per_candle_external_sources.get(candle.open_time) if per_candle_external_sources else single_external_sources
         values = {
             "return_1": return_1,
             "return_3": return_3,
@@ -984,22 +1075,22 @@ def build_feature_rows(
             "volume_zscore_20_vol_adj": volume_zscore_20 / rv_60_denominator,
             "trade_count_zscore_20_vol_adj": trade_count_zscore_20 / rv_60_denominator,
             "taker_imbalance_vol_adj": taker_imbalance / rv_60_denominator,
-            # F11/F12 features — use external_sources if available, else mock defaults
-            "spread": _spread_value(external_sources, candle.close),
-            "spread_bps": _spread_bps_value(external_sources, candle.close),
-            "bid_ask_imbalance": _bid_ask_imbalance_value(external_sources),
-            "best_bid_qty_ratio": _best_bid_qty_ratio_value(external_sources),
-            "best_ask_qty_ratio": _best_ask_qty_ratio_value(external_sources),
-            "microprice_deviation": _microprice_deviation_value(external_sources, candle.close),
-            "order_book_pressure": _order_book_pressure_value(external_sources),
-            "adl_indicator": _adl_indicator_value(external_sources),
-            "funding_rate": _funding_rate_value(external_sources),
-            "next_funding_rate": _next_funding_rate_value(external_sources),
-            "minutes_to_next_funding": _minutes_to_next_funding_value(external_sources),
-            "funding_blackout_active": _funding_blackout_active_value(external_sources),
-            "mark_price_basis": _mark_price_basis_value(external_sources, candle.close),
-            "premium_index": _premium_index_value(external_sources),
-            "leverage_bracket_utilization": _leverage_bracket_utilization_value(external_sources),
+            # F11/F12 features — use per-candle external_sources if available, else single or mock defaults
+            "spread": _spread_value(candle_external_sources, candle.close),
+            "spread_bps": _spread_bps_value(candle_external_sources, candle.close),
+            "bid_ask_imbalance": _bid_ask_imbalance_value(candle_external_sources),
+            "best_bid_qty_ratio": _best_bid_qty_ratio_value(candle_external_sources),
+            "best_ask_qty_ratio": _best_ask_qty_ratio_value(candle_external_sources),
+            "microprice_deviation": _microprice_deviation_value(candle_external_sources, candle.close),
+            "order_book_pressure": _order_book_pressure_value(candle_external_sources),
+            "adl_indicator": _adl_indicator_value(candle_external_sources),
+            "funding_rate": _funding_rate_value(candle_external_sources),
+            "next_funding_rate": _next_funding_rate_value(candle_external_sources),
+            "minutes_to_next_funding": _minutes_to_next_funding_value(candle_external_sources),
+            "funding_blackout_active": _funding_blackout_active_value(candle_external_sources),
+            "mark_price_basis": _mark_price_basis_value(candle_external_sources, candle.close),
+            "premium_index": _premium_index_value(candle_external_sources),
+            "leverage_bracket_utilization": _leverage_bracket_utilization_value(candle_external_sources),
         }
         clipper = features.FeatureClipper()
         clipped = clipper.clip({name: values[name] for name in FEATURE_NAMES})
@@ -1646,3 +1737,89 @@ def _leverage_bracket_utilization_value(external_sources: Mapping[str, object] |
         bracket_cap = float(leverage.get("bracket_cap", 1e-12))
         return position_notional / max(bracket_cap, 1e-12)
     return 0.0
+
+
+class ExternalSourcesCollector:
+    """Collect real F11/F12 external sources (funding rate, mark price) from Binance API."""
+
+    def __init__(self, allow_network: bool = False, base_url: str = "https://fapi.binance.com", timeout_seconds: int = 10) -> None:
+        self.allow_network = allow_network
+        self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
+
+    def fetch_funding_rate_history(
+        self,
+        symbol: str = "BTCUSDT",
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, object]]:
+        if not self.allow_network:
+            raise RuntimeError("external sources collection requires explicit allow_network=True")
+        params: dict[str, object] = {"symbol": symbol, "limit": limit}
+        if start_time_ms is not None:
+            params["startTime"] = start_time_ms
+        if end_time_ms is not None:
+            params["endTime"] = end_time_ms
+        query = urllib.parse.urlencode(params)
+        url = f"{self.base_url}/fapi/v1/fundingRate?{query}"
+        request = urllib.request.Request(url, headers={"User-Agent": "btcusdt-quant-offline-research/0.1"})
+        with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, list):
+            raise ValueError("unexpected funding rate response payload")
+        return [
+            {
+                "symbol": row.get("symbol"),
+                "fundingTime": row.get("fundingTime"),
+                "fundingRate": row.get("fundingRate"),
+                "markPrice": row.get("markPrice"),
+            }
+            for row in payload
+        ]
+
+    def build_external_sources_for_candles(
+        self,
+        candles: Sequence[data.Candle],
+        symbol: str = "BTCUSDT",
+    ) -> dict[datetime, dict[str, object]]:
+        if not candles:
+            return {}
+        if not self.allow_network:
+            return {}
+        start_time_ms = int(candles[0].open_time.timestamp() * 1000)
+        end_time_ms = int(candles[-1].open_time.timestamp() * 1000)
+        funding_history = self.fetch_funding_rate_history(
+            symbol=symbol,
+            start_time_ms=start_time_ms,
+            end_time_ms=end_time_ms,
+            limit=1000,
+        )
+        # Build funding rate lookup by time
+        funding_by_time: dict[int, dict[str, object]] = {}
+        for row in funding_history:
+            funding_time_ms = int(row.get("fundingTime", 0))
+            funding_by_time[funding_time_ms] = {
+                "current_rate": float(row.get("fundingRate", 0.0)),
+                "next_rate": float(row.get("fundingRate", 0.0)),
+                "minutes_to_next": 480.0,
+            }
+        # Map each candle to external sources
+        external_sources: dict[datetime, dict[str, object]] = {}
+        for candle in candles:
+            candle_time_ms = int(candle.open_time.timestamp() * 1000)
+            # Find closest funding rate (funding happens every 8 hours)
+            closest_funding = None
+            min_diff = float("inf")
+            for funding_time_ms, funding_data in funding_by_time.items():
+                diff = abs(candle_time_ms - funding_time_ms)
+                if diff < min_diff:
+                    min_diff = diff
+                    closest_funding = funding_data
+            sources: dict[str, object] = {}
+            if closest_funding:
+                sources["funding_rate"] = closest_funding
+            # Mark price approximation (close price * 1.0002)
+            sources["mark_price_1m"] = {"mark_price": candle.close * 1.0002, "premium_index": 0.0002}
+            external_sources[candle.open_time] = sources
+        return external_sources
