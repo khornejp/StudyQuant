@@ -12,3 +12,5 @@ venv/
 ProjectMD/
 artifacts/demo_review/
 artifacts/
+
+venv_btcusdt/
