@@ -810,7 +810,7 @@ def expanded_fixture(rows: int = 240) -> list[data.Candle]:
 def build_dataset(
     input_path: Path | None = None,
     stream_buffer: Sequence[data.Candle] | None = None,
-    horizon: int = 15,
+    horizon: int = 60,
     label_threshold: float = 0.0002,
     tp_pct: float = 0.001,
     sl_pct: float = 0.0005,
