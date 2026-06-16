@@ -1012,7 +1012,62 @@ class ChampionChallengerManager:
             score_bin_ci = [score_bin_ci]
         bounds: list[tuple[float, float]] = []
         if not isinstance(score_bin_ci, Sequence) or isinstance(score_bin_ci, (str, bytes)):
-            return bounds
+        return bounds
+
+
+class RegimeDetector:
+    """Deterministic market regime detection for 2-Stage research.
+
+    Stage 1: Classify market state into 3 regimes:
+      - high_volatility: high realized volatility (rv_15 > 80th percentile)
+      - trending: strong directional move with low volatility
+      - ranging: everything else (moderate volatility, no clear trend)
+
+    These regimes are deterministic heuristics, not learned classifiers.
+    They are used for diagnostic slicing and 2-Stage research only.
+    """
+
+    def __init__(self, rv_percentile: float = 0.80, trend_threshold: float = 0.05) -> None:
+        self.rv_percentile = rv_percentile
+        self.trend_threshold = trend_threshold
+
+    def detect(
+        self,
+        rv_15: float,
+        trend_slope_30: float,
+        historical_rv_15_values: Sequence[float] | None = None,
+    ) -> str:
+        """Return one of: 'high_volatility', 'trending', 'ranging'."""
+        rv_threshold = self._compute_rv_threshold(historical_rv_15_values)
+        if rv_15 > rv_threshold:
+            return "high_volatility"
+        if abs(trend_slope_30) > self.trend_threshold and rv_15 < rv_threshold * 0.5:
+            return "trending"
+        return "ranging"
+
+    def _compute_rv_threshold(self, historical_rv_15_values: Sequence[float] | None) -> float:
+        if historical_rv_15_values and len(historical_rv_15_values) > 0:
+            sorted_rvs = sorted(float(v) for v in historical_rv_15_values if v is not None)
+            index = int(len(sorted_rvs) * self.rv_percentile)
+            index = min(index, len(sorted_rvs) - 1)
+            return sorted_rvs[index]
+        # Default fallback if no historical data provided
+        return 0.001
+
+    def detect_for_candles(
+        self,
+        candles: Sequence[object],
+        rv_15_values: Sequence[float],
+        trend_slope_30_values: Sequence[float],
+    ) -> list[str]:
+        """Detect regime for each candle using historical context."""
+        regimes: list[str] = []
+        for i, (rv, trend) in enumerate(zip(rv_15_values, trend_slope_30_values)):
+            # Use historical values up to current index
+            historical = rv_15_values[:i] if i > 0 else []
+            regime = self.detect(rv, trend, historical)
+            regimes.append(regime)
+        return regimes
         for row in score_bin_ci:
             if isinstance(row, Mapping):
                 lower = row.get("net_return_ci_lower_95", row.get("lower", row.get("ci_lower")))
