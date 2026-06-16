@@ -812,7 +812,7 @@ def build_dataset(
     stream_buffer: Sequence[data.Candle] | None = None,
     horizon: int = 15,
     label_threshold: float = 0.0002,
-    tp_pct: float = 0.001,
+    tp_pct: float = 0.0005,
     sl_pct: float = 0.0005,
     external_events: Mapping[object, object] | None = None,
     archive_dir: Path | None = None,

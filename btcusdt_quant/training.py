@@ -533,7 +533,12 @@ def select_threshold(probabilities: Sequence[float], labels: Sequence[int]) -> f
     best_score = (-1.0, -1.0, 0.0)
     for threshold in sorted(candidates):
         current = metrics(probabilities, labels, threshold)
-        score = (current["f1"], current["accuracy"], -abs(threshold - 0.5))
+        # Use precision with minimum recall constraint (recall >= 0.3)
+        # If recall < 0.3, fall back to F1
+        if current["recall"] >= 0.3:
+            score = (current["precision"], current["f1"], -abs(threshold - 0.5))
+        else:
+            score = (current["f1"], current["accuracy"], -abs(threshold - 0.5))
         if score > best_score:
             best_score = score
             best_threshold = threshold
