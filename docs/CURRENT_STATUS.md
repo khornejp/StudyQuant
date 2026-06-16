@@ -1,7 +1,7 @@
 # btcusdt_quant v7.18 — 현재 진행상황
 
-**Last Updated**: 2026-06-15  
-**Current Commit**: `190c908` (GitHub pushed)  
+**Last Updated**: 2026-06-15 (Option C 진행 중)  
+**Current Commit**: `282fd96` (GitHub pushed)  
 **Test Status**: 214 tests pass (skipped=1), 0 errors  
 **Environment**: Python 3.10, Windows 10, NumPy 2.2.6
 
@@ -16,7 +16,7 @@ BTCUSDT 1분봉 기반 자동화 양매매(quant) 시스템 v7.18의 오프라�
 | **데이터 수집** | ✅ 완료 (Public API, Archive, Parquet) |
 | **피처 엔지니어링** | ✅ 완료 (107개 피처, F01~F12) |
 | **학습 파이프라인** | ✅ 완료 (4-fold CV, Calibration, Feature Selection) |
-| **모델 성능** | ⚠️ 기초 수준 (F1=0.526) |
+| **모델 성능** | ⚠️ 개선 중 (F1=0.430, Precision=0.51~0.57) |
 | **라이브 실행** | ✅ 스캐폴드 완료 (Mock/Testnet/Prod) |
 | **운영 배포** | ❌ 미완료 (추가 개선 필요) |
 
@@ -91,27 +91,50 @@ BTCUSDT 1분봉 기반 자동화 양매매(quant) 시스템 v7.18의 오프라�
 - **실제화된 피처**: funding_rate, next_funding_rate, minutes_to_next_funding, funding_blackout_active, mark_price_basis
 - **파일**: `dataset.py` (lines 1723~), `cli.py` (lines 348~)
 
+### 3.4 라벨 대칭화 (2026-06-15)
+
+- **변경**: TP=1.0% → 0.5% (SL=0.5% 유지)
+- **결과**: 라벨 67:33 → 50:50 (완벽 대칭)
+- **이유**: TP가 SL보다 2배 멀어서 Long bias 제거
+- **파일**: `dataset.py` (line 815)
+
+### 3.5 Threshold Precision 기준 (2026-06-15)
+
+- **변경**: F1 기준 → Precision 기준 (recall ≥ 0.3 constraint)
+- **결과**: Precision 0.35 → 0.51~0.57, Recall 0.82 → 0.27~0.53
+- **효과**: 더 선택적인 모델 (더 적은 거래, 더 높은 정확도)
+- **파일**: `training.py` (lines 527~)
+
+### 3.6 2-Stage Research 브랜치 (2026-06-15)
+
+- **브랜치**: `2stage-research` (GitHub)
+- **구성**: RegimeDetector 클래스 (volatility/trending/ranging)
+- **목적**: 2-Stage 구조 실험 (연구용, 프로덕션 아님)
+- **파일**: `features.py` (lines 1025~)
+
 ---
 
 ## 4. 현재 성능 지표
 
-### 4.1 학습 결과 (20,000 rows, horizon=15)
+### 4.1 학습 결과 (20,000 rows, horizon=15, symmetric TP/SL)
 
-| 메트릭 | 값 | 평가 |
-|--------|-----|------|
-| **Mean Test F1** | 0.526 | ⚠️ 기초 수준 |
-| **Mean Test Accuracy** | 0.357 | ⚠️ 낮음 |
-| **Fold Count** | 4 | ✅ |
-| **Feature Count** | 107 (59 after selection) | ✅ |
-| **Calibration ECE** | ~0.03 | ✅ 양호 |
-| **Champion-Challenger** | Promotion FAILED | ❌ (F11/F12 미완성) |
+| 메트릭 | Before (TP=1.0%) | After (TP=0.5%) | 평가 |
+|--------|------------------|-----------------|------|
+| **Mean Test F1** | 0.526 | **0.430** | ⚠️ 낮아짐 (selective) |
+| **Mean Test Accuracy** | 0.357 | **0.516** | ✅ 향상 |
+| **Precision** | 0.35 | **0.51~0.57** | ✅ 향상 |
+| **Recall** | 0.82 | **0.27~0.53** | ⚠️ 낮아짐 |
+| **Fold Count** | 4 | 4 | ✅ |
+| **Feature Count** | 107 (59) | 107 (57) | ✅ |
+| **Champion-Challenger** | FAILED | FAILED | ❌ (F11/F12 미완성) |
 
 ### 4.2 라벨 분포
 
-| 라벨 | 비율 | 의미 |
-|------|------|------|
-| 0 (SL/Timeout) | 66.7% | 하띌 또는 타임아웃 |
-| 1 (TP) | 33.3% | 상승 |
+| 라벨 | Before | After | 의미 |
+|------|--------|-------|------|
+| 0 (SL/Timeout) | 66.7% | **49.9%** | 하띌 또는 타임아웃 |
+| 1 (TP) | 33.3% | **49.4%** | 상승 |
+| Timeout | 0% | **0.6%** | 미도달 |
 
 ---
 
@@ -125,6 +148,8 @@ BTCUSDT 1분봉 기반 자동화 양매매(quant) 시스템 v7.18의 오프라�
 | **F11/F12 미완성** | 🔴 | depth/ADL/leverage는 실제 데이터 불가 | Testnet 실시간 수집 또는 historical API 탐색 |
 | **Optuna 버그** | 🔴 | threshold=0.6+ 설정 → F1=0.0 | Objective 수정 또는 threshold range 제한 |
 | **NumPy 2.0 호환성** | 🔴 | LightGBM/CatBoost import 실패 | NumPy downgrade 또는 라이브러리 업데이트 |
+| **Recall 낮음** | 🔴 | Precision 기준 threshold로 recall 0.27~0.53 | Threshold 기준 재조정 또는 다른 모델 |
+| **2-Stage 미완성** | 🔴 | RegimeDetector만 추가, Long/Short 모델 미구현 | 2stage-research 브랜치에서 계속 |
 
 ### 5.2 🟡 경고 (기능 제한)
 
@@ -215,30 +240,32 @@ python -m unittest discover -s tests
 
 ## 8. 다음 단계 권장사항
 
-### 8.1 단기 (1주 내)
+### 8.1 단기 (1주 내) — Single-Stage Main
 
 | 우선순위 | 작업 | 예상 효과 |
 |----------|------|-----------|
-| P0 | NumPy 2.0 호환성 해결 | LightGBM/CatBoost 사용 가능 |
-| P0 | LightGBM/CatBoost 모델 추가 | F1 0.52 → 0.60+ |
-| P1 | Optuna objective 수정 | threshold 범위 0.3~0.5 제한 |
-| P1 | 50k+ 데이터 수집 | 더 많은 학습 데이터 |
+| P0 | **NumPy 2.0 호환성 해결** | LightGBM/CatBoost 사용 가능 |
+| P0 | **LightGBM/CatBoost 모델 추가** | F1 0.43 → 0.60+ |
+| P1 | **Threshold 기준 재조정** | Precision-Recall trade-off 최적화 |
+| P1 | **50k+ 데이터 수집** | 더 많은 학습 데이터 |
 
-### 8.2 중기 (2~4주)
+### 8.2 중기 (2~4주) — Single-Stage + 2-Stage Research
 
 | 우선순위 | 작업 | 예상 효과 |
 |----------|------|-----------|
-| P1 | Depth/ADL historical API 탐색 | F11/F12 완전 통합 |
-| P2 | Feature selection 최적화 | 59개 → 20~30개 축소 |
-| P2 | Calibration 개선 | Isotonic/Platt scaling |
+| P1 | **2-Stage Long/Short 모델 실험** | regime별 분리 모델 성능 비교 |
+| P1 | **Regime별 threshold 최적화** | high_vol/trending/range별 다른 threshold |
+| P2 | **Depth/ADL historical API 탐색** | F11/F12 완전 통합 |
+| P2 | **Feature selection 최적화** | 59개 → 20~30개 축소 |
 
 ### 8.3 장기 (운영 배포 전)
 
 | 우선순위 | 작업 | 예상 효과 |
 |----------|------|-----------|
-| P2 | Testnet soak 7일+ | 실제 거래 메트릭 (PSI, latency, fill rate) |
-| P2 | Champion-Challenger 승격 | F1 > 0.6, Sharpe > 1.0, MDD < 0.1 |
-| P3 | Human-in-the-loop | 낮은 F1에서 자동 거래 금지 |
+| P2 | **Testnet soak 7일+** | 실제 거래 메트릭 (PSI, latency, fill rate) |
+| P2 | **Champion-Challenger 승격** | F1 > 0.6, Sharpe > 1.0, MDD < 0.1 |
+| P3 | **Human-in-the-loop** | 낮은 F1에서 자동 거래 금지 |
+| P3 | **2-Stage 프로덕션 통합** | Regime Detection → Long/Short 라우팅 (2stage-research 브랜치 머지) |
 
 ---
 
