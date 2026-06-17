@@ -317,7 +317,14 @@ class PurgedWalkForwardSplit:
 
 
 class FeatureSelectionPipeline:
-    def spearman_clustering(self, feature_matrix: Sequence[Sequence[float]], feature_names: Sequence[str], threshold: float = 0.90) -> list[str]:
+    def __init__(self, target_min_features: int = 0, target_max_features: int = 0, spearman_threshold: float = 0.90, gain_drop_ratio: float = 0.20) -> None:
+        self.target_min_features = target_min_features
+        self.target_max_features = target_max_features
+        self.spearman_threshold = spearman_threshold
+        self.gain_drop_ratio = gain_drop_ratio
+
+    def spearman_clustering(self, feature_matrix: Sequence[Sequence[float]], feature_names: Sequence[str], threshold: float | None = None) -> list[str]:
+        threshold = self.spearman_threshold if threshold is None else threshold
         columns = _columns(feature_matrix, feature_names)
         ranked_columns = {name: _ranks(values) for name, values in columns.items()}
         dropped: set[str] = set()
@@ -332,7 +339,8 @@ class FeatureSelectionPipeline:
                     dropped.add(str(right_name))
         return sorted(dropped)
 
-    def gain_importance_filter(self, feature_matrix: Sequence[Sequence[float]], feature_names: Sequence[str], drop_ratio: float = 0.20) -> list[str]:
+    def gain_importance_filter(self, feature_matrix: Sequence[Sequence[float]], feature_names: Sequence[str], drop_ratio: float | None = None) -> list[str]:
+        drop_ratio = self.gain_drop_ratio if drop_ratio is None else drop_ratio
         if not feature_names or drop_ratio <= 0.0:
             return []
         columns = _columns(feature_matrix, feature_names)
@@ -395,6 +403,20 @@ class FeatureSelectionPipeline:
         required = len(fold_masks) * min_survival_ratio
         return sorted(feature for feature, count in counts.items() if count >= required)
 
+    def _apply_feature_bounds(self, core: list[str], stage2: list[str], ablation: list[dict[str, float | str]]) -> list[str]:
+        if self.target_min_features <= 0 and self.target_max_features <= 0:
+            return core
+        ablation_rank = {str(item["feature_name"]): float(item["impact"]) for item in ablation}
+        sorted_stage2 = sorted(stage2, key=lambda name: (-ablation_rank.get(name, 0.0), name))
+        core_set = set(core)
+        if self.target_max_features > 0 and len(core) > self.target_max_features:
+            core = sorted(sorted_stage2[:self.target_max_features])
+        if self.target_min_features > 0 and len(core) < self.target_min_features:
+            missing = [name for name in sorted_stage2 if name not in core_set]
+            needed = self.target_min_features - len(core)
+            core = sorted(core + missing[:needed])
+        return core
+
     def run_full_pipeline(self, model: object, feature_matrix: Sequence[Sequence[float]], labels: Sequence[int], feature_names: Sequence[str]) -> dict[str, object]:
         spearman_drop = self.spearman_clustering(feature_matrix, feature_names)
         stage1 = [name for name in feature_names if name not in set(spearman_drop)]
@@ -407,6 +429,7 @@ class FeatureSelectionPipeline:
         ablation = self.ablation_test(model, stage2_matrix, labels, stage2)
         fold_masks = [stage1, stage2, [str(item["feature_name"]) for item in permutation if float(item["metric_delta"]) >= 0.0], [str(item["feature_name"]) for item in ablation if float(item["impact"]) >= 0.0]]
         core = self.core_features(fold_masks)
+        core_bounded = self._apply_feature_bounds(core, stage2, ablation)
         return {
             "spearman_drop": spearman_drop,
             "gain_drop": gain_drop,
@@ -414,6 +437,11 @@ class FeatureSelectionPipeline:
             "shap_stability": shap,
             "ablation": ablation,
             "core_features": core,
+            "core_features_bounded": core_bounded,
+            "feature_count_original": len(feature_names),
+            "feature_count_core": len(core),
+            "feature_count_bounded": len(core_bounded),
+            "bounds_applied": self.target_min_features > 0 or self.target_max_features > 0,
         }
 
 
@@ -566,7 +594,7 @@ class OptunaStudyRunner:
         profile = self._profile(budget_profile)
         effective_trials = n_trials if n_trials > 0 else self._int_from_object(profile.get("trials", 1), 1)
         try:
-            import optuna  # type: ignore[import-not-found]
+            optuna = __import__("optuna")
         except Exception:
             value = self._objective_value(model_factory, feature_matrix, labels, {"threshold": 0.5}, 0)
             return {
@@ -582,7 +610,7 @@ class OptunaStudyRunner:
         def objective(trial: object) -> float:
             suggest_float = getattr(trial, "suggest_float")
             params = {
-                "threshold": float(suggest_float("threshold", 0.30, 0.70)),
+                "threshold": float(suggest_float("threshold", 0.45, 0.55)),
                 "signal_scale": float(suggest_float("signal_scale", 0.50, 2.00)),
             }
             trial_number = self._int_from_object(getattr(trial, "number", 0), 0)
@@ -1022,3 +1050,369 @@ class ChampionChallengerManager:
             elif isinstance(row, tuple) and len(row) >= 2:
                 bounds.append((float(row[0]), float(row[1])))
         return bounds
+
+
+@dataclass(frozen=True)
+class RegimeDetectorConfig:
+    rv_percentile: float = 0.75
+    trend_percentile: float = 0.90
+    min_trend_abs: float = 0.00005
+    high_vol_priority: bool = True
+    low_vol_trend_multiplier: float = 1.0
+    min_regime_run_bars: int = 3
+
+
+class RegimeDetector:
+    """Deterministic market regime detection for 2-Stage research.
+
+    Stage 1: Classify market state into 3 regimes:
+      - high_volatility: realized volatility above calibrated history
+      - trending: trend strength above calibrated history outside high volatility
+      - ranging: everything else (moderate volatility, no clear trend)
+
+    These regimes are deterministic heuristics, not learned classifiers.
+    They are used for diagnostic slicing and 2-Stage research only.
+    """
+
+    def __init__(self, config: RegimeDetectorConfig | None = None, rv_percentile: float | None = None, trend_threshold: float | None = None) -> None:
+        if config is None:
+            defaults = RegimeDetectorConfig()
+            config = RegimeDetectorConfig(
+                rv_percentile=defaults.rv_percentile if rv_percentile is None else rv_percentile,
+                trend_percentile=defaults.trend_percentile,
+                min_trend_abs=defaults.min_trend_abs if trend_threshold is None else trend_threshold,
+                high_vol_priority=defaults.high_vol_priority,
+                low_vol_trend_multiplier=defaults.low_vol_trend_multiplier,
+                min_regime_run_bars=defaults.min_regime_run_bars,
+            )
+        self.config = config
+        self.rv_percentile = config.rv_percentile
+        self.trend_threshold = config.min_trend_abs
+
+    def fit_thresholds(self, rv_15_values: Sequence[float], trend_slope_30_values: Sequence[float]) -> dict[str, float]:
+        """Fit deterministic thresholds from historical distributions."""
+        rv_values = self._finite_values(rv_15_values)
+        trend_strength_values = [abs(value) for value in self._finite_values(trend_slope_30_values)]
+        rv_threshold = self._percentile(rv_values, self.config.rv_percentile, fallback=0.001)
+        trend_percentile_threshold = self._percentile(trend_strength_values, self.config.trend_percentile, fallback=self.config.min_trend_abs)
+        trend_threshold = max(float(self.config.min_trend_abs), trend_percentile_threshold)
+        return {
+            "rv_threshold": rv_threshold,
+            "trend_threshold": trend_threshold,
+            "trend_min": float(self.config.min_trend_abs),
+        }
+
+    def detect(
+        self,
+        rv_15: float,
+        trend_slope_30: float,
+        historical_rv_15_values: Sequence[float] | None = None,
+        thresholds: Mapping[str, float] | None = None,
+    ) -> str:
+        """Return one of: 'high_volatility', 'trending', 'ranging'."""
+        effective_thresholds = thresholds
+        if effective_thresholds is None:
+            effective_thresholds = self._default_thresholds(historical_rv_15_values)
+        return self._classify_raw(rv_15, trend_slope_30, effective_thresholds)
+
+    def _classify_raw(self, rv_15: float, trend_slope_30: float, thresholds: Mapping[str, float]) -> str:
+        rv_threshold = float(thresholds.get("rv_threshold", 0.001))
+        trend_threshold = max(float(thresholds.get("trend_threshold", self.config.min_trend_abs)), float(thresholds.get("trend_min", self.config.min_trend_abs)))
+        rv_value = float(rv_15) if isfinite(float(rv_15)) else 0.0
+        trend_strength = abs(float(trend_slope_30)) if isfinite(float(trend_slope_30)) else 0.0
+        trend_regime = trend_strength > trend_threshold and rv_value <= rv_threshold * self.config.low_vol_trend_multiplier
+        high_vol_regime = rv_value > rv_threshold
+        if self.config.high_vol_priority and high_vol_regime:
+            return "high_volatility"
+        if trend_regime:
+            return "trending"
+        if high_vol_regime:
+            return "high_volatility"
+        return "ranging"
+
+    def _compute_rv_threshold(self, historical_rv_15_values: Sequence[float] | None) -> float:
+        if historical_rv_15_values and len(historical_rv_15_values) > 0:
+            return self._percentile(self._finite_values(historical_rv_15_values), self.config.rv_percentile, fallback=0.001)
+        # Default fallback if no historical data provided
+        return 0.001
+
+    def detect_for_rows(
+        self,
+        rv_15_values: Sequence[float],
+        trend_slope_30_values: Sequence[float],
+    ) -> list[str]:
+        """Detect regime for each row using historical context."""
+        regimes: list[str] = []
+        for i, (rv, trend) in enumerate(zip(rv_15_values, trend_slope_30_values)):
+            historical_rv = rv_15_values[: i + 1]
+            historical_trend = trend_slope_30_values[: i + 1]
+            thresholds = self.fit_thresholds(historical_rv, historical_trend)
+            regime = self.detect(rv, trend, thresholds=thresholds)
+            regimes.append(regime)
+        return regimes
+
+    def detect_all(self, rv_15_values: Sequence[float], trend_slope_30_values: Sequence[float], thresholds: Mapping[str, float] | None = None) -> list[str]:
+        """Detect regime for all rows using full historical distribution.
+        This is used for offline training where all data is available upfront.
+        """
+        effective_thresholds = thresholds or self.fit_thresholds(rv_15_values, trend_slope_30_values)
+        raw_regimes: list[str] = []
+        for rv, trend in zip(rv_15_values, trend_slope_30_values):
+            raw_regimes.append(self._classify_raw(rv, trend, effective_thresholds))
+        return self._apply_hysteresis(raw_regimes)
+
+    def diagnostics(self, rv_15_values: Sequence[float], trend_slope_30_values: Sequence[float]) -> dict[str, object]:
+        thresholds = self.fit_thresholds(rv_15_values, trend_slope_30_values)
+        regimes = self.detect_all(rv_15_values, trend_slope_30_values, thresholds=thresholds)
+        regime_counts = {regime: regimes.count(regime) for regime in ("high_volatility", "trending", "ranging")}
+        transition_count = sum(1 for previous, current in zip(regimes, regimes[1:]) if previous != current)
+        return {
+            "regime_counts": regime_counts,
+            "thresholds": thresholds,
+            "regime_transition_count": transition_count,
+            "max_single_run_length": self._max_single_run_length(regimes),
+        }
+
+    def config_dict(self) -> dict[str, object]:
+        return {
+            "rv_percentile": self.config.rv_percentile,
+            "trend_percentile": self.config.trend_percentile,
+            "min_trend_abs": self.config.min_trend_abs,
+            "high_vol_priority": self.config.high_vol_priority,
+            "low_vol_trend_multiplier": self.config.low_vol_trend_multiplier,
+            "min_regime_run_bars": self.config.min_regime_run_bars,
+        }
+
+    def _default_thresholds(self, historical_rv_15_values: Sequence[float] | None) -> dict[str, float]:
+        return {
+            "rv_threshold": self._compute_rv_threshold(historical_rv_15_values),
+            "trend_threshold": float(self.config.min_trend_abs),
+            "trend_min": float(self.config.min_trend_abs),
+        }
+
+    def _apply_hysteresis(self, raw_regimes: Sequence[str]) -> list[str]:
+        if not raw_regimes:
+            return []
+        min_bars = max(1, int(self.config.min_regime_run_bars))
+        if min_bars <= 1:
+            return list(raw_regimes)
+        stable = raw_regimes[0]
+        candidate: str | None = None
+        candidate_count = 0
+        regimes = [stable]
+        for raw in raw_regimes[1:]:
+            if raw == stable:
+                candidate = None
+                candidate_count = 0
+                regimes.append(stable)
+                continue
+            if raw == candidate:
+                candidate_count += 1
+            else:
+                candidate = raw
+                candidate_count = 1
+            if candidate_count >= min_bars:
+                stable = raw
+                candidate = None
+                candidate_count = 0
+            regimes.append(stable)
+        return regimes
+
+    def _finite_values(self, values: Sequence[float]) -> list[float]:
+        finite_values: list[float] = []
+        for value in values:
+            if value is None:
+                continue
+            numeric = float(value)
+            if isfinite(numeric):
+                finite_values.append(numeric)
+        return finite_values
+
+    def _percentile(self, values: Sequence[float], percentile: float, fallback: float) -> float:
+        if not values:
+            return float(fallback)
+        ordered = sorted(float(value) for value in values)
+        if len(ordered) == 1:
+            return ordered[0]
+        pct = max(0.0, min(1.0, float(percentile)))
+        position = (len(ordered) - 1) * pct
+        lower_index = int(position)
+        upper_index = min(lower_index + 1, len(ordered) - 1)
+        fraction = position - lower_index
+        return ordered[lower_index] + (ordered[upper_index] - ordered[lower_index]) * fraction
+
+    def _max_single_run_length(self, regimes: Sequence[str]) -> int:
+        max_run = 0
+        current_run = 0
+        previous: str | None = None
+        for regime in regimes:
+            if regime == previous:
+                current_run += 1
+            else:
+                current_run = 1
+                previous = regime
+            max_run = max(max_run, current_run)
+        return max_run
+
+
+@dataclass(frozen=True)
+class OrderBlockConfig:
+    """Configuration for Order Block Imbalance detection."""
+    min_body_pct: float = 0.60
+    max_wick_pct: float = 0.20
+    min_volume_zscore: float = 1.0
+    min_taker_imbalance: float = 0.30
+    lookback_bars: int = 3
+    min_bars_since_last: int = 5
+
+
+class OrderBlockImbalanceDetector:
+    """Detect Order Block imbalances and generate entry timing signals.
+
+    Order Block (OB): A candle with strong directional intent (large body,
+    small wicks, high volume) indicating institutional order placement.
+
+    Imbalance: Significant difference between buy/sell pressure within the
+    order block (measured via taker_imbalance, bid_ask_imbalance).
+
+    Entry Timing: Signal generation when price returns to the order block
+    zone with confirming imbalance.
+    """
+
+    def __init__(self, config: OrderBlockConfig | None = None) -> None:
+        self.config = config or OrderBlockConfig()
+
+    def detect_order_blocks(
+        self,
+        candles: Sequence[dict[str, float]],
+    ) -> list[dict[str, object]]:
+        """Detect order blocks in a sequence of candles.
+
+        Each candle dict must contain: open, high, low, close, volume,
+        taker_imbalance, volume_zscore (optional), bid_ask_imbalance (optional).
+        """
+        order_blocks: list[dict[str, object]] = []
+        last_ob_index = -self.config.min_bars_since_last
+
+        for i, candle in enumerate(candles):
+            body_pct = abs(candle["close"] - candle["open"]) / max(candle["high"] - candle["low"], 1e-12)
+            upper_wick = candle["high"] - max(candle["open"], candle["close"])
+            lower_wick = min(candle["open"], candle["close"]) - candle["low"]
+            total_range = candle["high"] - candle["low"]
+            upper_wick_pct = upper_wick / max(total_range, 1e-12)
+            lower_wick_pct = lower_wick / max(total_range, 1e-12)
+            max_wick_pct = max(upper_wick_pct, lower_wick_pct)
+            volume_zscore = candle.get("volume_zscore", 0.0)
+            taker_imbalance = abs(candle.get("taker_imbalance", 0.0))
+
+            is_bullish = candle["close"] > candle["open"]
+            is_bearish = candle["close"] < candle["open"]
+
+            # Order block criteria: strong body, small wicks, elevated volume, significant imbalance
+            if (
+                body_pct >= self.config.min_body_pct
+                and max_wick_pct <= self.config.max_wick_pct
+                and volume_zscore >= self.config.min_volume_zscore
+                and taker_imbalance >= self.config.min_taker_imbalance
+                and (is_bullish or is_bearish)
+                and i - last_ob_index >= self.config.min_bars_since_last
+            ):
+                ob = {
+                    "index": i,
+                    "open": candle["open"],
+                    "high": candle["high"],
+                    "low": candle["low"],
+                    "close": candle["close"],
+                    "side": "bullish" if is_bullish else "bearish",
+                    "body_pct": body_pct,
+                    "max_wick_pct": max_wick_pct,
+                    "volume_zscore": volume_zscore,
+                    "taker_imbalance": taker_imbalance,
+                    "bid_ask_imbalance": candle.get("bid_ask_imbalance", 0.0),
+                    "zone_high": candle["high"],
+                    "zone_low": candle["low"],
+                }
+                order_blocks.append(ob)
+                last_ob_index = i
+
+        return order_blocks
+
+    def generate_entry_timing(
+        self,
+        candles: Sequence[dict[str, float]],
+        current_index: int,
+        order_blocks: Sequence[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
+        """Generate entry timing signal for current candle based on OB imbalance.
+
+        Returns a dict with:
+        - signal: 'BUY', 'SELL', or 'HOLD'
+        - confidence: float 0-1
+        - reason: str
+        - target_ob: dict | None
+        """
+        if order_blocks is None:
+            order_blocks = self.detect_order_blocks(candles[: current_index + 1])
+
+        if not order_blocks:
+            return {"signal": "HOLD", "confidence": 0.0, "reason": "no_order_blocks", "target_ob": None}
+
+        current_candle = candles[current_index]
+        current_price = current_candle["close"]
+
+        # Look for price returning to a recent order block zone with confirming imbalance
+        best_ob: dict[str, object] | None = None
+        best_score = 0.0
+        best_signal = "HOLD"
+
+        for ob in reversed(order_blocks):
+            ob_index = int(ob["index"])
+            if current_index - ob_index > self.config.lookback_bars * 3:
+                continue  # Too old
+
+            zone_high = float(ob["zone_high"])
+            zone_low = float(ob["zone_low"])
+            in_zone = zone_low <= current_price <= zone_high
+
+            if not in_zone:
+                continue
+
+            # Confirming imbalance: current candle shows opposite pressure building
+            current_taker_imbalance = abs(current_candle.get("taker_imbalance", 0.0))
+            current_bid_ask = abs(current_candle.get("bid_ask_imbalance", 0.0))
+            imbalance_score = min(1.0, (current_taker_imbalance + current_bid_ask) / 1.0)
+
+            # Bullish OB + price returns to zone = BUY signal
+            # Bearish OB + price returns to zone = SELL signal
+            ob_side = str(ob["side"])
+            if ob_side == "bullish":
+                signal = "BUY"
+                score = imbalance_score * 0.8 + 0.2
+            else:
+                signal = "SELL"
+                score = imbalance_score * 0.8 + 0.2
+
+            if score > best_score:
+                best_score = score
+                best_ob = ob
+                best_signal = signal
+
+        if best_ob is None:
+            return {"signal": "HOLD", "confidence": 0.0, "reason": "price_not_in_ob_zone", "target_ob": None}
+
+        return {
+            "signal": best_signal,
+            "confidence": best_score,
+            "reason": f"price_in_{best_ob['side']}_ob_zone_with_imbalance",
+            "target_ob": best_ob,
+        }
+
+    def config_dict(self) -> dict[str, object]:
+        return {
+            "min_body_pct": self.config.min_body_pct,
+            "max_wick_pct": self.config.max_wick_pct,
+            "min_volume_zscore": self.config.min_volume_zscore,
+            "min_taker_imbalance": self.config.min_taker_imbalance,
+            "lookback_bars": self.config.lookback_bars,
+            "min_bars_since_last": self.config.min_bars_since_last,
+        }

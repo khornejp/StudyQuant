@@ -36,6 +36,10 @@
 - **Source parity**: Train/live feature parity enforced in entry gates — blocks entries when parity fails
 - **Model artifact loading**: `run_live()` accepts `--model-artifact` path; loads `LinearClassifier` from JSON and uses `probability()` for signal generation
 - **TP/SL bracket wiring**: `submit_take_profit_stop_loss()` called after successful `safe_market_entry()` with 1% TP / 0.5% SL prices; atomic submission with cancel-on-failure for partial success protection
+- **Regime-aware inference**: Detects market regime (high_vol/trending/ranging) and selects appropriate model
+- **Dynamic strategy configuration**: Strategy profiles (balanced/conservative/aggressive) with regime-specific TP/SL and signal thresholds
+- **Order Block Imbalance Entry Timing**: Detects institutional order blocks and generates entry signals when price returns to OB zones
+- **Backtest Comparison**: `backtest` CLI command runs historical simulation with strategy comparison and P&L metrics
 
 ### Operational Monitoring (Scaffold Complete)
 - **Clock drift**: NTP-style monitoring, thresholds at 100ms/500ms/1000ms
@@ -70,6 +74,10 @@ python -m btcusdt_quant train --model-family auto --output artifacts/training_ml
 # Live execution (mock WebSocket, gap repair, backfill)
 python -m btcusdt_quant live --dry-run --output artifacts/live
 python -m btcusdt_quant live --dry-run --output artifacts/live --model-artifact artifacts/training/model.json
+
+# Backtest with strategy comparison
+python -m btcusdt_quant backtest --output artifacts/backtest
+python -m btcusdt_quant backtest --input artifacts/collected/btcusdt_1m.csv --output artifacts/backtest --model-artifact artifacts/training/model.json
 
 # Artifact verification
 python -m btcusdt_quant artifacts --path artifacts/demo

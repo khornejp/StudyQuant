@@ -408,6 +408,59 @@ class ArchiveDownloaderTests(unittest.TestCase):
             self.assertTrue((Path(tmp) / "checkpoint.json").exists())
 
 
+class ExternalSourcesCollectorTests(unittest.TestCase):
+    def test_collector_requires_allow_network(self) -> None:
+        collector = dataset.ExternalSourcesCollector(allow_network=False)
+        with self.assertRaises(RuntimeError):
+            collector.fetch_funding_rate_history()
+
+    def test_collector_build_sources_returns_empty_without_network(self) -> None:
+        collector = dataset.ExternalSourcesCollector(allow_network=False)
+        candles = make_stream_candles(5)
+        sources = collector.build_external_sources_for_candles(candles)
+        self.assertEqual(sources, {})
+
+    def test_collector_build_sources_maps_candles(self) -> None:
+        with mock.patch("btcusdt_quant.dataset.ExternalSourcesCollector.fetch_funding_rate_history") as mock_funding, \
+             mock.patch("btcusdt_quant.dataset.ExternalSourcesCollector.fetch_mark_price_klines") as mock_mark, \
+             mock.patch("btcusdt_quant.dataset.ExternalSourcesCollector.fetch_premium_index_klines") as mock_premium:
+            mock_funding.return_value = [
+                {"fundingTime": 1704067200000, "fundingRate": 0.0001, "markPrice": 42000.0}
+            ]
+            mock_mark.return_value = [
+                {"open_time": 1704067200000, "open": 41990.0, "high": 42010.0, "low": 41980.0, "close": 42000.0}
+            ]
+            mock_premium.return_value = [
+                {"open_time": 1704067200000, "open": 0.0001, "high": 0.0002, "low": 0.0001, "close": 0.00015}
+            ]
+            collector = dataset.ExternalSourcesCollector(allow_network=True)
+            candles = make_stream_candles(5)
+            sources = collector.build_external_sources_for_candles(candles)
+            self.assertGreater(len(sources), 0)
+            # Verify that at least the first candle has external sources
+            first_time = candles[0].open_time
+            if first_time in sources:
+                self.assertIn("funding_rate", sources[first_time])
+                self.assertIn("mark_price_1m", sources[first_time])
+
+    def test_collector_fallback_when_api_fails(self) -> None:
+        with mock.patch("btcusdt_quant.dataset.ExternalSourcesCollector.fetch_funding_rate_history") as mock_funding, \
+             mock.patch("btcusdt_quant.dataset.ExternalSourcesCollector.fetch_mark_price_klines") as mock_mark, \
+             mock.patch("btcusdt_quant.dataset.ExternalSourcesCollector.fetch_premium_index_klines") as mock_premium:
+            mock_funding.return_value = []
+            mock_mark.side_effect = urllib.error.URLError("network error")
+            mock_premium.side_effect = urllib.error.URLError("network error")
+            collector = dataset.ExternalSourcesCollector(allow_network=True)
+            candles = make_stream_candles(5)
+            sources = collector.build_external_sources_for_candles(candles)
+            self.assertGreater(len(sources), 0)
+            # Should fallback to approximation for mark price
+            first_time = candles[0].open_time
+            if first_time in sources:
+                mark_data = sources[first_time].get("mark_price_1m", {})
+                self.assertIn("mark_price", mark_data)
+
+
 class DataQualityEdgeTests(unittest.TestCase):
     def write_csv(self, path: Path, rows: list[tuple[object, ...]], header: str = "open_time,open,high,low,close,volume,quote_volume,number_of_trades") -> None:
         lines = [header]
@@ -568,6 +621,42 @@ class FeatureGovernanceTests(unittest.TestCase):
         self.assertIn("core_features", report)
         core_features = cast(list[str], report["core_features"])
         self.assertIn("signal", core_features)
+
+    def test_feature_selection_bounds_trim_to_max(self) -> None:
+        class ThresholdModel:
+            def predict(self, row: list[float]) -> int:
+                return 1 if row[0] >= 0.5 else 0
+        matrix = [[0.0, 1.0, 0.0], [0.1, 1.0, 1.0], [0.9, 1.0, 0.0], [1.0, 1.0, 1.0]]
+        pipeline = features.FeatureSelectionPipeline(target_max_features=2)
+        report = pipeline.run_full_pipeline(ThresholdModel(), matrix, [0, 0, 1, 1], ["signal", "flat", "noise"])
+        self.assertIn("core_features_bounded", report)
+        bounded = cast(list[str], report["core_features_bounded"])
+        self.assertLessEqual(len(bounded), 2)
+
+    def test_feature_selection_bounds_backfill_to_min(self) -> None:
+        class ThresholdModel:
+            def predict(self, row: list[float]) -> int:
+                return 1 if row[0] >= 0.5 else 0
+        matrix = [[0.0, 1.0, 0.0], [0.1, 1.0, 1.0], [0.9, 1.0, 0.0], [1.0, 1.0, 1.0]]
+        pipeline = features.FeatureSelectionPipeline(target_min_features=5)
+        report = pipeline.run_full_pipeline(ThresholdModel(), matrix, [0, 0, 1, 1], ["signal", "flat", "noise"])
+        self.assertIn("core_features_bounded", report)
+        bounded = cast(list[str], report["core_features_bounded"])
+        # With only 3 features total, backfill can only reach 3
+        self.assertGreaterEqual(len(bounded), 2)
+        self.assertLessEqual(len(bounded), 3)
+
+    def test_feature_selection_bounds_disabled_when_zero(self) -> None:
+        class ThresholdModel:
+            def predict(self, row: list[float]) -> int:
+                return 1 if row[0] >= 0.5 else 0
+        matrix = [[0.0, 1.0, 0.0], [0.1, 1.0, 1.0], [0.9, 1.0, 0.0], [1.0, 1.0, 1.0]]
+        pipeline = features.FeatureSelectionPipeline()
+        report = pipeline.run_full_pipeline(ThresholdModel(), matrix, [0, 0, 1, 1], ["signal", "flat", "noise"])
+        self.assertIn("core_features_bounded", report)
+        bounded = cast(list[str], report["core_features_bounded"])
+        core = cast(list[str], report["core_features"])
+        self.assertEqual(bounded, core)
 
     def test_bootstrap_ci_deterministic_with_seed(self) -> None:
         engine = features.BootstrapCIEngine()

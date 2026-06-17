@@ -127,7 +127,7 @@ class LabeledRow:
     fallback_features: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
+@dataclass
 class DatasetBuild:
     source: str
     symbol: str
@@ -141,7 +141,11 @@ class DatasetBuild:
     label_horizon: int
     label_threshold: float
     source_bundle: sources.MarketSourceBundle | None = None
-    source_availability_report: dict[str, object] = field(default_factory=dict)
+    source_availability_report: dict[str, object] | None = None
+
+    def __post_init__(self) -> None:
+        if self.source_availability_report is None:
+            self.source_availability_report = {}
 
 
 @dataclass(frozen=True)
@@ -477,6 +481,58 @@ def load_archive_candles(archive_dir: Path) -> list[data.Candle]:
     return list(merged_by_time.values())
 
 
+def archive_row_count(archive_dir: Path) -> int:
+    """Count all data rows in CSV files matching BTCUSDT-1m-*.csv in archive_dir."""
+    total = 0
+    for csv_path in archive_dir.glob("BTCUSDT-1m-*.csv"):
+        with csv_path.open("r", encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            next(reader, None)  # skip header
+            total += sum(1 for _ in reader)
+    return total
+
+
+def archive_date_coverage(archive_dir: Path) -> dict[str, object]:
+    """Return coverage summary for BTCUSDT-1m-*.csv files in archive_dir."""
+    files = sorted(archive_dir.glob("BTCUSDT-1m-*.csv"))
+    if not files:
+        return {
+            "start_date": None,
+            "end_date": None,
+            "raw_rows": 0,
+            "canonical_rows": 0,
+            "missing_days": [],
+            "files_found": 0,
+        }
+    dates: list[date] = []
+    raw_rows = 0
+    for csv_path in files:
+        date_str = _extract_date_from_archive_filename(csv_path.name)
+        dates.append(datetime.strptime(date_str, "%Y-%m-%d").date())
+        with csv_path.open("r", encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            next(reader, None)  # skip header
+            raw_rows += sum(1 for _ in reader)
+    start_date = min(dates)
+    end_date = max(dates)
+    try:
+        canonical = load_archive_candles(archive_dir)
+        canonical_rows = len(canonical)
+    except ValueError:
+        canonical_rows = raw_rows
+    all_days = set(_iter_archive_dates(start_date, end_date))
+    found_days = set(dates)
+    missing_days = sorted([d.isoformat() for d in all_days - found_days])
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "raw_rows": raw_rows,
+        "canonical_rows": canonical_rows,
+        "missing_days": missing_days,
+        "files_found": len(files),
+    }
+
+
 def _archive_csv_text_from_zip(payload: bytes) -> str:
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         names = [name for name in archive.namelist() if not name.endswith("/")]
@@ -774,7 +830,7 @@ def collect_candles(
     return CollectionResult(output_path, source, symbol, interval, len(candles), network_used)
 
 
-def expanded_fixture(rows: int = 240) -> list[data.Candle]:
+def expanded_fixture(rows: int = 300) -> list[data.Candle]:
     base = data.utc_minute(2026, 1, 1, 0, 0)
     missing_minutes = {37, 38, 119, 177}
     candles: list[data.Candle] = []
@@ -1747,6 +1803,71 @@ class ExternalSourcesCollector:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
 
+    def _fetch_klines(
+        self,
+        endpoint: str,
+        symbol: str = "BTCUSDT",
+        interval: str = "1m",
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+        limit: int = 1000,
+    ) -> list[list[float]]:
+        if not self.allow_network:
+            raise RuntimeError("external sources collection requires explicit allow_network=True")
+        params: dict[str, object] = {"symbol": symbol, "interval": interval, "limit": limit}
+        if start_time_ms is not None:
+            params["startTime"] = start_time_ms
+        if end_time_ms is not None:
+            params["endTime"] = end_time_ms
+        query = urllib.parse.urlencode(params)
+        url = f"{self.base_url}{endpoint}?{query}"
+        request = urllib.request.Request(url, headers={"User-Agent": "btcusdt-quant-offline-research/0.1"})
+        with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, list):
+            raise ValueError(f"unexpected klines response payload from {endpoint}")
+        return payload
+
+    def fetch_mark_price_klines(
+        self,
+        symbol: str = "BTCUSDT",
+        interval: str = "1m",
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, object]]:
+        rows = self._fetch_klines("/fapi/v1/markPriceKlines", symbol, interval, start_time_ms, end_time_ms, limit)
+        return [
+            {
+                "open_time": int(row[0]),
+                "open": float(row[1]),
+                "high": float(row[2]),
+                "low": float(row[3]),
+                "close": float(row[4]),
+            }
+            for row in rows
+        ]
+
+    def fetch_premium_index_klines(
+        self,
+        symbol: str = "BTCUSDT",
+        interval: str = "1m",
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, object]]:
+        rows = self._fetch_klines("/fapi/v1/premiumIndexKlines", symbol, interval, start_time_ms, end_time_ms, limit)
+        return [
+            {
+                "open_time": int(row[0]),
+                "open": float(row[1]),
+                "high": float(row[2]),
+                "low": float(row[3]),
+                "close": float(row[4]),
+            }
+            for row in rows
+        ]
+
     def fetch_funding_rate_history(
         self,
         symbol: str = "BTCUSDT",
@@ -1804,6 +1925,37 @@ class ExternalSourcesCollector:
                 "next_rate": float(row.get("fundingRate", 0.0)),
                 "minutes_to_next": 480.0,
             }
+        # Fetch real mark price and premium index klines
+        try:
+            mark_price_history = self.fetch_mark_price_klines(
+                symbol=symbol,
+                interval="1m",
+                start_time_ms=start_time_ms,
+                end_time_ms=end_time_ms,
+                limit=1000,
+            )
+            mark_price_by_time: dict[int, dict[str, object]] = {
+                int(row["open_time"]): {"mark_price": row["close"], "premium_index": 0.0}
+                for row in mark_price_history
+            }
+        except (urllib.error.URLError, ValueError) as e:
+            print(f"Warning: failed to fetch mark price klines: {e}")
+            mark_price_by_time = {}
+        try:
+            premium_index_history = self.fetch_premium_index_klines(
+                symbol=symbol,
+                interval="1m",
+                start_time_ms=start_time_ms,
+                end_time_ms=end_time_ms,
+                limit=1000,
+            )
+            premium_index_by_time: dict[int, float] = {
+                int(row["open_time"]): row["close"]
+                for row in premium_index_history
+            }
+        except (urllib.error.URLError, ValueError) as e:
+            print(f"Warning: failed to fetch premium index klines: {e}")
+            premium_index_by_time = {}
         # Map each candle to external sources
         external_sources: dict[datetime, dict[str, object]] = {}
         for candle in candles:
@@ -1819,7 +1971,16 @@ class ExternalSourcesCollector:
             sources: dict[str, object] = {}
             if closest_funding:
                 sources["funding_rate"] = closest_funding
-            # Mark price approximation (close price * 1.0002)
-            sources["mark_price_1m"] = {"mark_price": candle.close * 1.0002, "premium_index": 0.0002}
+            # Use real mark price when available, fallback to approximation
+            mark_data = mark_price_by_time.get(candle_time_ms)
+            if mark_data:
+                mark_price = float(mark_data["mark_price"])
+                premium_index = premium_index_by_time.get(candle_time_ms, 0.0)
+                sources["mark_price_1m"] = {
+                    "mark_price": mark_price,
+                    "premium_index": float(premium_index),
+                }
+            else:
+                sources["mark_price_1m"] = {"mark_price": candle.close * 1.0002, "premium_index": 0.0002}
             external_sources[candle.open_time] = sources
         return external_sources

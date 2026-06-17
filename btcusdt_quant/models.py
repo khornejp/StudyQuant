@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 import contextlib
 import importlib
 import importlib.util
 import io
+import json
 from dataclasses import dataclass
-from typing import Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 
 FeatureMatrix = Sequence[Sequence[float]]
@@ -176,6 +178,39 @@ class LightGBMAdapter:
             payload["serialized_model"] = serialized
         return payload
 
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "LightGBMAdapter":
+        feature_names = payload.get("feature_names", ())
+        if isinstance(feature_names, str):
+            feature_names = (feature_names,)
+        feature_names = tuple(str(name) for name in feature_names)
+        model_params = payload.get("model_params", {})
+        if not isinstance(model_params, Mapping):
+            model_params = {}
+        adapter = cls(feature_names=feature_names, model_params=model_params)
+        serialized = payload.get("serialized_model")
+        if not serialized:
+            raise ValueError("lightgbm model.json missing serialized_model; retrain with updated code to include serialization")
+        try:
+            lgb = _import_optional_module("lightgbm")
+            booster = lgb.Booster(model_str=str(serialized))
+            # Reconstruct LGBMClassifier wrapper around booster
+            from sklearn.base import clone
+            model = lgb.LGBMClassifier(**adapter.model_params)
+            model._Booster = booster
+            model.booster_ = booster
+            adapter.model = model
+        except Exception as error:
+            raise ValueError(f"failed to load lightgbm serialized model: {error}") from error
+        return adapter
+
+    def probability(self, values: Mapping[str, float]) -> float:
+        if self.model is None:
+            raise RuntimeError("lightgbm adapter must be fitted before probability")
+        matrix = _matrix_to_float_lists([[float(values.get(name, 0.0)) for name in self.feature_names]])
+        probs = self.predict_proba(matrix)
+        return probs[0] if probs else 0.5
+
 
 class CatBoostAdapter:
     DEFAULT_PARAMS: Mapping[str, object] = {
@@ -231,7 +266,52 @@ class CatBoostAdapter:
             "fitted": self.model is not None,
         }
         payload["weights"] = _feature_importance_map(self.model, self.feature_names)
+        if self.model is not None:
+            try:
+                import tempfile, os
+                with tempfile.NamedTemporaryFile(suffix=".cbm", delete=False) as tmp:
+                    tmp_path = tmp.name
+                getattr(self.model, "save_model")(tmp_path, format="cbm")
+                with open(tmp_path, "rb") as f:
+                    payload["serialized_model"] = base64.b64encode(f.read()).decode("ascii")
+                os.remove(tmp_path)
+            except Exception:
+                pass
         return payload
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "CatBoostAdapter":
+        feature_names = payload.get("feature_names", ())
+        if isinstance(feature_names, str):
+            feature_names = (feature_names,)
+        feature_names = tuple(str(name) for name in feature_names)
+        model_params = payload.get("model_params", {})
+        if not isinstance(model_params, Mapping):
+            model_params = {}
+        adapter = cls(feature_names=feature_names, model_params=model_params)
+        serialized = payload.get("serialized_model")
+        if not serialized:
+            raise ValueError("catboost model.json missing serialized_model; retrain with updated code to include serialization")
+        try:
+            catboost = _import_optional_module("catboost")
+            import tempfile, os
+            with tempfile.NamedTemporaryFile(suffix=".cbm", delete=False) as tmp:
+                tmp.write(base64.b64decode(str(serialized)))
+                tmp_path = tmp.name
+            model = catboost.CatBoostClassifier()
+            model.load_model(tmp_path)
+            adapter.model = model
+            os.remove(tmp_path)
+        except Exception as error:
+            raise ValueError(f"failed to load catboost serialized model: {error}") from error
+        return adapter
+
+    def probability(self, values: Mapping[str, float]) -> float:
+        if self.model is None:
+            raise RuntimeError("catboost adapter must be fitted before probability")
+        matrix = _matrix_to_float_lists([[float(values.get(name, 0.0)) for name in self.feature_names]])
+        probs = self.predict_proba(matrix)
+        return probs[0] if probs else 0.5
 
 
 class ModelFactory:

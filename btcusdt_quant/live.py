@@ -13,9 +13,9 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Callable, Mapping, Sequence
 
-from . import data, dataset, governance, monitoring, sources, training
+from . import data, dataset, features, governance, models, monitoring, sources, training
 from .exchange import MARKET, STOP_MARKET, TAKE_PROFIT_MARKET, ExchangeAdapter, ExchangeOrder, MockExchangeAdapter, MockOrder
-from .risk import DrawdownProtocol, DrawdownState, RiskDecision, RiskPolicy
+from .risk import DrawdownProtocol, DrawdownState, RiskDecision, RiskPolicy, strategy_reward_risk_decision
 
 
 class RateLimitError(RuntimeError):
@@ -293,6 +293,133 @@ class ExecutionJournal:
 _BLOCK_ENTRY_ACTIONS = {"block_entries", "block_new_entries", "drop_sample", "no_trade_current_bar", "rollback_to_champion"}
 _HARD_KILL_ACTIONS = {"hard_kill"}
 _RESOLVED_ORDER_STATUSES = {"CANCELED", "CANCELLED", "FILLED", "EXPIRED", "REJECTED", "MISSING"}
+STRATEGY_PROFILE_CHOICES = ("conservative", "balanced", "aggressive")
+
+
+@dataclass(frozen=True)
+class StrategyConfig:
+    name: str
+    long_threshold: float
+    short_threshold: float
+    tp_pct: float
+    sl_pct: float
+    atr_multiplier_tp: float
+    atr_multiplier_sl: float
+    min_reward_risk: float
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.long_threshold <= 1.0:
+            raise ValueError("long_threshold must be in [0, 1]")
+        if not 0.0 <= self.short_threshold <= 1.0:
+            raise ValueError("short_threshold must be in [0, 1]")
+        if self.tp_pct <= 0.0 or self.sl_pct <= 0.0:
+            raise ValueError("tp_pct and sl_pct must be positive")
+        if self.atr_multiplier_tp <= 0.0 or self.atr_multiplier_sl <= 0.0:
+            raise ValueError("ATR multipliers must be positive")
+        if self.min_reward_risk < 0.0:
+            raise ValueError("min_reward_risk must be non-negative")
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "long_threshold": self.long_threshold,
+            "short_threshold": self.short_threshold,
+            "tp_pct": self.tp_pct,
+            "sl_pct": self.sl_pct,
+            "atr_multiplier_tp": self.atr_multiplier_tp,
+            "atr_multiplier_sl": self.atr_multiplier_sl,
+            "min_reward_risk": self.min_reward_risk,
+        }
+
+
+@dataclass(frozen=True)
+class RegimeStrategyProfile:
+    regime: str
+    strategy: StrategyConfig
+
+
+_BALANCED_DEFAULT_STRATEGY = StrategyConfig("balanced_default", 0.50, 0.50, 0.010, 0.005, 1.0, 0.5, 1.0)
+_BALANCED_REGIME_STRATEGIES: dict[str, RegimeStrategyProfile] = {
+    "high_volatility": RegimeStrategyProfile("high_volatility", StrategyConfig("balanced_high_volatility", 0.45, 0.55, 0.015, 0.010, 1.5, 1.0, 1.0)),
+    "ranging": RegimeStrategyProfile("ranging", StrategyConfig("balanced_ranging", 0.52, 0.48, 0.008, 0.004, 0.8, 0.4, 1.0)),
+    "trending": RegimeStrategyProfile("trending", StrategyConfig("balanced_trending", 0.48, 0.52, 0.010, 0.005, 1.0, 0.5, 1.0)),
+}
+DEFAULT_STRATEGY_PROFILES: Mapping[str, RegimeStrategyProfile] = _BALANCED_REGIME_STRATEGIES
+
+
+def strategy_for_regime(active_regime: str | None, strategy_profile: str = "balanced") -> StrategyConfig:
+    if strategy_profile not in STRATEGY_PROFILE_CHOICES:
+        raise ValueError(f"unsupported strategy profile: {strategy_profile}")
+    base = _BALANCED_REGIME_STRATEGIES.get(str(active_regime or "")).strategy if active_regime in _BALANCED_REGIME_STRATEGIES else _BALANCED_DEFAULT_STRATEGY
+    if strategy_profile == "balanced":
+        return base
+    if strategy_profile == "conservative":
+        return StrategyConfig(
+            f"conservative_{base.name}",
+            min(0.95, base.long_threshold + 0.03),
+            max(0.05, base.short_threshold - 0.03),
+            base.tp_pct,
+            base.sl_pct,
+            base.atr_multiplier_tp,
+            base.atr_multiplier_sl,
+            max(base.min_reward_risk, 1.25),
+        )
+    return StrategyConfig(
+        f"aggressive_{base.name}",
+        max(0.05, base.long_threshold - 0.03),
+        min(0.95, base.short_threshold + 0.03),
+        base.tp_pct * 1.10,
+        base.sl_pct * 1.10,
+        base.atr_multiplier_tp * 1.10,
+        base.atr_multiplier_sl * 1.10,
+        min(base.min_reward_risk, 0.80),
+    )
+
+
+def optimized_tp_sl(entry_price: float, side: str, features: Mapping[str, float], strategy: StrategyConfig) -> tuple[float, float, dict[str, object]]:
+    if entry_price <= 0.0:
+        raise ValueError("entry_price must be positive")
+    if side not in {"BUY", "SELL"}:
+        raise ValueError("side must be BUY or SELL")
+    atr_value = features.get("atr_pct")
+    if atr_value is not None and float(atr_value) > 0.0:
+        tp_delta = strategy.atr_multiplier_tp * float(atr_value)
+        sl_delta = strategy.atr_multiplier_sl * float(atr_value)
+        pricing_method = "atr_pct"
+    else:
+        tp_delta = strategy.tp_pct
+        sl_delta = strategy.sl_pct
+        pricing_method = "fixed_pct"
+    if side == "BUY":
+        tp_price = entry_price * (1.0 + tp_delta)
+        sl_price = entry_price * (1.0 - sl_delta)
+    else:
+        tp_price = entry_price * (1.0 - tp_delta)
+        sl_price = entry_price * (1.0 + sl_delta)
+    reward_risk = tp_delta / sl_delta if sl_delta > 0.0 else 0.0
+    decision = {
+        "strategy": strategy.as_dict(),
+        "side": side,
+        "entry_price": entry_price,
+        "tp_delta": tp_delta,
+        "sl_delta": sl_delta,
+        "take_profit_price": tp_price,
+        "stop_loss_price": sl_price,
+        "reward_risk": reward_risk,
+        "pricing_method": pricing_method,
+    }
+    return tp_price, sl_price, decision
+
+
+def select_signal(probability: float, active_regime: str, strategy: StrategyConfig, reward_risk: float | None = None) -> str:
+    risk_decision = strategy_reward_risk_decision(reward_risk, strategy.min_reward_risk, strategy.name)
+    if not risk_decision.allowed:
+        return "HOLD"
+    if probability > strategy.long_threshold:
+        return "BUY"
+    if probability < strategy.short_threshold:
+        return "SELL"
+    return "HOLD"
 
 
 def safe_market_entry(
@@ -322,6 +449,9 @@ def safe_market_entry(
     allow_live_orders: bool = False,
     client_order_id: str | None = None,
     monitor_decisions: Sequence[Mapping[str, object] | str] | None = None,
+    strategy_reward_risk: float | None = None,
+    strategy_min_reward_risk: float | None = None,
+    strategy_name: str = "",
     return_decision: bool = False,
 ) -> str | RiskDecision:
     entry_side = signal_side or side or "BUY"
@@ -350,6 +480,9 @@ def safe_market_entry(
         allow_live_orders=allow_live_orders,
         client_order_id=client_order_id,
         monitor_decisions=monitor_decisions,
+        strategy_reward_risk=strategy_reward_risk,
+        strategy_min_reward_risk=strategy_min_reward_risk,
+        strategy_name=strategy_name,
     )
     if return_decision:
         return decision
@@ -428,7 +561,7 @@ def submit_take_profit_stop_loss(
             )
         )
         return tp_order, sl_order
-    except Exception:
+    except Exception as submit_error:
         # If SL (or TP) fails, cancel the already-submitted TP to avoid leaving
         # an open position with only one protective order.
         if tp_order is not None:
@@ -436,8 +569,8 @@ def submit_take_profit_stop_loss(
             if callable(cancel_order):
                 try:
                     cancel_order(symbol, order_id=tp_order.order_id, client_order_id=tp_order.client_order_id)
-                except Exception:
-                    pass
+                except Exception as cancel_error:
+                    raise submit_error from cancel_error
         raise
 
 
@@ -664,6 +797,9 @@ def _entry_gate_decision(
     allow_live_orders: bool,
     client_order_id: str | None,
     monitor_decisions: Sequence[Mapping[str, object] | str] | None,
+    strategy_reward_risk: float | None,
+    strategy_min_reward_risk: float | None,
+    strategy_name: str,
 ) -> RiskDecision:
     gate_decisions = _non_mutating_entry_gates(
         state,
@@ -682,6 +818,9 @@ def _entry_gate_decision(
         clock_drift_ms,
         drawdown_state,
         monitor_decisions,
+        strategy_reward_risk,
+        strategy_min_reward_risk,
+        strategy_name,
     )
     blocking = _blocking_decision(gate_decisions)
     if blocking is not None:
@@ -718,6 +857,9 @@ def _non_mutating_entry_gates(
     clock_drift_ms: int | None,
     drawdown_state: DrawdownState | None,
     monitor_decisions: Sequence[Mapping[str, object] | str] | None,
+    strategy_reward_risk: float | None,
+    strategy_min_reward_risk: float | None,
+    strategy_name: str,
 ) -> list[RiskDecision]:
     decisions: list[RiskDecision] = []
     allowed, reason = OneWayPositionGuard().can_enter(state, signal_side)
@@ -736,6 +878,8 @@ def _non_mutating_entry_gates(
     else:
         decisions.append(DrawdownProtocol(policy).evaluate(drawdown_state))
     decisions.append(_monitoring_decision(monitor_decisions))
+    if strategy_min_reward_risk is not None:
+        decisions.append(strategy_reward_risk_decision(strategy_reward_risk, strategy_min_reward_risk, strategy_name))
     return decisions
 
 
@@ -929,6 +1073,68 @@ class LiveRunResult:
     canonical: list[data.Candle]
     feature_rows: list[dataset.FeatureRow]
     source_bundle: sources.MarketSourceBundle | None = None
+    metrics_path: Path | None = None
+    alerts_path: Path | None = None
+    health_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class MarketEvent:
+    candle: data.Candle
+    sequence: int = 0
+
+
+@dataclass(frozen=True)
+class GapEvent:
+    detection: GapDetection
+    repaired_candles: tuple[data.Candle, ...] = ()
+
+
+@dataclass(frozen=True)
+class FeatureEvent:
+    canonical: tuple[data.Candle, ...]
+    feature_rows: tuple[dataset.FeatureRow, ...]
+    source_bundle: sources.MarketSourceBundle
+    external_sources: Mapping[str, object] = field(default_factory=dict)
+    source_report: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SignalEvent:
+    signal: str
+    model_inference: Mapping[str, object]
+    feature_row: dataset.FeatureRow | None = None
+
+
+@dataclass(frozen=True)
+class OrderEvent:
+    action: str
+    orders: tuple[ExchangeOrder, ...] = ()
+    details: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MonitoringEvent:
+    action: str
+    row: Mapping[str, object]
+    source: str = ""
+
+
+EventHandler = Callable[[Any], None]
+
+
+class EventBus:
+    def __init__(self) -> None:
+        self._handlers: dict[str, list[EventHandler]] = {}
+
+    def subscribe(self, event_type: str, handler: EventHandler) -> None:
+        self._handlers.setdefault(event_type, []).append(handler)
+
+    def publish(self, event: Any) -> None:
+        event_type = type(event).__name__
+        for handler in list(self._handlers.get(event_type, [])):
+            handler(event)
+
 
 class StreamGapDetector:
     def __init__(self, cadence: timedelta = timedelta(minutes=1), desync_threshold: int = 3) -> None:
@@ -994,7 +1200,7 @@ class WebSocketClient:
         if not self.allow_network:
             raise RuntimeError("WebSocket streaming requires explicit allow_network=True")
         try:
-            import websocket  # type: ignore[import-not-found]
+            websocket = __import__("websocket")
         except ImportError as error:
             raise RuntimeError("websocket-client is not installed; use live --dry-run or install websocket-client") from error
         self._stop_event.clear()
@@ -1177,7 +1383,7 @@ class RESTBackfill:
         return replace(candle, repaired=True, gap_flag=1)
 
 
-def load_model_artifact(path: Path | None, strict: bool = False) -> training.LinearClassifier | None:
+def load_model_artifact(path: Path | None, strict: bool = False) -> training.LinearClassifier | models.LightGBMAdapter | models.CatBoostAdapter | None:
     if path is None:
         return None
     if not path.exists():
@@ -1189,12 +1395,709 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> training.Lin
         if strict:
             raise ValueError(f"model artifact is not a JSON object: {path}")
         return None
+    model_family = str(payload.get("model_family", ""))
     try:
-        return training.LinearClassifier.from_dict(payload)
+        if "deterministic_centroid_linear" in model_family:
+            return training.LinearClassifier.from_dict(payload)
+        if model_family == "lightgbm":
+            return models.LightGBMAdapter.from_dict(payload)
+        if model_family == "catboost":
+            return models.CatBoostAdapter.from_dict(payload)
+        if strict:
+            raise ValueError(f"unsupported model_family: {model_family}")
+        return None
     except ValueError as error:
+        # Fallback: try to load as LinearClassifier using weights if available
+        weights = payload.get("weights")
+        feature_names = payload.get("feature_names")
+        if isinstance(weights, Mapping) and isinstance(feature_names, Sequence):
+            try:
+                means = {str(k): 0.0 for k in feature_names}
+                scales = {str(k): 1.0 for k in feature_names}
+                weights_dict = {str(k): float(v) for k, v in weights.items()}
+                linear_weights = {str(k): weights_dict.get(str(k), 0.0) for k in feature_names}
+                return training.LinearClassifier(
+                    tuple(str(k) for k in feature_names),
+                    training.Standardizer(means, scales),
+                    linear_weights,
+                    intercept=0.0,
+                )
+            except Exception as fallback_error:
+                if strict:
+                    raise ValueError(f"model artifact fallback failed: {fallback_error}") from fallback_error
+                return None
         if strict:
             raise ValueError(f"model artifact validation failed: {error}") from error
         return None
+
+
+@dataclass(frozen=True)
+class RegimeModelBundle:
+    models: dict[str, training.LinearClassifier | models.LightGBMAdapter | models.CatBoostAdapter]
+    detector_thresholds: dict[str, float]
+    detector_config: features.RegimeDetectorConfig
+    detector_diagnostics: Mapping[str, object]
+    default_regime: str | None = None
+
+
+def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeModelBundle | None:
+    """Load regime-aware models from a directory containing regime_run_summary.json."""
+    if path is None:
+        return None
+    if not path.exists():
+        if strict:
+            raise FileNotFoundError(f"regime model directory not found: {path}")
+        return None
+    summary_path = path / "regime_run_summary.json"
+    if not summary_path.exists():
+        if strict:
+            raise FileNotFoundError(f"regime_run_summary.json not found in {path}")
+        return None
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    regime_results = summary.get("regime_results", {})
+    default_regime = summary.get("default_regime")
+    regime_detector = summary.get("regime_detector", {})
+    detector_thresholds = _coerce_float_mapping(regime_detector.get("thresholds", {}) if isinstance(regime_detector, Mapping) else {})
+    detector_config = _coerce_regime_detector_config(regime_detector.get("config", {}) if isinstance(regime_detector, Mapping) else {})
+    detector_diagnostics = regime_detector.get("diagnostics", {}) if isinstance(regime_detector, Mapping) else {}
+    if not detector_thresholds:
+        detector_thresholds = features.RegimeDetector(detector_config).fit_thresholds((), ())
+    loaded_models: dict[str, training.LinearClassifier | models.LightGBMAdapter | models.CatBoostAdapter] = {}
+    for regime_name in ("high_volatility", "trending", "ranging"):
+        if regime_name not in regime_results:
+            continue
+        model_path = path / f"regime_{regime_name}" / "model.json"
+        if not model_path.exists():
+            if strict:
+                raise FileNotFoundError(f"regime model not found: {model_path}")
+            continue
+        model = load_model_artifact(model_path, strict=strict)
+        if model is not None:
+            loaded_models[regime_name] = model
+    if not loaded_models:
+        return None
+    diagnostics_mapping: Mapping[str, object] = detector_diagnostics if isinstance(detector_diagnostics, Mapping) else {}
+    return RegimeModelBundle(
+        models=loaded_models,
+        detector_thresholds=detector_thresholds,
+        detector_config=detector_config,
+        detector_diagnostics=diagnostics_mapping,
+        default_regime=str(default_regime) if isinstance(default_regime, str) else None,
+    )
+
+
+def _coerce_float_mapping(payload: object) -> dict[str, float]:
+    if not isinstance(payload, Mapping):
+        return {}
+    values: dict[str, float] = {}
+    for key, value in payload.items():
+        if isinstance(value, (float, int, str)):
+            values[str(key)] = float(value)
+    return values
+
+
+def _coerce_regime_detector_config(payload: object) -> features.RegimeDetectorConfig:
+    if not isinstance(payload, Mapping):
+        return features.RegimeDetectorConfig()
+    defaults = features.RegimeDetectorConfig()
+    return features.RegimeDetectorConfig(
+        rv_percentile=float(payload.get("rv_percentile", defaults.rv_percentile)),
+        trend_percentile=float(payload.get("trend_percentile", defaults.trend_percentile)),
+        min_trend_abs=float(payload.get("min_trend_abs", defaults.min_trend_abs)),
+        high_vol_priority=bool(payload.get("high_vol_priority", defaults.high_vol_priority)),
+        low_vol_trend_multiplier=float(payload.get("low_vol_trend_multiplier", defaults.low_vol_trend_multiplier)),
+        min_regime_run_bars=int(payload.get("min_regime_run_bars", defaults.min_regime_run_bars)),
+    )
+
+
+class LiveEngine:
+    def __init__(
+        self,
+        output: Path,
+        dry_run: bool = True,
+        allow_public_network: bool = False,
+        max_candles: int = 12,
+        idle_timeout_seconds: float = 0.2,
+        exchange_adapter: ExchangeAdapter | None = None,
+        custom_candles: Sequence[data.Candle] | None = None,
+        model_artifact_path: Path | None = None,
+        source_parity_passed: bool | None = None,
+        regime_aware: bool = False,
+        strategy_profile: str = "balanced",
+        soak_duration_hours: float = 0.0,
+        soak_report_interval_minutes: float = 60.0,
+    ) -> None:
+        if strategy_profile not in STRATEGY_PROFILE_CHOICES:
+            raise ValueError(f"unsupported strategy profile: {strategy_profile}")
+        self.output = output
+        self.dry_run = dry_run
+        self.allow_public_network = allow_public_network
+        self.max_candles = max_candles
+        self.idle_timeout_seconds = idle_timeout_seconds
+        self.exchange_adapter = exchange_adapter
+        self.custom_candles = custom_candles
+        self.model_artifact_path = model_artifact_path
+        self.source_parity_passed = source_parity_passed
+        self.regime_aware = regime_aware
+        self.strategy_profile = strategy_profile
+        self.soak_duration_hours = soak_duration_hours
+        self.soak_report_interval_minutes = soak_report_interval_minutes
+        self.bus = EventBus()
+        self._register_default_handlers()
+        self._reset_run_state()
+
+    def _register_default_handlers(self) -> None:
+        self.bus.subscribe("MarketEvent", self._handle_market_event)
+        self.bus.subscribe("FeatureEvent", self._handle_feature_event)
+        self.bus.subscribe("SignalEvent", self._handle_signal_event)
+        self.bus.subscribe("MarketEvent", self._monitor_market_event)
+        self.bus.subscribe("GapEvent", self._monitor_gap_event)
+        self.bus.subscribe("SignalEvent", self._monitor_signal_event)
+        self.bus.subscribe("OrderEvent", self._monitor_order_event)
+        self.bus.subscribe("MonitoringEvent", self._monitor_monitoring_event)
+
+    def _reset_run_state(self) -> None:
+        self.client: WebSocketClient | None = None
+        self.backfill: RESTBackfill | None = None
+        self.detector = StreamGapDetector()
+        self.anomalies: list[str] = []
+        self.desync_events = 0
+        self.source_errors: dict[str, str] = {}
+        self.order_errors: list[str] = []
+        self.active_adapter = self.exchange_adapter or MockExchangeAdapter()
+        self.drawdown_state = self._initial_drawdown_state()
+        self.canonical: list[data.Candle] = []
+        self.source_bundle: sources.MarketSourceBundle | None = None
+        self.clock_monitor_row: Mapping[str, object] = {}
+        self.adl_monitor_row: Mapping[str, object] = {}
+        self.funding_monitor_row: Mapping[str, object] = {}
+        self.calibration_monitor_row: Mapping[str, object] = {}
+        self.monitor_decisions: tuple[Mapping[str, object], ...] = ()
+        self.external_sources: dict[str, object] = {}
+        self.feature_rows: list[dataset.FeatureRow] = []
+        self.source_report: Mapping[str, object] = {}
+        self.signal = "HOLD"
+        self.model_inference: dict[str, object] = {"probability": None, "signal": "HOLD", "model_loaded": False}
+        self.strategy_config = strategy_for_regime(None, self.strategy_profile)
+        self.strategy_decision: dict[str, object] = {"profile": self.strategy_profile, "strategy": self.strategy_config.as_dict(), "signal": "HOLD"}
+        self.bracket_pricing: dict[str, object] | None = None
+        self.gap_action = "allow"
+        self.soak_start_time: datetime | None = None
+        self.soak_last_report_time: datetime | None = None
+        self.entry_action = "allow"
+        self.exit_action = "allow"
+        self.bracket_orders: tuple[ExchangeOrder, ExchangeOrder, ExchangeOrder] | None = None
+        self.bracket_error: str | None = None
+        self.emergency_close_order: ExchangeOrder | None = None
+        self.metrics_registry = monitoring.MetricsRegistry()
+        self.alert_manager = monitoring.AlertManager.with_builtin_rules()
+        self.active_alerts: list[dict[str, str]] = []
+        self.health_status = monitoring.health_from_alerts(())
+        self.metrics_path = self.output / "metrics.json"
+        self.alerts_path = self.output / "alerts.json"
+        self.health_path = self.output / "health.json"
+        self._last_regime: object = None
+        self.summary: dict[str, object] = {}
+
+    def _initial_drawdown_state(self) -> DrawdownState:
+        try:
+            initial_account = self.active_adapter.get_account()
+            initial_equity = initial_account.available_balance
+        except Exception as account_error:
+            self.source_errors["initial_account"] = str(account_error)
+            initial_equity = 0.0
+        return DrawdownState(peak_equity=initial_equity, current_equity=initial_equity)
+
+    def run(self) -> LiveRunResult:
+        if not self.dry_run and not self.allow_public_network:
+            raise RuntimeError("live mode without --dry-run requires --allow-public-network")
+        self._reset_run_state()
+        self.soak_start_time = datetime.now(timezone.utc)
+        self.soak_last_report_time = self.soak_start_time
+        self.client, self.backfill = self._build_stream_components()
+        self.client.start()
+        try:
+            processed = 0
+            soak_mode = self.soak_duration_hours > 0
+            max_candles = float("inf") if soak_mode else self.max_candles
+            while processed < max_candles:
+                # Check soak duration termination
+                if soak_mode and self.soak_start_time is not None:
+                    elapsed_hours = (datetime.now(timezone.utc) - self.soak_start_time).total_seconds() / 3600.0
+                    if elapsed_hours >= self.soak_duration_hours:
+                        print(f"Soak test completed: {elapsed_hours:.2f} hours elapsed (limit: {self.soak_duration_hours:.2f})")
+                        break
+                    # Periodic soak report
+                    if self.soak_last_report_time is not None:
+                        report_interval_hours = self.soak_report_interval_minutes / 60.0
+                        time_since_report = (datetime.now(timezone.utc) - self.soak_last_report_time).total_seconds() / 3600.0
+                        if time_since_report >= report_interval_hours:
+                            self._write_soak_report(processed, elapsed_hours)
+                            self.soak_last_report_time = datetime.now(timezone.utc)
+                candle = self.client.next_candle(timeout=self.idle_timeout_seconds)
+                if candle is None:
+                    if isinstance(self.client, MockWebSocketClient) and self.client.is_finished():
+                        break
+                    self._handle_idle_timeout()
+                    continue
+                self.bus.publish(MarketEvent(candle=candle, sequence=processed + 1))
+                processed += 1
+        finally:
+            self.client.close()
+
+        self._finalize_after_stream()
+        self._write_outputs()
+        if self.source_bundle is None:
+            raise RuntimeError("live source bundle was not built")
+        return LiveRunResult(
+            self.output,
+            self.summary,
+            self.canonical,
+            self.feature_rows,
+            self.source_bundle,
+            self.metrics_path,
+            self.alerts_path,
+            self.health_path,
+        )
+
+    def _build_stream_components(self) -> tuple[WebSocketClient, RESTBackfill]:
+        if self.custom_candles is not None:
+            fixture = list(self.custom_candles)
+            stream_fixture = fixture[: self.max_candles]
+            client: WebSocketClient = MockWebSocketClient(stream_fixture)
+            fixture_by_time = {candle.open_time: candle for candle in fixture}
+            backfill = RESTBackfill(fetcher=lambda open_times: [fixture_by_time[open_time] for open_time in open_times if open_time in fixture_by_time])
+        elif self.dry_run:
+            fixture = _live_fixture(max(self.max_candles + 4, 12))
+            omitted = {5, 6, 9}
+            stream_fixture = [candle for index, candle in enumerate(fixture[: self.max_candles]) if index not in omitted]
+            client = MockWebSocketClient(stream_fixture)
+            fixture_by_time = {candle.open_time: candle for candle in fixture}
+            backfill = RESTBackfill(fetcher=lambda open_times: [fixture_by_time[open_time] for open_time in open_times if open_time in fixture_by_time])
+        else:
+            client = WebSocketClient(allow_network=True)
+            backfill = RESTBackfill(allow_network=True)
+        return client, backfill
+
+    def _handle_idle_timeout(self) -> None:
+        timeout_detection = self.detector.check_timeout(datetime.now(timezone.utc))
+        if timeout_detection.stream_desync_detected:
+            self.desync_events += 1
+            if timeout_detection.anomaly is not None:
+                self.anomalies.append(timeout_detection.anomaly)
+            self.bus.publish(GapEvent(timeout_detection))
+
+    def _handle_market_event(self, event: Any) -> None:
+        if not isinstance(event, MarketEvent):
+            raise TypeError("MarketEvent handler received unexpected event")
+        detection = self.detector.observe(event.candle)
+        if detection.stream_desync_detected:
+            self.desync_events += 1
+            if detection.anomaly is not None:
+                self.anomalies.append(detection.anomaly)
+            repaired_candles = self._backfill().backfill_missing(detection.missing_open_times)
+            for repaired in repaired_candles:
+                self._client().add_candle(repaired)
+            self.bus.publish(GapEvent(detection, tuple(repaired_candles)))
+        self._update_drawdown(event.candle)
+
+    def _update_drawdown(self, candle: data.Candle) -> None:
+        try:
+            current_account = self.active_adapter.get_account()
+            current_equity = current_account.available_balance
+        except Exception as account_error:
+            self.source_errors["drawdown_account"] = str(account_error)
+            current_equity = candle.close
+        self.drawdown_state = self.drawdown_state.update(current_equity)
+
+    def _finalize_after_stream(self) -> None:
+        self.canonical = data.CanonicalTimelineBuilder().build(self._client().buffer_snapshot())
+        self.source_bundle = build_live_source_bundle(self.canonical, dry_run=self.dry_run)
+        self.clock_monitor_row = monitoring.ClockDriftService().evaluate()
+        self.adl_monitor_row = monitoring.ADLMonitorService().evaluate(self.source_bundle.adl_quantile)
+        self.funding_monitor_row = monitoring.FundingMonitorService().evaluate(self.source_bundle.funding_rate)
+        self.calibration_monitor_row = monitoring.CalibrationDriftMonitor().evaluate([], [])
+        self.monitor_decisions = (self.clock_monitor_row, self.adl_monitor_row, self.funding_monitor_row, self.calibration_monitor_row)
+        for source, row in (
+            ("clock", self.clock_monitor_row),
+            ("adl", self.adl_monitor_row),
+            ("funding", self.funding_monitor_row),
+            ("calibration", self.calibration_monitor_row),
+        ):
+            self.bus.publish(MonitoringEvent(str(row.get("action", "allow")), row, source))
+        self.external_sources = self._fetch_external_sources()
+        self.feature_rows = dataset.build_feature_rows(self.canonical, source_bundle=self.source_bundle, external_sources=self.external_sources)
+        self.source_report = sources.train_live_feature_parity_report(
+            dataset.FEATURE_NAMES,
+            source_bundle=self.source_bundle,
+            feature_registry=dataset.feature_formula_registry()["features"],
+            external_sources=self.external_sources,
+        )
+        self.bus.publish(
+            FeatureEvent(
+                canonical=tuple(self.canonical),
+                feature_rows=tuple(self.feature_rows),
+                source_bundle=self.source_bundle,
+                external_sources=self.external_sources,
+                source_report=self.source_report,
+            )
+        )
+
+    def _fetch_external_sources(self) -> dict[str, object]:
+        external_sources: dict[str, object] = {}
+        try:
+            depth = self.active_adapter.get_depth("BTCUSDT")
+            external_sources["depth_snapshot"] = {
+                "best_bid": depth.best_bid,
+                "best_ask": depth.best_ask,
+                "bid_qty": depth.bid_qty,
+                "ask_qty": depth.ask_qty,
+                "microprice": depth.microprice,
+            }
+        except Exception as source_error:
+            self.source_errors["depth_snapshot"] = str(source_error)
+        try:
+            funding = self.active_adapter.get_funding_rate("BTCUSDT")
+            external_sources["funding_rate"] = {
+                "current_rate": funding.current_rate,
+                "next_rate": funding.next_rate,
+                "minutes_to_next": funding.minutes_to_next,
+            }
+        except Exception as source_error:
+            self.source_errors["funding_rate"] = str(source_error)
+        try:
+            adl = self.active_adapter.get_adl_quantile("BTCUSDT")
+            external_sources["adl_quantile"] = {"adl_quantile": adl.adl_quantile}
+        except Exception as source_error:
+            self.source_errors["adl_quantile"] = str(source_error)
+        try:
+            mark = self.active_adapter.get_mark_price("BTCUSDT")
+            external_sources["mark_price_1m"] = {
+                "mark_price": mark.mark_price,
+                "premium_index": mark.premium_index,
+            }
+        except Exception as source_error:
+            self.source_errors["mark_price_1m"] = str(source_error)
+        return external_sources
+
+    def _handle_feature_event(self, event: Any) -> None:
+        if not isinstance(event, FeatureEvent):
+            raise TypeError("FeatureEvent handler received unexpected event")
+        self.canonical = list(event.canonical)
+        self.feature_rows = list(event.feature_rows)
+        self.source_bundle = event.source_bundle
+        self.external_sources = dict(event.external_sources)
+        self.source_report = event.source_report
+        self._compute_signal()
+        latest_row = self.feature_rows[-1] if self.feature_rows else None
+        self.bus.publish(SignalEvent(self.signal, self.model_inference, latest_row))
+
+    def _apply_strategy_decision(self, probability: float | None, active_regime: str | None, fallback_signal: str) -> str:
+        strategy = strategy_for_regime(active_regime, self.strategy_profile)
+        threshold_signal = select_signal(probability, active_regime or "", strategy) if probability is not None else fallback_signal
+        latest_features = self.feature_rows[-1].features if self.feature_rows else {}
+        entry_price = self.canonical[-1].close if self.canonical else 0.0
+        reward_risk: float | None = None
+        pricing: dict[str, object] | None = None
+        if threshold_signal in {"BUY", "SELL"} and entry_price > 0.0:
+            _, _, pricing = optimized_tp_sl(entry_price, threshold_signal, latest_features, strategy)
+            reward_risk = float(pricing["reward_risk"])
+        risk_decision = strategy_reward_risk_decision(reward_risk, strategy.min_reward_risk, strategy.name)
+        if probability is not None:
+            selected_signal = select_signal(probability, active_regime or "", strategy, reward_risk)
+        else:
+            selected_signal = threshold_signal if risk_decision.allowed else "HOLD"
+        self.strategy_config = strategy
+        self.bracket_pricing = pricing
+        self.strategy_decision = {
+            "profile": self.strategy_profile,
+            "active_regime": active_regime,
+            "strategy": strategy.as_dict(),
+            "probability": probability,
+            "threshold_signal": threshold_signal,
+            "signal": selected_signal,
+            "reward_risk": reward_risk,
+            "min_reward_risk": strategy.min_reward_risk,
+            "risk_gate_action": risk_decision.action,
+            "risk_gate_allowed": risk_decision.allowed,
+            "risk_gate_reason": risk_decision.reason,
+            "pricing_method": pricing.get("pricing_method") if pricing else None,
+        }
+        return selected_signal
+
+    def _compute_signal(self) -> None:
+        strict_artifact = self.model_artifact_path is not None
+        model: training.LinearClassifier | models.LightGBMAdapter | models.CatBoostAdapter | None = None
+        active_regime: str | None = None
+        fallback_regime: str | None = None
+        if self.regime_aware and self.model_artifact_path is not None:
+            regime_bundle = load_regime_aware_models(self.model_artifact_path, strict=strict_artifact)
+            if regime_bundle is not None and self.feature_rows:
+                latest_features = self.feature_rows[-1].features
+                rv_15 = float(latest_features.get("rv_15", 0.0))
+                trend_slope_30 = float(latest_features.get("trend_slope_30", 0.0))
+                detector = features.RegimeDetector(regime_bundle.detector_config)
+                active_regime = detector.detect(rv_15, trend_slope_30, thresholds=regime_bundle.detector_thresholds)
+                model = regime_bundle.models.get(active_regime)
+                if model is None and regime_bundle.default_regime is not None:
+                    model = regime_bundle.models.get(regime_bundle.default_regime)
+                    if model is not None:
+                        fallback_regime = regime_bundle.default_regime
+        else:
+            model = load_model_artifact(self.model_artifact_path, strict=strict_artifact)
+        if model is not None and self.feature_rows:
+            latest_features = self.feature_rows[-1].features
+            try:
+                probability = model.probability(latest_features)
+                self.signal = self._apply_strategy_decision(probability, active_regime, "HOLD")
+                self.model_inference = {"probability": probability, "signal": self.signal, "model_loaded": True, "regime": active_regime, "fallback_regime": fallback_regime}
+            except Exception as inference_error:
+                self.signal = "HOLD"
+                self._apply_strategy_decision(None, active_regime, "HOLD")
+                self.model_inference = {"probability": None, "signal": self.signal, "model_loaded": True, "error": str(inference_error), "regime": active_regime, "fallback_regime": fallback_regime}
+        else:
+            last_return = data.returns(self.canonical)[-1] if self.canonical else 0.0
+            fallback_signal = "BUY" if last_return > 0 else "SELL" if last_return < 0 else "HOLD"
+            self.signal = self._apply_strategy_decision(None, active_regime, fallback_signal)
+            self.model_inference = {"probability": None, "signal": self.signal, "model_loaded": False, "fallback": "last_return", "regime": active_regime, "fallback_regime": None}
+        latest_gap_ratio = float(self.feature_rows[-1].features.get("gap_ratio_20", 0.0)) if self.feature_rows else 0.0
+        latest_max_gap_run = float(self.feature_rows[-1].features.get("max_gap_run_120", 0.0)) if self.feature_rows else 0.0
+        self.gap_action = governance.fallback_action("gap_ratio_20", latest_gap_ratio)
+        if self.gap_action == "allow":
+            self.gap_action = governance.fallback_action("max_gap_run", latest_max_gap_run)
+
+    def _handle_signal_event(self, event: Any) -> None:
+        if not isinstance(event, SignalEvent):
+            raise TypeError("SignalEvent handler received unexpected event")
+        self.signal = event.signal
+        parity_passed = self.source_parity_passed if self.source_parity_passed is not None else bool(self.source_report.get("train_live_feature_parity_passed", False))
+        position = self.active_adapter.get_position("BTCUSDT")
+        account = self.active_adapter.get_account()
+        entry_quantity = 0.001 if self.signal in {"BUY", "SELL"} else 0.0
+        entry_price_for_notional = self.canonical[-1].close if self.canonical else 0.0
+        entry_notional = entry_quantity * entry_price_for_notional
+        self.entry_action = str(
+            safe_market_entry(
+                position,
+                self.signal,
+                entry_quantity,
+                adapter=self.active_adapter,
+                source_parity_passed=parity_passed,
+                gap_action=self.gap_action,
+                account_balance_usdt=account.available_balance,
+                leverage=position.leverage,
+                notional=entry_notional,
+                drawdown_state=self.drawdown_state,
+                monitor_decisions=self.monitor_decisions,
+                allow_live_orders=not self.dry_run,
+                submit=not self.dry_run and self.signal in {"BUY", "SELL"},
+                strategy_reward_risk=float(self.strategy_decision["reward_risk"]) if self.strategy_decision.get("reward_risk") is not None else None,
+                strategy_min_reward_risk=self.strategy_config.min_reward_risk,
+                strategy_name=self.strategy_config.name,
+            )
+        )
+        self._submit_brackets_if_needed(entry_quantity)
+        self.exit_action = str(gap_cross_exit(0.0, False, monitor_decisions=self.monitor_decisions))
+        orders: list[ExchangeOrder] = []
+        if self.bracket_orders is not None:
+            orders.extend(self.bracket_orders)
+        if self.emergency_close_order is not None:
+            orders.append(self.emergency_close_order)
+        self.bus.publish(OrderEvent(self.entry_action, tuple(orders), {"exit_action": self.exit_action, "bracket_error": self.bracket_error or ""}))
+
+    def _monitor_market_event(self, event: Any) -> None:
+        if not isinstance(event, MarketEvent):
+            raise TypeError("MarketEvent monitor received unexpected event")
+        self.metrics_registry.increment("candles_processed")
+        self._evaluate_monitoring_alerts()
+
+    def _monitor_gap_event(self, event: Any) -> None:
+        if not isinstance(event, GapEvent):
+            raise TypeError("GapEvent monitor received unexpected event")
+        self.metrics_registry.increment("gap_events")
+        self._evaluate_monitoring_alerts()
+
+    def _monitor_signal_event(self, event: Any) -> None:
+        if not isinstance(event, SignalEvent):
+            raise TypeError("SignalEvent monitor received unexpected event")
+        probability = event.model_inference.get("probability")
+        self.metrics_registry.set("current_probability", probability)
+        regime = event.model_inference.get("regime")
+        self.metrics_registry.set("current_regime", regime)
+        if regime not in (None, "") and self._last_regime not in (None, "") and regime != self._last_regime:
+            self.metrics_registry.increment("regime_transitions")
+        if regime not in (None, ""):
+            self._last_regime = regime
+        if "error" in event.model_inference:
+            self.metrics_registry.increment("model_inference_errors")
+        latest_gap_ratio = 0.0
+        if event.feature_row is not None:
+            latest_gap_ratio = float(event.feature_row.features.get("gap_ratio_20", 0.0))
+        self.metrics_registry.set("latest_gap_ratio", latest_gap_ratio)
+        if self.source_report:
+            self.metrics_registry.set("train_live_feature_parity_passed", bool(self.source_report.get("train_live_feature_parity_passed", False)))
+        self._evaluate_monitoring_alerts()
+
+    def _monitor_order_event(self, event: Any) -> None:
+        if not isinstance(event, OrderEvent):
+            raise TypeError("OrderEvent monitor received unexpected event")
+        self.metrics_registry.increment("orders_submitted")
+        self._evaluate_monitoring_alerts()
+
+    def _monitor_monitoring_event(self, event: Any) -> None:
+        if not isinstance(event, MonitoringEvent):
+            raise TypeError("MonitoringEvent monitor received unexpected event")
+        self.metrics_registry.increment("monitoring_actions")
+        self.metrics_registry.set("latest_monitoring_action", event.action)
+        if "clock_drift_ms" in event.row:
+            self.metrics_registry.set("clock_drift_ms", event.row["clock_drift_ms"])
+        self._evaluate_monitoring_alerts()
+
+    def _evaluate_monitoring_alerts(self) -> None:
+        snapshot = self.metrics_registry.snapshot()
+        self.active_alerts = self.alert_manager.evaluate(snapshot)
+        self.health_status = monitoring.health_from_alerts(self.active_alerts)
+
+    def _submit_brackets_if_needed(self, entry_quantity: float) -> None:
+        if self.entry_action != "market_entry_submitted" or self.signal not in {"BUY", "SELL"}:
+            return
+        try:
+            entry_price = self.canonical[-1].close if self.canonical else 0.0
+            if entry_price <= 0.0:
+                recent_market_orders = [
+                    order for order in getattr(self.active_adapter, "orders", ())
+                    if order.symbol == "BTCUSDT" and order.side == self.signal and order.order_type == MARKET
+                ]
+                if recent_market_orders:
+                    entry_price = float(getattr(recent_market_orders[-1], "avg_fill_price", 0.0) or getattr(recent_market_orders[-1], "price", 0.0) or 0.0)
+            if entry_price > 0.0:
+                latest_features = self.feature_rows[-1].features if self.feature_rows else {}
+                tp_price, sl_price, pricing = optimized_tp_sl(entry_price, self.signal, latest_features, self.strategy_config)
+                self.bracket_pricing = pricing
+                tp_order, sl_order = submit_take_profit_stop_loss(
+                    adapter=self.active_adapter,
+                    symbol="BTCUSDT",
+                    position_side=self.signal,
+                    quantity=entry_quantity,
+                    take_profit_price=round(tp_price, 2),
+                    stop_loss_price=round(sl_price, 2),
+                    allow_live_orders=not self.dry_run,
+                )
+                entry_orders = [
+                    order for order in getattr(self.active_adapter, "orders", ())
+                    if order.symbol == "BTCUSDT" and order.side == self.signal and order.order_type == MARKET
+                ]
+                entry_order = entry_orders[-1] if entry_orders else ExchangeOrder("BTCUSDT", self.signal, MARKET, entry_quantity)
+                self.bracket_orders = (entry_order, tp_order, sl_order)
+            else:
+                self.bracket_error = "bracket_pricing_failed: no valid entry_price from canonical or adapter"
+                self.entry_action = "hard_kill"
+        except Exception as bracket_exc:
+            self.bracket_error = str(bracket_exc)
+            self.entry_action = "hard_kill"
+            try:
+                emergency_exit_side = "SELL" if self.signal == "BUY" else "BUY"
+                self.emergency_close_order = self.active_adapter.submit_order(
+                    "BTCUSDT",
+                    emergency_exit_side,
+                    MARKET,
+                    entry_quantity,
+                    reduce_only=True,
+                    client_order_id=f"emergency_close_{int(monotonic())}",
+                )
+            except Exception as emergency_error:
+                self.order_errors.append(f"emergency_close_failed: {emergency_error}")
+
+    def _write_outputs(self) -> None:
+        if self.source_bundle is None:
+            raise RuntimeError("live source bundle was not built")
+        self.output.mkdir(parents=True, exist_ok=True)
+        dataset.write_candles_csv(self.output / "live_candles.csv", self.canonical)
+        monitoring.MonitoringReportWriter(self.output).write_all(
+            [self.clock_monitor_row],
+            [self.adl_monitor_row],
+            [self.funding_monitor_row],
+            [self.calibration_monitor_row],
+        )
+        self._evaluate_monitoring_alerts()
+        self.metrics_path.write_text(json.dumps(self.metrics_registry.snapshot(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        self.alerts_path.write_text(json.dumps(self.active_alerts, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        self.health_path.write_text(json.dumps(self.health_status.as_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        self.summary = {
+            "dry_run": self.dry_run,
+            "network_used": not self.dry_run,
+            "stream_desync_detected": self.desync_events > 0,
+            "anomalies": self.anomalies,
+            "backfilled_rows": sum(event["filled"] for event in self._backfill().events),
+            "canonical_rows": len(self.canonical),
+            "feature_rows": len(self.feature_rows),
+            "source_hashes": dict(self.source_report.get("source_hashes", {})),
+            "unavailable_sources": list(self.source_report.get("unavailable_sources", ())),
+            "train_live_feature_parity_passed": bool(self.source_report.get("train_live_feature_parity_passed", False)),
+            "signal": self.signal,
+            "model_inference": self.model_inference,
+            "strategy_decision": self.strategy_decision,
+            "bracket_pricing": self.bracket_pricing,
+            "monitoring_actions": [str(row.get("action", "allow")) for row in self.monitor_decisions],
+            "metrics_path": self.metrics_path.as_posix(),
+            "alerts_path": self.alerts_path.as_posix(),
+            "health_path": self.health_path.as_posix(),
+            "health": self.health_status.as_dict(),
+            "active_alerts": self.active_alerts,
+            "entry_action": self.entry_action,
+            "exit_action": self.exit_action,
+            "bracket_orders": {
+                "entry_order_id": self.bracket_orders[0].order_id if self.bracket_orders else None,
+                "tp_order_id": self.bracket_orders[1].order_id if self.bracket_orders else None,
+                "sl_order_id": self.bracket_orders[2].order_id if self.bracket_orders else None,
+            } if self.bracket_orders else None,
+            "bracket_error": self.bracket_error,
+            "emergency_close_order_id": self.emergency_close_order.order_id if self.emergency_close_order else None,
+            "drawdown_state": {
+                "peak_equity": self.drawdown_state.peak_equity,
+                "current_equity": self.drawdown_state.current_equity,
+                "max_drawdown": self.drawdown_state.max_drawdown,
+                "tier": self.drawdown_state.tier,
+            },
+            "output": self.output.as_posix(),
+        }
+        (self.output / "live_summary.json").write_text(json.dumps(self.summary, indent=2, sort_keys=True), encoding="utf-8")
+
+    def _write_soak_report(self, candles_processed: int, elapsed_hours: float) -> None:
+        if self.soak_start_time is None:
+            return
+        report = {
+            "soak_start_time": self.soak_start_time.isoformat(),
+            "report_time": datetime.now(timezone.utc).isoformat(),
+            "elapsed_hours": round(elapsed_hours, 2),
+            "soak_duration_hours": self.soak_duration_hours,
+            "candles_processed": candles_processed,
+            "candles_per_hour": round(candles_processed / max(elapsed_hours, 0.001), 2),
+            "metrics": self.metrics_registry.snapshot(),
+            "health": self.health_status.as_dict(),
+            "drawdown": {
+                "peak_equity": self.drawdown_state.peak_equity,
+                "current_equity": self.drawdown_state.current_equity,
+                "max_drawdown": self.drawdown_state.max_drawdown,
+                "tier": self.drawdown_state.tier,
+            },
+            "anomalies": self.anomalies,
+            "desync_events": self.desync_events,
+            "order_errors": self.order_errors,
+        }
+        soak_path = self.output / f"soak_report_{int(elapsed_hours):04d}h.json"
+        soak_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+        print(f"Soak report written: {soak_path} ({elapsed_hours:.2f}h, {candles_processed} candles)")
+
+    def _client(self) -> WebSocketClient:
+        if self.client is None:
+            raise RuntimeError("live client is not initialized")
+        return self.client
+
+    def _backfill(self) -> RESTBackfill:
+        if self.backfill is None:
+            raise RuntimeError("live backfill is not initialized")
+        return self.backfill
 
 
 def run_live(
@@ -1207,272 +2110,26 @@ def run_live(
     custom_candles: Sequence[data.Candle] | None = None,
     model_artifact_path: Path | None = None,
     source_parity_passed: bool | None = None,
+    regime_aware: bool = False,
+    strategy_profile: str = "balanced",
+    soak_duration_hours: float = 0.0,
+    soak_report_interval_minutes: float = 60.0,
 ) -> LiveRunResult:
-    if not dry_run and not allow_public_network:
-        raise RuntimeError("live mode without --dry-run requires --allow-public-network")
-    if custom_candles is not None:
-        fixture = list(custom_candles)
-        stream_fixture = fixture[:max_candles]
-        client: WebSocketClient = MockWebSocketClient(stream_fixture)
-        fixture_by_time = {candle.open_time: candle for candle in fixture}
-        backfill = RESTBackfill(fetcher=lambda open_times: [fixture_by_time[open_time] for open_time in open_times if open_time in fixture_by_time])
-    elif dry_run:
-        fixture = _live_fixture(max(max_candles + 4, 12))
-        omitted = {5, 6, 9}
-        stream_fixture = [candle for index, candle in enumerate(fixture[:max_candles]) if index not in omitted]
-        client: WebSocketClient = MockWebSocketClient(stream_fixture)
-        fixture_by_time = {candle.open_time: candle for candle in fixture}
-        backfill = RESTBackfill(fetcher=lambda open_times: [fixture_by_time[open_time] for open_time in open_times if open_time in fixture_by_time])
-    else:
-        client = WebSocketClient(allow_network=True)
-        backfill = RESTBackfill(allow_network=True)
-
-    detector = StreamGapDetector()
-    anomalies: list[str] = []
-    desync_events = 0
-    # Initialize drawdown tracking with account balance as peak equity
-    active_adapter = exchange_adapter or MockExchangeAdapter()
-    try:
-        initial_account = active_adapter.get_account()
-        initial_equity = initial_account.available_balance
-    except Exception:
-        initial_equity = 0.0
-    drawdown_state = DrawdownState(peak_equity=initial_equity, current_equity=initial_equity)
-    drawdown_protocol = DrawdownProtocol()
-    client.start()
-    try:
-        processed = 0
-        while processed < max_candles:
-            candle = client.next_candle(timeout=idle_timeout_seconds)
-            if candle is None:
-                if isinstance(client, MockWebSocketClient) and client.is_finished():
-                    break
-                timeout_detection = detector.check_timeout(datetime.now(timezone.utc))
-                if timeout_detection.stream_desync_detected:
-                    desync_events += 1
-                if timeout_detection.stream_desync_detected and timeout_detection.anomaly is not None:
-                    anomalies.append(timeout_detection.anomaly)
-                continue
-            detection = detector.observe(candle)
-            if detection.stream_desync_detected:
-                desync_events += 1
-                if detection.anomaly is not None:
-                    anomalies.append(detection.anomaly)
-                for repaired in backfill.backfill_missing(detection.missing_open_times):
-                    client.add_candle(repaired)
-            # Update drawdown state after each candle using current price as equity proxy
-            try:
-                current_account = active_adapter.get_account()
-                current_equity = current_account.available_balance
-            except Exception:
-                current_equity = candle.close
-            drawdown_state = drawdown_state.update(current_equity)
-            processed += 1
-    finally:
-        client.close()
-
-    canonical = data.CanonicalTimelineBuilder().build(client.buffer_snapshot())
-    source_bundle = build_live_source_bundle(canonical, dry_run=dry_run)
-    clock_monitor_row = monitoring.ClockDriftService().evaluate()
-    adl_monitor_row = monitoring.ADLMonitorService().evaluate(source_bundle.adl_quantile)
-    funding_monitor_row = monitoring.FundingMonitorService().evaluate(source_bundle.funding_rate)
-    calibration_monitor_row = monitoring.CalibrationDriftMonitor().evaluate([], [])
-    monitor_decisions = (clock_monitor_row, adl_monitor_row, funding_monitor_row, calibration_monitor_row)
-    # Fetch real-time F11/F12 data from exchange adapter if available
-    active_adapter = exchange_adapter or MockExchangeAdapter()
-    external_sources: dict[str, object] = {}
-    try:
-        depth = active_adapter.get_depth("BTCUSDT")
-        external_sources["depth_snapshot"] = {
-            "best_bid": depth.best_bid,
-            "best_ask": depth.best_ask,
-            "bid_qty": depth.bid_qty,
-            "ask_qty": depth.ask_qty,
-            "microprice": depth.microprice,
-        }
-    except Exception:
-        pass
-    try:
-        funding = active_adapter.get_funding_rate("BTCUSDT")
-        external_sources["funding_rate"] = {
-            "current_rate": funding.current_rate,
-            "next_rate": funding.next_rate,
-            "minutes_to_next": funding.minutes_to_next,
-        }
-    except Exception:
-        pass
-    try:
-        adl = active_adapter.get_adl_quantile("BTCUSDT")
-        external_sources["adl_quantile"] = {"adl_quantile": adl.adl_quantile}
-    except Exception:
-        pass
-    try:
-        mark = active_adapter.get_mark_price("BTCUSDT")
-        external_sources["mark_price_1m"] = {
-            "mark_price": mark.mark_price,
-            "premium_index": mark.premium_index,
-        }
-    except Exception:
-        pass
-    feature_rows = dataset.build_feature_rows(canonical, source_bundle=source_bundle, external_sources=external_sources)
-    # Evaluate source parity including external_sources availability
-    source_report = sources.train_live_feature_parity_report(
-        dataset.FEATURE_NAMES,
-        source_bundle=source_bundle,
-        feature_registry=dataset.feature_formula_registry()["features"],
-        external_sources=external_sources,
-    )
-    # Load model artifact and generate signal from model inference
-    strict_artifact = model_artifact_path is not None
-    model = load_model_artifact(model_artifact_path, strict=strict_artifact)
-    if model is not None and feature_rows:
-        latest_features = feature_rows[-1].features
-        try:
-            probability = model.probability(latest_features)
-            signal = "BUY" if probability > 0.5 else "SELL" if probability < 0.5 else "HOLD"
-            model_inference = {"probability": probability, "signal": signal, "model_loaded": True}
-        except Exception as inference_error:
-            signal = "HOLD"
-            model_inference = {"probability": None, "signal": signal, "model_loaded": True, "error": str(inference_error)}
-    else:
-        last_return = data.returns(canonical)[-1] if canonical else 0.0
-        signal = "BUY" if last_return > 0 else "SELL" if last_return < 0 else "HOLD"
-        model_inference = {"probability": None, "signal": signal, "model_loaded": False, "fallback": "last_return"}
-    # Determine gap-contamination action from actual gap metrics in the latest feature row
-    latest_gap_ratio = float(feature_rows[-1].features.get("gap_ratio_20", 0.0)) if feature_rows else 0.0
-    latest_max_gap_run = float(feature_rows[-1].features.get("max_gap_run_120", 0.0)) if feature_rows else 0.0
-    gap_action = governance.fallback_action("gap_ratio_20", latest_gap_ratio)
-    if gap_action == "allow":
-        gap_action = governance.fallback_action("max_gap_run", latest_max_gap_run)
-    # Use actual exchange adapter if provided (e.g., testnet), otherwise mock
-    active_adapter = exchange_adapter or MockExchangeAdapter()
-    parity_passed = source_parity_passed if source_parity_passed is not None else bool(source_report.get("train_live_feature_parity_passed", False))
-    # Fetch real position and account state from exchange adapter
-    position = active_adapter.get_position("BTCUSDT")
-    account = active_adapter.get_account()
-    entry_quantity = 0.001 if signal in {"BUY", "SELL"} else 0.0
-    # Compute realistic notional for risk gate: quantity * entry_price
-    entry_price_for_notional = canonical[-1].close if canonical else 0.0
-    entry_notional = entry_quantity * entry_price_for_notional
-    entry_action = safe_market_entry(
-        position, signal, entry_quantity,
-        adapter=active_adapter,
-        source_parity_passed=parity_passed,
-        gap_action=gap_action,
-        account_balance_usdt=account.available_balance,
-        leverage=position.leverage,
-        notional=entry_notional,
-        drawdown_state=drawdown_state,
-        monitor_decisions=monitor_decisions,
-        allow_live_orders=not dry_run,
-        submit=not dry_run and signal in {"BUY", "SELL"},
-    )
-    # Wire TP/SL bracket orders after successful market entry
-    # Note: safe_market_entry already submitted the market entry when submit=True,
-    # so we only submit TP/SL exit orders here to avoid duplicate market entries.
-    bracket_orders: tuple[ExchangeOrder, ExchangeOrder, ExchangeOrder] | None = None
-    bracket_error: str | None = None
-    emergency_close_order: ExchangeOrder | None = None
-    if entry_action == "market_entry_submitted" and signal in {"BUY", "SELL"}:
-        try:
-            # Use canonical close price for entry price; fallback to adapter fill price if available
-            entry_price = canonical[-1].close if canonical else 0.0
-            if entry_price <= 0.0:
-                # Try to get fill price from the most recent market order on the adapter
-                recent_market_orders = [
-                    order for order in getattr(active_adapter, "orders", ())
-                    if order.symbol == "BTCUSDT" and order.side == signal and order.order_type == MARKET
-                ]
-                if recent_market_orders:
-                    entry_price = float(getattr(recent_market_orders[-1], "avg_fill_price", 0.0) or getattr(recent_market_orders[-1], "price", 0.0) or 0.0)
-            if entry_price > 0.0:
-                if signal == "BUY":
-                    tp_price = entry_price * 1.01
-                    sl_price = entry_price * 0.995
-                else:
-                    tp_price = entry_price * 0.99
-                    sl_price = entry_price * 1.005
-                tp_order, sl_order = submit_take_profit_stop_loss(
-                    adapter=active_adapter,
-                    symbol="BTCUSDT",
-                    position_side=signal,
-                    quantity=entry_quantity,
-                    take_profit_price=round(tp_price, 2),
-                    stop_loss_price=round(sl_price, 2),
-                    allow_live_orders=not dry_run,
-                )
-                # Reconstruct the entry order from the adapter for consistency
-                entry_orders = [
-                    order for order in getattr(active_adapter, "orders", ())
-                    if order.symbol == "BTCUSDT" and order.side == signal and order.order_type == MARKET
-                ]
-                entry_order = entry_orders[-1] if entry_orders else ExchangeOrder(
-                    "BTCUSDT", signal, MARKET, entry_quantity
-                )
-                bracket_orders = (entry_order, tp_order, sl_order)
-            else:
-                bracket_error = "bracket_pricing_failed: no valid entry_price from canonical or adapter"
-                entry_action = "hard_kill"
-        except Exception as bracket_exc:
-            bracket_error = str(bracket_exc)
-            # Fail-safe: bracket failure leaves position unprotected — trigger hard_kill
-            entry_action = "hard_kill"
-            # Submit emergency reduce-only market close to flatten the position
-            emergency_close_order: ExchangeOrder | None = None
-            try:
-                emergency_exit_side = "SELL" if signal == "BUY" else "BUY"
-                emergency_close_order = active_adapter.submit_order(
-                    "BTCUSDT",
-                    emergency_exit_side,
-                    MARKET,
-                    entry_quantity,
-                    reduce_only=True,
-                    client_order_id=f"emergency_close_{int(monotonic())}",
-                )
-            except Exception:
-                pass
-    exit_action = gap_cross_exit(0.0, False, monitor_decisions=monitor_decisions)
-    output.mkdir(parents=True, exist_ok=True)
-    dataset.write_candles_csv(output / "live_candles.csv", canonical)
-    monitoring.MonitoringReportWriter(output).write_all(
-        [clock_monitor_row],
-        [adl_monitor_row],
-        [funding_monitor_row],
-        [calibration_monitor_row],
-    )
-    summary: dict[str, object] = {
-        "dry_run": dry_run,
-        "network_used": not dry_run,
-        "stream_desync_detected": desync_events > 0,
-        "anomalies": anomalies,
-        "backfilled_rows": sum(event["filled"] for event in backfill.events),
-        "canonical_rows": len(canonical),
-        "feature_rows": len(feature_rows),
-        "source_hashes": dict(source_report.get("source_hashes", {})),
-        "unavailable_sources": list(source_report.get("unavailable_sources", ())),
-        "train_live_feature_parity_passed": bool(source_report.get("train_live_feature_parity_passed", False)),
-        "signal": signal,
-        "model_inference": model_inference,
-        "monitoring_actions": [str(row.get("action", "allow")) for row in monitor_decisions],
-        "entry_action": entry_action,
-        "exit_action": exit_action,
-        "bracket_orders": {
-            "entry_order_id": bracket_orders[0].order_id if bracket_orders else None,
-            "tp_order_id": bracket_orders[1].order_id if bracket_orders else None,
-            "sl_order_id": bracket_orders[2].order_id if bracket_orders else None,
-        } if bracket_orders else None,
-        "bracket_error": bracket_error,
-        "emergency_close_order_id": emergency_close_order.order_id if emergency_close_order else None,
-        "drawdown_state": {
-            "peak_equity": drawdown_state.peak_equity,
-            "current_equity": drawdown_state.current_equity,
-            "max_drawdown": drawdown_state.max_drawdown,
-            "tier": drawdown_state.tier,
-        },
-        "output": output.as_posix(),
-    }
-    (output / "live_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
-    return LiveRunResult(output, summary, canonical, feature_rows, source_bundle)
+    return LiveEngine(
+        output,
+        dry_run=dry_run,
+        allow_public_network=allow_public_network,
+        max_candles=max_candles,
+        idle_timeout_seconds=idle_timeout_seconds,
+        exchange_adapter=exchange_adapter,
+        custom_candles=custom_candles,
+        model_artifact_path=model_artifact_path,
+        source_parity_passed=source_parity_passed,
+        regime_aware=regime_aware,
+        strategy_profile=strategy_profile,
+        soak_duration_hours=soak_duration_hours,
+        soak_report_interval_minutes=soak_report_interval_minutes,
+    ).run()
 
 
 def build_live_source_bundle(candles: Sequence[data.Candle], dry_run: bool = True) -> sources.MarketSourceBundle:

@@ -63,6 +63,19 @@ class RiskDecision:
     details: Mapping[str, object] = field(default_factory=dict)
 
 
+def strategy_reward_risk_decision(reward_risk: float | None, min_reward_risk: float, strategy_name: str = "") -> RiskDecision:
+    if min_reward_risk < 0.0:
+        raise ValueError("min_reward_risk must be non-negative")
+    details = {"min_reward_risk": min_reward_risk, "strategy": strategy_name}
+    if reward_risk is None:
+        return RiskDecision("allow", True, "strategy reward/risk not supplied", "strategy", details=details)
+    checked_reward_risk = float(reward_risk)
+    details = {**details, "reward_risk": checked_reward_risk}
+    if checked_reward_risk < min_reward_risk:
+        return RiskDecision("block_new_entries", False, "strategy reward/risk below minimum", "strategy", "block_entries", 0.0, details)
+    return RiskDecision("allow", True, "strategy reward/risk accepted", "strategy", details=details)
+
+
 class DrawdownProtocol:
     """Tiered live drawdown fallback: warn -> reduce_size -> block_entries -> hard_kill."""
 

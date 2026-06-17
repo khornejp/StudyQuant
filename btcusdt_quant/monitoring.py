@@ -26,6 +26,160 @@ class MonitoringDecision:
         }
 
 
+@dataclass(frozen=True)
+class HealthStatus:
+    overall: str
+    checks: dict[str, str]
+    timestamp: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "overall": self.overall,
+            "checks": dict(self.checks),
+            "timestamp": self.timestamp,
+        }
+
+
+class MetricsRegistry:
+    counter_names = (
+        "candles_processed",
+        "gap_events",
+        "orders_submitted",
+        "model_inference_errors",
+        "monitoring_actions",
+        "regime_transitions",
+    )
+    gauge_names = (
+        "current_probability",
+        "current_regime",
+        "latest_gap_ratio",
+        "clock_drift_ms",
+    )
+
+    def __init__(self) -> None:
+        self._counters: dict[str, int] = {name: 0 for name in self.counter_names}
+        self._gauges: dict[str, object] = {name: None for name in self.gauge_names}
+        self._regime_transition_window: list[int] = []
+
+    def increment(self, counter_name: str) -> None:
+        if counter_name not in self._counters:
+            raise KeyError(f"unknown counter: {counter_name}")
+        self._counters[counter_name] += 1
+        if counter_name == "candles_processed":
+            self._append_regime_transition_marker(0)
+        elif counter_name == "regime_transitions":
+            if self._regime_transition_window:
+                self._regime_transition_window[-1] += 1
+            else:
+                self._append_regime_transition_marker(1)
+
+    def set(self, gauge_name: str, value: object) -> None:
+        self._gauges[gauge_name] = value
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "counters": dict(self._counters),
+            "gauges": dict(self._gauges),
+            "windows": {
+                "regime_transitions_10": sum(self._regime_transition_window[-10:]),
+            },
+        }
+
+    def _append_regime_transition_marker(self, marker: int) -> None:
+        self._regime_transition_window.append(marker)
+        if len(self._regime_transition_window) > 10:
+            del self._regime_transition_window[:-10]
+
+
+@dataclass(frozen=True)
+class AlertRule:
+    name: str
+    condition: Callable[[Mapping[str, object]], bool]
+    severity: str
+
+
+class AlertManager:
+    def __init__(self, rules: Sequence[AlertRule] | None = None) -> None:
+        self.rules: list[AlertRule] = list(rules or ())
+        self._active_alerts: list[dict[str, str]] = []
+
+    @classmethod
+    def with_builtin_rules(cls) -> "AlertManager":
+        manager = cls()
+        for rule in builtin_alert_rules():
+            manager.add_rule(rule)
+        return manager
+
+    def add_rule(self, rule: AlertRule) -> None:
+        if rule.severity not in {"info", "warning", "critical"}:
+            raise ValueError("alert severity must be info, warning, or critical")
+        self.rules.append(rule)
+
+    def evaluate(self, metrics_snapshot: Mapping[str, object]) -> list[dict[str, str]]:
+        active: list[dict[str, str]] = []
+        for rule in self.rules:
+            if rule.condition(metrics_snapshot):
+                active.append({"name": rule.name, "severity": rule.severity})
+        self._active_alerts = active
+        return self.active_alerts()
+
+    def active_alerts(self) -> list[dict[str, str]]:
+        return [dict(alert) for alert in self._active_alerts]
+
+
+def builtin_alert_rules() -> tuple[AlertRule, ...]:
+    return (
+        AlertRule("hard_kill", _hard_kill_active, "critical"),
+        AlertRule("regime_jitter", _regime_jitter_active, "warning"),
+        AlertRule("feature_parity_failure", _feature_parity_failure_active, "critical"),
+        AlertRule("model_inference_error", _model_inference_error_active, "warning"),
+    )
+
+
+def health_from_alerts(alerts: Sequence[Mapping[str, object]], timestamp: datetime | None = None) -> HealthStatus:
+    severities = {str(alert.get("severity", "")) for alert in alerts}
+    if "critical" in severities:
+        overall = "critical"
+    elif "warning" in severities:
+        overall = "degraded"
+    else:
+        overall = "healthy"
+    checks = {str(alert.get("name", "unknown")): str(alert.get("severity", "info")) for alert in alerts}
+    if not checks:
+        checks = {"alerts": "ok"}
+    current_time = timestamp or datetime.now(timezone.utc)
+    return HealthStatus(overall=overall, checks=checks, timestamp=current_time.astimezone(timezone.utc).isoformat())
+
+
+def _hard_kill_active(metrics_snapshot: Mapping[str, object]) -> bool:
+    gauges = _snapshot_section(metrics_snapshot, "gauges")
+    return gauges.get("latest_monitoring_action") == "hard_kill"
+
+
+def _regime_jitter_active(metrics_snapshot: Mapping[str, object]) -> bool:
+    windows = _snapshot_section(metrics_snapshot, "windows")
+    counters = _snapshot_section(metrics_snapshot, "counters")
+    recent_transitions = int(windows.get("regime_transitions_10", counters.get("regime_transitions", 0)) or 0)
+    return recent_transitions > 3
+
+
+def _feature_parity_failure_active(metrics_snapshot: Mapping[str, object]) -> bool:
+    gauges = _snapshot_section(metrics_snapshot, "gauges")
+    return gauges.get("feature_parity_passed") is False or gauges.get("train_live_feature_parity_passed") is False
+
+
+def _model_inference_error_active(metrics_snapshot: Mapping[str, object]) -> bool:
+    counters = _snapshot_section(metrics_snapshot, "counters")
+    return int(counters.get("model_inference_errors", 0) or 0) > 0
+
+
+def _snapshot_section(metrics_snapshot: Mapping[str, object], section: str) -> Mapping[str, object]:
+    value = metrics_snapshot.get(section, {})
+    if isinstance(value, Mapping):
+        return value
+    return {}
+
+
 class ClockDriftService:
     allow_threshold_ms = 100
     block_threshold_ms = 500

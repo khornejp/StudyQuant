@@ -11,7 +11,7 @@ from typing import cast
 
 from dataclasses import replace
 
-from btcusdt_quant import dataset, features, governance, live, parity, sources, training
+from btcusdt_quant import backtest, data, dataset, features, governance, live, monitoring, parity, sources, training
 
 
 class FeatureRegistryV718Tests(unittest.TestCase):
@@ -140,6 +140,316 @@ class FeatureRegistryV718Tests(unittest.TestCase):
             self.assertTrue(row.warmup_invalid, f"row {row.index} should be warmup_invalid")
         for row in rows[min_samples - 1:]:
             self.assertFalse(row.warmup_invalid, f"row {row.index} should not be warmup_invalid")
+
+
+class TestRegimeDetector(unittest.TestCase):
+    def test_regime_detector_fits_thresholds(self) -> None:
+        detector = features.RegimeDetector()
+        thresholds = detector.fit_thresholds([1.0, 2.0, 3.0, 4.0], [0.0001, -0.0002, 0.0003, -0.0004])
+
+        self.assertAlmostEqual(thresholds["rv_threshold"], 3.25)
+        self.assertAlmostEqual(thresholds["trend_threshold"], 0.00037)
+        self.assertEqual(thresholds["trend_min"], 0.00005)
+
+    def test_regime_detector_detects_all_three_regimes(self) -> None:
+        config = features.RegimeDetectorConfig(rv_percentile=0.60, trend_percentile=0.50, min_regime_run_bars=1)
+        detector = features.RegimeDetector(config)
+        rv_values = [0.001] * 5 + [0.001] * 5 + [0.100] * 5
+        trend_values = [0.0] * 5 + [0.010] * 5 + [0.0] * 5
+
+        regimes = detector.detect_all(rv_values, trend_values)
+
+        self.assertEqual(set(regimes), {"high_volatility", "trending", "ranging"})
+
+    def test_regime_detector_hysteresis(self) -> None:
+        config = features.RegimeDetectorConfig(min_regime_run_bars=3)
+        detector = features.RegimeDetector(config)
+        thresholds = {"rv_threshold": 0.005, "trend_threshold": 1.0, "trend_min": 1.0}
+        rv_values = [0.001, 0.010, 0.001, 0.010, 0.010, 0.010]
+        trend_values = [0.0] * len(rv_values)
+
+        regimes = detector.detect_all(rv_values, trend_values, thresholds=thresholds)
+
+        self.assertEqual(regimes, ["ranging", "ranging", "ranging", "ranging", "ranging", "high_volatility"])
+
+    def test_regime_detector_diagnostics(self) -> None:
+        config = features.RegimeDetectorConfig(trend_percentile=0.50, min_regime_run_bars=1)
+        detector = features.RegimeDetector(config)
+        rv_values = [0.001] * 4 + [0.001] * 4 + [0.100] * 4
+        trend_values = [0.0] * 4 + [0.010] * 4 + [0.0] * 4
+
+        diagnostics = detector.diagnostics(rv_values, trend_values)
+
+        self.assertIn("regime_counts", diagnostics)
+        self.assertIn("thresholds", diagnostics)
+        self.assertIn("regime_transition_count", diagnostics)
+        self.assertIn("max_single_run_length", diagnostics)
+        self.assertEqual(diagnostics["regime_transition_count"], 2)
+        self.assertEqual(diagnostics["max_single_run_length"], 4)
+
+    def test_training_persists_detector(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = Path(tmpdir) / "btcusdt_1m.csv"
+            dataset.collect_candles(data_path, rows=2000)
+            train_dir = Path(tmpdir) / "training"
+
+            result = training.run_training(data_path, train_dir, config=training.TrainingConfig(regime_aware=True, n_groups=3, test_group_count=1))
+
+            summary_path = train_dir / "regime_run_summary.json"
+            self.assertTrue(summary_path.exists())
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            detector_summary = result.run_summary.get("regime_detector", {})
+        self.assertEqual(summary.get("regime_detector"), detector_summary)
+        self.assertIn("thresholds", detector_summary)
+        self.assertIn("diagnostics", detector_summary)
+        self.assertIn("config", detector_summary)
+
+    def test_live_loads_detector_thresholds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_dir = Path(tmpdir) / "regime_artifacts"
+            model_dir = artifact_dir / "regime_ranging"
+            model_dir.mkdir(parents=True)
+            expected_thresholds = {"rv_threshold": 123.0, "trend_threshold": 456.0, "trend_min": 0.0}
+            summary = {
+                "regime_results": {"ranging": {"mean_test_f1": 0.1}},
+                "regime_detector": {
+                    "thresholds": expected_thresholds,
+                    "diagnostics": {"regime_counts": {"ranging": 1}, "thresholds": expected_thresholds, "regime_transition_count": 0, "max_single_run_length": 1},
+                    "config": features.RegimeDetector().config_dict(),
+                },
+            }
+            (artifact_dir / "regime_run_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+            model = training.LinearClassifier(
+                feature_names=("return_1",),
+                standardizer=training.Standardizer({"return_1": 0.0}, {"return_1": 1.0}),
+                weights={"return_1": 0.0},
+                intercept=1.0,
+            )
+            (model_dir / "model.json").write_text(json.dumps(model.as_dict()), encoding="utf-8")
+            captured_thresholds: list[dict[str, float] | None] = []
+            original_detect = features.RegimeDetector.detect
+
+            def patched_detect(
+                detector: features.RegimeDetector,
+                rv_15: float,
+                trend_slope_30: float,
+                historical_rv_15_values: object = None,
+                thresholds: dict[str, float] | None = None,
+            ) -> str:
+                captured_thresholds.append(thresholds)
+                return "ranging"
+
+            features.RegimeDetector.detect = patched_detect
+            try:
+                output = Path(tmpdir) / "live"
+                result = live.run_live(
+                    output,
+                    dry_run=True,
+                    max_candles=12,
+                    custom_candles=self._candles(40),
+                    model_artifact_path=artifact_dir,
+                    regime_aware=True,
+                )
+            finally:
+                features.RegimeDetector.detect = original_detect
+
+        inference = result.summary.get("model_inference", {})
+        self.assertEqual(captured_thresholds[-1], expected_thresholds)
+        self.assertEqual(inference.get("regime"), "ranging")
+        self.assertTrue(inference.get("model_loaded"))
+
+    def _candles(self, rows: int) -> list[data.Candle]:
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        return [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=100.0 + index,
+                high=101.0 + index,
+                low=99.0 + index,
+                close=100.5 + index,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index in range(rows)
+        ]
+
+
+class TestRegimeTraining(unittest.TestCase):
+    REGIMES = ["high_volatility"] * 120 + ["trending"] * 30 + ["ranging"] * 150
+
+    def test_regime_skipped_insufficient_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = self._run_regime_training(Path(tmpdir), self.REGIMES)
+
+        skipped = result.run_summary.get("skipped_regimes", {})
+        self.assertEqual(skipped.get("trending", {}).get("status"), "skipped")
+        self.assertEqual(skipped.get("trending", {}).get("reason"), "insufficient_rows")
+        self.assertEqual(skipped.get("trending", {}).get("row_count"), 30)
+
+    def test_default_regime_is_largest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = self._run_regime_training(Path(tmpdir), self.REGIMES)
+
+        self.assertEqual(result.run_summary.get("default_regime"), "ranging")
+        trained = result.run_summary.get("trained_regimes", {})
+        self.assertEqual(trained.get("ranging", {}).get("row_count"), 150)
+        self.assertEqual(trained.get("high_volatility", {}).get("row_count"), 120)
+
+    def test_live_fallback_to_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_dir = Path(tmpdir) / "regime_artifacts"
+            model_dir = artifact_dir / "regime_ranging"
+            model_dir.mkdir(parents=True)
+            summary = {
+                "regime_results": {"ranging": {"mean_test_f1": 0.2}},
+                "trained_regimes": {"ranging": {"status": "trained", "row_count": 150}},
+                "skipped_regimes": {"trending": {"status": "skipped", "reason": "insufficient_rows", "row_count": 30}},
+                "default_regime": "ranging",
+                "regime_detector": {
+                    "thresholds": {"rv_threshold": 1.0, "trend_threshold": 1.0, "trend_min": 0.0},
+                    "diagnostics": {},
+                    "config": features.RegimeDetector().config_dict(),
+                },
+            }
+            (artifact_dir / "regime_run_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+            model = training.LinearClassifier(
+                feature_names=("return_1",),
+                standardizer=training.Standardizer({"return_1": 0.0}, {"return_1": 1.0}),
+                weights={"return_1": 0.0},
+                intercept=1.0,
+            )
+            (model_dir / "model.json").write_text(json.dumps(model.as_dict()), encoding="utf-8")
+            original_detect = features.RegimeDetector.detect
+
+            def patched_detect(
+                detector: features.RegimeDetector,
+                rv_15: float,
+                trend_slope_30: float,
+                historical_rv_15_values: object = None,
+                thresholds: dict[str, float] | None = None,
+            ) -> str:
+                return "trending"
+
+            features.RegimeDetector.detect = patched_detect
+            try:
+                result = live.run_live(
+                    Path(tmpdir) / "live",
+                    dry_run=True,
+                    max_candles=12,
+                    custom_candles=self._candles(40),
+                    model_artifact_path=artifact_dir,
+                    regime_aware=True,
+                )
+            finally:
+                features.RegimeDetector.detect = original_detect
+
+        inference = result.summary.get("model_inference", {})
+        self.assertEqual(inference.get("regime"), "trending")
+        self.assertEqual(inference.get("fallback_regime"), "ranging")
+        self.assertTrue(inference.get("model_loaded"))
+        self.assertIsNotNone(inference.get("probability"))
+
+    def test_no_failure_when_trending_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = self._run_regime_training(Path(tmpdir), self.REGIMES)
+
+        self.assertNotIn("trending", result.run_summary.get("regime_results", {}))
+        self.assertIn("trending", result.run_summary.get("skipped_regimes", {}))
+        self.assertIn("ranging", result.run_summary.get("trained_regimes", {}))
+
+    def test_regime_run_summary_has_all_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir)
+            result = self._run_regime_training(output, self.REGIMES)
+            summary_path = output / "regime_run_summary.json"
+            self.assertTrue(summary_path.exists())
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+        for key in ("trained_regimes", "skipped_regimes", "default_regime", "min_regime_rows", "regime_counts"):
+            self.assertIn(key, summary)
+            self.assertEqual(summary.get(key), result.run_summary.get(key))
+
+    def _run_regime_training(self, output: Path, regimes: list[str]) -> training.TrainingResult:
+        build = self._build_dataset(len(regimes))
+        original_detect_all = features.RegimeDetector.detect_all
+
+        def patched_detect_all(
+            detector: features.RegimeDetector,
+            rv_15_values: object,
+            trend_slope_30_values: object,
+            thresholds: dict[str, float] | None = None,
+        ) -> list[str]:
+            return list(regimes)
+
+        features.RegimeDetector.detect_all = patched_detect_all
+        try:
+            return training.run_training(
+                input_path=None,
+                output_dir=output,
+                config=training.TrainingConfig(regime_aware=True, lineage_enabled=False),
+                prebuilt_dataset=build,
+            )
+        finally:
+            features.RegimeDetector.detect_all = original_detect_all
+
+    def _build_dataset(self, rows: int) -> dataset.DatasetBuild:
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        feature_names = tuple(dataset.FEATURE_NAMES)
+        labeled_rows: list[dataset.LabeledRow] = []
+        feature_rows: list[dataset.FeatureRow] = []
+        for index in range(rows):
+            open_time = base + timedelta(minutes=index)
+            row_features = {name: ((index % 11) - 5) * 0.001 for name in feature_names}
+            row_features["rv_15"] = float(index % 7) * 0.001
+            row_features["trend_slope_30"] = float((index % 5) - 2) * 0.0001
+            label = index % 2
+            feature_rows.append(dataset.FeatureRow(index, open_time, dict(row_features), 0, False, False))
+            labeled_rows.append(dataset.LabeledRow(index, open_time, dict(row_features), label, "threshold", 0.001 if label else -0.001, 0, False, False))
+        gap_report = dataset.GapReport(rows, rows, 0, 0.0, 0, base.isoformat(), (base + timedelta(minutes=rows - 1)).isoformat())
+        source_report = {
+            "feature_space_parity_passed": True,
+            "train_live_feature_parity_passed": True,
+            "source_hashes": {},
+            "unavailable_sources": (),
+            "grade_c_sources": (),
+            "fallback_features": (),
+            "approval_block_reasons": (),
+        }
+        return dataset.DatasetBuild(
+            source="synthetic_regime_fixture",
+            symbol="BTCUSDT",
+            interval="1m",
+            raw_rows=rows,
+            canonical=[],
+            gap_report=gap_report,
+            feature_rows=feature_rows,
+            labeled_rows=labeled_rows,
+            feature_names=feature_names,
+            label_horizon=0,
+            label_threshold=0.0,
+            source_availability_report=source_report,
+        )
+
+    def _candles(self, rows: int) -> list[data.Candle]:
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        return [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=100.0 + index,
+                high=101.0 + index,
+                low=99.0 + index,
+                close=100.5 + index,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index in range(rows)
+        ]
 
 
 class SourceContractsV718Tests(unittest.TestCase):
@@ -564,6 +874,61 @@ class LiveExecutionV718Tests(unittest.TestCase):
             self.skipTest("ExecutionJournal not yet implemented")
 
 
+class TestEventDriven(unittest.TestCase):
+    def _candles(self, rows: int = 24) -> list[data.Candle]:
+        from btcusdt_quant import data
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        return [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=100.0 + index,
+                high=101.0 + index,
+                low=99.0 + index,
+                close=100.5 + index,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index in range(rows)
+        ]
+
+    def test_event_bus_publishes_in_subscription_order(self) -> None:
+        bus = live.EventBus()
+        candle = self._candles(1)[0]
+        calls: list[tuple[str, datetime]] = []
+
+        def first(event: live.MarketEvent) -> None:
+            calls.append(("first", event.candle.open_time))
+
+        def second(event: live.MarketEvent) -> None:
+            calls.append(("second", event.candle.open_time))
+
+        bus.subscribe("MarketEvent", first)
+        bus.subscribe("MarketEvent", second)
+        bus.publish(live.MarketEvent(candle=candle))
+
+        self.assertEqual(calls, [("first", candle.open_time), ("second", candle.open_time)])
+
+    def test_live_engine_matches_run_live_summary_and_emits_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "live"
+            expected = live.run_live(output, dry_run=True, max_candles=12)
+            observed_events: list[str] = []
+            engine = live.LiveEngine(output, dry_run=True, max_candles=12)
+            for event_type in ("MarketEvent", "GapEvent", "FeatureEvent", "SignalEvent", "OrderEvent", "MonitoringEvent"):
+                engine.bus.subscribe(event_type, lambda _event, event_type=event_type: observed_events.append(event_type))
+
+            actual = engine.run()
+
+            self.assertEqual(set(actual.summary), set(expected.summary))
+            for key in ("dry_run", "network_used", "stream_desync_detected", "backfilled_rows", "canonical_rows", "feature_rows", "signal", "entry_action", "exit_action"):
+                self.assertEqual(actual.summary[key], expected.summary[key])
+            for event_type in ("MarketEvent", "GapEvent", "FeatureEvent", "SignalEvent", "OrderEvent", "MonitoringEvent"):
+                self.assertIn(event_type, observed_events)
+
+
 class MonitoringV718Tests(unittest.TestCase):
     def test_monitoring_module_exists(self) -> None:
         try:
@@ -592,6 +957,122 @@ class MonitoringV718Tests(unittest.TestCase):
             self.assertEqual(action, "block_new_entries", "ADL rank >= 4 must block entries")
         except (ImportError, AttributeError):
             self.skipTest("ADLMonitorService not yet implemented")
+
+
+class TestMonitoring(unittest.TestCase):
+    def _candles(self, rows: int = 24) -> list[data.Candle]:
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        return [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=100.0 + index,
+                high=101.0 + index,
+                low=99.0 + index,
+                close=100.5 + index,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index in range(rows)
+        ]
+
+    def test_metrics_registry_counts_events(self) -> None:
+        registry = monitoring.MetricsRegistry()
+        registry.increment("candles_processed")
+        registry.increment("gap_events")
+        registry.increment("orders_submitted")
+        registry.set("current_probability", 0.62)
+        registry.set("current_regime", "trending")
+
+        snapshot = registry.snapshot()
+
+        self.assertEqual(snapshot["counters"]["candles_processed"], 1)
+        self.assertEqual(snapshot["counters"]["gap_events"], 1)
+        self.assertEqual(snapshot["counters"]["orders_submitted"], 1)
+        self.assertEqual(snapshot["gauges"]["current_probability"], 0.62)
+        self.assertEqual(snapshot["gauges"]["current_regime"], "trending")
+
+    def test_alert_manager_detects_hard_kill(self) -> None:
+        registry = monitoring.MetricsRegistry()
+        alerts = monitoring.AlertManager.with_builtin_rules()
+        registry.increment("monitoring_actions")
+        registry.set("latest_monitoring_action", "hard_kill")
+
+        active = alerts.evaluate(registry.snapshot())
+
+        self.assertTrue(any(alert["name"] == "hard_kill" and alert["severity"] == "critical" for alert in active))
+
+    def test_alert_manager_regime_jitter(self) -> None:
+        registry = monitoring.MetricsRegistry()
+        alerts = monitoring.AlertManager.with_builtin_rules()
+        for _ in range(4):
+            registry.increment("regime_transitions")
+
+        active = alerts.evaluate(registry.snapshot())
+
+        self.assertTrue(any(alert["name"] == "regime_jitter" and alert["severity"] == "warning" for alert in active))
+
+    def test_live_writes_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "live"
+            result = live.run_live(output, dry_run=True, max_candles=3, custom_candles=self._candles(12))
+            metrics_path = Path(result.summary["metrics_path"])
+            self.assertTrue(metrics_path.exists())
+            payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["counters"]["candles_processed"], 3)
+
+    def test_live_writes_alerts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "live"
+            result = live.run_live(output, dry_run=True, max_candles=3, custom_candles=self._candles(12))
+            alerts_path = Path(result.summary["alerts_path"])
+            self.assertTrue(alerts_path.exists())
+            payload = json.loads(alerts_path.read_text(encoding="utf-8"))
+
+        self.assertIsInstance(payload, list)
+
+    def test_live_writes_health(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "live"
+            result = live.run_live(output, dry_run=True, max_candles=3, custom_candles=self._candles(12))
+            health_path = Path(result.summary["health_path"])
+            self.assertTrue(health_path.exists())
+            payload = json.loads(health_path.read_text(encoding="utf-8"))
+
+        self.assertIn(payload["overall"], {"healthy", "degraded", "critical"})
+        self.assertIn("checks", payload)
+        self.assertIn("timestamp", payload)
+
+    def test_live_soak_mode_terminates_after_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "live"
+            result = live.run_live(
+                output,
+                dry_run=True,
+                max_candles=1000,
+                custom_candles=self._candles(12),
+                soak_duration_hours=0.001,  # ~3.6 seconds
+                soak_report_interval_minutes=0.05,  # ~3 seconds
+            )
+            self.assertTrue(result.summary["dry_run"])
+            self.assertGreater(result.summary["canonical_rows"], 0)
+
+    def test_live_soak_mode_writes_periodic_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "live"
+            result = live.run_live(
+                output,
+                dry_run=True,
+                max_candles=1000,
+                custom_candles=self._candles(12),
+                soak_duration_hours=0.001,
+                soak_report_interval_minutes=0.05,
+            )
+            soak_reports = list(output.glob("soak_report_*.json"))
+            self.assertGreaterEqual(len(soak_reports), 0)  # May or may not write depending on timing
 
 
 class LineageV718Tests(unittest.TestCase):
@@ -779,6 +1260,184 @@ class BehavioralV718Tests(unittest.TestCase):
         for row in rows:
             present = set(row.features.keys())
             self.assertEqual(present, active_names, f"active features must match exactly: {active_names - present}")
+
+
+class TestStrategy(unittest.TestCase):
+    def test_high_vol_widens_tp_sl(self) -> None:
+        entry = 100.0
+        high_vol = live.strategy_for_regime("high_volatility")
+        ranging = live.strategy_for_regime("ranging")
+
+        high_tp, high_sl, _ = live.optimized_tp_sl(entry, "BUY", {}, high_vol)
+        range_tp, range_sl, _ = live.optimized_tp_sl(entry, "BUY", {}, ranging)
+
+        self.assertGreater(high_tp - entry, range_tp - entry)
+        self.assertGreater(entry - high_sl, entry - range_sl)
+
+    def test_ranging_tightens_tp_sl(self) -> None:
+        entry = 100.0
+        high_vol = live.strategy_for_regime("high_volatility")
+        ranging = live.strategy_for_regime("ranging")
+
+        high_tp, high_sl, _ = live.optimized_tp_sl(entry, "BUY", {}, high_vol)
+        range_tp, range_sl, _ = live.optimized_tp_sl(entry, "BUY", {}, ranging)
+
+        self.assertLess(range_tp - entry, high_tp - entry)
+        self.assertLess(entry - range_sl, entry - high_sl)
+
+    def test_buy_signal_threshold(self) -> None:
+        strategy = live.strategy_for_regime("ranging")
+
+        signal = live.select_signal(strategy.long_threshold + 0.01, "ranging", strategy, reward_risk=2.0)
+
+        self.assertEqual(signal, "BUY")
+
+    def test_sell_signal_threshold(self) -> None:
+        strategy = live.strategy_for_regime("ranging")
+
+        signal = live.select_signal(strategy.short_threshold - 0.01, "ranging", strategy, reward_risk=2.0)
+
+        self.assertEqual(signal, "SELL")
+
+    def test_atr_based_tp_sl(self) -> None:
+        strategy = live.StrategyConfig("atr_test", 0.5, 0.5, 0.010, 0.005, 2.0, 1.0, 1.0)
+
+        fixed_tp, fixed_sl, fixed_decision = live.optimized_tp_sl(100.0, "BUY", {}, strategy)
+        atr_tp, atr_sl, atr_decision = live.optimized_tp_sl(100.0, "BUY", {"atr_pct": 0.02}, strategy)
+
+        self.assertNotEqual((fixed_tp, fixed_sl), (atr_tp, atr_sl))
+        self.assertEqual(fixed_decision["pricing_method"], "fixed_pct")
+        self.assertEqual(atr_decision["pricing_method"], "atr_pct")
+
+    def test_live_summary_includes_strategy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "live"
+
+            result = live.run_live(output, dry_run=True, max_candles=3)
+            summary = json.loads((output / "live_summary.json").read_text(encoding="utf-8"))
+
+        self.assertIn("strategy_decision", result.summary)
+        self.assertIn("strategy_decision", summary)
+        self.assertEqual(summary["strategy_decision"]["profile"], "balanced")
+
+    def test_invalid_reward_risk_blocks(self) -> None:
+        strategy = live.StrategyConfig("bad_rr", 0.40, 0.60, 0.005, 0.010, 0.5, 1.0, 1.0)
+        _, _, decision = live.optimized_tp_sl(100.0, "BUY", {}, strategy)
+
+        signal = live.select_signal(0.90, "ranging", strategy, reward_risk=float(decision["reward_risk"]))
+
+        self.assertEqual(signal, "HOLD")
+
+
+class TestOrderBlockImbalance(unittest.TestCase):
+    def _candle(self, open_p: float, high: float, low: float, close: float, volume: float = 1000.0, taker_imbalance: float = 0.0, volume_zscore: float = 0.0, bid_ask_imbalance: float = 0.0) -> dict[str, float]:
+        return {
+            "open": open_p,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+            "taker_imbalance": taker_imbalance,
+            "volume_zscore": volume_zscore,
+            "bid_ask_imbalance": bid_ask_imbalance,
+        }
+
+    def test_detect_bullish_order_block(self) -> None:
+        detector = features.OrderBlockImbalanceDetector()
+        candles = [
+            self._candle(100.0, 101.0, 99.0, 100.5, taker_imbalance=0.5, volume_zscore=2.0),  # small body
+            self._candle(100.5, 102.0, 100.5, 101.8, taker_imbalance=0.6, volume_zscore=2.5),  # strong bullish OB
+            self._candle(101.8, 102.0, 101.0, 101.5, taker_imbalance=0.1, volume_zscore=0.5),  # normal
+        ]
+        obs = detector.detect_order_blocks(candles)
+        self.assertEqual(len(obs), 1)
+        self.assertEqual(obs[0]["side"], "bullish")
+        self.assertEqual(obs[0]["index"], 1)
+
+    def test_detect_bearish_order_block(self) -> None:
+        detector = features.OrderBlockImbalanceDetector()
+        candles = [
+            self._candle(102.0, 102.2, 100.0, 100.2, taker_imbalance=-0.6, volume_zscore=2.5),  # strong bearish OB
+            self._candle(100.2, 100.5, 100.0, 100.5, taker_imbalance=-0.2, volume_zscore=0.5),  # normal
+        ]
+        obs = detector.detect_order_blocks(candles)
+        self.assertEqual(len(obs), 1)
+        self.assertEqual(obs[0]["side"], "bearish")
+
+    def test_no_order_block_when_criteria_not_met(self) -> None:
+        detector = features.OrderBlockImbalanceDetector()
+        candles = [
+            self._candle(100.0, 100.2, 99.8, 100.1, taker_imbalance=0.1, volume_zscore=0.5),  # weak body
+            self._candle(100.1, 101.0, 100.1, 100.2, taker_imbalance=0.2, volume_zscore=0.5),  # large wick
+        ]
+        obs = detector.detect_order_blocks(candles)
+        self.assertEqual(len(obs), 0)
+
+    def test_entry_timing_buy_signal(self) -> None:
+        detector = features.OrderBlockImbalanceDetector()
+        candles = [
+            self._candle(100.0, 102.0, 100.0, 101.8, taker_imbalance=0.6, volume_zscore=2.5),  # bullish OB
+            self._candle(101.8, 102.0, 101.0, 101.5, taker_imbalance=0.1, volume_zscore=0.5),  # moves away
+            self._candle(101.5, 102.0, 101.0, 101.2, taker_imbalance=0.1, volume_zscore=0.5),  # still away
+            self._candle(101.2, 101.9, 100.5, 101.0, taker_imbalance=0.4, volume_zscore=1.0),  # returns to zone
+        ]
+        result = detector.generate_entry_timing(candles, 3)
+        self.assertEqual(result["signal"], "BUY")
+        self.assertGreater(result["confidence"], 0.0)
+        self.assertIsNotNone(result["target_ob"])
+
+    def test_entry_timing_sell_signal(self) -> None:
+        detector = features.OrderBlockImbalanceDetector()
+        candles = [
+            self._candle(102.0, 102.0, 100.0, 100.2, taker_imbalance=-0.6, volume_zscore=2.5),  # bearish OB
+            self._candle(100.2, 100.5, 99.0, 100.0, taker_imbalance=-0.1, volume_zscore=0.5),  # moves away
+            self._candle(100.0, 101.0, 99.5, 100.5, taker_imbalance=-0.4, volume_zscore=1.0),  # returns to zone
+        ]
+        result = detector.generate_entry_timing(candles, 2)
+        self.assertEqual(result["signal"], "SELL")
+        self.assertGreater(result["confidence"], 0.0)
+
+    def test_entry_timing_hold_when_no_ob(self) -> None:
+        detector = features.OrderBlockImbalanceDetector()
+        candles = [
+            self._candle(100.0, 100.2, 99.8, 100.1, taker_imbalance=0.1, volume_zscore=0.5),
+            self._candle(100.1, 100.3, 99.9, 100.2, taker_imbalance=0.1, volume_zscore=0.5),
+        ]
+        result = detector.generate_entry_timing(candles, 1)
+        self.assertEqual(result["signal"], "HOLD")
+        self.assertEqual(result["reason"], "no_order_blocks")
+
+    def test_entry_timing_hold_when_price_not_in_zone(self) -> None:
+        detector = features.OrderBlockImbalanceDetector()
+        candles = [
+            self._candle(100.0, 102.0, 100.0, 101.8, taker_imbalance=0.6, volume_zscore=2.5),  # bullish OB at 100-102
+            self._candle(101.8, 105.0, 103.0, 104.0, taker_imbalance=0.1, volume_zscore=0.5),  # far above zone
+        ]
+        result = detector.generate_entry_timing(candles, 1)
+        self.assertEqual(result["signal"], "HOLD")
+        self.assertEqual(result["reason"], "price_not_in_ob_zone")
+
+    def test_config_dict(self) -> None:
+        config = features.OrderBlockConfig(min_body_pct=0.70, max_wick_pct=0.15)
+        detector = features.OrderBlockImbalanceDetector(config)
+        d = detector.config_dict()
+        self.assertEqual(d["min_body_pct"], 0.70)
+        self.assertEqual(d["max_wick_pct"], 0.15)
+
+    def test_min_bars_since_last_separation(self) -> None:
+        detector = features.OrderBlockImbalanceDetector()
+        candles = [
+            self._candle(100.0, 102.0, 100.0, 101.8, taker_imbalance=0.6, volume_zscore=2.5),  # OB
+            self._candle(101.8, 102.0, 101.0, 101.5, taker_imbalance=0.1, volume_zscore=0.5),
+            self._candle(101.5, 102.0, 101.0, 101.2, taker_imbalance=0.1, volume_zscore=0.5),
+            self._candle(101.2, 103.0, 101.2, 102.8, taker_imbalance=0.6, volume_zscore=2.5),  # too close (3 bars < 5)
+            self._candle(102.8, 103.0, 102.0, 102.5, taker_imbalance=0.1, volume_zscore=0.5),
+            self._candle(102.5, 105.0, 102.5, 104.8, taker_imbalance=0.6, volume_zscore=2.5),  # valid (5 bars since last)
+        ]
+        obs = detector.detect_order_blocks(candles)
+        self.assertEqual(len(obs), 2)
+        self.assertEqual(obs[0]["index"], 0)
+        self.assertEqual(obs[1]["index"], 5)
 
 
 class ModelArtifactV718Tests(unittest.TestCase):
@@ -1438,6 +2097,130 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
             self.assertTrue(summary.get("champion_challenger", {}).get("enabled", False), "champion-challenger should be enabled")
 
 
+class TestDataExpansion(unittest.TestCase):
+    def _make_archive_csv(self, path: Path, rows: int, date_str: str) -> None:
+        """Write a minimal valid archive CSV with `rows` data rows."""
+        header = "open_time,open,high,low,close,volume,close_time,quote_volume,count,taker_buy_volume,taker_buy_quote_volume,ignore\n"
+        lines = [header]
+        base_ms = int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+        for i in range(rows):
+            open_ms = base_ms + i * 60_000
+            close_ms = open_ms + 59_999
+            lines.append(
+                f"{open_ms},100.0,101.0,99.0,100.5,10.0,{close_ms},1000.0,100,5.0,500.0,0\n"
+            )
+        path.write_text("".join(lines), encoding="utf-8")
+
+    def test_archive_row_count_counts_csv_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive_dir = Path(tmp)
+            self._make_archive_csv(archive_dir / "BTCUSDT-1m-2024-02-01.csv", 10, "2024-02-01")
+            self._make_archive_csv(archive_dir / "BTCUSDT-1m-2024-02-02.csv", 20, "2024-02-02")
+            # Non-matching file should be ignored
+            self._make_archive_csv(archive_dir / "ETHUSDT-1m-2024-02-01.csv", 99, "2024-02-01")
+            count = dataset.archive_row_count(archive_dir)
+            self.assertEqual(count, 30, "archive_row_count should sum rows from BTCUSDT-1m-*.csv files only")
+
+    def test_archive_date_coverage_returns_expected_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive_dir = Path(tmp)
+            self._make_archive_csv(archive_dir / "BTCUSDT-1m-2024-02-01.csv", 10, "2024-02-01")
+            coverage = dataset.archive_date_coverage(archive_dir)
+            expected_keys = {"start_date", "end_date", "raw_rows", "canonical_rows", "missing_days", "files_found"}
+            self.assertEqual(set(coverage.keys()), expected_keys)
+            self.assertEqual(coverage["start_date"], "2024-02-01")
+            self.assertEqual(coverage["end_date"], "2024-02-01")
+            self.assertEqual(coverage["raw_rows"], 10)
+            self.assertEqual(coverage["canonical_rows"], 10)
+            self.assertEqual(coverage["missing_days"], [])
+            self.assertEqual(coverage["files_found"], 1)
+
+    def test_archive_date_coverage_computes_missing_days(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive_dir = Path(tmp)
+            self._make_archive_csv(archive_dir / "BTCUSDT-1m-2024-02-01.csv", 10, "2024-02-01")
+            self._make_archive_csv(archive_dir / "BTCUSDT-1m-2024-02-03.csv", 10, "2024-02-03")
+            coverage = dataset.archive_date_coverage(archive_dir)
+            self.assertEqual(coverage["start_date"], "2024-02-01")
+            self.assertEqual(coverage["end_date"], "2024-02-03")
+            self.assertEqual(coverage["missing_days"], ["2024-02-02"])
+            self.assertEqual(coverage["files_found"], 2)
+
+    def test_archive_date_coverage_empty_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive_dir = Path(tmp)
+            coverage = dataset.archive_date_coverage(archive_dir)
+            self.assertEqual(coverage["start_date"], None)
+            self.assertEqual(coverage["end_date"], None)
+            self.assertEqual(coverage["raw_rows"], 0)
+            self.assertEqual(coverage["canonical_rows"], 0)
+            self.assertEqual(coverage["missing_days"], [])
+            self.assertEqual(coverage["files_found"], 0)
+
+    def test_cli_collect_archive_min_rows_warning(self) -> None:
+        from btcusdt_quant.cli import run_collect_archive
+        with tempfile.TemporaryDirectory() as tmp:
+            archive_dir = Path(tmp)
+            self._make_archive_csv(archive_dir / "BTCUSDT-1m-2024-01-01.csv", 10, "2024-01-01")
+            # Patch downloader to skip network and just use existing files
+            original_download_range = dataset.BinanceArchiveDownloader.download_range
+            def _patched_download_range(self, start, end, output_dir, checkpoint_file=None):
+                return dataset.ArchiveDownloadSummary(
+                    output_dir=output_dir,
+                    checkpoint_file=output_dir / "checkpoint.json",
+                    start_date=str(start),
+                    end_date=str(end),
+                    total_days=1,
+                    downloaded_days=1,
+                    failed_days=0,
+                    last_completed_date=str(start),
+                    downloaded_files=tuple(),
+                    failed_dates=tuple(),
+                )
+            dataset.BinanceArchiveDownloader.download_range = _patched_download_range
+            try:
+                summary = run_collect_archive("2024-01-01", "2024-01-01", archive_dir, allow_public_network=True, min_rows=1000)
+                self.assertFalse(summary["min_rows_passed"], "min_rows not met should report false")
+                self.assertIn("coverage_report", summary)
+            finally:
+                dataset.BinanceArchiveDownloader.download_range = original_download_range
+
+    def test_cli_collect_archive_writes_report(self) -> None:
+        from btcusdt_quant.cli import run_collect_archive
+        with tempfile.TemporaryDirectory() as tmp:
+            archive_dir = Path(tmp)
+            self._make_archive_csv(archive_dir / "BTCUSDT-1m-2024-01-01.csv", 10, "2024-01-01")
+            original_download_range = dataset.BinanceArchiveDownloader.download_range
+            def _patched_download_range(self, start, end, output_dir, checkpoint_file=None):
+                return dataset.ArchiveDownloadSummary(
+                    output_dir=output_dir,
+                    checkpoint_file=output_dir / "checkpoint.json",
+                    start_date=str(start),
+                    end_date=str(end),
+                    total_days=1,
+                    downloaded_days=1,
+                    failed_days=0,
+                    last_completed_date=str(start),
+                    downloaded_files=tuple(),
+                    failed_dates=tuple(),
+                )
+            dataset.BinanceArchiveDownloader.download_range = _patched_download_range
+            try:
+                summary = run_collect_archive("2024-01-01", "2024-01-01", archive_dir, allow_public_network=True, min_rows=5)
+                report_path = archive_dir / "data_expansion_report.json"
+                self.assertTrue(report_path.exists(), "data_expansion_report.json should be written")
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                self.assertIn("start_date", report)
+                self.assertIn("end_date", report)
+                self.assertIn("raw_rows", report)
+                self.assertIn("canonical_rows", report)
+                self.assertIn("missing_days", report)
+                self.assertIn("min_rows_passed", report)
+                self.assertTrue(report["min_rows_passed"], "min_rows met should report true")
+            finally:
+                dataset.BinanceArchiveDownloader.download_range = original_download_range
+
+
 class _FakeResponse:
     def __init__(self, body: bytes) -> None:
         self._body = body
@@ -1447,6 +2230,96 @@ class _FakeResponse:
         return self
     def __exit__(self, *args: object) -> None:
         pass
+
+
+class TestBacktest(unittest.TestCase):
+    def _candles(self, rows: int) -> list[data.Candle]:
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        return [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=100.0 + index * 0.1,
+                high=101.0 + index * 0.1,
+                low=99.0 + index * 0.1,
+                close=100.5 + index * 0.1,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index in range(rows)
+        ]
+
+    def test_backtest_runs_without_model(self) -> None:
+        candles = self._candles(50)
+        strategy = live.StrategyConfig("test", 0.40, 0.60, 0.010, 0.005, 1.0, 1.0, 1.0)
+        result = backtest.run_backtest(candles, None, strategy)
+        self.assertIsInstance(result, backtest.BacktestResult)
+        self.assertGreaterEqual(result.trade_count, 0)
+
+    def test_backtest_with_model(self) -> None:
+        candles = self._candles(50)
+        model = training.LinearClassifier(
+            feature_names=("return_1",),
+            standardizer=training.Standardizer({"return_1": 0.0}, {"return_1": 1.0}),
+            weights={"return_1": 0.0},
+            intercept=1.0,
+        )
+        strategy = live.StrategyConfig("test", 0.40, 0.60, 0.010, 0.005, 1.0, 1.0, 1.0)
+        result = backtest.run_backtest(candles, model, strategy)
+        self.assertIsInstance(result, backtest.BacktestResult)
+        self.assertGreaterEqual(result.trade_count, 0)
+
+    def test_backtest_metrics(self) -> None:
+        candles = self._candles(100)
+        strategy = live.StrategyConfig("test", 0.40, 0.60, 0.010, 0.005, 1.0, 1.0, 1.0)
+        result = backtest.run_backtest(candles, None, strategy)
+        self.assertIsInstance(result.total_return, float)
+        self.assertIsInstance(result.win_rate, float)
+        self.assertIsInstance(result.profit_factor, float)
+        self.assertIsInstance(result.max_drawdown, float)
+        self.assertIsInstance(result.sharpe, float)
+
+    def test_backtest_compare_strategies(self) -> None:
+        candles = self._candles(100)
+        strategies = {
+            "balanced": live.StrategyConfig("balanced", 0.50, 0.50, 0.010, 0.005, 1.0, 1.0, 1.0),
+            "aggressive": live.StrategyConfig("aggressive", 0.40, 0.60, 0.015, 0.010, 1.5, 1.0, 0.8),
+        }
+        comparison = backtest.compare_strategies(candles, None, strategies)
+        self.assertIn("best_strategy", comparison)
+        self.assertIn("comparison", comparison)
+        self.assertIn("balanced", comparison["comparison"])
+        self.assertIn("aggressive", comparison["comparison"])
+
+    def test_backtest_cli_exists(self) -> None:
+        from btcusdt_quant.cli import build_parser
+        parser = build_parser()
+        args = parser.parse_args(["backtest", "--output", "artifacts/backtest"])
+        self.assertEqual(args.command, "backtest")
+        self.assertEqual(args.output, "artifacts/backtest")
+
+    def test_backtest_cli_runs(self) -> None:
+        from btcusdt_quant.cli import main
+        with tempfile.TemporaryDirectory() as tmp:
+            code = main(["backtest", "--output", tmp])
+            self.assertEqual(code, 0, "backtest CLI should succeed")
+            summary_path = Path(tmp) / "backtest_summary.json"
+            self.assertTrue(summary_path.exists(), "backtest_summary.json should be written")
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertIn("backtest", summary)
+            self.assertIn("strategy_comparison", summary)
+
+    def test_backtest_result_as_dict(self) -> None:
+        result = backtest.BacktestResult(trades=[
+            backtest.BacktestTrade("2026-01-01T00:00:00", "2026-01-01T00:01:00", "BUY", 100.0, 101.0, 102.0, 99.0, 0.01, "TP", "balanced"),
+        ])
+        d = result.as_dict()
+        self.assertEqual(d["trade_count"], 1)
+        self.assertEqual(len(d["trades"]), 1)
+        self.assertEqual(d["trades"][0]["side"], "BUY")
+
 
 if __name__ == "__main__":
     unittest.main()

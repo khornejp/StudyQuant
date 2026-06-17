@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from math import exp, isfinite, log, sqrt
 from pathlib import Path
@@ -116,6 +116,15 @@ class TrainingConfig:
     optuna_budget_profile: str = "practical_start"
     optuna_trials: int = 0
     champion_challenger_enabled: bool = False
+    regime_aware: bool = False
+    min_regime_rows: int = 80
+    regime_detector_rv_percentile: float = 0.75
+    regime_detector_trend_percentile: float = 0.70
+    regime_detector_min_trend_abs: float = 0.00001
+    regime_detector_low_vol_trend_multiplier: float = 2.0
+    regime_detector_min_regime_run_bars: int = 3
+    feature_selection_target_min: int = 0
+    feature_selection_target_max: int = 0
 
     def __post_init__(self) -> None:
         if self.cv_mode not in {"walk_forward", "combinatorial_purged"}:
@@ -130,6 +139,8 @@ class TrainingConfig:
             raise ValueError("test_group_count cannot exceed n_groups")
         if str(self.model_family).lower().strip() not in {"auto", "stdlib", "linear", "deterministic", "lightgbm", "lgbm", "catboost", "cat"}:
             raise ValueError("model_family must be 'auto', 'stdlib', 'lightgbm', or 'catboost'")
+        if self.min_regime_rows <= 0:
+            raise ValueError("min_regime_rows must be positive")
 
 
 @dataclass(frozen=True)
@@ -155,11 +166,17 @@ class TrainingResult:
     artifacts: list[str]
 
 
-def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None) -> TrainingResult:
+def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None, prebuilt_dataset: dataset.DatasetBuild | None = None) -> TrainingResult:
     training_config = config or TrainingConfig()
-    build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir, external_sources=external_sources)
+    if prebuilt_dataset is not None:
+        build = prebuilt_dataset
+    else:
+        build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir, external_sources=external_sources)
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
+    # Regime-aware: split by market regime and train separate models
+    if training_config.regime_aware:
+        return run_regime_aware_training(build, output_dir, training_config)
     # Parity assertion: warn when feature_space_parity_passed is False
     source_report = build.source_availability_report
     parity_passed = bool(source_report.get("feature_space_parity_passed", False))
@@ -181,7 +198,10 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     feature_selection_report: dict[str, object] | None = None
     effective_feature_names = build.feature_names
     if training_config.feature_selection_enabled:
-        selection_pipeline = features.FeatureSelectionPipeline()
+        selection_pipeline = features.FeatureSelectionPipeline(
+            target_min_features=training_config.feature_selection_target_min,
+            target_max_features=training_config.feature_selection_target_max,
+        )
         # Use first fold's training data only to prevent test-data leakage
         first_fold_train_indices = _split_indices(splits[0].train) if splits else list(range(len(build.labeled_rows)))
         first_train_rows = [build.labeled_rows[index] for index in first_fold_train_indices]
@@ -195,7 +215,9 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             labels=[row.label for row in first_train_rows],
             feature_names=build.feature_names,
         )
-        selected_core = feature_selection_report.get("core_features", [])
+        bounded_core = feature_selection_report.get("core_features_bounded", [])
+        unbounded_core = feature_selection_report.get("core_features", [])
+        selected_core = bounded_core if bounded_core else unbounded_core
         if selected_core and len(selected_core) >= 10:
             effective_feature_names = selected_core
     # Optional Optuna hyperparameter tuning
@@ -392,6 +414,130 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         calibration_config=calibration_config(fold_results),
     )
     return TrainingResult(output_dir, build, splits, fold_results, run_summary, manifest)
+
+
+def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, training_config: TrainingConfig) -> TrainingResult:
+    detector = features.RegimeDetector(
+        config=features.RegimeDetectorConfig(
+            rv_percentile=training_config.regime_detector_rv_percentile,
+            trend_percentile=training_config.regime_detector_trend_percentile,
+            min_trend_abs=training_config.regime_detector_min_trend_abs,
+            high_vol_priority=True,
+            low_vol_trend_multiplier=training_config.regime_detector_low_vol_trend_multiplier,
+            min_regime_run_bars=training_config.regime_detector_min_regime_run_bars,
+        )
+    )
+    rv_15_values = [float(row.features.get("rv_15", 0.0)) for row in build.labeled_rows]
+    trend_slope_30_values = [float(row.features.get("trend_slope_30", 0.0)) for row in build.labeled_rows]
+    detector_thresholds = detector.fit_thresholds(rv_15_values, trend_slope_30_values)
+    detector_diagnostics = detector.diagnostics(rv_15_values, trend_slope_30_values)
+    regimes = detector.detect_all(rv_15_values, trend_slope_30_values, thresholds=detector_thresholds)
+    regime_counts = {regime: regimes.count(regime) for regime in _REGIME_NAMES}
+    regime_summaries: dict[str, dict[str, object]] = {}
+    trained_regimes: dict[str, dict[str, object]] = {}
+    skipped_regimes: dict[str, dict[str, object]] = {}
+
+    for regime_name in _REGIME_NAMES:
+        regime_indices = [index for index, regime in enumerate(regimes) if regime == regime_name]
+        row_count = len(regime_indices)
+        if row_count < training_config.min_regime_rows:
+            skipped_regimes[regime_name] = {
+                "status": "skipped",
+                "reason": "insufficient_rows",
+                "row_count": row_count,
+                "min_regime_rows": training_config.min_regime_rows,
+            }
+            continue
+        regime_result = _train_single_regime(build, output_dir, training_config, regime_name, regime_indices)
+        regime_summaries[regime_name] = dict(regime_result.run_summary)
+        trained_regimes[regime_name] = {
+            "status": "trained",
+            "row_count": row_count,
+            "min_regime_rows": training_config.min_regime_rows,
+            "output_dir": f"regime_{regime_name}",
+            "mean_test_f1": float(regime_result.run_summary.get("mean_test_f1", 0.0)),
+        }
+
+    default_regime = _default_regime_by_rows(trained_regimes)
+    regime_test_f1_values = [float(summary["mean_test_f1"]) for summary in regime_summaries.values() if "mean_test_f1" in summary]
+    aggregated_mean_test_f1 = sum(regime_test_f1_values) / len(regime_test_f1_values) if regime_test_f1_values else 0.0
+    run_summary = {
+        "regime_aware": True,
+        "regime_results": regime_summaries,
+        "regime_counts": regime_counts,
+        "trained_regimes": trained_regimes,
+        "skipped_regimes": skipped_regimes,
+        "default_regime": default_regime,
+        "min_regime_rows": training_config.min_regime_rows,
+        "regime_detector": {
+            "thresholds": detector_thresholds,
+            "diagnostics": detector_diagnostics,
+            "config": detector.config_dict(),
+        },
+        "network_used": False,
+        "orders_enabled": False,
+        "credentials_required": False,
+        "labeled_rows": len(build.labeled_rows),
+        "fold_count": 0,
+        "mean_test_f1": aggregated_mean_test_f1,
+        "mean_test_accuracy": 0.0,
+        "mean_test_ece": 0.0,
+        "mean_test_brier": 0.0,
+        "artifacts": ["regime_run_summary.json"],
+    }
+    writer = governance.ArtifactWriter(output_dir)
+    writer.write_json("regime_run_summary.json", run_summary)
+    return TrainingResult(
+        output_dir=output_dir,
+        dataset_build=build,
+        splits=[],
+        fold_results=[],
+        run_summary=run_summary,
+        artifacts=["regime_run_summary.json"],
+    )
+
+
+_REGIME_NAMES = ("high_volatility", "trending", "ranging")
+
+
+def _train_single_regime(
+    build: dataset.DatasetBuild,
+    output_dir: Path,
+    training_config: TrainingConfig,
+    regime_name: str,
+    regime_indices: Sequence[int],
+) -> TrainingResult:
+    regime_labeled_rows = [build.labeled_rows[index] for index in regime_indices]
+    regime_build = replace(
+        build,
+        labeled_rows=regime_labeled_rows,
+        source=f"{build.source}_regime_{regime_name}",
+    )
+    regime_output_dir = output_dir / f"regime_{regime_name}"
+    regime_output_dir.mkdir(parents=True, exist_ok=True)
+    # Skip metadata/artifacts for sub-regime models: keep only core model training
+    regime_config = replace(
+        training_config,
+        regime_aware=False,
+        lineage_enabled=False,
+        feature_selection_enabled=False,
+        optuna_enabled=False,
+        champion_challenger_enabled=False,
+    )
+    return run_training(
+        input_path=None,
+        output_dir=regime_output_dir,
+        config=regime_config,
+        archive_dir=None,
+        external_sources=None,
+        prebuilt_dataset=regime_build,
+    )
+
+
+def _default_regime_by_rows(trained_regimes: Mapping[str, Mapping[str, object]]) -> str | None:
+    if not trained_regimes:
+        return None
+    return max(trained_regimes, key=lambda regime: int(trained_regimes[regime].get("row_count", 0)))
 
 
 def default_splits(n_rows: int, purge_gap: int) -> list[features.Split]:

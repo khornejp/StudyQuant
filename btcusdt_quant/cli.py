@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from . import data, dataset, exchange, features, governance, live, secrets, training
+from . import backtest, data, dataset, exchange, features, governance, live, secrets, training
 
 
 def run_demo(output: Path) -> dict[str, object]:
@@ -142,6 +143,15 @@ def run_train(
     optuna_budget_profile: str = "practical_start",
     champion_challenger_enabled: bool = False,
     external_sources: Mapping[str, object] | None = None,
+    regime_aware: bool = False,
+    min_regime_rows: int = 80,
+    regime_detector_rv_percentile: float = 0.75,
+    regime_detector_trend_percentile: float = 0.70,
+    regime_detector_min_trend_abs: float = 0.00001,
+    regime_detector_low_vol_trend_multiplier: float = 2.0,
+    regime_detector_min_regime_run_bars: int = 3,
+    feature_selection_target_min: int = 0,
+    feature_selection_target_max: int = 0,
 ) -> dict[str, object]:
     config = training.TrainingConfig(
         cv_mode=cv_mode,
@@ -156,6 +166,15 @@ def run_train(
         optuna_trials=optuna_trials,
         optuna_budget_profile=optuna_budget_profile,
         champion_challenger_enabled=champion_challenger_enabled,
+        regime_aware=regime_aware,
+        min_regime_rows=min_regime_rows,
+        regime_detector_rv_percentile=regime_detector_rv_percentile,
+        regime_detector_trend_percentile=regime_detector_trend_percentile,
+        regime_detector_min_trend_abs=regime_detector_min_trend_abs,
+        regime_detector_low_vol_trend_multiplier=regime_detector_low_vol_trend_multiplier,
+        regime_detector_min_regime_run_bars=regime_detector_min_regime_run_bars,
+        feature_selection_target_min=feature_selection_target_min,
+        feature_selection_target_max=feature_selection_target_max,
     )
     archive_dir = None
     if input_path is not None and input_path.is_dir():
@@ -179,10 +198,26 @@ def run_collect(output: Path, rows: int, allow_public_network: bool = False, for
     }
 
 
-def run_collect_archive(start: str, end: str, output: Path, checkpoint: Path | None = None, allow_public_network: bool = False) -> dict[str, object]:
+def run_collect_archive(start: str, end: str, output: Path, checkpoint: Path | None = None, allow_public_network: bool = False, min_rows: int = 0) -> dict[str, object]:
     if not allow_public_network:
         raise RuntimeError("archive collection requires --allow-public-network")
     summary = dataset.BinanceArchiveDownloader().download_range(start, end, output, checkpoint)
+    coverage = dataset.archive_date_coverage(output)
+    raw_rows = coverage["raw_rows"]
+    min_rows_passed = True
+    if min_rows > 0 and raw_rows < min_rows:
+        print(f"warning: archive raw_rows ({raw_rows}) below min_rows threshold ({min_rows})")
+        min_rows_passed = False
+    report = {
+        "start_date": coverage["start_date"],
+        "end_date": coverage["end_date"],
+        "raw_rows": raw_rows,
+        "canonical_rows": coverage["canonical_rows"],
+        "missing_days": coverage["missing_days"],
+        "min_rows_passed": min_rows_passed,
+    }
+    report_path = output / "data_expansion_report.json"
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {
         "output_dir": summary.output_dir.as_posix(),
         "checkpoint_file": summary.checkpoint_file.as_posix(),
@@ -194,6 +229,8 @@ def run_collect_archive(start: str, end: str, output: Path, checkpoint: Path | N
         "last_completed_date": summary.last_completed_date,
         "downloaded_files": list(summary.downloaded_files),
         "failed_dates": list(summary.failed_dates),
+        "coverage_report": report,
+        "min_rows_passed": min_rows_passed,
     }
 
 
@@ -241,6 +278,10 @@ def run_live(
     approval_artifacts: Path | None = None,
     recv_window_ms: int = 5000,
     model_artifact_path: Path | None = None,
+    regime_aware: bool = False,
+    strategy_profile: str = "balanced",
+    soak_duration_hours: float = 0.0,
+    soak_report_interval_minutes: float = 60.0,
 ) -> dict[str, object]:
     exchange_adapter = create_exchange_adapter(exchange_name, allow_signed_network, allow_prod, approval_artifacts, recv_window_ms)
     result = live.run_live(
@@ -250,6 +291,10 @@ def run_live(
         max_candles=max_candles,
         exchange_adapter=exchange_adapter,
         model_artifact_path=model_artifact_path,
+        regime_aware=regime_aware,
+        strategy_profile=strategy_profile,
+        soak_duration_hours=soak_duration_hours,
+        soak_report_interval_minutes=soak_report_interval_minutes,
     )
     summary = dict(result.summary)
     summary["exchange"] = exchange_name
@@ -273,6 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect_archive.add_argument("--output", default="artifacts/archive", help="archive output directory")
     collect_archive.add_argument("--checkpoint", default=None, help="optional checkpoint JSON path; defaults to output/checkpoint.json")
     collect_archive.add_argument("--allow-public-network", action="store_true", help="opt in to public Binance archive download")
+    collect_archive.add_argument("--min-rows", type=int, default=0, help="minimum expected raw rows; warns if not met")
     train = subparsers.add_parser("train", help="run deterministic offline CSV/fixture training pipeline")
     train.add_argument("--output", default="artifacts/training", help="training artifact output directory")
     train.add_argument("--input", default=None, help="optional local CSV candles path; defaults to offline fixture")
@@ -288,6 +334,15 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--optuna-budget", default="practical_start", choices=("research_fast", "practical_start", "full_audit_budget"), help="Optuna budget profile")
     train.add_argument("--champion-challenger", action="store_true", help="enable champion-challenger promotion evaluation from fold test metrics")
     train.add_argument("--collect-external-sources", action="store_true", help="collect real F11/F12 external sources (funding rate, mark price) from Binance API for training")
+    train.add_argument("--regime-aware", action="store_true", help="enable 2-Stage regime-aware training: separate models for high_volatility, trending, and ranging regimes")
+    train.add_argument("--min-regime-rows", type=int, default=80, help="minimum rows required per regime to train a sub-model")
+    train.add_argument("--regime-rv-percentile", type=float, default=0.75, help="realized volatility percentile threshold for high-vol regime detection")
+    train.add_argument("--regime-trend-percentile", type=float, default=0.70, help="trend slope percentile threshold for trending regime detection")
+    train.add_argument("--regime-min-trend-abs", type=float, default=0.00001, help="minimum absolute trend slope to qualify as trending")
+    train.add_argument("--regime-low-vol-multiplier", type=float, default=2.0, help="multiplier for trend threshold in low-volatility periods")
+    train.add_argument("--regime-min-run-bars", type=int, default=3, help="minimum consecutive bars to confirm a regime change")
+    train.add_argument("--feature-selection-target-min", type=int, default=0, help="minimum number of features to select (0 disables lower bound)")
+    train.add_argument("--feature-selection-target-max", type=int, default=0, help="maximum number of features to select (0 disables upper bound)")
     live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
     live_parser.add_argument("--output", default="artifacts/live", help="live artifact output directory")
     live_parser.add_argument("--dry-run", action="store_true", help="use deterministic fixture WebSocket and REST backfill")
@@ -298,7 +353,15 @@ def build_parser() -> argparse.ArgumentParser:
     live_parser.add_argument("--allow-prod", action="store_true", help="opt in to production exchange adapter after artifact approval")
     live_parser.add_argument("--approval-artifacts", default=None, help="approval artifact directory required for production")
     live_parser.add_argument("--recv-window-ms", type=int, default=5000, help="Binance signed request recvWindow in milliseconds")
-    live_parser.add_argument("--model-artifact", default=None, help="path to trained model artifact JSON (e.g., artifacts/training/model.json)")
+    live_parser.add_argument("--model-artifact", default=None, help="path to trained model artifact JSON (e.g., artifacts/training/model.json) or regime-aware directory (e.g., artifacts/training_regime_50k)")
+    live_parser.add_argument("--regime-aware", action="store_true", help="enable regime-aware inference: load multiple regime models and select by detected market regime")
+    live_parser.add_argument("--strategy-profile", choices=live.STRATEGY_PROFILE_CHOICES, default="balanced", help="strategy profile for regime-aware signal thresholds and TP/SL pricing")
+    live_parser.add_argument("--soak-duration-hours", type=float, default=0.0, help="soak test duration in hours (0 = normal mode, >0 = soak mode)")
+    live_parser.add_argument("--soak-report-interval-minutes", type=float, default=60.0, help="soak test periodic report interval in minutes")
+    backtest_parser = subparsers.add_parser("backtest", help="run backtest on historical candles")
+    backtest_parser.add_argument("--input", default=None, help="CSV candles path; defaults to fixture")
+    backtest_parser.add_argument("--output", default="artifacts/backtest", help="backtest output directory")
+    backtest_parser.add_argument("--model-artifact", default=None, help="trained model artifact JSON path")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -334,7 +397,7 @@ def main(argv: list[str] | None = None) -> int:
         output = Path(args.output)
         checkpoint = Path(args.checkpoint) if args.checkpoint else None
         try:
-            summary = run_collect_archive(args.start, args.end, output, checkpoint, args.allow_public_network)
+            summary = run_collect_archive(args.start, args.end, output, checkpoint, args.allow_public_network, args.min_rows)
         except (OSError, RuntimeError, ValueError) as error:
             print(f"archive collection failed: {error}", file=sys.stderr)
             return 1
@@ -344,6 +407,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"last_completed_date={summary['last_completed_date']}")
         print(f"checkpoint={summary['checkpoint_file']}")
         print(f"output={summary['output_dir']}")
+        if not summary["min_rows_passed"]:
+            print(f"warning: min_rows not met (raw_rows={summary['coverage_report']['raw_rows']}, min_rows={args.min_rows})")
         return 0
     if args.command == "train":
         output = Path(args.output)
@@ -368,6 +433,15 @@ def main(argv: list[str] | None = None) -> int:
                 optuna_budget_profile=args.optuna_budget,
                 champion_challenger_enabled=args.champion_challenger,
                 external_sources=external_sources,
+                regime_aware=args.regime_aware,
+                min_regime_rows=args.min_regime_rows,
+                regime_detector_rv_percentile=args.regime_rv_percentile,
+                regime_detector_trend_percentile=args.regime_trend_percentile,
+                regime_detector_min_trend_abs=args.regime_min_trend_abs,
+                regime_detector_low_vol_trend_multiplier=args.regime_low_vol_multiplier,
+                regime_detector_min_regime_run_bars=args.regime_min_run_bars,
+                feature_selection_target_min=args.feature_selection_target_min,
+                feature_selection_target_max=args.feature_selection_target_max,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)
@@ -396,6 +470,10 @@ def main(argv: list[str] | None = None) -> int:
                 approval_artifacts=approval_artifacts,
                 recv_window_ms=args.recv_window_ms,
                 model_artifact_path=model_artifact_path,
+                regime_aware=args.regime_aware,
+                strategy_profile=args.strategy_profile,
+                soak_duration_hours=args.soak_duration_hours,
+                soak_report_interval_minutes=args.soak_report_interval_minutes,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"live failed: {error}", file=sys.stderr)
@@ -408,8 +486,52 @@ def main(argv: list[str] | None = None) -> int:
         print(f"backfilled_rows={summary['backfilled_rows']}")
         print(f"canonical_rows={summary['canonical_rows']}")
         print(f"signal={summary['signal']}")
+        strategy_decision = summary.get("strategy_decision", {})
+        if strategy_decision:
+            print(f"strategy_profile={strategy_decision.get('profile')}")
+        model_inference = summary.get("model_inference", {})
+        if model_inference:
+            print(f"model_loaded={model_inference.get('model_loaded')}")
+            print(f"probability={model_inference.get('probability')}")
+            print(f"regime={model_inference.get('regime')}")
+            if model_inference.get("error"):
+                print(f"model_error={model_inference.get('error')}")
         print(f"artifacts={output}")
         return 0
+    if args.command == "backtest":
+        output = Path(args.output)
+        try:
+            candles = dataset.load_csv_candles(Path(args.input)) if args.input else data.local_fixture()
+            model = None
+            if args.model_artifact:
+                model_path = Path(args.model_artifact)
+                if model_path.is_file():
+                    model = live.load_model_artifact(model_path)
+                elif model_path.is_dir() and (model_path / "model.json").is_file():
+                    model = live.load_model_artifact(model_path / "model.json")
+            strategies = {
+                "balanced": live.strategy_for_regime(None, "balanced"),
+                "conservative": live.strategy_for_regime(None, "conservative"),
+                "aggressive": live.strategy_for_regime(None, "aggressive"),
+            }
+            comparison = backtest.compare_strategies(candles, model, strategies)
+            result = backtest.run_backtest(candles, model, strategies["balanced"])
+            summary = {
+                "backtest": result.as_dict(),
+                "strategy_comparison": comparison,
+            }
+            output.mkdir(parents=True, exist_ok=True)
+            (output / "backtest_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            print("BTCUSDT backtest complete")
+            print(f"trades={result.trade_count}")
+            print(f"total_return={result.total_return:.4f}")
+            print(f"win_rate={result.win_rate:.4f}")
+            print(f"best_strategy={comparison['best_strategy']}")
+            print(f"artifacts={output}")
+            return 0
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"backtest failed: {error}", file=sys.stderr)
+            return 1
     if args.command == "artifacts":
         ok, errors = governance.verify_manifest(Path(args.path))
         if ok:
