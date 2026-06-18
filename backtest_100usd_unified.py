@@ -50,8 +50,9 @@ def main():
     INITIAL_EQUITY = 100.0
     POSITION_SIZE = 0.1
     MAX_CANDLES = 10000  # ~1 week of 1m candles
-    MIN_HOLD_BARS = 5
-    COOLDOWN_BARS = 5
+    MIN_HOLD_BARS = 10
+    COOLDOWN_BARS = 10
+    THRESHOLD_MULTIPLIER = 1.005  # Slightly higher than trained threshold
     FEE_RATE_PER_SIDE = backtest.DEFAULT_FEE_RATE_PER_SIDE
     SLIPPAGE_RATE_PER_SIDE = backtest.DEFAULT_SLIPPAGE_RATE_PER_SIDE
     
@@ -93,57 +94,87 @@ def main():
     print(f"Computed {features_df.shape[1]} features in {feature_time:.2f}s")
     print(f"Speedup vs original: ~25x faster")
     
-    # Step 4: Train Model
-    print("\n[Step 4] Training Model")
+    # Step 4: Load or Train Model
+    print("\n[Step 4] Loading Model")
     start = time.time()
     
-    feature_names = list(features_df.columns)
-    feature_matrix = features_df.values
-    
-    # Create labels (next 15-bar return > 0)
-    closes = np.array([c.close for c in candles])
-    labels = []
-    for i in range(len(candles) - 15):
-        future_return = (closes[i+15] - closes[i]) / closes[i]
-        labels.append(1 if future_return > 0 else 0)
-    labels.extend([0] * 15)
-    
-    # Train centroid model
-    from btcusdt_quant.training import Standardizer, LinearClassifier
-    
-    train_size = int(len(candles) * 0.8)
-    train_X = feature_matrix[:train_size]
-    train_y = np.array(labels[:train_size])
-    
-    means = {name: float(np.mean(train_X[:, i])) for i, name in enumerate(feature_names)}
-    stds = {name: float(np.std(train_X[:, i])) + 1e-8 for i, name in enumerate(feature_names)}
-    standardizer = Standardizer(means, stds)
-    
-    X_std = np.array([standardizer.transform(dict(zip(feature_names, row)), feature_names) for row in train_X])
-    
-    pos_mask = train_y == 1
-    neg_mask = train_y == 0
-    pos_centroid = np.mean(X_std[pos_mask], axis=0) if np.any(pos_mask) else np.zeros(len(feature_names))
-    neg_centroid = np.mean(X_std[neg_mask], axis=0) if np.any(neg_mask) else np.zeros(len(feature_names))
-    diff = pos_centroid - neg_centroid
-    
-    weights = {name: float(diff[i]) for i, name in enumerate(feature_names)}
-    intercept = float(np.dot(neg_centroid, diff))
-    
-    model = LinearClassifier(
-        feature_names=tuple(feature_names),
-        standardizer=standardizer,
-        weights=weights,
-        intercept=intercept,
-    )
+    MODEL_ARTIFACT_PATH = Path("artifacts/training_lightgbm/model.json")
+    if MODEL_ARTIFACT_PATH.exists():
+        from btcusdt_quant.live import load_model_artifact
+        model = load_model_artifact(MODEL_ARTIFACT_PATH)
+        print(f"Loaded pre-trained model: {type(model).__name__}")
+    else:
+        print("No pre-trained model found, training inline...")
+        feature_names = list(features_df.columns)
+        feature_matrix = features_df.values
+        
+        # Create labels (next 15-bar return > 0)
+        closes = np.array([c.close for c in candles])
+        labels = []
+        for i in range(len(candles) - 15):
+            future_return = (closes[i+15] - closes[i]) / closes[i]
+            labels.append(1 if future_return > 0 else 0)
+        labels.extend([0] * 15)
+        
+        # Train centroid model
+        from btcusdt_quant.training import Standardizer, LinearClassifier
+        
+        train_size = int(len(candles) * 0.8)
+        train_X = feature_matrix[:train_size]
+        train_y = np.array(labels[:train_size])
+        
+        means = {name: float(np.mean(train_X[:, i])) for i, name in enumerate(feature_names)}
+        stds = {name: float(np.std(train_X[:, i])) + 1e-8 for i, name in enumerate(feature_names)}
+        standardizer = Standardizer(means, stds)
+        
+        X_std = np.array([standardizer.transform(dict(zip(feature_names, row)), feature_names) for row in train_X])
+        
+        pos_mask = train_y == 1
+        neg_mask = train_y == 0
+        pos_centroid = np.mean(X_std[pos_mask], axis=0) if np.any(pos_mask) else np.zeros(len(feature_names))
+        neg_centroid = np.mean(X_std[neg_mask], axis=0) if np.any(neg_mask) else np.zeros(len(feature_names))
+        diff = pos_centroid - neg_centroid
+        
+        weights = {name: float(diff[i]) for i, name in enumerate(feature_names)}
+        intercept = float(np.dot(neg_centroid, diff))
+        
+        model = LinearClassifier(
+            feature_names=tuple(feature_names),
+            standardizer=standardizer,
+            weights=weights,
+            intercept=intercept,
+        )
     
     train_time = time.time() - start
-    print(f"Model trained in {train_time:.2f}s")
+    print(f"Model ready in {train_time:.2f}s")
     
     # Step 5: Backtest
     print("\n[Step 5] Running Backtest")
     start = time.time()
-    strategy = live.strategy_for_regime("ranging", "balanced")
+    
+    # Use very relaxed TP/SL: 2.0% TP / 1.5% SL to capture larger moves
+    strategy = live.StrategyConfig(
+        "balanced_relaxed",
+        long_threshold=0.50,
+        short_threshold=0.50,
+        tp_pct=0.020,
+        sl_pct=0.015,
+        atr_multiplier_tp=2.0,
+        atr_multiplier_sl=1.5,
+        min_reward_risk=1.0,
+    )
+    
+    # Load training threshold from artifacts if available
+    training_threshold = None
+    threshold_path = Path("artifacts/training_lightgbm/threshold_report.json")
+    if threshold_path.exists():
+        import json
+        threshold_report = json.loads(threshold_path.read_text(encoding="utf-8"))
+        fold_thresholds = threshold_report.get("fold_thresholds", [])
+        if fold_thresholds:
+            avg_threshold = sum(float(f["threshold"]) for f in fold_thresholds) / len(fold_thresholds)
+            training_threshold = min(avg_threshold * THRESHOLD_MULTIPLIER, 0.995)
+            print(f"Loaded training threshold: {avg_threshold:.4f} -> adjusted: {training_threshold:.4f} (from {len(fold_thresholds)} folds)")
     
     result = backtest.run_backtest(
         candles=candles,
@@ -153,6 +184,8 @@ def main():
         position_size=POSITION_SIZE,
         min_hold_bars=MIN_HOLD_BARS,
         cooldown_bars=COOLDOWN_BARS,
+        long_threshold=training_threshold,
+        short_threshold=1.0 - training_threshold if training_threshold is not None else None,
         fee_rate_per_side=FEE_RATE_PER_SIDE,
         slippage_rate_per_side=SLIPPAGE_RATE_PER_SIDE,
     )

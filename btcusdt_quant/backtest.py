@@ -166,6 +166,8 @@ def run_backtest(
     label_horizon: int = 15,
     min_hold_bars: int = 0,
     cooldown_bars: int = 0,
+    long_threshold: float | None = None,
+    short_threshold: float | None = None,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
     slippage_rate_per_side: float = DEFAULT_SLIPPAGE_RATE_PER_SIDE,
 ) -> BacktestResult:
@@ -182,6 +184,8 @@ def run_backtest(
     label_horizon: bars to hold before forced exit
     min_hold_bars: minimum bars to hold before allowing TP/SL exit
     cooldown_bars: bars to wait after exit before re-entry
+    long_threshold: override strategy long threshold (default uses strategy.long_threshold)
+    short_threshold: override strategy short threshold (default uses strategy.short_threshold)
     fee_rate_per_side: trading fee charged on entry and exit, as a decimal rate
     slippage_rate_per_side: fixed slippage charged on entry and exit, as a decimal rate
     """
@@ -219,7 +223,14 @@ def run_backtest(
         if model is not None and i < len(feature_rows):
             features_dict = feature_rows[i].features
             prob = model.probability(features_dict)
-            signal = live.select_signal(prob, "ranging", strategy, reward_risk=2.0)
+            lt = long_threshold if long_threshold is not None else strategy.long_threshold
+            st = short_threshold if short_threshold is not None else strategy.short_threshold
+            if prob > lt:
+                signal = "BUY"
+            elif prob < st:
+                signal = "SELL"
+            else:
+                signal = "HOLD"
         else:
             signal = "HOLD"
 
