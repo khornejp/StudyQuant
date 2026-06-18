@@ -50,10 +50,14 @@ def main():
     INITIAL_EQUITY = 100.0
     POSITION_SIZE = 0.1
     MAX_CANDLES = 10000  # ~1 week of 1m candles
+    FEE_RATE_PER_SIDE = backtest.DEFAULT_FEE_RATE_PER_SIDE
+    SLIPPAGE_RATE_PER_SIDE = backtest.DEFAULT_SLIPPAGE_RATE_PER_SIDE
     
     print("="*60)
     print("BTCUSDT Fast Backtest - $100 Initial Capital")
     print("(Parquet + Vectorized Features)")
+    print(f"Fees: {FEE_RATE_PER_SIDE*100:.3f}%/side | Slippage: {SLIPPAGE_RATE_PER_SIDE*100:.3f}%/side")
+    print(f"Round-trip cost: {(2 * (FEE_RATE_PER_SIDE + SLIPPAGE_RATE_PER_SIDE))*100:.3f}% per trade")
     print("="*60)
     
     # Check input exists
@@ -144,26 +148,34 @@ def main():
         strategy=strategy,
         initial_equity=INITIAL_EQUITY,
         position_size=POSITION_SIZE,
+        fee_rate_per_side=FEE_RATE_PER_SIDE,
+        slippage_rate_per_side=SLIPPAGE_RATE_PER_SIDE,
     )
     backtest_time = time.time() - start
     
     # Results
     final_equity = INITIAL_EQUITY * (1 + result.total_return)
+    gross_final_equity = INITIAL_EQUITY * (1 + result.gross_total_return)
     
     print()
     print("="*60)
     print("BACKTEST RESULTS")
     print("="*60)
     print(f"Initial Capital:     ${INITIAL_EQUITY:.2f}")
-    print(f"Final Capital:       ${final_equity:.2f}")
-    print(f"Total Return:        {result.total_return*100:+.2f}%")
+    print(f"Gross Final Capital: ${gross_final_equity:.2f}")
+    print(f"Net Final Capital:   ${final_equity:.2f}")
+    print(f"Gross Return:        {result.gross_total_return*100:+.2f}%")
+    print(f"Net Return:          {result.total_return*100:+.2f}%")
+    print(f"Cost Impact:         {(result.gross_total_return - result.total_return)*100:+.2f}%")
+    print(f"Fees Paid:           ${result.total_fees:.4f}")
+    print(f"Slippage Cost:       ${result.total_slippage:.4f}")
     print(f"Win Rate:            {result.win_rate:.2%}")
     print(f"Profit Factor:       {result.profit_factor:.2f}")
     print(f"Max Drawdown:        {result.max_drawdown:.2%}")
     print(f"Sharpe Ratio:        {result.sharpe:.2f}")
     print(f"Total Trades:        {result.trade_count}")
     print()
-    print(f"Performance: ${INITIAL_EQUITY:.2f} → ${final_equity:.2f}")
+    print(f"Performance: ${INITIAL_EQUITY:.2f} → ${final_equity:.2f} net (${gross_final_equity:.2f} gross)")
     if result.total_return > 0:
         print(f"Result: PROFIT +${final_equity - INITIAL_EQUITY:.2f}")
     else:
@@ -178,7 +190,18 @@ def main():
     summary = {
         "initial_capital": INITIAL_EQUITY,
         "final_capital": final_equity,
+        "net_final_capital": final_equity,
+        "gross_final_capital": gross_final_equity,
         "total_return_pct": result.total_return * 100,
+        "net_return_pct": result.total_return * 100,
+        "gross_return_pct": result.gross_total_return * 100,
+        "cost_impact_return_pct": (result.gross_total_return - result.total_return) * 100,
+        "fee_rate_per_side_pct": FEE_RATE_PER_SIDE * 100,
+        "slippage_rate_per_side_pct": SLIPPAGE_RATE_PER_SIDE * 100,
+        "round_trip_cost_pct": result.round_trip_cost_pct * 100,
+        "total_fees": result.total_fees,
+        "total_slippage": result.total_slippage,
+        "total_costs": result.total_costs,
         "win_rate": result.win_rate,
         "profit_factor": result.profit_factor,
         "max_drawdown": result.max_drawdown,
@@ -201,6 +224,11 @@ def main():
                 "entry_price": t.entry_price,
                 "exit_price": t.exit_price,
                 "pnl_pct": t.pnl_pct * 100,
+                "net_pnl_pct": t.pnl_pct * 100,
+                "gross_pnl_pct": t.gross_pnl_pct * 100,
+                "cost_pct": t.cost_pct * 100,
+                "fee_paid": t.fee_paid,
+                "slippage_paid": t.slippage_paid,
                 "outcome": t.outcome,
             }
             for t in result.trades[:10]

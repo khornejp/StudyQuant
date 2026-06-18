@@ -2233,6 +2233,21 @@ class _FakeResponse:
 
 
 class TestBacktest(unittest.TestCase):
+    class _ConstantProbabilityModel:
+        def __init__(self, probability: float) -> None:
+            self.probability_value = probability
+
+        def probability(self, values: object) -> float:
+            return self.probability_value
+
+    class _SingleBuyModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def probability(self, values: object) -> float:
+            self.calls += 1
+            return 0.90 if self.calls == 1 else 0.50
+
     def _candles(self, rows: int) -> list[data.Candle]:
         base = data.utc_minute(2026, 1, 1, 0, 0)
         return [
@@ -2249,6 +2264,24 @@ class TestBacktest(unittest.TestCase):
                 taker_buy_quote_volume=500.0,
             )
             for index in range(rows)
+        ]
+
+    def _priced_candles(self, closes: list[float]) -> list[data.Candle]:
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        return [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=close,
+                high=close * 1.001,
+                low=close * 0.999,
+                close=close,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index, close in enumerate(closes)
         ]
 
     def test_backtest_runs_without_model(self) -> None:
@@ -2280,6 +2313,73 @@ class TestBacktest(unittest.TestCase):
         self.assertIsInstance(result.profit_factor, float)
         self.assertIsInstance(result.max_drawdown, float)
         self.assertIsInstance(result.sharpe, float)
+
+    def test_backtest_deducts_fee_and_slippage_from_trade_pnl(self) -> None:
+        candles = self._priced_candles([100.0, 101.0])
+        strategy = live.StrategyConfig("test", 0.60, 0.40, 0.500, 0.500, 1.0, 1.0, 0.0)
+
+        result = backtest.run_backtest(
+            candles,
+            self._SingleBuyModel(),
+            strategy,
+            initial_equity=100.0,
+            position_size=1.0,
+            label_horizon=1,
+            fee_rate_per_side=0.0002,
+            slippage_rate_per_side=0.0002,
+        )
+
+        self.assertEqual(result.trade_count, 1)
+        trade = result.trades[0]
+        self.assertAlmostEqual(trade.gross_pnl_pct, 0.0100)
+        self.assertAlmostEqual(trade.fee_pct, 0.0004)
+        self.assertAlmostEqual(trade.slippage_pct, 0.0004)
+        self.assertAlmostEqual(trade.cost_pct, 0.0008)
+        self.assertAlmostEqual(trade.pnl_pct, 0.0092)
+        self.assertAlmostEqual(result.gross_total_return, 0.0100)
+        self.assertAlmostEqual(result.total_return, 0.0092)
+        self.assertAlmostEqual(result.total_fees, 0.04)
+        self.assertAlmostEqual(result.total_slippage, 0.04)
+
+    def test_backtest_cost_impact_scales_with_trade_count(self) -> None:
+        candles = self._priced_candles([100.0] * 20)
+        strategy = live.StrategyConfig("test", 0.60, 0.40, 0.500, 0.500, 1.0, 1.0, 0.0)
+
+        result = backtest.run_backtest(
+            candles,
+            self._ConstantProbabilityModel(0.90),
+            strategy,
+            initial_equity=100.0,
+            position_size=1.0,
+            label_horizon=1,
+            fee_rate_per_side=0.0002,
+            slippage_rate_per_side=0.0002,
+        )
+
+        expected_return = (1.0 - result.round_trip_cost_pct) ** result.trade_count - 1.0
+        self.assertGreaterEqual(result.trade_count, 10)
+        self.assertAlmostEqual(result.gross_total_return, 0.0)
+        self.assertAlmostEqual(result.total_return, expected_return)
+        self.assertLess(result.total_return, -0.01)
+
+    def test_backtest_rejects_non_finite_cost_rates(self) -> None:
+        candles = self._priced_candles([100.0, 101.0])
+        strategy = live.StrategyConfig("test", 0.60, 0.40, 0.500, 0.500, 1.0, 1.0, 0.0)
+
+        with self.assertRaises(ValueError):
+            backtest.run_backtest(
+                candles,
+                self._SingleBuyModel(),
+                strategy,
+                fee_rate_per_side=float("nan"),
+            )
+        with self.assertRaises(ValueError):
+            backtest.run_backtest(
+                candles,
+                self._SingleBuyModel(),
+                strategy,
+                slippage_rate_per_side=float("inf"),
+            )
 
     def test_backtest_compare_strategies(self) -> None:
         candles = self._candles(100)

@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
 from typing import Mapping, Sequence
 
 from . import data, dataset, features, live, training
+
+
+DEFAULT_FEE_RATE_PER_SIDE = 0.0002
+DEFAULT_SLIPPAGE_RATE_PER_SIDE = 0.0002
+DEFAULT_ROUND_TRIP_COST_PCT = 2.0 * (DEFAULT_FEE_RATE_PER_SIDE + DEFAULT_SLIPPAGE_RATE_PER_SIDE)
 
 
 @dataclass
@@ -20,28 +26,51 @@ class BacktestTrade:
     pnl_pct: float
     outcome: str
     strategy: str
+    gross_pnl_pct: float = 0.0
+    fee_pct: float = 0.0
+    slippage_pct: float = 0.0
+    cost_pct: float = 0.0
+    fee_paid: float = 0.0
+    slippage_paid: float = 0.0
+    cost_paid: float = 0.0
 
 
 @dataclass
 class BacktestResult:
     trades: list[BacktestTrade] = field(default_factory=list)
     total_return: float = 0.0
+    gross_total_return: float = 0.0
     win_rate: float = 0.0
     profit_factor: float = 0.0
     max_drawdown: float = 0.0
     sharpe: float = 0.0
     trade_count: int = 0
     signal_counts: dict[str, int] = field(default_factory=dict)
+    fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE
+    slippage_rate_per_side: float = DEFAULT_SLIPPAGE_RATE_PER_SIDE
+    round_trip_cost_pct: float = DEFAULT_ROUND_TRIP_COST_PCT
+    total_fees: float = 0.0
+    total_slippage: float = 0.0
+    total_costs: float = 0.0
 
     def as_dict(self) -> dict[str, object]:
         return {
             "total_return": self.total_return,
+            "net_total_return": self.total_return,
+            "gross_total_return": self.gross_total_return,
+            "cost_impact_return": self.gross_total_return - self.total_return,
             "win_rate": self.win_rate,
             "profit_factor": self.profit_factor,
             "max_drawdown": self.max_drawdown,
             "sharpe": self.sharpe,
             "trade_count": len(self.trades),
             "signal_counts": self.signal_counts,
+            "fee_rate_per_side": self.fee_rate_per_side,
+            "slippage_rate_per_side": self.slippage_rate_per_side,
+            "round_trip_cost_pct": self.round_trip_cost_pct,
+            "total_fees": self.total_fees,
+            "total_slippage": self.total_slippage,
+            "total_costs": self.total_costs,
             "trades": [
                 {
                     "entry_time": t.entry_time,
@@ -52,12 +81,75 @@ class BacktestResult:
                     "tp_price": t.tp_price,
                     "sl_price": t.sl_price,
                     "pnl_pct": t.pnl_pct,
+                    "net_pnl_pct": t.pnl_pct,
+                    "gross_pnl_pct": t.gross_pnl_pct,
+                    "fee_pct": t.fee_pct,
+                    "slippage_pct": t.slippage_pct,
+                    "cost_pct": t.cost_pct,
+                    "fee_paid": t.fee_paid,
+                    "slippage_paid": t.slippage_paid,
+                    "cost_paid": t.cost_paid,
                     "outcome": t.outcome,
                     "strategy": t.strategy,
                 }
                 for t in self.trades
             ],
         }
+
+
+def _validate_cost_rates(fee_rate_per_side: float, slippage_rate_per_side: float) -> None:
+    if not isfinite(fee_rate_per_side):
+        raise ValueError("fee_rate_per_side must be finite")
+    if not isfinite(slippage_rate_per_side):
+        raise ValueError("slippage_rate_per_side must be finite")
+    if fee_rate_per_side < 0.0:
+        raise ValueError("fee_rate_per_side must be non-negative")
+    if slippage_rate_per_side < 0.0:
+        raise ValueError("slippage_rate_per_side must be non-negative")
+
+
+def _trade_gross_pnl_pct(trade: BacktestTrade, exit_price: float) -> float:
+    if trade.side == "BUY":
+        return (exit_price - trade.entry_price) / trade.entry_price
+    return (trade.entry_price - exit_price) / trade.entry_price
+
+
+def _close_trade(
+    trade: BacktestTrade,
+    exit_time: str,
+    exit_price: float,
+    outcome: str,
+    equity: float,
+    gross_equity: float,
+    position_size: float,
+    fee_rate_per_side: float,
+    slippage_rate_per_side: float,
+) -> tuple[float, float, float]:
+    gross_pnl_pct = _trade_gross_pnl_pct(trade, exit_price)
+    fee_pct = fee_rate_per_side * 2.0
+    slippage_pct = slippage_rate_per_side * 2.0
+    cost_pct = fee_pct + slippage_pct
+    net_pnl_pct = gross_pnl_pct - cost_pct
+
+    trade_notional = position_size * equity
+    fee_paid = fee_pct * trade_notional
+    slippage_paid = slippage_pct * trade_notional
+    net_trade_pnl = net_pnl_pct * trade_notional
+    gross_trade_pnl = gross_pnl_pct * position_size * gross_equity
+
+    trade.exit_time = exit_time
+    trade.exit_price = exit_price
+    trade.pnl_pct = net_pnl_pct
+    trade.gross_pnl_pct = gross_pnl_pct
+    trade.fee_pct = fee_pct
+    trade.slippage_pct = slippage_pct
+    trade.cost_pct = cost_pct
+    trade.fee_paid = fee_paid
+    trade.slippage_paid = slippage_paid
+    trade.cost_paid = fee_paid + slippage_paid
+    trade.outcome = outcome
+
+    return equity + net_trade_pnl, gross_equity + gross_trade_pnl, net_pnl_pct
 
 
 def run_backtest(
@@ -68,6 +160,8 @@ def run_backtest(
     position_size: float = 0.1,
     tp_sl_method: str = "fixed_pct",
     label_horizon: int = 15,
+    fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
+    slippage_rate_per_side: float = DEFAULT_SLIPPAGE_RATE_PER_SIDE,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -80,9 +174,16 @@ def run_backtest(
     position_size: fraction of equity per trade
     tp_sl_method: 'fixed_pct' or 'atr_pct'
     label_horizon: bars to hold before forced exit
+    fee_rate_per_side: trading fee charged on entry and exit, as a decimal rate
+    slippage_rate_per_side: fixed slippage charged on entry and exit, as a decimal rate
     """
+    _validate_cost_rates(fee_rate_per_side, slippage_rate_per_side)
     result = BacktestResult()
+    result.fee_rate_per_side = fee_rate_per_side
+    result.slippage_rate_per_side = slippage_rate_per_side
+    result.round_trip_cost_pct = 2.0 * (fee_rate_per_side + slippage_rate_per_side)
     equity = initial_equity
+    gross_equity = initial_equity
     peak_equity = initial_equity
     active_trade: BacktestTrade | None = None
     bar_count = 0
@@ -128,18 +229,21 @@ def run_backtest(
                 else:
                     outcome = "TIMEOUT"
 
-                if active_trade.side == "BUY":
-                    pnl_pct = (exit_price - active_trade.entry_price) / active_trade.entry_price
-                else:
-                    pnl_pct = (active_trade.entry_price - exit_price) / active_trade.entry_price
-
-                trade_pnl = pnl_pct * position_size * equity
-                equity += trade_pnl
+                equity, gross_equity, pnl_pct = _close_trade(
+                    active_trade,
+                    candle.open_time.isoformat(),
+                    exit_price,
+                    outcome,
+                    equity,
+                    gross_equity,
+                    position_size,
+                    fee_rate_per_side,
+                    slippage_rate_per_side,
+                )
+                result.total_fees += active_trade.fee_paid
+                result.total_slippage += active_trade.slippage_paid
+                result.total_costs += active_trade.cost_paid
                 peak_equity = max(peak_equity, equity)
-                active_trade.exit_time = candle.open_time.isoformat()
-                active_trade.exit_price = exit_price
-                active_trade.pnl_pct = pnl_pct
-                active_trade.outcome = outcome
                 result.trades.append(active_trade)
                 returns.append(pnl_pct)
                 active_trade = None
@@ -168,21 +272,27 @@ def run_backtest(
     if active_trade is not None:
         last_candle = candles[-1]
         exit_price = last_candle.close
-        if active_trade.side == "BUY":
-            pnl_pct = (exit_price - active_trade.entry_price) / active_trade.entry_price
-        else:
-            pnl_pct = (active_trade.entry_price - exit_price) / active_trade.entry_price
-        trade_pnl = pnl_pct * position_size * equity
-        equity += trade_pnl
-        active_trade.exit_time = last_candle.open_time.isoformat()
-        active_trade.exit_price = exit_price
-        active_trade.pnl_pct = pnl_pct
-        active_trade.outcome = "OPEN_AT_END"
+        equity, gross_equity, pnl_pct = _close_trade(
+            active_trade,
+            last_candle.open_time.isoformat(),
+            exit_price,
+            "OPEN_AT_END",
+            equity,
+            gross_equity,
+            position_size,
+            fee_rate_per_side,
+            slippage_rate_per_side,
+        )
+        result.total_fees += active_trade.fee_paid
+        result.total_slippage += active_trade.slippage_paid
+        result.total_costs += active_trade.cost_paid
+        peak_equity = max(peak_equity, equity)
         result.trades.append(active_trade)
         returns.append(pnl_pct)
 
     # Compute metrics
     result.total_return = (equity - initial_equity) / initial_equity
+    result.gross_total_return = (gross_equity - initial_equity) / initial_equity
     result.trade_count = len(result.trades)
     if result.trades:
         wins = sum(1 for t in result.trades if t.pnl_pct > 0)
@@ -204,25 +314,41 @@ def compare_strategies(
     model: training.LinearClassifier | None,
     strategies: Mapping[str, live.StrategyConfig],
     initial_equity: float = 10000.0,
+    fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
+    slippage_rate_per_side: float = DEFAULT_SLIPPAGE_RATE_PER_SIDE,
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison."""
     results: dict[str, BacktestResult] = {}
     for name, strategy in strategies.items():
-        results[name] = run_backtest(candles, model, strategy, initial_equity)
+        results[name] = run_backtest(
+            candles,
+            model,
+            strategy,
+            initial_equity,
+            fee_rate_per_side=fee_rate_per_side,
+            slippage_rate_per_side=slippage_rate_per_side,
+        )
 
     best_strategy = max(results, key=lambda k: results[k].total_return)
     return {
         "best_strategy": best_strategy,
         "best_total_return": results[best_strategy].total_return,
+        "best_gross_total_return": results[best_strategy].gross_total_return,
         "best_win_rate": results[best_strategy].win_rate,
         "comparison": {
             name: {
                 "total_return": r.total_return,
+                "net_total_return": r.total_return,
+                "gross_total_return": r.gross_total_return,
+                "cost_impact_return": r.gross_total_return - r.total_return,
                 "win_rate": r.win_rate,
                 "profit_factor": r.profit_factor,
                 "max_drawdown": r.max_drawdown,
                 "sharpe": r.sharpe,
                 "trade_count": r.trade_count,
+                "total_fees": r.total_fees,
+                "total_slippage": r.total_slippage,
+                "total_costs": r.total_costs,
             }
             for name, r in results.items()
         },
