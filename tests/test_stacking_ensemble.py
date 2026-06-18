@@ -5,6 +5,20 @@ from datetime import timedelta
 from btcusdt_quant import data, dataset
 
 
+class MetaModelTests(unittest.TestCase):
+    def test_meta_model_catboost(self) -> None:
+        from btcusdt_quant.ensemble import _fit_meta_model
+        import numpy as np
+        X = np.array([[0.9, 0.8], [0.1, 0.2], [0.8, 0.9], [0.2, 0.1]])
+        y = np.array([1, 0, 1, 0])
+        model = _fit_meta_model(X, y, "catboost")
+        self.assertIsNotNone(model)
+        prob = model.predict_proba(X[:1])[0]
+        self.assertGreaterEqual(prob, 0.0)
+        self.assertLessEqual(prob, 1.0)
+
+
+
 class MultitargetLabelTests(unittest.TestCase):
     def test_labeled_row_has_targets_and_reasons(self) -> None:
         base = data.utc_minute(2026, 1, 1, 0, 0)

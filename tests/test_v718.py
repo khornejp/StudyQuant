@@ -11,7 +11,7 @@ from typing import cast
 
 from dataclasses import replace
 
-from btcusdt_quant import backtest, data, dataset, features, governance, live, monitoring, parity, sources, training
+from btcusdt_quant import backtest, data, dataset, features, governance, live, models, monitoring, parity, sources, training
 
 
 class FeatureRegistryV718Tests(unittest.TestCase):
@@ -312,12 +312,8 @@ class TestRegimeDetector(unittest.TestCase):
                 },
             }
             (artifact_dir / "regime_run_summary.json").write_text(json.dumps(summary), encoding="utf-8")
-            model = training.LinearClassifier(
-                feature_names=("return_1",),
-                standardizer=training.Standardizer({"return_1": 0.0}, {"return_1": 1.0}),
-                weights={"return_1": 0.0},
-                intercept=1.0,
-            )
+            model = models.CatBoostAdapter(feature_names=["return_1"])
+            model.fit([[0.0], [0.1]], [1, 0])
             (model_dir / "model.json").write_text(json.dumps(model.as_dict()), encoding="utf-8")
             captured_thresholds: list[dict[str, float] | None] = []
             original_detect = features.RegimeDetector.detect
@@ -408,12 +404,8 @@ class TestRegimeTraining(unittest.TestCase):
                 },
             }
             (artifact_dir / "regime_run_summary.json").write_text(json.dumps(summary), encoding="utf-8")
-            model = training.LinearClassifier(
-                feature_names=("return_1",),
-                standardizer=training.Standardizer({"return_1": 0.0}, {"return_1": 1.0}),
-                weights={"return_1": 0.0},
-                intercept=1.0,
-            )
+            model = models.CatBoostAdapter(feature_names=["return_1"])
+            model.fit([[0.0], [0.1]], [1, 0])
             (model_dir / "model.json").write_text(json.dumps(model.as_dict()), encoding="utf-8")
             original_detect = features.RegimeDetector.detect
 
@@ -1535,24 +1527,15 @@ class TestOrderBlockImbalance(unittest.TestCase):
 
 class ModelArtifactV718Tests(unittest.TestCase):
     def test_load_model_artifact_from_valid_json(self) -> None:
-        from btcusdt_quant import training
-        classifier = training.LinearClassifier(
-            feature_names=("return_1", "volume_ratio"),
-            standardizer=training.Standardizer(
-                {"return_1": 0.0, "volume_ratio": 10.0},
-                {"return_1": 0.01, "volume_ratio": 5.0},
-            ),
-            weights={"return_1": 1.0, "volume_ratio": -0.5},
-            intercept=0.0,
-        )
+        model = models.CatBoostAdapter(feature_names=["return_1", "volume_ratio"])
+        model.fit([[0.0, 1.0], [0.1, 0.9]], [1, 0])
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "model.json"
-            path.write_text(json.dumps(classifier.as_dict()), encoding="utf-8")
+            path.write_text(json.dumps(model.as_dict()), encoding="utf-8")
             loaded = live.load_model_artifact(path)
             self.assertIsNotNone(loaded)
             assert loaded is not None
             self.assertEqual(loaded.feature_names, ("return_1", "volume_ratio"))
-            self.assertAlmostEqual(loaded.intercept, 0.0)
 
     def test_load_model_artifact_missing_path_returns_none(self) -> None:
         self.assertIsNone(live.load_model_artifact(None))
@@ -1563,53 +1546,13 @@ class ModelArtifactV718Tests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 live.load_model_artifact(path, strict=True)
 
-    def test_linear_classifier_from_dict_rejects_empty_features(self) -> None:
-        from btcusdt_quant import training
-        with self.assertRaises(ValueError):
-            training.LinearClassifier.from_dict({"model_family": "deterministic_centroid_linear_classifier", "feature_names": []})
-
-    def test_linear_classifier_from_dict_rejects_missing_mean(self) -> None:
-        from btcusdt_quant import training
-        payload = {
-            "model_family": "deterministic_centroid_linear_classifier",
-            "feature_names": ["return_1", "volume_ratio"],
-            "standardizer_means": {"return_1": 0.0},
-            "standardizer_scales": {"return_1": 0.01, "volume_ratio": 5.0},
-            "weights": {"return_1": 1.0, "volume_ratio": -0.5},
-            "intercept": 0.0,
-        }
-        with self.assertRaises(ValueError):
-            training.LinearClassifier.from_dict(payload)
-
-    def test_linear_classifier_from_dict_rejects_zero_scale(self) -> None:
-        from btcusdt_quant import training
-        payload = {
-            "model_family": "deterministic_centroid_linear_classifier",
-            "feature_names": ["return_1"],
-            "standardizer_means": {"return_1": 0.0},
-            "standardizer_scales": {"return_1": 0.0},
-            "weights": {"return_1": 1.0},
-            "intercept": 0.0,
-        }
-        with self.assertRaises(ValueError):
-            training.LinearClassifier.from_dict(payload)
-
-    def test_linear_classifier_from_dict_rejects_wrong_family(self) -> None:
-        from btcusdt_quant import training
-        with self.assertRaises(ValueError):
-            training.LinearClassifier.from_dict({"model_family": "lightgbm", "feature_names": ["return_1"]})
-
     def test_live_run_with_model_artifact_uses_inference(self) -> None:
-        from btcusdt_quant import data, training
-        classifier = training.LinearClassifier(
-            feature_names=("return_1",),
-            standardizer=training.Standardizer({"return_1": 0.0}, {"return_1": 0.01}),
-            weights={"return_1": 10.0},
-            intercept=0.0,
-        )
+        from btcusdt_quant import data
+        model = models.CatBoostAdapter(feature_names=["return_1"])
+        model.fit([[0.0], [0.1]], [1, 0])
         with tempfile.TemporaryDirectory() as tmpdir:
             model_path = Path(tmpdir) / "model.json"
-            model_path.write_text(json.dumps(classifier.as_dict()), encoding="utf-8")
+            model_path.write_text(json.dumps(model.as_dict()), encoding="utf-8")
             output = Path(tmpdir) / "live"
             base = data.utc_minute(2026, 1, 1, 0, 0)
             candles = [
@@ -1767,7 +1710,7 @@ class EndToEndPipelineV718Tests(unittest.TestCase):
             collect_result = dataset.collect_candles(data_path, rows=240)
             self.assertGreaterEqual(collect_result.rows, 200, "collect should produce at least 200 rows")
             
-            # 2. Train with default args (model_family defaults to stdlib)
+            # 2. Train with default args (model_family defaults to auto)
             train_dir = Path(tmpdir) / "training"
             train_result = training.run_training(data_path, train_dir)
             self.assertGreaterEqual(len(train_result.dataset_build.labeled_rows), 80, "training should produce at least 80 labeled rows")
@@ -2142,15 +2085,17 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
                 # Verify run_summary contains optuna applied params
                 optuna_section = result.run_summary.get("optuna", {})
                 self.assertTrue(optuna_section.get("enabled", False))
-                # Verify model artifact contains signal_scale from optuna (model constructor param)
+                # Verify optuna params are recorded in run_summary
+                report = optuna_section.get("report", {})
+                self.assertIn("best_params", report, "optuna best_params must be recorded")
+                best_params = report.get("best_params", {})
+                self.assertIn("signal_scale", best_params, "signal_scale must be in optuna best_params")
+                # threshold must NOT be in model_params (it's a decision param, not model constructor param)
                 model_path = Path(train_dir) / "model.json"
                 self.assertTrue(model_path.exists(), "model.json should exist")
                 model_data = json.loads(model_path.read_text())
                 self.assertIn("model_family", model_data)
-                # signal_scale must be in model_params (passed to model constructor)
                 model_params = model_data.get("model_params", {})
-                self.assertEqual(model_params.get("signal_scale"), 1.7, "model artifact must contain optuna signal_scale")
-                # threshold must NOT be in model_params (it's a decision param, not model constructor param)
                 self.assertNotIn("threshold", model_params, "threshold must not be in model_params")
                 # Verify every fold threshold is exactly the monkeypatched 0.37
                 for fold in result.fold_results:
@@ -2386,12 +2331,8 @@ class TestBacktest(unittest.TestCase):
 
     def test_backtest_with_model(self) -> None:
         candles = self._candles(50)
-        model = training.LinearClassifier(
-            feature_names=("return_1",),
-            standardizer=training.Standardizer({"return_1": 0.0}, {"return_1": 1.0}),
-            weights={"return_1": 0.0},
-            intercept=1.0,
-        )
+        model = models.CatBoostAdapter(feature_names=["return_1"])
+        model.fit([[i * 0.01] for i in range(len(candles) - 1)], [1 if i % 2 == 0 else 0 for i in range(len(candles) - 1)])
         strategy = live.StrategyConfig("test", 0.40, 0.60, 0.010, 0.005, 1.0, 1.0, 1.0)
         result = backtest.run_backtest(candles, model, strategy)
         self.assertIsInstance(result, backtest.BacktestResult)

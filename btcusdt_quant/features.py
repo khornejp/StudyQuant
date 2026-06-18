@@ -241,7 +241,7 @@ def _gradient_descent(method: str, x_values: Sequence[float | tuple[float, float
             previous_loss = current_loss
             break
         previous_loss = current_loss
-    return tuple(params), {"converged": converged, "iterations": iterations, "final_loss": previous_loss, "optimizer": "stdlib_gradient_descent"}
+        return tuple(params), {"converged": converged, "iterations": iterations, "final_loss": previous_loss, "optimizer": "gradient_descent"}
 
 
 def _calibration_loss(method: str, x_values: Sequence[float | tuple[float, float]], labels: Sequence[int], params: tuple[float, ...], l2: float = 1e-3) -> float:
@@ -710,8 +710,9 @@ class OptunaStudyRunner:
     def _call_model_factory(self, model_factory: object, params: Mapping[str, float]) -> object:
         if not callable(model_factory):
             raise TypeError("model_factory must be callable")
+        model_params = {k: v for k, v in params.items() if k not in ("threshold", "signal_scale")}
         try:
-            return model_factory(dict(params))
+            return model_factory(model_params)
         except TypeError:
             return model_factory()
 

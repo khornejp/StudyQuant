@@ -20,6 +20,7 @@ class StackingEnsembleAdapter:
     meta_model_family: str
     meta_coefs: list[float]
     meta_intercept: float
+    meta_adapter: models.ModelAdapter | None = None
 
     @property
     def model_family(self) -> str:
@@ -43,13 +44,16 @@ class StackingEnsembleAdapter:
     def probability(self, features: Mapping[str, float]) -> float:
         p_direction = float(self.direction_model.probability(features))
         p_profitability = float(self.profitability_model.probability(features))
+        if self.meta_adapter is not None:
+            meta_features = {"direction_probability": p_direction, "profitability_probability": p_profitability}
+            return float(self.meta_adapter.probability(meta_features))
         meta_input = np.array([p_direction, p_profitability])
         logit = float(np.dot(meta_input, self.meta_coefs) + self.meta_intercept)
         prob = 1.0 / (1.0 + np.exp(-logit))
         return float(np.clip(prob, 0.0, 1.0))
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "model_family": self.model_family,
             "feature_names": list(self.feature_names),
             "meta_model_family": self.meta_model_family,
@@ -58,6 +62,9 @@ class StackingEnsembleAdapter:
             "direction_model": self.direction_model.as_dict(),
             "profitability_model": self.profitability_model.as_dict(),
         }
+        if self.meta_adapter is not None:
+            result["meta_adapter"] = self.meta_adapter.as_dict()
+        return result
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "StackingEnsembleAdapter":
@@ -95,6 +102,70 @@ def _load_submodel(payload: object) -> models.ModelAdapter | None:
     return None
 
 
+def _fit_meta_model(
+    X: np.ndarray,
+    y: np.ndarray,
+    meta_family: str = "catboost",
+) -> models.ModelAdapter:
+    """Fit a meta model on base model probabilities and return a ModelAdapter."""
+    feature_names = ("direction_probability", "profitability_probability")
+    if meta_family == "catboost":
+        try:
+            import catboost as cb
+        except ImportError:
+            raise RuntimeError("catboost is not installed; install with: pip install catboost")
+        clf = cb.CatBoostClassifier(iterations=100, depth=3, verbose=False, random_seed=42)
+        clf.fit(X, y)
+        return _SklearnMetaModelAdapter(clf, feature_names)
+
+    raise ValueError(f"unsupported meta model family: {meta_family}")
+
+
+class _SklearnMetaModelAdapter:
+    """Wrapper for sklearn meta models to implement ModelAdapter protocol."""
+
+    def __init__(self, sklearn_model: object, feature_names: Sequence[str] = ()) -> None:
+        self._model = sklearn_model
+        self.feature_names = tuple(feature_names)
+        self._coefs = [0.5, 0.5]
+        self._intercept = 0.0
+
+    @property
+    def model_family(self) -> str:
+        return f"sklearn_{type(self._model).__name__.lower()}"
+
+    def fit(self, feature_matrix: Sequence[Sequence[float]], labels: Sequence[int], sample_weight: Sequence[float] | None = None) -> "_SklearnMetaModelAdapter":
+        self._model.fit(feature_matrix, labels, sample_weight=sample_weight)
+        return self
+
+    def predict_proba(self, feature_matrix: Sequence[Sequence[float]]) -> list[float]:
+        result: list[float] = []
+        for probs in self._model.predict_proba(feature_matrix):
+            result.append(float(probs[1]))
+        return result
+
+    def probability(self, values: Mapping[str, float]) -> float:
+        row = [float(values.get(name, 0.0)) for name in self.feature_names]
+        probs = self.predict_proba([row])
+        return probs[0] if probs else 0.5
+
+    def as_dict(self) -> dict[str, object]:
+        import pickle, base64
+        return {
+            "model_family": self.model_family,
+            "feature_names": list(self.feature_names),
+            "serialized_model": base64.b64encode(pickle.dumps(self._model)).decode("ascii"),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "_SklearnMetaModelAdapter":
+        import pickle, base64
+        feature_names = tuple(str(name) for name in payload.get("feature_names", ()))
+        serialized = str(payload.get("serialized_model", ""))
+        model = pickle.loads(base64.b64decode(serialized.encode("ascii")))
+        return cls(model, feature_names)
+
+
 def fit_stacking_ensemble(
     labeled_rows: Sequence[dataset.LabeledRow],
     feature_names: Sequence[str],
@@ -104,7 +175,6 @@ def fit_stacking_ensemble(
 ) -> StackingEnsembleAdapter:
     """Fit a stacking ensemble with leakage-safe chronological split."""
     import numpy as np
-    from sklearn.linear_model import LogisticRegression
 
     n = len(labeled_rows)
     if n < 200:
@@ -116,7 +186,6 @@ def fit_stacking_ensemble(
 
     base_train_rows = labeled_rows[:base_train_end]
     meta_train_rows = labeled_rows[base_train_end:meta_train_end]
-    val_rows = labeled_rows[meta_train_end:]
 
     # Train base model 1: direction
     direction_features = training.feature_matrix(base_train_rows, feature_names)
@@ -151,13 +220,11 @@ def fit_stacking_ensemble(
         meta_y.append(row.targets.get("profitability", row.label))
 
     # Train meta model
-    if meta_family == "sklearn_logistic":
-        meta_clf = LogisticRegression(solver="lbfgs", max_iter=1000)
-        meta_clf.fit(np.array(meta_X), np.array(meta_y))
-        meta_coefs = meta_clf.coef_[0].tolist()
-        meta_intercept = float(meta_clf.intercept_[0])
-    else:
-        raise ValueError(f"unsupported meta model family: {meta_family}")
+    meta_adapter = _fit_meta_model(np.array(meta_X), np.array(meta_y), meta_family)
+
+    # Extract coefs/intercept for backward-compatible serialization
+    meta_coefs = getattr(meta_adapter, "_coefs", [0.5, 0.5])
+    meta_intercept = getattr(meta_adapter, "_intercept", 0.0)
 
     return StackingEnsembleAdapter(
         feature_names=tuple(feature_names),
@@ -166,4 +233,5 @@ def fit_stacking_ensemble(
         meta_model_family=meta_family,
         meta_coefs=meta_coefs,
         meta_intercept=meta_intercept,
+        meta_adapter=meta_adapter,
     )

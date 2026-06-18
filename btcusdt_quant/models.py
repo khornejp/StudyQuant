@@ -62,64 +62,6 @@ class ModelSelection:
         }
 
 
-@dataclass(frozen=True)
-class _AdapterRow:
-    features: dict[str, float]
-    label: int
-
-
-class StdlibLinearAdapter:
-    def __init__(self, feature_names: Sequence[str] | None = None, model_params: Mapping[str, object] | None = None) -> None:
-        self.feature_names = tuple(str(name) for name in feature_names) if feature_names is not None else ()
-        self.model_params = dict(model_params or {})
-        self.model: object | None = None
-
-    @property
-    def model_family(self) -> str:
-        return "stdlib"
-
-    def fit(self, feature_matrix: FeatureMatrix, labels: Sequence[int], sample_weight: Sequence[float] | None = None) -> "StdlibLinearAdapter":
-        rows = _matrix_to_float_lists(feature_matrix)
-        label_values = [int(label) for label in labels]
-        if len(rows) != len(label_values):
-            raise ValueError("feature_matrix and labels must have the same length")
-        if not self.feature_names:
-            self.feature_names = _default_feature_names(rows)
-        adapter_rows = [_AdapterRow(_row_mapping(row, self.feature_names), label) for row, label in zip(rows, label_values)]
-        from . import training
-
-        self.model = training.fit_classifier(adapter_rows, self.feature_names, sample_weight)  # type: ignore[arg-type]
-        return self
-
-    def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
-        if self.model is None:
-            raise RuntimeError("stdlib adapter must be fitted before predict_proba")
-        probabilities = []
-        probability = getattr(self.model, "probability")
-        for row in _matrix_to_float_lists(feature_matrix):
-            probabilities.append(_clip_probability(float(probability(_row_mapping(row, self.feature_names)))))
-        return probabilities
-
-    def probability(self, values: Mapping[str, float]) -> float:
-        if self.model is None:
-            raise RuntimeError("stdlib adapter must be fitted before probability")
-        return _clip_probability(float(getattr(self.model, "probability")(values)))
-
-    def as_dict(self) -> dict[str, object]:
-        if self.model is None:
-            return {
-                "model_family": "deterministic_centroid_linear_classifier",
-                "adapter_family": self.model_family,
-                "feature_names": list(self.feature_names),
-                "model_params": dict(self.model_params),
-                "fitted": False,
-            }
-        payload = dict(getattr(self.model, "as_dict")())
-        payload["adapter_family"] = self.model_family
-        payload["model_params"] = dict(self.model_params)
-        return payload
-
-
 class LightGBMAdapter:
     DEFAULT_PARAMS: Mapping[str, object] = {
         "objective": "binary",
@@ -318,7 +260,7 @@ class CatBoostAdapter:
 
 
 class ModelFactory:
-    SUPPORTED_FAMILIES: tuple[str, ...] = ("stdlib", "lightgbm", "catboost", "auto", "sklearn_logistic", "stacking_ensemble")
+    SUPPORTED_FAMILIES: tuple[str, ...] = ("lightgbm", "catboost", "auto", "stacking_ensemble", "pytorch_multitask")
 
     def create(
         self,
@@ -377,12 +319,24 @@ class ModelFactory:
         raise OptionalDependencyUnavailable(_selection_error(requested, attempted, unavailable))
 
     def _adapter(self, family: str, feature_names: Sequence[str] | None, model_params: Mapping[str, object] | None) -> ModelAdapter:
-        if family == "stdlib":
-            return StdlibLinearAdapter(feature_names, model_params)
         if family == "lightgbm":
             return LightGBMAdapter(feature_names, model_params)
         if family == "catboost":
             return CatBoostAdapter(feature_names, model_params)
+        if family == "pytorch_multitask":
+            from . import multitask_nn
+            params = dict(model_params or {})
+            return multitask_nn.MultitaskNNAdapter(
+                input_dim=int(params.get("input_dim", 0)),
+                hidden_dims=tuple(int(v) for v in params.get("hidden_dims", [128, 64])),
+                task=str(params.get("task", "profitability")),
+                feature_names=tuple(feature_names) if feature_names is not None else (),
+                epochs=int(params.get("epochs", 100)),
+                batch_size=int(params.get("batch_size", 256)),
+                learning_rate=float(params.get("learning_rate", 1e-3)),
+                weight_decay=float(params.get("weight_decay", 1e-5)),
+                early_stopping_patience=int(params.get("early_stopping_patience", 10)),
+            )
         raise ValueError(f"unsupported model family: {family}")
 
     def _is_available(self, family: str) -> bool:
@@ -390,7 +344,9 @@ class ModelFactory:
             return LightGBMAdapter.available()
         if family == "catboost":
             return CatBoostAdapter.available()
-        return family in {"stdlib", "sklearn_logistic", "stacking_ensemble"}
+        if family == "pytorch_multitask":
+            return _pytorch_available()
+        return family in {"stacking_ensemble"}
 
 
 def _selection(
@@ -415,13 +371,13 @@ def _selection(
 
 def _candidate_families(requested: str, fallback_allowed: bool) -> tuple[str, ...]:
     if requested == "auto":
-        chain = ("lightgbm", "catboost", "stdlib")
+        chain = ("lightgbm", "catboost", "pytorch_multitask")
     elif requested == "lightgbm":
-        chain = ("lightgbm", "catboost", "stdlib")
+        chain = ("lightgbm", "catboost", "pytorch_multitask")
     elif requested == "catboost":
-        chain = ("catboost", "stdlib")
-    elif requested == "stdlib":
-        chain = ("stdlib",)
+        chain = ("catboost", "pytorch_multitask")
+    elif requested == "pytorch_multitask":
+        chain = ("pytorch_multitask", "catboost")
     else:
         raise ValueError(f"unsupported model family: {requested}")
     return chain if fallback_allowed else (chain[0],)
@@ -429,7 +385,7 @@ def _candidate_families(requested: str, fallback_allowed: bool) -> tuple[str, ..
 
 def _normalize_family(family: str) -> str:
     normalized = str(family or "auto").lower().strip()
-    aliases = {"linear": "stdlib", "deterministic": "stdlib", "lgbm": "lightgbm", "cat": "catboost"}
+    aliases = {"lgbm": "lightgbm", "cat": "catboost", "pytorch": "pytorch_multitask", "nn": "pytorch_multitask"}
     normalized = aliases.get(normalized, normalized)
     if normalized not in ModelFactory.SUPPORTED_FAMILIES:
         raise ValueError(f"unsupported model family: {family}")
@@ -437,7 +393,11 @@ def _normalize_family(family: str) -> str:
 
 
 def _module_name(family: str) -> str:
-    return {"lightgbm": "lightgbm", "catboost": "catboost", "stdlib": "stdlib"}[family]
+    return {"lightgbm": "lightgbm", "catboost": "catboost", "pytorch_multitask": "torch"}[family]
+
+
+def _pytorch_available() -> bool:
+    return importlib.util.find_spec("torch") is not None
 
 
 def _selection_error(requested: str, attempted: Sequence[str], unavailable: Mapping[str, str]) -> str:

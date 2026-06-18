@@ -1383,7 +1383,7 @@ class RESTBackfill:
         return replace(candle, repaired=True, gap_flag=1)
 
 
-def load_model_artifact(path: Path | None, strict: bool = False) -> training.LinearClassifier | models.LightGBMAdapter | models.CatBoostAdapter | None:
+def load_model_artifact(path: Path | None, strict: bool = False) -> models.ModelAdapter | None:
     if path is None:
         return None
     if not path.exists():
@@ -1397,8 +1397,6 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> training.Lin
         return None
     model_family = str(payload.get("model_family", ""))
     try:
-        if "deterministic_centroid_linear" in model_family:
-            return training.LinearClassifier.from_dict(payload)
         if model_family == "lightgbm":
             return models.LightGBMAdapter.from_dict(payload)
         if model_family == "catboost":
@@ -1406,29 +1404,13 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> training.Lin
         if model_family == "stacking_ensemble":
             from . import ensemble
             return ensemble.StackingEnsembleAdapter.from_dict(payload)
+        if model_family == "pytorch_multitask":
+            from . import multitask_nn
+            return multitask_nn.MultitaskNNAdapter.from_dict(payload)
         if strict:
             raise ValueError(f"unsupported model_family: {model_family}")
         return None
     except ValueError as error:
-        # Fallback: try to load as LinearClassifier using weights if available
-        weights = payload.get("weights")
-        feature_names = payload.get("feature_names")
-        if isinstance(weights, Mapping) and isinstance(feature_names, Sequence):
-            try:
-                means = {str(k): 0.0 for k in feature_names}
-                scales = {str(k): 1.0 for k in feature_names}
-                weights_dict = {str(k): float(v) for k, v in weights.items()}
-                linear_weights = {str(k): weights_dict.get(str(k), 0.0) for k in feature_names}
-                return training.LinearClassifier(
-                    tuple(str(k) for k in feature_names),
-                    training.Standardizer(means, scales),
-                    linear_weights,
-                    intercept=0.0,
-                )
-            except Exception as fallback_error:
-                if strict:
-                    raise ValueError(f"model artifact fallback failed: {fallback_error}") from fallback_error
-                return None
         if strict:
             raise ValueError(f"model artifact validation failed: {error}") from error
         return None
@@ -1436,7 +1418,7 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> training.Lin
 
 @dataclass(frozen=True)
 class RegimeModelBundle:
-    models: dict[str, training.LinearClassifier | models.LightGBMAdapter | models.CatBoostAdapter]
+    models: dict[str, models.ModelAdapter]
     detector_thresholds: dict[str, float]
     detector_config: features.RegimeDetectorConfig
     detector_diagnostics: Mapping[str, object]
@@ -1465,7 +1447,7 @@ def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeM
     detector_diagnostics = regime_detector.get("diagnostics", {}) if isinstance(regime_detector, Mapping) else {}
     if not detector_thresholds:
         detector_thresholds = features.RegimeDetector(detector_config).fit_thresholds((), ())
-    loaded_models: dict[str, training.LinearClassifier | models.LightGBMAdapter | models.CatBoostAdapter] = {}
+    loaded_models: dict[str, models.ModelAdapter] = {}
     for regime_name in ("high_volatility", "trending", "ranging"):
         if regime_name not in regime_results:
             continue
@@ -1830,7 +1812,7 @@ class LiveEngine:
 
     def _compute_signal(self) -> None:
         strict_artifact = self.model_artifact_path is not None
-        model: training.LinearClassifier | models.LightGBMAdapter | models.CatBoostAdapter | None = None
+        model: models.ModelAdapter | None = None
         active_regime: str | None = None
         fallback_regime: str | None = None
         if self.regime_aware and self.model_artifact_path is not None:

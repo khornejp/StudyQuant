@@ -155,8 +155,11 @@ def run_train(
     ensemble_enabled: bool = False,
     ensemble_direction_family: str = "catboost",
     ensemble_profitability_family: str = "catboost",
-    ensemble_meta_family: str = "sklearn_logistic",
+    ensemble_meta_family: str = "catboost",
+    multitask: bool = False,
 ) -> dict[str, object]:
+    if multitask:
+        model_family = "pytorch_multitask"
     config = training.TrainingConfig(
         cv_mode=cv_mode,
         embargo_size=embargo_size,
@@ -330,7 +333,7 @@ def build_parser() -> argparse.ArgumentParser:
     train = subparsers.add_parser("train", help="run deterministic offline CSV/fixture training pipeline")
     train.add_argument("--output", default="artifacts/training", help="training artifact output directory")
     train.add_argument("--input", default=None, help="optional local CSV candles path; defaults to offline fixture")
-    train.add_argument("--model-family", default="stdlib", help="model family selector; stdlib uses deterministic centroid linear classifier (default); auto tries lightgbm/catboost first if installed")
+    train.add_argument("--model-family", default="auto", help="model family selector; auto tries lightgbm/catboost/pytorch_multitask first if installed")
     train.add_argument("--cv-mode", choices=("walk_forward", "combinatorial_purged"), default="walk_forward", help="cross-validation splitter mode")
     train.add_argument("--embargo-size", type=int, default=0, help="bars to embargo after combinatorial test windows")
     train.add_argument("--n-groups", type=int, default=5, help="sequential groups for combinatorial purged CV")
@@ -354,7 +357,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--ensemble", action="store_true", help="enable stacking ensemble: train direction + profitability + meta model")
     train.add_argument("--ensemble-direction-family", default="catboost", help="base model family for direction prediction")
     train.add_argument("--ensemble-profitability-family", default="catboost", help="base model family for profitability prediction")
-    train.add_argument("--ensemble-meta-family", default="sklearn_logistic", help="meta model family for final probability")
+    train.add_argument("--ensemble-meta-family", default="catboost", choices=("catboost",), help="meta model family for final probability")
+    train.add_argument("--multitask", action="store_true", help="use PyTorch multitask neural network as the model family (shorthand for --model-family pytorch_multitask)")
     live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
     live_parser.add_argument("--output", default="artifacts/live", help="live artifact output directory")
     live_parser.add_argument("--dry-run", action="store_true", help="use deterministic fixture WebSocket and REST backfill")
@@ -458,6 +462,7 @@ def main(argv: list[str] | None = None) -> int:
                 ensemble_direction_family=args.ensemble_direction_family,
                 ensemble_profitability_family=args.ensemble_profitability_family,
                 ensemble_meta_family=args.ensemble_meta_family,
+                multitask=args.multitask,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)

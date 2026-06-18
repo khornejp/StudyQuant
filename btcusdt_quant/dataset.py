@@ -774,6 +774,8 @@ def load_parquet_candles(path: Path) -> list[data.Candle]:
         open_time = columns["open_time"][i]
         if isinstance(open_time, str):
             open_time = datetime.fromisoformat(open_time)
+        elif isinstance(open_time, int):
+            open_time = datetime.fromtimestamp(open_time / 1000.0, tz=timezone.utc)
         candles.append(
             data.Candle(
                 open_time=open_time,

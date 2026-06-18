@@ -418,8 +418,8 @@ class ArtifactWriter:
             {
                 "model_family": "lightgbm",
                 "optional_dependency_available": lightgbm_available,
-                "missing_value_policy": "native_missing_values_when_available_else_stdlib_fallback",
-                "fallback_model_family": "deterministic stdlib centroid linear classifier",
+                "missing_value_policy": "native_missing_values_when_available_else_catboost_fallback",
+                "fallback_model_family": "catboost classifier",
                 "validation_status": "adapter_available" if lightgbm_available else "optional_dependency_absent_fallback_validated",
                 "validation_passed": True,
             }

@@ -13,102 +13,12 @@ from . import cv, dataset, features, governance, lineage, models, monitoring
 
 
 @dataclass(frozen=True)
-class Standardizer:
-    means: dict[str, float]
-    scales: dict[str, float]
-
-    def transform(self, values: Mapping[str, float], feature_names: Sequence[str]) -> list[float]:
-        return [(values[name] - self.means[name]) / self.scales[name] for name in feature_names]
-
-
-@dataclass(frozen=True)
-class LinearClassifier:
-    feature_names: tuple[str, ...]
-    standardizer: Standardizer
-    weights: dict[str, float]
-    intercept: float
-    calibration_offset: float = 0.0
-
-    def probability(self, values: Mapping[str, float]) -> float:
-        z_values = self.standardizer.transform(values, self.feature_names)
-        score = self.intercept + self.calibration_offset
-        for name, value in zip(self.feature_names, z_values):
-            score += self.weights[name] * value
-        return sigmoid(score)
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "model_family": "deterministic_centroid_linear_classifier",
-            "feature_names": list(self.feature_names),
-            "standardizer_means": self.standardizer.means,
-            "standardizer_scales": self.standardizer.scales,
-            "weights": self.weights,
-            "intercept": self.intercept,
-            "calibration_offset": self.calibration_offset,
-        }
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, object]) -> LinearClassifier:
-        model_family = payload.get("model_family", "")
-        if not isinstance(model_family, str) or "deterministic_centroid_linear" not in model_family:
-            raise ValueError(f"unsupported model_family for LinearClassifier: {model_family}")
-        feature_names = payload.get("feature_names", ())
-        if isinstance(feature_names, str):
-            feature_names = (feature_names,)
-        feature_names = tuple(str(name) for name in feature_names)
-        if not feature_names:
-            raise ValueError("feature_names must be non-empty")
-        means = payload.get("standardizer_means", {})
-        scales = payload.get("standardizer_scales", {})
-        weights = payload.get("weights", {})
-        intercept = float(payload.get("intercept", 0.0))
-        calibration_offset = float(payload.get("calibration_offset", 0.0))
-        if not isinstance(means, Mapping):
-            raise ValueError("standardizer_means must be a mapping")
-        if not isinstance(scales, Mapping):
-            raise ValueError("standardizer_scales must be a mapping")
-        if not isinstance(weights, Mapping):
-            raise ValueError("weights must be a mapping")
-        # Validate every feature has required entries
-        for name in feature_names:
-            if name not in means:
-                raise ValueError(f"missing standardizer_means for feature: {name}")
-            if name not in scales:
-                raise ValueError(f"missing standardizer_scales for feature: {name}")
-            if name not in weights:
-                raise ValueError(f"missing weight for feature: {name}")
-        # Validate finite floats and non-zero scales
-        float_means = {str(k): float(v) for k, v in means.items()}
-        float_scales = {str(k): float(v) for k, v in scales.items()}
-        float_weights = {str(k): float(v) for k, v in weights.items()}
-        for name in feature_names:
-            if not isfinite(float_means[name]):
-                raise ValueError(f"non-finite mean for feature: {name}")
-            if not isfinite(float_scales[name]) or float_scales[name] == 0.0:
-                raise ValueError(f"non-finite or zero scale for feature: {name}")
-            if not isfinite(float_weights[name]):
-                raise ValueError(f"non-finite weight for feature: {name}")
-        if not isfinite(intercept):
-            raise ValueError("intercept must be finite")
-        if not isfinite(calibration_offset):
-            raise ValueError("calibration_offset must be finite")
-        standardizer = Standardizer(float_means, float_scales)
-        return cls(
-            feature_names=feature_names,
-            standardizer=standardizer,
-            weights=float_weights,
-            intercept=intercept,
-            calibration_offset=calibration_offset,
-        )
-
-
-@dataclass(frozen=True)
 class TrainingConfig:
     cv_mode: str = "walk_forward"
     embargo_size: int = 0
     n_groups: int = 5
     test_group_count: int = 1
-    model_family: str = "stdlib"
+    model_family: str = "auto"
     model_params: Mapping[str, object] = field(default_factory=dict)
     fallback_allowed: bool = True
     lineage_enabled: bool = True
@@ -129,7 +39,7 @@ class TrainingConfig:
     ensemble_enabled: bool = False
     ensemble_direction_family: str = "catboost"
     ensemble_profitability_family: str = "catboost"
-    ensemble_meta_family: str = "sklearn_logistic"
+    ensemble_meta_family: str = "catboost"
 
     def __post_init__(self) -> None:
         if self.cv_mode not in {"walk_forward", "combinatorial_purged"}:
@@ -142,7 +52,7 @@ class TrainingConfig:
             raise ValueError("test_group_count must be positive")
         if self.test_group_count > self.n_groups:
             raise ValueError("test_group_count cannot exceed n_groups")
-        valid_families = {"auto", "stdlib", "linear", "deterministic", "lightgbm", "lgbm", "catboost", "cat", "sklearn_logistic", "stacking_ensemble"}
+        valid_families = set(models.ModelFactory.SUPPORTED_FAMILIES) | {"auto", "linear", "deterministic", "lgbm", "cat"}
         if str(self.model_family).lower().strip() not in valid_families:
             raise ValueError(f"model_family must be one of {valid_families}")
         if self.min_regime_rows <= 0:
@@ -590,47 +500,6 @@ def feature_matrix(rows: Sequence[dataset.LabeledRow], feature_names: Sequence[s
     return [[float(row.features[name]) for name in feature_names] for row in rows]
 
 
-def fit_classifier(rows: Sequence[dataset.LabeledRow], feature_names: Sequence[str], sample_weights: Sequence[float] | None = None) -> LinearClassifier:
-    if not rows:
-        raise ValueError("cannot fit classifier with no rows")
-    weights_for_rows = _validated_sample_weights(rows, sample_weights)
-    standardizer = fit_standardizer(rows, feature_names, weights_for_rows)
-    positives = [(row, weight) for row, weight in zip(rows, weights_for_rows) if row.label == 1]
-    negatives = [(row, weight) for row, weight in zip(rows, weights_for_rows) if row.label == 0]
-    total_weight = sum(weights_for_rows)
-    base_rate = sum(weight for _, weight in positives) / total_weight if total_weight > 0.0 else 0.0
-    weights: dict[str, float] = {}
-    pos_center: list[float] = []
-    neg_center: list[float] = []
-    for name_index, name in enumerate(feature_names):
-        pos_values = [standardizer.transform(row.features, feature_names)[name_index] for row, _ in positives]
-        pos_weights = [weight for _, weight in positives]
-        neg_values = [standardizer.transform(row.features, feature_names)[name_index] for row, _ in negatives]
-        neg_weights = [weight for _, weight in negatives]
-        pos_mean = weighted_mean(pos_values, pos_weights) if pos_values else 0.0
-        neg_mean = weighted_mean(neg_values, neg_weights) if neg_values else 0.0
-        pos_center.append(pos_mean)
-        neg_center.append(neg_mean)
-        weights[str(name)] = pos_mean - neg_mean
-    intercept = safe_logit(base_rate)
-    intercept -= 0.5 * (sum(value * value for value in pos_center) - sum(value * value for value in neg_center))
-    return LinearClassifier(tuple(str(name) for name in feature_names), standardizer, weights, intercept)
-
-
-def fit_standardizer(rows: Sequence[dataset.LabeledRow], feature_names: Sequence[str], sample_weights: Sequence[float] | None = None) -> Standardizer:
-    weights_for_rows = _validated_sample_weights(rows, sample_weights)
-    means: dict[str, float] = {}
-    scales: dict[str, float] = {}
-    for name in feature_names:
-        values = [row.features[name] for row in rows]
-        average = weighted_mean(values, weights_for_rows) if values else 0.0
-        variance = weighted_mean([(value - average) ** 2 for value in values], weights_for_rows) if values else 0.0
-        scale = sqrt(variance) if variance > 0.0 else 1.0
-        means[str(name)] = average
-        scales[str(name)] = scale
-    return Standardizer(means, scales)
-
-
 def weighted_mean(values: Sequence[float], weights: Sequence[float]) -> float:
     if len(values) != len(weights):
         raise ValueError("values and weights must have the same length")
@@ -784,7 +653,7 @@ def write_training_artifacts(
     build: dataset.DatasetBuild,
     splits: Sequence[object],
     fold_results: Sequence[FoldResult],
-    final_model: models.ModelAdapter | LinearClassifier,
+    final_model: models.ModelAdapter,
     config: TrainingConfig | None = None,
     sample_intervals: Sequence[cv.SampleInterval] | None = None,
     uniqueness: cv.UniquenessWeightResult | None = None,
@@ -986,7 +855,7 @@ def model_selection_report(
     config: TrainingConfig,
     fold_results: Sequence[FoldResult],
     final_selection: models.ModelSelection | None,
-    final_model: models.ModelAdapter | LinearClassifier,
+    final_model: models.ModelAdapter,
 ) -> dict[str, object]:
     final_payload = final_selection.as_dict() if final_selection is not None else default_model_selection(config, final_model)
     fold_payloads = [dict(fold.model_selection) for fold in fold_results]
@@ -1003,7 +872,7 @@ def model_selection_report(
     }
 
 
-def default_model_selection(config: TrainingConfig, model: models.ModelAdapter | LinearClassifier | None) -> dict[str, object]:
+def default_model_selection(config: TrainingConfig, model: models.ModelAdapter | None) -> dict[str, object]:
     family = selected_family(model)
     return {
         "requested_family": config.model_family,
@@ -1017,7 +886,7 @@ def default_model_selection(config: TrainingConfig, model: models.ModelAdapter |
     }
 
 
-def selected_family(model: models.ModelAdapter | LinearClassifier | None) -> str:
+def selected_family(model: models.ModelAdapter | None) -> str:
     if model is None:
         return "stdlib"
     family = getattr(model, "model_family", None)
@@ -1051,19 +920,14 @@ def lightgbm_missing_policy_validation_rows(build: dataset.DatasetBuild, feature
     return rows
 
 
-def inference_latency_report(model: models.ModelAdapter | LinearClassifier, matrix: Sequence[Sequence[float]], max_rows: int = 100) -> dict[str, object]:
+def inference_latency_report(model: models.ModelAdapter, matrix: Sequence[Sequence[float]], max_rows: int = 100) -> dict[str, object]:
     sample = [list(row) for row in matrix[:max_rows]]
     if not sample:
         return empty_latency_report()
     latencies = []
     for row in sample:
         start = perf_counter()
-        if hasattr(model, "predict_proba"):
-            getattr(model, "predict_proba")([row])
-        else:
-            # Direct LinearClassifier compatibility is intentionally reported as unavailable
-            # because its probability method requires feature-name mappings.
-            return empty_latency_report()
+        getattr(model, "predict_proba")([row])
         latencies.append((perf_counter() - start) * 1000.0)
     return {
         "metric": "single_row_predict_proba_latency_ms",
@@ -1190,7 +1054,7 @@ def threshold_report(fold_results: Sequence[FoldResult]) -> dict[str, object]:
 
 def model_version_metadata(
     build: dataset.DatasetBuild,
-    model: models.ModelAdapter | LinearClassifier,
+    model: models.ModelAdapter,
     config: TrainingConfig,
     final_selection: models.ModelSelection | None = None,
 ) -> dict[str, object]:
@@ -1267,7 +1131,7 @@ def write_lineage_metadata(
 
 def model_card(
     build: dataset.DatasetBuild,
-    model: models.ModelAdapter | LinearClassifier,
+    model: models.ModelAdapter,
     selection_report: Mapping[str, object] | None = None,
     model_metadata: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
@@ -1295,7 +1159,7 @@ def model_card(
     }
 
 
-def model_feature_names(model: models.ModelAdapter | LinearClassifier, fallback: Sequence[str]) -> list[str]:
+def model_feature_names(model: models.ModelAdapter, fallback: Sequence[str]) -> list[str]:
     feature_names = getattr(model, "feature_names", None)
     if isinstance(feature_names, Sequence) and not isinstance(feature_names, (str, bytes)):
         return [str(name) for name in feature_names]
