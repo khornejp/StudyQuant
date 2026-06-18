@@ -1063,6 +1063,7 @@ def build_feature_rows(
             "sma_20_60_spread": sma_20_60_spread,
             "trend_slope_10": _trend_slope(closes, index, 10),
             "trend_slope_30": _trend_slope(closes, index, 30),
+            "prev_horizon_trend": _prev_horizon_trend(closes, index),
             "distance_to_high_20": _distance_to_extreme(candle.close, _rolling_max(highs, index, 20)),
             "distance_to_low_20": _distance_to_extreme(candle.close, _rolling_min(lows, index, 20)),
             "rv_5": rv_5,
@@ -1578,6 +1579,25 @@ def _outside_bar_flag(candles: Sequence[data.Candle], index: int) -> float:
     current = candles[index]
     previous = candles[index - 1]
     return 1.0 if current.high >= previous.high and current.low <= previous.low else 0.0
+
+
+PREV_HORIZON_TREND_HORIZON = 15
+PREV_HORIZON_TREND_THRESHOLD = 0.001
+
+
+def _prev_horizon_trend(closes: list[float], index: int, horizon: int = PREV_HORIZON_TREND_HORIZON, threshold: float = PREV_HORIZON_TREND_THRESHOLD) -> float:
+    if index < horizon:
+        return 0.0
+    prev_close = closes[index - 1]
+    start_close = closes[index - horizon]
+    if start_close == 0.0:
+        return 0.0
+    change = prev_close / start_close - 1.0
+    if change > threshold:
+        return 1.0
+    if change < -threshold:
+        return -1.0
+    return 0.0
 
 
 def _indicator_zscore(value_at: Callable[[int], float], index: int, window: int) -> float:

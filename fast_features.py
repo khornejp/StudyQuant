@@ -304,6 +304,15 @@ def compute_features_fast(candles: Sequence[data.Candle]) -> pd.DataFrame:
     df["sma_20_60_spread"] = sma_20_60_spread
     df["trend_slope_10"] = _trend_slope(closes, 10)
     df["trend_slope_30"] = _trend_slope(closes, 30)
+    prev_horizon = np.zeros(n, dtype=float)
+    if n > 15:
+        start_closes = closes[:n - 15]
+        prev_closes = closes[14:n - 1]
+        change = np.zeros(n - 15, dtype=float)
+        valid = start_closes != 0.0
+        change[valid] = prev_closes[valid] / start_closes[valid] - 1.0
+        prev_horizon[15:] = np.where(change > 0.001, 1.0, np.where(change < -0.001, -1.0, 0.0))
+    df["prev_horizon_trend"] = prev_horizon
     df["distance_to_high_20"] = _ratio_to_value(closes, _rolling_max(highs, 20))
     df["distance_to_low_20"] = _ratio_to_value(closes, _rolling_min(lows, 20))
 

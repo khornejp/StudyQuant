@@ -43,6 +43,99 @@ class FeatureRegistryV718Tests(unittest.TestCase):
         active_names = {str(feature["feature_name"]) for feature in registry_features if feature.get("scaffold_status") != "pending_data_source"}
         self.assertEqual(active_names, set(dataset.FEATURE_NAMES), "FEATURE_NAMES must match active registry features")
 
+    def test_prev_horizon_trend_feature_exists(self) -> None:
+        self.assertIn("prev_horizon_trend", dataset.FEATURE_NAMES, "prev_horizon_trend must be in active feature names")
+        registry = dataset.feature_formula_registry()
+        registry_features = cast(list[dict[str, object]], registry["features"])
+        names = {str(f["feature_name"]) for f in registry_features}
+        self.assertIn("prev_horizon_trend", names, "prev_horizon_trend must be in feature registry")
+
+    def test_prev_horizon_trend_values(self) -> None:
+        from btcusdt_quant import data
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        candles = [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=100.0,
+                high=101.0,
+                low=99.0,
+                close=100.0 + index * 0.5,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index in range(30)
+        ]
+        rows = dataset.build_feature_rows(candles)
+        self.assertGreater(len(rows), 16)
+        row = rows[16]
+        self.assertIn("prev_horizon_trend", row.features)
+        self.assertEqual(row.features["prev_horizon_trend"], 1.0, "rising trend should be +1")
+
+        candles_flat = [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=100.0,
+                high=101.0,
+                low=99.0,
+                close=100.0,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index in range(30)
+        ]
+        rows_flat = dataset.build_feature_rows(candles_flat)
+        self.assertEqual(rows_flat[16].features["prev_horizon_trend"], 0.0, "flat trend should be 0")
+
+        candles_down = [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=100.0,
+                high=101.0,
+                low=99.0,
+                close=100.0 - index * 0.5,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index in range(30)
+        ]
+        rows_down = dataset.build_feature_rows(candles_down)
+        self.assertEqual(rows_down[16].features["prev_horizon_trend"], -1.0, "falling trend should be -1")
+
+    def test_fast_prev_horizon_trend_matches_slow(self) -> None:
+        from btcusdt_quant import data
+        from fast_features import compute_features_fast
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        candles = [
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=100.0,
+                high=101.0,
+                low=99.0,
+                close=100.0 + (index % 5) * 0.2 - 0.4,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            )
+            for index in range(100)
+        ]
+        slow_rows = dataset.build_feature_rows(candles)
+        fast_df = compute_features_fast(candles)
+        for idx in (15, 30, 50, 80):
+            slow_val = slow_rows[idx].features["prev_horizon_trend"]
+            fast_val = float(fast_df["prev_horizon_trend"].iloc[idx])
+            self.assertAlmostEqual(slow_val, fast_val, places=10, msg=f"prev_horizon_trend mismatch at index {idx}")
+
     def test_feature_dependency_graph_is_acyclic(self) -> None:
         registry = dataset.feature_formula_registry()
         dependency_graph = registry.get("dependency_graph", {})
@@ -2419,6 +2512,50 @@ class TestBacktest(unittest.TestCase):
         self.assertEqual(d["trade_count"], 1)
         self.assertEqual(len(d["trades"]), 1)
         self.assertEqual(d["trades"][0]["side"], "BUY")
+
+    def test_backtest_min_hold_bars_delays_exit(self) -> None:
+        candles = self._priced_candles([100.0, 110.0, 110.0, 110.0, 110.0, 110.0])
+        strategy = live.StrategyConfig("test", 0.60, 0.40, 0.500, 0.500, 1.0, 1.0, 0.0)
+        result = backtest.run_backtest(
+            candles,
+            self._SingleBuyModel(),
+            strategy,
+            initial_equity=100.0,
+            position_size=1.0,
+            label_horizon=5,
+            min_hold_bars=3,
+            fee_rate_per_side=0.0,
+            slippage_rate_per_side=0.0,
+        )
+        self.assertEqual(result.trade_count, 1)
+        trade = result.trades[0]
+        self.assertEqual(trade.outcome, "TIMEOUT")
+
+    def test_backtest_cooldown_bars_prevents_reentry(self) -> None:
+        candles = self._priced_candles([100.0, 101.0, 102.0, 103.0, 104.0, 105.0])
+        strategy = live.StrategyConfig("test", 0.60, 0.40, 0.500, 0.500, 1.0, 1.0, 0.0)
+        result = backtest.run_backtest(
+            candles,
+            self._ConstantProbabilityModel(0.90),
+            strategy,
+            initial_equity=100.0,
+            position_size=1.0,
+            label_horizon=1,
+            cooldown_bars=2,
+            fee_rate_per_side=0.0,
+            slippage_rate_per_side=0.0,
+        )
+        self.assertLessEqual(result.trade_count, 2)
+
+    def test_backtest_rejects_invalid_pacing_params(self) -> None:
+        candles = self._priced_candles([100.0, 101.0])
+        strategy = live.StrategyConfig("test", 0.60, 0.40, 0.500, 0.500, 1.0, 1.0, 0.0)
+        with self.assertRaises(ValueError):
+            backtest.run_backtest(candles, None, strategy, min_hold_bars=-1)
+        with self.assertRaises(ValueError):
+            backtest.run_backtest(candles, None, strategy, min_hold_bars=10, label_horizon=5)
+        with self.assertRaises(ValueError):
+            backtest.run_backtest(candles, None, strategy, cooldown_bars=-1)
 
 
 if __name__ == "__main__":

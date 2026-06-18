@@ -52,6 +52,8 @@ class BacktestResult:
     total_fees: float = 0.0
     total_slippage: float = 0.0
     total_costs: float = 0.0
+    min_hold_bars: int = 0
+    cooldown_bars: int = 0
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -71,6 +73,8 @@ class BacktestResult:
             "total_fees": self.total_fees,
             "total_slippage": self.total_slippage,
             "total_costs": self.total_costs,
+            "min_hold_bars": self.min_hold_bars,
+            "cooldown_bars": self.cooldown_bars,
             "trades": [
                 {
                     "entry_time": t.entry_time,
@@ -160,6 +164,8 @@ def run_backtest(
     position_size: float = 0.1,
     tp_sl_method: str = "fixed_pct",
     label_horizon: int = 15,
+    min_hold_bars: int = 0,
+    cooldown_bars: int = 0,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
     slippage_rate_per_side: float = DEFAULT_SLIPPAGE_RATE_PER_SIDE,
 ) -> BacktestResult:
@@ -174,19 +180,32 @@ def run_backtest(
     position_size: fraction of equity per trade
     tp_sl_method: 'fixed_pct' or 'atr_pct'
     label_horizon: bars to hold before forced exit
+    min_hold_bars: minimum bars to hold before allowing TP/SL exit
+    cooldown_bars: bars to wait after exit before re-entry
     fee_rate_per_side: trading fee charged on entry and exit, as a decimal rate
     slippage_rate_per_side: fixed slippage charged on entry and exit, as a decimal rate
     """
     _validate_cost_rates(fee_rate_per_side, slippage_rate_per_side)
+    if label_horizon <= 0:
+        raise ValueError("label_horizon must be positive")
+    if min_hold_bars < 0:
+        raise ValueError("min_hold_bars must be non-negative")
+    if min_hold_bars > label_horizon:
+        raise ValueError("min_hold_bars must not exceed label_horizon")
+    if cooldown_bars < 0:
+        raise ValueError("cooldown_bars must be non-negative")
     result = BacktestResult()
     result.fee_rate_per_side = fee_rate_per_side
     result.slippage_rate_per_side = slippage_rate_per_side
     result.round_trip_cost_pct = 2.0 * (fee_rate_per_side + slippage_rate_per_side)
+    result.min_hold_bars = min_hold_bars
+    result.cooldown_bars = cooldown_bars
     equity = initial_equity
     gross_equity = initial_equity
     peak_equity = initial_equity
     active_trade: BacktestTrade | None = None
     bar_count = 0
+    next_entry_index = 0
     returns: list[float] = []
 
     feature_rows = dataset.build_feature_rows(candles)
@@ -219,11 +238,12 @@ def run_backtest(
                 hit_tp = candle.low <= active_trade.tp_price
                 hit_sl = candle.high >= active_trade.sl_price
 
-            if hit_tp or hit_sl or bar_count >= label_horizon:
-                if hit_tp:
+            can_exit_for_barrier = bar_count >= min_hold_bars
+            if (can_exit_for_barrier and (hit_tp or hit_sl)) or bar_count >= label_horizon:
+                if hit_tp and can_exit_for_barrier:
                     exit_price = active_trade.tp_price
                     outcome = "TP"
-                elif hit_sl:
+                elif hit_sl and can_exit_for_barrier:
                     exit_price = active_trade.sl_price
                     outcome = "SL"
                 else:
@@ -248,9 +268,11 @@ def run_backtest(
                 returns.append(pnl_pct)
                 active_trade = None
                 bar_count = 0
+                if cooldown_bars > 0:
+                    next_entry_index = i + cooldown_bars + 1
 
         # Enter new trade
-        if active_trade is None and signal in {"BUY", "SELL"}:
+        if active_trade is None and signal in {"BUY", "SELL"} and i >= next_entry_index:
             entry_price = candle.close
             tp_price, sl_price, decision = live.optimized_tp_sl(
                 entry_price, signal, feature_rows[i].features if i < len(feature_rows) else {}, strategy

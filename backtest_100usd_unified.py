@@ -50,6 +50,8 @@ def main():
     INITIAL_EQUITY = 100.0
     POSITION_SIZE = 0.1
     MAX_CANDLES = 10000  # ~1 week of 1m candles
+    MIN_HOLD_BARS = 5
+    COOLDOWN_BARS = 5
     FEE_RATE_PER_SIDE = backtest.DEFAULT_FEE_RATE_PER_SIDE
     SLIPPAGE_RATE_PER_SIDE = backtest.DEFAULT_SLIPPAGE_RATE_PER_SIDE
     
@@ -58,6 +60,7 @@ def main():
     print("(Parquet + Vectorized Features)")
     print(f"Fees: {FEE_RATE_PER_SIDE*100:.3f}%/side | Slippage: {SLIPPAGE_RATE_PER_SIDE*100:.3f}%/side")
     print(f"Round-trip cost: {(2 * (FEE_RATE_PER_SIDE + SLIPPAGE_RATE_PER_SIDE))*100:.3f}% per trade")
+    print(f"Min Hold: {MIN_HOLD_BARS} bars | Cooldown: {COOLDOWN_BARS} bars")
     print("="*60)
     
     # Check input exists
@@ -148,6 +151,8 @@ def main():
         strategy=strategy,
         initial_equity=INITIAL_EQUITY,
         position_size=POSITION_SIZE,
+        min_hold_bars=MIN_HOLD_BARS,
+        cooldown_bars=COOLDOWN_BARS,
         fee_rate_per_side=FEE_RATE_PER_SIDE,
         slippage_rate_per_side=SLIPPAGE_RATE_PER_SIDE,
     )
@@ -207,6 +212,8 @@ def main():
         "max_drawdown": result.max_drawdown,
         "sharpe": result.sharpe,
         "trade_count": result.trade_count,
+        "min_hold_bars": result.min_hold_bars,
+        "cooldown_bars": result.cooldown_bars,
         "signal_counts": result.signal_counts,
         "candles_used": len(candles),
         "timing_seconds": {

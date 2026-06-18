@@ -94,6 +94,7 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("trend_slope_30", "F02", TREND_MA, "linear_regression_slope(close,last 30 bars) / close_t", 30, 30, "klines_1m"),
     _feature("distance_to_high_20", "F02", TREND_MA, "close_t / max(high,last 20 bars) - 1", 20, 20, "klines_1m"),
     _feature("distance_to_low_20", "F02", TREND_MA, "close_t / min(low,last 20 bars) - 1", 20, 20, "klines_1m"),
+    _feature("prev_horizon_trend", "F02", TREND_MA, "+1 if close_t-1 > close_t-15 * 1.001 else -1 if close_t-1 < close_t-15 * 0.999 else 0", 16, 16, "klines_1m"),
     _feature("rv_5", "F03", VOLATILITY, "stddev(1m returns over 5 bars ending at t)", 6, 6, "klines_1m", ("return_1",)),
     _feature("rv_15", "F03", VOLATILITY, "stddev(1m returns over 15 bars ending at t)", 16, 16, "klines_1m", ("return_1",)),
     _feature("rv_30", "F03", VOLATILITY, "stddev(1m returns over 30 bars ending at t)", 31, 31, "klines_1m", ("return_1",)),
