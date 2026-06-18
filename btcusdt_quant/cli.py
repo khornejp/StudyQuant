@@ -152,6 +152,10 @@ def run_train(
     regime_detector_min_regime_run_bars: int = 3,
     feature_selection_target_min: int = 0,
     feature_selection_target_max: int = 0,
+    ensemble_enabled: bool = False,
+    ensemble_direction_family: str = "catboost",
+    ensemble_profitability_family: str = "catboost",
+    ensemble_meta_family: str = "sklearn_logistic",
 ) -> dict[str, object]:
     config = training.TrainingConfig(
         cv_mode=cv_mode,
@@ -175,6 +179,10 @@ def run_train(
         regime_detector_min_regime_run_bars=regime_detector_min_regime_run_bars,
         feature_selection_target_min=feature_selection_target_min,
         feature_selection_target_max=feature_selection_target_max,
+        ensemble_enabled=ensemble_enabled,
+        ensemble_direction_family=ensemble_direction_family,
+        ensemble_profitability_family=ensemble_profitability_family,
+        ensemble_meta_family=ensemble_meta_family,
     )
     archive_dir = None
     if input_path is not None and input_path.is_dir():
@@ -343,6 +351,10 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--regime-min-run-bars", type=int, default=3, help="minimum consecutive bars to confirm a regime change")
     train.add_argument("--feature-selection-target-min", type=int, default=0, help="minimum number of features to select (0 disables lower bound)")
     train.add_argument("--feature-selection-target-max", type=int, default=0, help="maximum number of features to select (0 disables upper bound)")
+    train.add_argument("--ensemble", action="store_true", help="enable stacking ensemble: train direction + profitability + meta model")
+    train.add_argument("--ensemble-direction-family", default="catboost", help="base model family for direction prediction")
+    train.add_argument("--ensemble-profitability-family", default="catboost", help="base model family for profitability prediction")
+    train.add_argument("--ensemble-meta-family", default="sklearn_logistic", help="meta model family for final probability")
     live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
     live_parser.add_argument("--output", default="artifacts/live", help="live artifact output directory")
     live_parser.add_argument("--dry-run", action="store_true", help="use deterministic fixture WebSocket and REST backfill")
@@ -442,6 +454,10 @@ def main(argv: list[str] | None = None) -> int:
                 regime_detector_min_regime_run_bars=args.regime_min_run_bars,
                 feature_selection_target_min=args.feature_selection_target_min,
                 feature_selection_target_max=args.feature_selection_target_max,
+                ensemble_enabled=args.ensemble,
+                ensemble_direction_family=args.ensemble_direction_family,
+                ensemble_profitability_family=args.ensemble_profitability_family,
+                ensemble_meta_family=args.ensemble_meta_family,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)

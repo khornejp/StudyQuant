@@ -125,6 +125,8 @@ class LabeledRow:
     feature_availability_status: dict[str, str] = field(default_factory=dict)
     unavailable_sources: tuple[str, ...] = ()
     fallback_features: tuple[str, ...] = ()
+    targets: dict[str, int] = field(default_factory=dict)
+    target_reasons: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -1206,6 +1208,9 @@ def attach_labels(
             continue
         target_return = (candles[future_index].close - close) / close
         label, label_reason = triple_barrier_label(row.index, candles, horizon, label_threshold, tp_pct, sl_pct, target_return)
+        # Direction target: simple future return sign
+        direction_label = 1 if target_return > 0.0 else 0
+        direction_reason = "future_positive" if target_return > 0.0 else "future_negative"
         external_label, external_reason = _external_label(row, target_return, label_threshold, external_events)
         if external_label is not None and external_reason is not None:
             label = external_label
@@ -1225,6 +1230,8 @@ def attach_labels(
                 feature_availability_status=dict(row.feature_availability_status),
                 unavailable_sources=row.unavailable_sources,
                 fallback_features=row.fallback_features,
+                targets={"direction": direction_label, "profitability": label},
+                target_reasons={"direction": direction_reason, "profitability": label_reason},
             )
         )
     return labeled

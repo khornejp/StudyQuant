@@ -30,6 +30,9 @@ class ModelAdapter(Protocol):
     def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
         ...
 
+    def probability(self, values: Mapping[str, float]) -> float:
+        ...
+
     def as_dict(self) -> dict[str, object]:
         ...
 
@@ -315,7 +318,7 @@ class CatBoostAdapter:
 
 
 class ModelFactory:
-    SUPPORTED_FAMILIES: tuple[str, ...] = ("stdlib", "lightgbm", "catboost", "auto")
+    SUPPORTED_FAMILIES: tuple[str, ...] = ("stdlib", "lightgbm", "catboost", "auto", "sklearn_logistic", "stacking_ensemble")
 
     def create(
         self,
@@ -387,7 +390,7 @@ class ModelFactory:
             return LightGBMAdapter.available()
         if family == "catboost":
             return CatBoostAdapter.available()
-        return family == "stdlib"
+        return family in {"stdlib", "sklearn_logistic", "stacking_ensemble"}
 
 
 def _selection(

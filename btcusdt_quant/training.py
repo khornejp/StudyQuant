@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from math import exp, isfinite, log, sqrt
 from pathlib import Path
 from statistics import mean
-from time import perf_counter
+from time import perf_counter, time
 from typing import Mapping, Sequence
 
 from . import cv, dataset, features, governance, lineage, models, monitoring
@@ -125,6 +126,10 @@ class TrainingConfig:
     regime_detector_min_regime_run_bars: int = 3
     feature_selection_target_min: int = 0
     feature_selection_target_max: int = 0
+    ensemble_enabled: bool = False
+    ensemble_direction_family: str = "catboost"
+    ensemble_profitability_family: str = "catboost"
+    ensemble_meta_family: str = "sklearn_logistic"
 
     def __post_init__(self) -> None:
         if self.cv_mode not in {"walk_forward", "combinatorial_purged"}:
@@ -137,8 +142,9 @@ class TrainingConfig:
             raise ValueError("test_group_count must be positive")
         if self.test_group_count > self.n_groups:
             raise ValueError("test_group_count cannot exceed n_groups")
-        if str(self.model_family).lower().strip() not in {"auto", "stdlib", "linear", "deterministic", "lightgbm", "lgbm", "catboost", "cat"}:
-            raise ValueError("model_family must be 'auto', 'stdlib', 'lightgbm', or 'catboost'")
+        valid_families = {"auto", "stdlib", "linear", "deterministic", "lightgbm", "lgbm", "catboost", "cat", "sklearn_logistic", "stacking_ensemble"}
+        if str(self.model_family).lower().strip() not in valid_families:
+            raise ValueError(f"model_family must be one of {valid_families}")
         if self.min_regime_rows <= 0:
             raise ValueError("min_regime_rows must be positive")
 
@@ -161,7 +167,7 @@ class TrainingResult:
     output_dir: Path
     dataset_build: dataset.DatasetBuild
     splits: list[object]
-    fold_results: list[FoldResult]
+    fold_results: list[object]
     run_summary: dict[str, object]
     artifacts: list[str]
 
@@ -174,6 +180,9 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir, external_sources=external_sources)
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
+    # Ensemble stacking: train direction + profitability + meta model
+    if training_config.ensemble_enabled:
+        return run_ensemble_training(build, output_dir, training_config)
     # Regime-aware: split by market regime and train separate models
     if training_config.regime_aware:
         return run_regime_aware_training(build, output_dir, training_config)
@@ -1346,3 +1355,71 @@ def sigmoid(value: float) -> float:
         return 1.0 / (1.0 + z)
     z = exp(value)
     return z / (1.0 + z)
+
+
+def run_ensemble_training(
+    build: dataset.DatasetBuild,
+    output_dir: Path,
+    config: TrainingConfig,
+) -> TrainingResult:
+    """Train a stacking ensemble: direction + profitability + meta model."""
+    from . import ensemble
+
+    start_time = time()
+    print(f"[Ensemble] Training stacking ensemble with {len(build.labeled_rows)} rows")
+    print(f"[Ensemble] Direction family: {config.ensemble_direction_family}")
+    print(f"[Ensemble] Profitability family: {config.ensemble_profitability_family}")
+    print(f"[Ensemble] Meta family: {config.ensemble_meta_family}")
+
+    ensemble_model = ensemble.fit_stacking_ensemble(
+        build.labeled_rows,
+        build.feature_names,
+        direction_family=config.ensemble_direction_family,
+        profitability_family=config.ensemble_profitability_family,
+        meta_family=config.ensemble_meta_family,
+    )
+
+    # Evaluate on full dataset
+    full_probs = ensemble_model.predict_proba(feature_matrix(build.labeled_rows, build.feature_names))
+    full_labels = [row.targets.get("profitability", row.label) for row in build.labeled_rows]
+    full_metrics = metrics(full_probs, full_labels, 0.5)
+
+    # Write artifacts
+    output_dir.mkdir(parents=True, exist_ok=True)
+    model_path = output_dir / "model.json"
+    model_path.write_text(json.dumps(ensemble_model.as_dict(), indent=2), encoding="utf-8")
+
+    # Run summary
+    run_summary = {
+        "training_config": {
+            "ensemble_enabled": True,
+            "ensemble_direction_family": config.ensemble_direction_family,
+            "ensemble_profitability_family": config.ensemble_profitability_family,
+            "ensemble_meta_family": config.ensemble_meta_family,
+            "model_family": "stacking_ensemble",
+        },
+        "training_rows": len(build.labeled_rows),
+        "feature_names": list(build.feature_names),
+        "mean_test_f1": full_metrics.get("f1", 0.0),
+        "mean_test_accuracy": full_metrics.get("accuracy", 0.0),
+        "profitability_positive_ratio": sum(full_labels) / len(full_labels) if full_labels else 0.0,
+        "network_used": False,
+        "orders_enabled": False,
+        "labeled_rows": len(build.labeled_rows),
+        "fold_count": 1,
+        "timing_seconds": {"total": time() - start_time},
+    }
+    summary_path = output_dir / "run_summary.json"
+    summary_path.write_text(json.dumps(run_summary, indent=2), encoding="utf-8")
+
+    print(f"[Ensemble] Model saved to {model_path}")
+    print(f"[Ensemble] F1: {full_metrics.get('f1', 0.0):.4f}")
+
+    return TrainingResult(
+        output_dir=output_dir,
+        dataset_build=build,
+        splits=[],
+        fold_results=[],
+        run_summary=run_summary,
+        artifacts=[str(model_path)],
+    )

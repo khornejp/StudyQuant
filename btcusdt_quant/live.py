@@ -1403,6 +1403,9 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> training.Lin
             return models.LightGBMAdapter.from_dict(payload)
         if model_family == "catboost":
             return models.CatBoostAdapter.from_dict(payload)
+        if model_family == "stacking_ensemble":
+            from . import ensemble
+            return ensemble.StackingEnsembleAdapter.from_dict(payload)
         if strict:
             raise ValueError(f"unsupported model_family: {model_family}")
         return None
