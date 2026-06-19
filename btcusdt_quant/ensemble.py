@@ -114,7 +114,7 @@ def _fit_meta_model(
             import catboost as cb
         except ImportError:
             raise RuntimeError("catboost is not installed; install with: pip install catboost")
-        clf = cb.CatBoostClassifier(iterations=100, depth=3, verbose=False, random_seed=42)
+        clf = cb.CatBoostClassifier(iterations=50, depth=2, verbose=False, random_seed=42)
         clf.fit(X, y)
         return _SklearnMetaModelAdapter(clf, feature_names)
 

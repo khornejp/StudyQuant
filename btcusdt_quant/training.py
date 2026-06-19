@@ -90,12 +90,12 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir, external_sources=external_sources)
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
-    # Ensemble stacking: train direction + profitability + meta model
-    if training_config.ensemble_enabled:
-        return run_ensemble_training(build, output_dir, training_config)
     # Regime-aware: split by market regime and train separate models
     if training_config.regime_aware:
         return run_regime_aware_training(build, output_dir, training_config)
+    # Ensemble stacking: train direction + profitability + meta model
+    if training_config.ensemble_enabled:
+        return run_ensemble_training(build, output_dir, training_config)
     # Parity assertion: warn when feature_space_parity_passed is False
     source_report = build.source_availability_report
     parity_passed = bool(source_report.get("feature_space_parity_passed", False))
