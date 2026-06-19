@@ -137,7 +137,18 @@ print(f'Training data: {combined.num_rows} rows ({combined.num_rows/60/24:.0f} d
 print(f'  Regime-aware will auto-classify: high_volatility / trending / ranging')
 "
 
-Write-Host "`n=== STEP 4: Train ===" -ForegroundColor Cyan
+Write-Host "`n=== STEP 4: Train (skip first 50 weeks for valid weekly MA) ===" -ForegroundColor Cyan
+python -c "
+import pyarrow.parquet as pq, pyarrow as pa
+import datetime
+
+t = pq.read_table('artifacts/training_combined.parquet')
+start_ms = int(datetime.datetime(2020, 12, 15, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+mask = pa.compute.greater_equal(t['open_time'], pa.scalar(start_ms))
+t_filtered = t.filter(mask)
+pq.write_table(t_filtered, 'artifacts/training_combined.parquet')
+print(f'Filtered: {t.num_rows} -> {t_filtered.num_rows} rows (skipped first ~50 weeks)')
+"
 python -m btcusdt_quant train --input artifacts/training_combined.parquet --ensemble --regime-aware --output artifacts/regime_stacking_model
 
 Write-Host "`n=== STEP 5: Backtest ===" -ForegroundColor Cyan
