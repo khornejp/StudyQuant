@@ -16,7 +16,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Callable, Mapping, Sequence
 
-from . import data, feature_registry, features, parity, sources
+from . import data, feature_registry, features, parity, sources, weekly_features
 
 
 COLLECTED_CSV_FIELDS: tuple[str, ...] = (
@@ -998,6 +998,8 @@ def build_feature_rows(
     trades = [float(candle.number_of_trades) for candle in candles]
     ranges = [_range_value(candle) for candle in candles]
     range_pcts = [_range_pct(candle) for candle in candles]
+    # Pre-compute weekly features once for all rows
+    weekly_feature_values = weekly_features.compute_weekly_features(candles)
     warmup_cutoff = max_feature_min_samples() - 1
     for index, candle in enumerate(candles):
         warmup_invalid = index < warmup_cutoff
@@ -1152,6 +1154,11 @@ def build_feature_rows(
             "mark_price_basis": _mark_price_basis_value(candle_external_sources, candle.close),
             "premium_index": _premium_index_value(candle_external_sources),
             "leverage_bracket_utilization": _leverage_bracket_utilization_value(candle_external_sources),
+            # F13: Weekly features
+            "weekly_ma20_slope": weekly_feature_values["weekly_ma20_slope"][index],
+            "weekly_ma50_slope": weekly_feature_values["weekly_ma50_slope"][index],
+            "weekly_drawdown": weekly_feature_values["weekly_drawdown"][index],
+            "weekly_vol_contraction": weekly_feature_values["weekly_vol_contraction"][index],
         }
         clipper = features.FeatureClipper()
         clipped = clipper.clip({name: values[name] for name in FEATURE_NAMES})

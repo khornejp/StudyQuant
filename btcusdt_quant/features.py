@@ -1109,20 +1109,58 @@ class RegimeDetector:
         trend_slope_30: float,
         historical_rv_15_values: Sequence[float] | None = None,
         thresholds: Mapping[str, float] | None = None,
+        weekly_ma20_slope: float | None = None,
+        weekly_drawdown: float | None = None,
+        weekly_vol_contraction: float | None = None,
     ) -> str:
-        """Return one of: 'high_volatility', 'trending', 'ranging'."""
+        """Return one of: 'high_volatility', 'trending', 'ranging'.
+        
+        Optionally uses weekly features for more accurate regime detection.
+        """
         effective_thresholds = thresholds
         if effective_thresholds is None:
             effective_thresholds = self._default_thresholds(historical_rv_15_values)
-        return self._classify_raw(rv_15, trend_slope_30, effective_thresholds)
+        return self._classify_raw(rv_15, trend_slope_30, effective_thresholds, weekly_ma20_slope, weekly_drawdown, weekly_vol_contraction)
 
-    def _classify_raw(self, rv_15: float, trend_slope_30: float, thresholds: Mapping[str, float]) -> str:
+    def _classify_raw(
+        self,
+        rv_15: float,
+        trend_slope_30: float,
+        thresholds: Mapping[str, float],
+        weekly_ma20_slope: float | None = None,
+        weekly_drawdown: float | None = None,
+        weekly_vol_contraction: float | None = None,
+    ) -> str:
         rv_threshold = float(thresholds.get("rv_threshold", 0.001))
         trend_threshold = max(float(thresholds.get("trend_threshold", self.config.min_trend_abs)), float(thresholds.get("trend_min", self.config.min_trend_abs)))
         rv_value = float(rv_15) if isfinite(float(rv_15)) else 0.0
         trend_strength = abs(float(trend_slope_30)) if isfinite(float(trend_slope_30)) else 0.0
+        
+        # Base regime detection
         trend_regime = trend_strength > trend_threshold and rv_value <= rv_threshold * self.config.low_vol_trend_multiplier
         high_vol_regime = rv_value > rv_threshold
+        
+        # Enhance with weekly features if available
+        if weekly_ma20_slope is not None and weekly_drawdown is not None:
+            ma_slope = float(weekly_ma20_slope) if isfinite(float(weekly_ma20_slope)) else 0.0
+            dd = float(weekly_drawdown) if isfinite(float(weekly_drawdown)) else 0.0
+            
+            # Strong trend: MA slope > 2% weekly AND drawdown < 5%
+            strong_trend = abs(ma_slope) > 0.02 and dd > -0.05
+            if strong_trend:
+                trend_regime = True
+            
+            # Deep drawdown: override to ranging/high_vol
+            if dd < -0.20:
+                high_vol_regime = True
+                trend_regime = False
+            
+            # Volatility contraction: likely ranging
+            if weekly_vol_contraction is not None:
+                vol_contract = float(weekly_vol_contraction) if isfinite(float(weekly_vol_contraction)) else 1.0
+                if vol_contract < 0.5 and not high_vol_regime:
+                    trend_regime = False
+        
         if self.config.high_vol_priority and high_vol_regime:
             return "high_volatility"
         if trend_regime:

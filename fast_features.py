@@ -18,7 +18,7 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-from btcusdt_quant import data, feature_registry, features
+from btcusdt_quant import data, feature_registry, features, weekly_features
 
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -410,6 +410,11 @@ def compute_features_fast(candles: Sequence[data.Candle]) -> pd.DataFrame:
     df["mark_price_basis"] = 0.0
     df["premium_index"] = 0.0
     df["leverage_bracket_utilization"] = 0.0
+
+    # F13: Weekly features
+    weekly_data = weekly_features.compute_weekly_features(candles)
+    for key, values in weekly_data.items():
+        df[key] = np.array(values, dtype=float)
 
     df = df.fillna(0.0)
     df = df.loc[:, FEATURE_NAMES].copy()

@@ -33,6 +33,7 @@ VOL_ADJUSTED_TREND = "volatility_adjusted_trend_features"
 VOL_ADJUSTED_FLOW = "volatility_adjusted_candle_flow_features"
 MICROSTRUCTURE = "microstructure_features"
 EXCHANGE_SAFETY = "exchange_funding_safety_features"
+HIGHER_TIMEFRAME = "higher_timeframe_features"
 
 
 def _feature(
@@ -176,6 +177,11 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("mark_price_basis", "F12", EXCHANGE_SAFETY, "(mark_price_t - close_t) / close_t", 1, 1, "mark_price_1m", warmup_rule="state", leakage_risk="low_state_snapshot"),
     _feature("premium_index", "F12", EXCHANGE_SAFETY, "exchange premium index observed at t", 1, 1, "premium_index_1m", warmup_rule="state", leakage_risk="low_state_snapshot"),
     _feature("leverage_bracket_utilization", "F12", EXCHANGE_SAFETY, "position notional_t / max(current leverage bracket cap_t, 1e-12)", 1, 1, "leverage_bracket", warmup_rule="state", leakage_risk="low_state_snapshot"),
+    # F13: Higher Timeframe Features (Weekly)
+    _feature("weekly_ma20_slope", "F13", HIGHER_TIMEFRAME, "pct_change(SMA(weekly_close, 20))", 50400, 50400, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_ma50_slope", "F13", HIGHER_TIMEFRAME, "pct_change(SMA(weekly_close, 50))", 50400, 50400, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_drawdown", "F13", HIGHER_TIMEFRAME, "weekly_close_t / cummax(weekly_close) - 1", 50400, 50400, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_vol_contraction", "F13", HIGHER_TIMEFRAME, "std(weekly_close, 20) / std(weekly_close, 50)", 50400, 50400, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
 ]
 
 
