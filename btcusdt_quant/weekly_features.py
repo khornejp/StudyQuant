@@ -48,24 +48,25 @@ def compute_weekly_features(candles: Sequence[data.Candle]) -> dict[str, list[fl
     if len(weekly) < 50:  # Need at least 50 completed weeks for MA50
         return _empty_weekly_features(n)
     
-    # Compute traditional weekly MAs using ONLY completed weekly closes
-    weekly["ma20"] = weekly["close"].rolling(20, min_periods=1).mean()
-    weekly["ma50"] = weekly["close"].rolling(50, min_periods=1).mean()
+    # Compute traditional weekly MAs: require FULL window (20 or 50 weeks)
+    # Before window is full, value is NaN → forward-filled as 0.0 later
+    weekly["ma20"] = weekly["close"].rolling(20, min_periods=20).mean()
+    weekly["ma50"] = weekly["close"].rolling(50, min_periods=50).mean()
     
-    # MA slopes: (MA(t) - MA(t-1)) / MA(t-1) → pct change of the MA itself
+    # MA slopes: NaN before window full → fillna(0.0)
     weekly["ma20_slope"] = weekly["ma20"].pct_change(fill_method=None).fillna(0.0)
     weekly["ma50_slope"] = weekly["ma50"].pct_change(fill_method=None).fillna(0.0)
     
-    # Golden/Dead cross: 1 if MA20 > MA50 else 0
-    weekly["ma20_above_ma50"] = (weekly["ma20"] > weekly["ma50"]).astype(float)
+    # Golden/Dead cross: NaN comparison → False → 0.0
+    weekly["ma20_above_ma50"] = (weekly["ma20"] > weekly["ma50"]).astype(float).fillna(0.0)
     
-    # Drawdown from weekly ATH
+    # Drawdown from weekly ATH (cummax works from week 1)
     weekly["rolling_max"] = weekly["close"].cummax()
     weekly["drawdown"] = (weekly["close"] / weekly["rolling_max"] - 1.0).fillna(0.0)
     
-    # Volatility contraction
-    weekly["vol20"] = weekly["close"].rolling(20, min_periods=1).std().fillna(0.0)
-    weekly["vol50"] = weekly["close"].rolling(50, min_periods=1).std().fillna(0.0)
+    # Volatility contraction: require FULL window
+    weekly["vol20"] = weekly["close"].rolling(20, min_periods=20).std()
+    weekly["vol50"] = weekly["close"].rolling(50, min_periods=50).std()
     vol50_safe = weekly["vol50"].replace(0.0, np.nan).fillna(1e-8)
     weekly["vol_contraction"] = (weekly["vol20"] / vol50_safe).fillna(1.0).clip(0.0, 10.0)
     
