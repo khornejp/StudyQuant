@@ -111,28 +111,30 @@ print(f'  {t.num_rows} rows')
 "
 }
 
-Write-Host "`n=== STEP 3: Combine ===" -ForegroundColor Cyan
+Write-Host "`n=== STEP 3: Combine ALL periods into single timeline ===" -ForegroundColor Cyan
+Write-Host "  This ensures continuous history for proper weekly MA computation"
 python -c "
 import pyarrow.parquet as pq, pyarrow.compute as pc, pyarrow as pa, glob
 
-def combine(pattern, out):
-    f = sorted(glob.glob(pattern))
-    if not f: return
-    t = pa.concat_tables([pq.read_table(x) for x in f])
-    t = t.take(pc.sort_indices(t, sort_keys=[('open_time','ascending')]))
-    pq.write_table(t, out)
-    print(f'{out}: {t.num_rows} rows')
+files = sorted(glob.glob('artifacts/futures_up_*.parquet') + 
+              glob.glob('artifacts/futures_down_*.parquet') + 
+              glob.glob('artifacts/futures_range_*.parquet'))
+if not files:
+    print('ERROR: No parquet files found')
+    exit(1)
 
-combine('artifacts/futures_up_*.parquet', 'artifacts/training_up.parquet')
-combine('artifacts/futures_down_*.parquet', 'artifacts/training_down.parquet')
-combine('artifacts/futures_range_*.parquet', 'artifacts/training_range.parquet')
+tables = [pq.read_table(f) for f in files]
+combined = pa.concat_tables(tables)
+combined = combined.take(pc.sort_indices(combined, sort_keys=[('open_time','ascending')]))
+pq.write_table(combined, 'artifacts/training_combined.parquet')
 
-allf = sorted(glob.glob('artifacts/training_*.parquet'))
-if allf:
-    t = pa.concat_tables([pq.read_table(f) for f in allf])
-    t = t.take(pc.sort_indices(t, sort_keys=[('open_time','ascending')]))
-    pq.write_table(t, 'artifacts/training_combined.parquet')
-    print(f'Training: {t.num_rows} rows')
+# Also create backtest file if not exists
+bt_files = glob.glob('artifacts/futures_backtest_2025.parquet')
+if bt_files:
+    print(f'Backtest: {bt_files[0]}')
+
+print(f'Training data: {combined.num_rows} rows ({combined.num_rows/60/24:.0f} days)')
+print(f'  Regime-aware will auto-classify: high_volatility / trending / ranging')
 "
 
 Write-Host "`n=== STEP 4: Train ===" -ForegroundColor Cyan
