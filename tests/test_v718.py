@@ -24,8 +24,8 @@ class FeatureRegistryV718Tests(unittest.TestCase):
         registry = dataset.feature_formula_registry()
         registry_features = cast(list[dict[str, object]], registry["features"])
         categories = {str(feature["category"]) for feature in registry_features}
-        expected = {f"F{index:02d}" for index in range(1, 13)}
-        self.assertEqual(categories, expected, "v7.18 requires F01-F12 categories")
+        expected = {f"F{index:02d}" for index in range(1, 14)}
+        self.assertEqual(categories, expected, "v7.18 requires F01-F13 categories")
 
     def test_all_active_features_have_required_fields(self) -> None:
         registry = dataset.feature_formula_registry()
