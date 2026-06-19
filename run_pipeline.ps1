@@ -75,9 +75,30 @@ foreach ($p in $periods) {
     Write-Host "[$($p.Label)] $($csvs.Count) files" -ForegroundColor Yellow
     python -c "
 import glob, pyarrow.csv as pv, pyarrow.parquet as pq, pyarrow as pa
+
+# Standard Binance kline columns (before our renaming)
+BINANCE_COLS = [
+    'open_time', 'open', 'high', 'low', 'close', 'volume',
+    'close_time', 'quote_volume', 'count', 'taker_buy_volume',
+    'taker_buy_quote_volume', 'ignore'
+]
+
+def read_csv_safe(path):
+    # Peek first line to detect header
+    with open(path, 'r', encoding='utf-8') as f:
+        first_line = f.readline().strip()
+    first_field = first_line.split(',')[0] if first_line else ''
+    # If first field is numeric (timestamp), it's data row = no header
+    is_header = not (first_field.replace('.', '').replace('-', '').isdigit())
+    if is_header:
+        return pv.read_csv(path)
+    else:
+        return pv.read_csv(path, read_options=pv.ReadOptions(column_names=BINANCE_COLS))
+
 files = sorted(glob.glob('$($p.Dir)/BTCUSDT-1m-*.csv'))
 if not files: exit(0)
-t = pa.concat_tables([pv.read_csv(f) for f in files])
+tables = [read_csv_safe(f) for f in files]
+t = pa.concat_tables(tables)
 names = []
 for c in t.column_names:
     if c=='count': names.append('number_of_trades')
