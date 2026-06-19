@@ -416,42 +416,84 @@ def parse_open_time(value: str) -> datetime:
 
 
 def parse_archive_csv_text(csv_text: str) -> list[data.Candle]:
-    reader = csv.DictReader(io.StringIO(csv_text))
-    fieldnames = reader.fieldnames or []
-    missing = set(ARCHIVE_CSV_FIELDS) - set(fieldnames)
-    if missing:
-        raise ArchiveValidationError(f"archive CSV missing required columns: {', '.join(sorted(missing))}")
+    # Check if first line looks like a header (contains letters)
+    first_line = csv_text.lstrip().splitlines()[0] if csv_text else ""
+    has_header = any(c.isalpha() for c in first_line.split(",")[0]) if first_line else False
+
     candles: list[data.Candle] = []
     seen_open_times: set[datetime] = set()
     previous_open_time: datetime | None = None
-    for row in reader:
-        open_time = parse_open_time(row["open_time"])
-        if open_time in seen_open_times:
-            raise ArchiveValidationError(f"archive CSV contains duplicate open_time: {open_time.isoformat()}")
-        if previous_open_time is not None and open_time <= previous_open_time:
-            raise ArchiveValidationError("archive CSV open_time values must be chronological")
-        seen_open_times.add(open_time)
-        previous_open_time = open_time
-        open_price = float(row["open"])
-        high = float(row["high"])
-        low = float(row["low"])
-        close = float(row["close"])
-        volume = float(row["volume"])
-        _validate_ohlcv(open_price, high, low, close, volume)
-        candles.append(
-            data.Candle(
-                open_time=open_time,
-                open=open_price,
-                high=high,
-                low=low,
-                close=close,
-                volume=volume,
-                quote_volume=float(row.get("quote_volume") or 0.0),
-                number_of_trades=int(float(row.get("count") or 0)),
-                taker_buy_base_volume=float(row.get("taker_buy_volume") or 0.0),
-                taker_buy_quote_volume=float(row.get("taker_buy_quote_volume") or 0.0),
+
+    if has_header:
+        # Standard DictReader for files with headers
+        reader = csv.DictReader(io.StringIO(csv_text))
+        fieldnames = reader.fieldnames or []
+        missing = set(ARCHIVE_CSV_FIELDS) - set(fieldnames)
+        if missing:
+            raise ArchiveValidationError(f"archive CSV missing required columns: {', '.join(sorted(missing))}")
+        for row in reader:
+            open_time = parse_open_time(row["open_time"])
+            if open_time in seen_open_times:
+                raise ArchiveValidationError(f"archive CSV contains duplicate open_time: {open_time.isoformat()}")
+            if previous_open_time is not None and open_time <= previous_open_time:
+                raise ArchiveValidationError("archive CSV open_time values must be chronological")
+            seen_open_times.add(open_time)
+            previous_open_time = open_time
+            open_price = float(row["open"])
+            high = float(row["high"])
+            low = float(row["low"])
+            close = float(row["close"])
+            volume = float(row["volume"])
+            _validate_ohlcv(open_price, high, low, close, volume)
+            candles.append(
+                data.Candle(
+                    open_time=open_time,
+                    open=open_price,
+                    high=high,
+                    low=low,
+                    close=close,
+                    volume=volume,
+                    quote_volume=float(row.get("quote_volume") or 0.0),
+                    number_of_trades=int(float(row.get("count") or 0)),
+                    taker_buy_base_volume=float(row.get("taker_buy_volume") or 0.0),
+                    taker_buy_quote_volume=float(row.get("taker_buy_quote_volume") or 0.0),
+                )
             )
-        )
+    else:
+        # No header: use standard Binance kline column order
+        standard_fields = list(ARCHIVE_CSV_FIELDS)
+        reader = csv.reader(io.StringIO(csv_text))
+        for raw_row in reader:
+            if len(raw_row) < len(standard_fields):
+                continue  # Skip malformed rows
+            row = {k: v for k, v in zip(standard_fields, raw_row)}
+            open_time = parse_open_time(row["open_time"])
+            if open_time in seen_open_times:
+                raise ArchiveValidationError(f"archive CSV contains duplicate open_time: {open_time.isoformat()}")
+            if previous_open_time is not None and open_time <= previous_open_time:
+                raise ArchiveValidationError("archive CSV open_time values must be chronological")
+            seen_open_times.add(open_time)
+            previous_open_time = open_time
+            open_price = float(row["open"])
+            high = float(row["high"])
+            low = float(row["low"])
+            close = float(row["close"])
+            volume = float(row["volume"])
+            _validate_ohlcv(open_price, high, low, close, volume)
+            candles.append(
+                data.Candle(
+                    open_time=open_time,
+                    open=open_price,
+                    high=high,
+                    low=low,
+                    close=close,
+                    volume=volume,
+                    quote_volume=float(row.get("quote_volume") or 0.0),
+                    number_of_trades=int(float(row.get("count") or 0)),
+                    taker_buy_base_volume=float(row.get("taker_buy_volume") or 0.0),
+                    taker_buy_quote_volume=float(row.get("taker_buy_quote_volume") or 0.0),
+                )
+            )
     return candles
 
 
@@ -488,8 +530,11 @@ def archive_row_count(archive_dir: Path) -> int:
     total = 0
     for csv_path in archive_dir.glob("BTCUSDT-1m-*.csv"):
         with csv_path.open("r", encoding="utf-8") as handle:
+            first_line = handle.readline()
+            has_header = any(c.isalpha() for c in first_line.split(",")[0]) if first_line else False
             reader = csv.reader(handle)
-            next(reader, None)  # skip header
+            if not has_header:
+                total += 1  # Count the first line we already read
             total += sum(1 for _ in reader)
     return total
 
