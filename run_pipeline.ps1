@@ -196,34 +196,40 @@ Write-Host ""
 
 $combineScript = @"
 import pyarrow.parquet as pq
+import pyarrow.compute as pc
 import pyarrow as pa
 import glob
 import sys
 
-def combine_parquet_files(pattern, output_path):
+def combine_sorted(pattern, output_path):
     files = sorted(glob.glob(pattern))
     if not files:
         print(f'No files found: {pattern}')
         return
     tables = [pq.read_table(f) for f in files]
     combined = pa.concat_tables(tables)
-    pq.write_table(combined, output_path)
-    print(f'Combined {len(files)} files -> {combined.num_rows} rows -> {output_path}')
+    # CRITICAL: Sort by open_time to maintain chronological order
+    sort_indices = pc.sort_indices(combined, sort_keys=[('open_time', 'ascending')])
+    sorted_table = combined.take(sort_indices)
+    pq.write_table(sorted_table, output_path)
+    print(f'Combined {len(files)} files -> {sorted_table.num_rows} rows (sorted by open_time) -> {output_path}')
 
-# Combine by regime type
-combine_parquet_files('artifacts/futures_up_*.parquet', 'artifacts/training_up.parquet')
-combine_parquet_files('artifacts/futures_down_*.parquet', 'artifacts/training_down.parquet')
-combine_parquet_files('artifacts/futures_range_*.parquet', 'artifacts/training_range.parquet')
+# Combine by regime type (sorted chronologically)
+combine_sorted('artifacts/futures_up_*.parquet', 'artifacts/training_up.parquet')
+combine_sorted('artifacts/futures_down_*.parquet', 'artifacts/training_down.parquet')
+combine_sorted('artifacts/futures_range_*.parquet', 'artifacts/training_range.parquet')
 
-# Combine all for training
+# Combine all regimes for training (sorted chronologically)
 all_train_files = sorted(glob.glob('artifacts/training_up.parquet') + 
                           glob.glob('artifacts/training_down.parquet') + 
                           glob.glob('artifacts/training_range.parquet'))
 if all_train_files:
     tables = [pq.read_table(f) for f in all_train_files]
     combined = pa.concat_tables(tables)
-    pq.write_table(combined, 'artifacts/training_combined.parquet')
-    print(f'Final training set: {combined.num_rows} rows')
+    sort_indices = pc.sort_indices(combined, sort_keys=[('open_time', 'ascending')])
+    sorted_table = combined.take(sort_indices)
+    pq.write_table(sorted_table, 'artifacts/training_combined.parquet')
+    print(f'Final training set: {sorted_table.num_rows} rows (sorted by open_time)')
 "@
 
 $combineScript | Out-File -FilePath "_combine.py" -Encoding utf8
