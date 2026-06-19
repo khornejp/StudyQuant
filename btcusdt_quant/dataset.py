@@ -97,6 +97,16 @@ class GapReport:
 
 
 @dataclass(frozen=True)
+class UserRegimePeriod:
+    regime: str
+    start: datetime
+    end_exclusive: datetime
+
+
+USER_REGIME_NAMES: tuple[str, ...] = ("up", "down", "range")
+
+
+@dataclass(frozen=True)
 class FeatureRow:
     index: int
     open_time: datetime
@@ -108,6 +118,7 @@ class FeatureRow:
     feature_availability_status: dict[str, str] = field(default_factory=dict)
     unavailable_sources: tuple[str, ...] = ()
     fallback_features: tuple[str, ...] = ()
+    user_regime: str | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +138,7 @@ class LabeledRow:
     fallback_features: tuple[str, ...] = ()
     targets: dict[str, int] = field(default_factory=dict)
     target_reasons: dict[str, str] = field(default_factory=dict)
+    user_regime: str | None = None
 
 
 @dataclass
@@ -912,6 +924,39 @@ def expanded_fixture(rows: int = 6000) -> list[data.Candle]:
     return candles
 
 
+def resolve_user_regime(open_time: datetime, periods: Sequence[UserRegimePeriod]) -> str | None:
+    """Return user regime for open_time using half-open intervals [start, end_exclusive)."""
+    for period in periods:
+        if period.start <= open_time < period.end_exclusive:
+            return period.regime
+    return None
+
+
+def load_user_regime_periods(path: Path) -> list[UserRegimePeriod]:
+    """Load user-specified regime periods from JSON file.
+
+    Expected format:
+    {
+        "periods": [
+            {"regime": "up", "start": "2020-01-01", "end_exclusive": "2020-02-13"},
+            ...
+        ]
+    }
+    """
+    with path.open("r", encoding="utf-8") as file:
+        data = json.load(file)
+    periods_data = data.get("periods", []) if isinstance(data, dict) else data
+    periods: list[UserRegimePeriod] = []
+    for item in periods_data:
+        regime = str(item["regime"]).lower()
+        if regime not in USER_REGIME_NAMES:
+            raise ValueError(f"invalid regime '{regime}'; must be one of {USER_REGIME_NAMES}")
+        start = datetime.fromisoformat(str(item["start"])).replace(tzinfo=timezone.utc)
+        end_exclusive = datetime.fromisoformat(str(item["end_exclusive"])).replace(tzinfo=timezone.utc)
+        periods.append(UserRegimePeriod(regime=regime, start=start, end_exclusive=end_exclusive))
+    return periods
+
+
 def build_dataset(
     input_path: Path | None = None,
     stream_buffer: Sequence[data.Candle] | None = None,
@@ -923,6 +968,7 @@ def build_dataset(
     archive_dir: Path | None = None,
     source_bundle: sources.MarketSourceBundle | None = None,
     external_sources: Mapping[str, object] | None = None,
+    user_regime_periods: Sequence[UserRegimePeriod] | None = None,
 ) -> DatasetBuild:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
@@ -958,7 +1004,7 @@ def build_dataset(
         source_report_external_sources = external_sources[first_key]  # type: ignore[index]
     else:
         source_report_external_sources = external_sources
-    feature_rows = build_feature_rows(canonical, source_bundle=resolved_source_bundle, external_sources=external_sources)
+    feature_rows = build_feature_rows(canonical, source_bundle=resolved_source_bundle, external_sources=external_sources, user_regime_periods=user_regime_periods)
     labeled_rows = attach_labels(
         feature_rows,
         canonical,
@@ -1011,6 +1057,7 @@ def build_feature_rows(
     candles: Sequence[data.Candle],
     source_bundle: sources.MarketSourceBundle | None = None,
     external_sources: Mapping[str, object] | None = None,
+    user_regime_periods: Sequence[UserRegimePeriod] | None = None,
 ) -> list[FeatureRow]:
     # Support per-candle external_sources: Mapping[datetime, Mapping[str, object]]
     # or single external_sources for all candles: Mapping[str, object]
@@ -1234,6 +1281,7 @@ def build_feature_rows(
                 merged_feature_status,
                 unavailable_sources,
                 fallback_features,
+                resolve_user_regime(candle.open_time, user_regime_periods) if user_regime_periods else None,
             )
         )
     return rows
@@ -1289,6 +1337,7 @@ def attach_labels(
                 fallback_features=row.fallback_features,
                 targets={"direction": direction_label, "profitability": label},
                 target_reasons={"direction": direction_reason, "profitability": label_reason},
+                user_regime=row.user_regime,
             )
         )
     return labeled
@@ -1721,6 +1770,7 @@ def labeled_row_dict(row: LabeledRow, feature_names: Sequence[str]) -> dict[str,
         "gap_flag": row.gap_flag,
         "repaired": row.repaired,
         "warmup_invalid": row.warmup_invalid,
+        "user_regime": row.user_regime,
     }
     for name in feature_names:
         output[name] = row.features[name]

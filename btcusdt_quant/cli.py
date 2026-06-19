@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -157,9 +158,15 @@ def run_train(
     ensemble_profitability_family: str = "catboost",
     ensemble_meta_family: str = "catboost",
     multitask: bool = False,
+    use_user_regime: bool = False,
+    user_regime_file: str | None = None,
+    training_start: str | None = None,
 ) -> dict[str, object]:
     if multitask:
         model_family = "pytorch_multitask"
+    training_start_dt: datetime | None = None
+    if training_start is not None:
+        training_start_dt = datetime.fromisoformat(training_start).replace(tzinfo=timezone.utc)
     config = training.TrainingConfig(
         cv_mode=cv_mode,
         embargo_size=embargo_size,
@@ -186,12 +193,17 @@ def run_train(
         ensemble_direction_family=ensemble_direction_family,
         ensemble_profitability_family=ensemble_profitability_family,
         ensemble_meta_family=ensemble_meta_family,
+        use_user_regime=use_user_regime,
+        training_start=training_start_dt,
     )
+    user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None
+    if user_regime_file is not None:
+        user_regime_periods = dataset.load_user_regime_periods(Path(user_regime_file))
     archive_dir = None
     if input_path is not None and input_path.is_dir():
         archive_dir = input_path
         input_path = None
-    result = training.run_training(input_path, output, config, archive_dir=archive_dir, external_sources=external_sources)
+    result = training.run_training(input_path, output, config, archive_dir=archive_dir, external_sources=external_sources, user_regime_periods=user_regime_periods)
     summary = dict(result.run_summary)
     summary["requested_model_family"] = model_family
     return summary
@@ -358,6 +370,9 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--ensemble-direction-family", default="catboost", help="base model family for direction prediction")
     train.add_argument("--ensemble-profitability-family", default="catboost", help="base model family for profitability prediction")
     train.add_argument("--ensemble-meta-family", default="catboost", choices=("catboost",), help="meta model family for final probability")
+    train.add_argument("--use-user-regime", action="store_true", help="use user-specified trend periods instead of automatic RegimeDetector for regime-aware training")
+    train.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods")
+    train.add_argument("--training-start", default=None, help="start date for training data (ISO format, e.g., 2020-12-15); rows before this date are excluded after feature computation")
     train.add_argument("--multitask", action="store_true", help="use PyTorch multitask neural network as the model family (shorthand for --model-family pytorch_multitask)")
     live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
     live_parser.add_argument("--output", default="artifacts/live", help="live artifact output directory")
@@ -463,6 +478,9 @@ def main(argv: list[str] | None = None) -> int:
                 ensemble_profitability_family=args.ensemble_profitability_family,
                 ensemble_meta_family=args.ensemble_meta_family,
                 multitask=args.multitask,
+                use_user_regime=args.use_user_regime,
+                user_regime_file=args.user_regime_file,
+                training_start=args.training_start,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)

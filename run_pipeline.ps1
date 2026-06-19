@@ -5,47 +5,47 @@ $ErrorActionPreference = "Stop"
 
 $periods = @(
     # 2020-2024 Full range (headerless CSV fix applied)
-    @{Label="UP2020-01"; Start="2020-01-01"; End="2020-02-13"; Dir="artifacts/futures_up_2020_01"},
-    @{Label="UP2020-03"; Start="2020-03-13"; End="2020-05-11"; Dir="artifacts/futures_up_2020_03"},
-    @{Label="UP2020-07"; Start="2020-07-20"; End="2020-09-01"; Dir="artifacts/futures_up_2020_07"},
-    @{Label="UP2020-10"; Start="2020-10-08"; End="2021-01-08"; Dir="artifacts/futures_up_2020_10"},
-    @{Label="UP2021-01"; Start="2021-01-27"; End="2021-04-14"; Dir="artifacts/futures_up_2021_01"},
-    @{Label="UP2021-07"; Start="2021-07-20"; End="2021-09-07"; Dir="artifacts/futures_up_2021_07"},
-    @{Label="UP2021-09"; Start="2021-09-29"; End="2021-11-10"; Dir="artifacts/futures_up_2021_09"},
-    @{Label="UP2022-01"; Start="2022-01-24"; End="2022-03-28"; Dir="artifacts/futures_up_2022_01"},
-    @{Label="UP2023-01"; Start="2023-01-01"; End="2023-02-16"; Dir="artifacts/futures_up_2023_01"},
-    @{Label="UP2023-03"; Start="2023-03-10"; End="2023-04-14"; Dir="artifacts/futures_up_2023_03"},
-    @{Label="UP2023-06"; Start="2023-06-15"; End="2023-07-13"; Dir="artifacts/futures_up_2023_06"},
-    @{Label="UP2023-10"; Start="2023-10-16"; End="2023-12-08"; Dir="artifacts/futures_up_2023_10"},
-    @{Label="UP2024-01"; Start="2024-01-23"; End="2024-03-14"; Dir="artifacts/futures_up_2024_01"},
-    @{Label="UP2024-05"; Start="2024-05-01"; End="2024-06-07"; Dir="artifacts/futures_up_2024_05"},
-    @{Label="UP2024-09"; Start="2024-09-06"; End="2024-10-29"; Dir="artifacts/futures_up_2024_09"},
-    @{Label="UP2024-11"; Start="2024-11-05"; End="2024-12-17"; Dir="artifacts/futures_up_2024_11"},
-    @{Label="DN2020-02"; Start="2020-02-13"; End="2020-03-13"; Dir="artifacts/futures_down_2020_02"},
-    @{Label="DN2021-01"; Start="2021-01-08"; End="2021-01-27"; Dir="artifacts/futures_down_2021_01"},
-    @{Label="DN2021-04"; Start="2021-04-14"; End="2021-07-20"; Dir="artifacts/futures_down_2021_04"},
-    @{Label="DN2021-09"; Start="2021-09-07"; End="2021-09-29"; Dir="artifacts/futures_down_2021_09"},
-    @{Label="DN2021-11"; Start="2021-11-10"; End="2022-01-24"; Dir="artifacts/futures_down_2021_11"},
-    @{Label="DN2022-03"; Start="2022-03-28"; End="2022-05-12"; Dir="artifacts/futures_down_2022_03"},
-    @{Label="DN2022-05"; Start="2022-05-12"; End="2022-06-18"; Dir="artifacts/futures_down_2022_05"},
-    @{Label="DN2022-08"; Start="2022-08-15"; End="2022-09-21"; Dir="artifacts/futures_down_2022_08"},
-    @{Label="DN2022-11"; Start="2022-11-05"; End="2022-11-21"; Dir="artifacts/futures_down_2022_11"},
-    @{Label="DN2023-02"; Start="2023-02-16"; End="2023-03-10"; Dir="artifacts/futures_down_2023_02"},
-    @{Label="DN2023-07"; Start="2023-07-13"; End="2023-09-11"; Dir="artifacts/futures_down_2023_07"},
-    @{Label="DN2024-01"; Start="2024-01-01"; End="2024-01-23"; Dir="artifacts/futures_down_2024_01"},
-    @{Label="DN2024-03"; Start="2024-03-14"; End="2024-05-01"; Dir="artifacts/futures_down_2024_03"},
-    @{Label="DN2024-06"; Start="2024-06-07"; End="2024-08-05"; Dir="artifacts/futures_down_2024_06"},
-    @{Label="DN2024-12"; Start="2024-12-17"; End="2024-12-31"; Dir="artifacts/futures_down_2024_12"},
-    @{Label="RG2020-05"; Start="2020-05-11"; End="2020-07-20"; Dir="artifacts/futures_range_2020_05"},
-    @{Label="RG2020-09"; Start="2020-09-01"; End="2020-10-08"; Dir="artifacts/futures_range_2020_09"},
-    @{Label="RG2022-06"; Start="2022-06-18"; End="2022-08-15"; Dir="artifacts/futures_range_2022_06"},
-    @{Label="RG2022-09"; Start="2022-09-21"; End="2022-11-05"; Dir="artifacts/futures_range_2022_09"},
-    @{Label="RG2022-11"; Start="2022-11-21"; End="2022-12-31"; Dir="artifacts/futures_range_2022_11"},
-    @{Label="RG2023-04"; Start="2023-04-14"; End="2023-06-15"; Dir="artifacts/futures_range_2023_04"},
-    @{Label="RG2023-09"; Start="2023-09-11"; End="2023-10-16"; Dir="artifacts/futures_range_2023_09"},
-    @{Label="RG2023-12"; Start="2023-12-08"; End="2023-12-31"; Dir="artifacts/futures_range_2023_12"},
-    @{Label="RG2024-08"; Start="2024-08-05"; End="2024-09-06"; Dir="artifacts/futures_range_2024_08"},
-    @{Label="BT2025"; Start="2025-01-01"; End="2025-06-30"; Dir="artifacts/futures_backtest_2025"}
+    @{Label="UP2020-01"; Start="2020-01-01"; End="2020-02-13"; Dir="artifacts/futures_up_2020_01"; Regime="up"},
+    @{Label="UP2020-03"; Start="2020-03-13"; End="2020-05-11"; Dir="artifacts/futures_up_2020_03"; Regime="up"},
+    @{Label="UP2020-07"; Start="2020-07-20"; End="2020-09-01"; Dir="artifacts/futures_up_2020_07"; Regime="up"},
+    @{Label="UP2020-10"; Start="2020-10-08"; End="2021-01-08"; Dir="artifacts/futures_up_2020_10"; Regime="up"},
+    @{Label="UP2021-01"; Start="2021-01-27"; End="2021-04-14"; Dir="artifacts/futures_up_2021_01"; Regime="up"},
+    @{Label="UP2021-07"; Start="2021-07-20"; End="2021-09-07"; Dir="artifacts/futures_up_2021_07"; Regime="up"},
+    @{Label="UP2021-09"; Start="2021-09-29"; End="2021-11-10"; Dir="artifacts/futures_up_2021_09"; Regime="up"},
+    @{Label="UP2022-01"; Start="2022-01-24"; End="2022-03-28"; Dir="artifacts/futures_up_2022_01"; Regime="up"},
+    @{Label="UP2023-01"; Start="2023-01-01"; End="2023-02-16"; Dir="artifacts/futures_up_2023_01"; Regime="up"},
+    @{Label="UP2023-03"; Start="2023-03-10"; End="2023-04-14"; Dir="artifacts/futures_up_2023_03"; Regime="up"},
+    @{Label="UP2023-06"; Start="2023-06-15"; End="2023-07-13"; Dir="artifacts/futures_up_2023_06"; Regime="up"},
+    @{Label="UP2023-10"; Start="2023-10-16"; End="2023-12-08"; Dir="artifacts/futures_up_2023_10"; Regime="up"},
+    @{Label="UP2024-01"; Start="2024-01-23"; End="2024-03-14"; Dir="artifacts/futures_up_2024_01"; Regime="up"},
+    @{Label="UP2024-05"; Start="2024-05-01"; End="2024-06-07"; Dir="artifacts/futures_up_2024_05"; Regime="up"},
+    @{Label="UP2024-09"; Start="2024-09-06"; End="2024-10-29"; Dir="artifacts/futures_up_2024_09"; Regime="up"},
+    @{Label="UP2024-11"; Start="2024-11-05"; End="2024-12-17"; Dir="artifacts/futures_up_2024_11"; Regime="up"},
+    @{Label="DN2020-02"; Start="2020-02-13"; End="2020-03-13"; Dir="artifacts/futures_down_2020_02"; Regime="down"},
+    @{Label="DN2021-01"; Start="2021-01-08"; End="2021-01-27"; Dir="artifacts/futures_down_2021_01"; Regime="down"},
+    @{Label="DN2021-04"; Start="2021-04-14"; End="2021-07-20"; Dir="artifacts/futures_down_2021_04"; Regime="down"},
+    @{Label="DN2021-09"; Start="2021-09-07"; End="2021-09-29"; Dir="artifacts/futures_down_2021_09"; Regime="down"},
+    @{Label="DN2021-11"; Start="2021-11-10"; End="2022-01-24"; Dir="artifacts/futures_down_2021_11"; Regime="down"},
+    @{Label="DN2022-03"; Start="2022-03-28"; End="2022-05-12"; Dir="artifacts/futures_down_2022_03"; Regime="down"},
+    @{Label="DN2022-05"; Start="2022-05-12"; End="2022-06-18"; Dir="artifacts/futures_down_2022_05"; Regime="down"},
+    @{Label="DN2022-08"; Start="2022-08-15"; End="2022-09-21"; Dir="artifacts/futures_down_2022_08"; Regime="down"},
+    @{Label="DN2022-11"; Start="2022-11-05"; End="2022-11-21"; Dir="artifacts/futures_down_2022_11"; Regime="down"},
+    @{Label="DN2023-02"; Start="2023-02-16"; End="2023-03-10"; Dir="artifacts/futures_down_2023_02"; Regime="down"},
+    @{Label="DN2023-07"; Start="2023-07-13"; End="2023-09-11"; Dir="artifacts/futures_down_2023_07"; Regime="down"},
+    @{Label="DN2024-01"; Start="2024-01-01"; End="2024-01-23"; Dir="artifacts/futures_down_2024_01"; Regime="down"},
+    @{Label="DN2024-03"; Start="2024-03-14"; End="2024-05-01"; Dir="artifacts/futures_down_2024_03"; Regime="down"},
+    @{Label="DN2024-06"; Start="2024-06-07"; End="2024-08-05"; Dir="artifacts/futures_down_2024_06"; Regime="down"},
+    @{Label="DN2024-12"; Start="2024-12-17"; End="2024-12-31"; Dir="artifacts/futures_down_2024_12"; Regime="down"},
+    @{Label="RG2020-05"; Start="2020-05-11"; End="2020-07-20"; Dir="artifacts/futures_range_2020_05"; Regime="range"},
+    @{Label="RG2020-09"; Start="2020-09-01"; End="2020-10-08"; Dir="artifacts/futures_range_2020_09"; Regime="range"},
+    @{Label="RG2022-06"; Start="2022-06-18"; End="2022-08-15"; Dir="artifacts/futures_range_2022_06"; Regime="range"},
+    @{Label="RG2022-09"; Start="2022-09-21"; End="2022-11-05"; Dir="artifacts/futures_range_2022_09"; Regime="range"},
+    @{Label="RG2022-11"; Start="2022-11-21"; End="2022-12-31"; Dir="artifacts/futures_range_2022_11"; Regime="range"},
+    @{Label="RG2023-04"; Start="2023-04-14"; End="2023-06-15"; Dir="artifacts/futures_range_2023_04"; Regime="range"},
+    @{Label="RG2023-09"; Start="2023-09-11"; End="2023-10-16"; Dir="artifacts/futures_range_2023_09"; Regime="range"},
+    @{Label="RG2023-12"; Start="2023-12-08"; End="2023-12-31"; Dir="artifacts/futures_range_2023_12"; Regime="range"},
+    @{Label="RG2024-08"; Start="2024-08-05"; End="2024-09-06"; Dir="artifacts/futures_range_2024_08"; Regime="range"},
+    @{Label="BT2025"; Start="2025-01-01"; End="2025-06-30"; Dir="artifacts/futures_backtest_2025"; Regime="backtest"}
 )
 
 Write-Host "=== STEP 1: Downloading ===" -ForegroundColor Cyan
@@ -134,24 +134,29 @@ if bt_files:
     print(f'Backtest: {bt_files[0]}')
 
 print(f'Training data: {combined.num_rows} rows ({combined.num_rows/60/24:.0f} days)')
-print(f'  Regime-aware will auto-classify: high_volatility / trending / ranging')
+print(f'  User-specified regimes: up / down / range')
 "
 
-Write-Host "`n=== STEP 4: Train (skip first 50 weeks for valid weekly MA) ===" -ForegroundColor Cyan
-python -c "
-import pyarrow.parquet as pq, pyarrow as pa
-import datetime
+Write-Host "`n=== STEP 4: Generate user_regime_periods.json ===" -ForegroundColor Cyan
+$regimePeriods = @()
+foreach ($p in $periods) {
+    if ($p.Regime -eq "backtest") { continue }
+    $regimePeriods += @{
+        regime = $p.Regime
+        start = $p.Start
+        end_exclusive = $p.End
+    }
+}
+$jsonContent = @{
+    periods = $regimePeriods
+} | ConvertTo-Json -Depth 3
+$jsonContent | Out-File -FilePath "artifacts/user_regime_periods.json" -Encoding utf8
+Write-Host "Generated artifacts/user_regime_periods.json with $($regimePeriods.Count) periods" -ForegroundColor Green
 
-t = pq.read_table('artifacts/training_combined.parquet')
-start_ms = int(datetime.datetime(2020, 12, 15, tzinfo=datetime.timezone.utc).timestamp() * 1000)
-mask = pa.compute.greater_equal(t['open_time'], pa.scalar(start_ms))
-t_filtered = t.filter(mask)
-pq.write_table(t_filtered, 'artifacts/training_combined.parquet')
-print(f'Filtered: {t.num_rows} -> {t_filtered.num_rows} rows (skipped first ~50 weeks)')
-"
-python -m btcusdt_quant train --input artifacts/training_combined.parquet --ensemble --regime-aware --output artifacts/regime_stacking_model
+Write-Host "`n=== STEP 5: Train with user regimes (skip first 50 weeks via --training-start) ===" -ForegroundColor Cyan
+python -m btcusdt_quant train --input artifacts/training_combined.parquet --ensemble --regime-aware --use-user-regime --user-regime-file artifacts/user_regime_periods.json --training-start 2020-12-15 --output artifacts/regime_stacking_model
 
-Write-Host "`n=== STEP 5: Backtest ===" -ForegroundColor Cyan
+Write-Host "`n=== STEP 6: Backtest ===" -ForegroundColor Cyan
 python -m btcusdt_quant backtest --input artifacts/futures_backtest_2025.parquet --model-artifact artifacts/regime_stacking_model --output artifacts/backtest_results
 
 Write-Host "`n=== DONE ===" -ForegroundColor Cyan

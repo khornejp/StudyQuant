@@ -2499,5 +2499,119 @@ class TestBacktest(unittest.TestCase):
             backtest.run_backtest(candles, None, strategy, cooldown_bars=-1)
 
 
+class TestUserRegime(unittest.TestCase):
+    def test_resolve_user_regime_boundary(self) -> None:
+        from datetime import datetime, timezone
+        periods = [
+            dataset.UserRegimePeriod("up", datetime(2020, 1, 1, tzinfo=timezone.utc), datetime(2020, 2, 1, tzinfo=timezone.utc)),
+        ]
+        self.assertEqual(dataset.resolve_user_regime(datetime(2020, 1, 1, tzinfo=timezone.utc), periods), "up")
+        self.assertEqual(dataset.resolve_user_regime(datetime(2020, 1, 15, tzinfo=timezone.utc), periods), "up")
+        self.assertIsNone(dataset.resolve_user_regime(datetime(2020, 2, 1, tzinfo=timezone.utc), periods))
+        self.assertIsNone(dataset.resolve_user_regime(datetime(2019, 12, 31, tzinfo=timezone.utc), periods))
+
+    def test_load_user_regime_periods(self) -> None:
+        import json
+        import tempfile
+        from datetime import datetime, timezone
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "periods.json"
+            data = {
+                "periods": [
+                    {"regime": "up", "start": "2020-01-01", "end_exclusive": "2020-02-01"},
+                    {"regime": "down", "start": "2020-02-01", "end_exclusive": "2020-03-01"},
+                ]
+            }
+            path.write_text(json.dumps(data), encoding="utf-8")
+            periods = dataset.load_user_regime_periods(path)
+            self.assertEqual(len(periods), 2)
+            self.assertEqual(periods[0].regime, "up")
+            self.assertEqual(periods[0].start, datetime(2020, 1, 1, tzinfo=timezone.utc))
+            self.assertEqual(periods[0].end_exclusive, datetime(2020, 2, 1, tzinfo=timezone.utc))
+
+    def test_load_user_regime_periods_rejects_invalid_regime(self) -> None:
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "periods.json"
+            data = {"periods": [{"regime": "invalid", "start": "2020-01-01", "end_exclusive": "2020-02-01"}]}
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                dataset.load_user_regime_periods(path)
+
+    def test_training_config_user_regime_fields(self) -> None:
+        from datetime import datetime, timezone
+        config = training.TrainingConfig(use_user_regime=True, training_start=datetime(2020, 12, 15, tzinfo=timezone.utc))
+        self.assertTrue(config.use_user_regime)
+        self.assertEqual(config.training_start, datetime(2020, 12, 15, tzinfo=timezone.utc))
+
+    def test_user_regime_training_bypasses_detector(self) -> None:
+        import tempfile
+        from datetime import datetime, timezone
+        # Manually construct labeled rows with user_regime to bypass feature warmup
+        base = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+        feature_names = tuple(dataset.FEATURE_NAMES)
+        labeled_rows: list[dataset.LabeledRow] = []
+        feature_rows: list[dataset.FeatureRow] = []
+        # Create 600 rows: 200 up, 200 down, 200 range (need enough for CV splits)
+        for index in range(600):
+            open_time = base + timedelta(minutes=index)
+            row_features = {name: ((index % 11) - 5) * 0.001 for name in feature_names}
+            row_features["rv_15"] = float(index % 7) * 0.001
+            row_features["trend_slope_30"] = float((index % 5) - 2) * 0.0001
+            label = index % 2
+            regime = "up" if index < 200 else ("down" if index < 400 else "range")
+            feature_rows.append(dataset.FeatureRow(index, open_time, dict(row_features), 0, False, False, user_regime=regime))
+            labeled_rows.append(dataset.LabeledRow(
+                index, open_time, dict(row_features), label, "threshold",
+                0.001 if label else -0.001, 0, False, False,
+                targets={"direction": label, "profitability": label},
+                target_reasons={"direction": "future_positive" if label else "future_negative", "profitability": "threshold"},
+                user_regime=regime,
+            ))
+        gap_report = dataset.GapReport(600, 600, 0, 0.0, 0, base.isoformat(), (base + timedelta(minutes=599)).isoformat())
+        source_report = {
+            "feature_space_parity_passed": True,
+            "train_live_feature_parity_passed": True,
+            "unavailable_sources": [],
+            "fallback_features": [],
+        }
+        build = dataset.DatasetBuild(
+            source="test_user_regime",
+            symbol="BTCUSDT",
+            interval="1m",
+            raw_rows=600,
+            canonical=[],
+            gap_report=gap_report,
+            feature_rows=feature_rows,
+            labeled_rows=labeled_rows,
+            feature_names=feature_names,
+            label_horizon=15,
+            label_threshold=0.0002,
+            source_availability_report=source_report,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            config = training.TrainingConfig(
+                regime_aware=True,
+                use_user_regime=True,
+                ensemble_enabled=False,
+                n_groups=2,
+                test_group_count=1,
+                min_regime_rows=10,
+            )
+            # Should succeed without calling RegimeDetector
+            result = training.run_regime_aware_training(build, output_dir, config)
+            self.assertIn("regime_source", result.run_summary)
+            self.assertEqual(result.run_summary["regime_source"], "user_regime")
+            trained = result.run_summary.get("trained_regimes", {})
+            self.assertIn("up", trained)
+            self.assertIn("down", trained)
+            self.assertIn("range", trained)
+            self.assertEqual(trained["up"]["row_count"], 200)
+            self.assertEqual(trained["down"]["row_count"], 200)
+            self.assertEqual(trained["range"]["row_count"], 200)
+
+
 if __name__ == "__main__":
     unittest.main()

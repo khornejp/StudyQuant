@@ -40,6 +40,8 @@ class TrainingConfig:
     ensemble_direction_family: str = "catboost"
     ensemble_profitability_family: str = "catboost"
     ensemble_meta_family: str = "catboost"
+    use_user_regime: bool = False
+    training_start: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.cv_mode not in {"walk_forward", "combinatorial_purged"}:
@@ -82,12 +84,17 @@ class TrainingResult:
     artifacts: list[str]
 
 
-def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None, prebuilt_dataset: dataset.DatasetBuild | None = None) -> TrainingResult:
+def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None, prebuilt_dataset: dataset.DatasetBuild | None = None, user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None) -> TrainingResult:
     training_config = config or TrainingConfig()
     if prebuilt_dataset is not None:
         build = prebuilt_dataset
     else:
-        build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir, external_sources=external_sources)
+        build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir, external_sources=external_sources, user_regime_periods=user_regime_periods)
+    if training_config.training_start is not None:
+        build = replace(
+            build,
+            labeled_rows=[row for row in build.labeled_rows if row.open_time >= training_config.training_start],
+        )
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
     # Regime-aware: split by market regime and train separate models
@@ -336,6 +343,8 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
 
 
 def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, training_config: TrainingConfig) -> TrainingResult:
+    if training_config.use_user_regime:
+        return _run_user_regime_training(build, output_dir, training_config)
     detector = features.RegimeDetector(
         config=features.RegimeDetectorConfig(
             rv_percentile=training_config.regime_detector_rv_percentile,
@@ -393,6 +402,74 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
             "diagnostics": detector_diagnostics,
             "config": detector.config_dict(),
         },
+        "network_used": False,
+        "orders_enabled": False,
+        "credentials_required": False,
+        "labeled_rows": len(build.labeled_rows),
+        "fold_count": 0,
+        "mean_test_f1": aggregated_mean_test_f1,
+        "mean_test_accuracy": 0.0,
+        "mean_test_ece": 0.0,
+        "mean_test_brier": 0.0,
+        "artifacts": ["regime_run_summary.json"],
+    }
+    writer = governance.ArtifactWriter(output_dir)
+    writer.write_json("regime_run_summary.json", run_summary)
+    return TrainingResult(
+        output_dir=output_dir,
+        dataset_build=build,
+        splits=[],
+        fold_results=[],
+        run_summary=run_summary,
+        artifacts=["regime_run_summary.json"],
+    )
+
+
+def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, training_config: TrainingConfig) -> TrainingResult:
+    """Train separate models per user-specified regime (up/down/range)."""
+    user_regime_names = dataset.USER_REGIME_NAMES
+    regimes = [row.user_regime for row in build.labeled_rows]
+    regime_counts = {regime: regimes.count(regime) for regime in user_regime_names}
+    regime_summaries: dict[str, dict[str, object]] = {}
+    trained_regimes: dict[str, dict[str, object]] = {}
+    skipped_regimes: dict[str, dict[str, object]] = {}
+
+    for regime_name in user_regime_names:
+        regime_indices = [index for index, regime in enumerate(regimes) if regime == regime_name]
+        row_count = len(regime_indices)
+        if row_count < training_config.min_regime_rows:
+            skipped_regimes[regime_name] = {
+                "status": "skipped",
+                "reason": "insufficient_rows",
+                "row_count": row_count,
+                "min_regime_rows": training_config.min_regime_rows,
+            }
+            continue
+        regime_result = _train_single_regime(build, output_dir, training_config, regime_name, regime_indices)
+        regime_summaries[regime_name] = dict(regime_result.run_summary)
+        trained_regimes[regime_name] = {
+            "status": "trained",
+            "row_count": row_count,
+            "min_regime_rows": training_config.min_regime_rows,
+            "output_dir": f"regime_{regime_name}",
+            "mean_test_f1": float(regime_result.run_summary.get("mean_test_f1", 0.0)),
+        }
+
+    default_regime = _default_regime_by_rows(trained_regimes)
+    regime_test_f1_values = [float(summary["mean_test_f1"]) for summary in regime_summaries.values() if "mean_test_f1" in summary]
+    aggregated_mean_test_f1 = sum(regime_test_f1_values) / len(regime_test_f1_values) if regime_test_f1_values else 0.0
+    unclassified_count = sum(1 for r in regimes if r is None)
+    run_summary = {
+        "regime_aware": True,
+        "regime_source": "user_regime",
+        "user_regime_counts": regime_counts,
+        "unclassified_rows": unclassified_count,
+        "training_start": training_config.training_start.isoformat() if training_config.training_start else None,
+        "regime_results": regime_summaries,
+        "trained_regimes": trained_regimes,
+        "skipped_regimes": skipped_regimes,
+        "default_regime": default_regime,
+        "min_regime_rows": training_config.min_regime_rows,
         "network_used": False,
         "orders_enabled": False,
         "credentials_required": False,
