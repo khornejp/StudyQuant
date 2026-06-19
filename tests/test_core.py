@@ -154,7 +154,7 @@ class DataPipelineTests(unittest.TestCase):
         registry = dataset.feature_formula_registry()
         registry_features = cast(list[dict[str, object]], registry["features"])
         categories = {feature["category"] for feature in registry_features}
-        self.assertEqual(categories, {f"F{index:02d}" for index in range(1, 13)})
+        self.assertEqual(categories, {f"F{index:02d}" for index in range(1, 14)})
 
     def test_feature_registry_all_features_active(self) -> None:
         registry = dataset.feature_formula_registry()

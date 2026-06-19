@@ -178,10 +178,13 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("premium_index", "F12", EXCHANGE_SAFETY, "exchange premium index observed at t", 1, 1, "premium_index_1m", warmup_rule="state", leakage_risk="low_state_snapshot"),
     _feature("leverage_bracket_utilization", "F12", EXCHANGE_SAFETY, "position notional_t / max(current leverage bracket cap_t, 1e-12)", 1, 1, "leverage_bracket", warmup_rule="state", leakage_risk="low_state_snapshot"),
     # F13: Higher Timeframe Features (Weekly)
-    _feature("weekly_ma20_slope", "F13", HIGHER_TIMEFRAME, "pct_change(SMA(weekly_close, 20))", 50400, 50400, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("weekly_ma50_slope", "F13", HIGHER_TIMEFRAME, "pct_change(SMA(weekly_close, 50))", 50400, 50400, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("weekly_drawdown", "F13", HIGHER_TIMEFRAME, "weekly_close_t / cummax(weekly_close) - 1", 50400, 50400, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("weekly_vol_contraction", "F13", HIGHER_TIMEFRAME, "std(weekly_close, 20) / std(weekly_close, 50)", 50400, 50400, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_ma20_slope_closed", "F13", HIGHER_TIMEFRAME, "pct_change(SMA(weekly_close, 20))", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_ma50_slope_closed", "F13", HIGHER_TIMEFRAME, "pct_change(SMA(weekly_close, 50))", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_ma20_above_ma50", "F13", HIGHER_TIMEFRAME, "1 if SMA(weekly_close, 20) > SMA(weekly_close, 50) else 0", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_drawdown", "F13", HIGHER_TIMEFRAME, "weekly_close_t / cummax(weekly_close) - 1", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_vol_contraction", "F13", HIGHER_TIMEFRAME, "std(weekly_close, 20) / std(weekly_close, 50)", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("close_vs_weekly_ma20", "F13", HIGHER_TIMEFRAME, "current_close / SMA(weekly_close, 20) - 1", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("close_vs_weekly_ma50", "F13", HIGHER_TIMEFRAME, "current_close / SMA(weekly_close, 50) - 1", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
 ]
 
 

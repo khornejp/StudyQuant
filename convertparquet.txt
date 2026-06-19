@@ -1,0 +1,5 @@
+import pyarrow.csv as pv
+import pyarrow.parquet as pq
+table = pv.read_csv('artifacts/btcusdt_2months_combined.csv')
+pq.write_table(table, 'artifacts/btcusdt_2months_combined.parquet')
+print('Parquet saved')

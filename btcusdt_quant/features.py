@@ -1109,7 +1109,9 @@ class RegimeDetector:
         trend_slope_30: float,
         historical_rv_15_values: Sequence[float] | None = None,
         thresholds: Mapping[str, float] | None = None,
-        weekly_ma20_slope: float | None = None,
+        weekly_ma20_slope_closed: float | None = None,
+        weekly_ma50_slope_closed: float | None = None,
+        weekly_ma20_above_ma50: float | None = None,
         weekly_drawdown: float | None = None,
         weekly_vol_contraction: float | None = None,
     ) -> str:
@@ -1120,14 +1122,20 @@ class RegimeDetector:
         effective_thresholds = thresholds
         if effective_thresholds is None:
             effective_thresholds = self._default_thresholds(historical_rv_15_values)
-        return self._classify_raw(rv_15, trend_slope_30, effective_thresholds, weekly_ma20_slope, weekly_drawdown, weekly_vol_contraction)
+        return self._classify_raw(
+            rv_15, trend_slope_30, effective_thresholds,
+            weekly_ma20_slope_closed, weekly_ma50_slope_closed, weekly_ma20_above_ma50,
+            weekly_drawdown, weekly_vol_contraction,
+        )
 
     def _classify_raw(
         self,
         rv_15: float,
         trend_slope_30: float,
         thresholds: Mapping[str, float],
-        weekly_ma20_slope: float | None = None,
+        weekly_ma20_slope_closed: float | None = None,
+        weekly_ma50_slope_closed: float | None = None,
+        weekly_ma20_above_ma50: float | None = None,
         weekly_drawdown: float | None = None,
         weekly_vol_contraction: float | None = None,
     ) -> str:
@@ -1141,14 +1149,21 @@ class RegimeDetector:
         high_vol_regime = rv_value > rv_threshold
         
         # Enhance with weekly features if available
-        if weekly_ma20_slope is not None and weekly_drawdown is not None:
-            ma_slope = float(weekly_ma20_slope) if isfinite(float(weekly_ma20_slope)) else 0.0
+        if weekly_ma20_slope_closed is not None and weekly_drawdown is not None:
+            ma20_slope = float(weekly_ma20_slope_closed) if isfinite(float(weekly_ma20_slope_closed)) else 0.0
+            ma50_slope = float(weekly_ma50_slope_closed) if isfinite(float(weekly_ma50_slope_closed)) else 0.0
             dd = float(weekly_drawdown) if isfinite(float(weekly_drawdown)) else 0.0
             
-            # Strong trend: MA slope > 2% weekly AND drawdown < 5%
-            strong_trend = abs(ma_slope) > 0.02 and dd > -0.05
+            # Strong trend: MA20 slope > 2% weekly AND drawdown < 5%
+            strong_trend = abs(ma20_slope) > 0.02 and dd > -0.05
             if strong_trend:
                 trend_regime = True
+            
+            # Golden cross: MA20 > MA50, both slopes positive
+            if weekly_ma20_above_ma50 is not None:
+                golden_cross = float(weekly_ma20_above_ma50) > 0.5 and ma20_slope > 0 and ma50_slope > 0
+                if golden_cross and dd > -0.05:
+                    trend_regime = True
             
             # Deep drawdown: override to ranging/high_vol
             if dd < -0.20:

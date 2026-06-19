@@ -834,7 +834,7 @@ def collect_candles(
     return CollectionResult(output_path, source, symbol, interval, len(candles), network_used)
 
 
-def expanded_fixture(rows: int = 300) -> list[data.Candle]:
+def expanded_fixture(rows: int = 6000) -> list[data.Candle]:
     base = data.utc_minute(2026, 1, 1, 0, 0)
     missing_minutes = {37, 38, 119, 177}
     candles: list[data.Candle] = []
@@ -1155,10 +1155,13 @@ def build_feature_rows(
             "premium_index": _premium_index_value(candle_external_sources),
             "leverage_bracket_utilization": _leverage_bracket_utilization_value(candle_external_sources),
             # F13: Weekly features
-            "weekly_ma20_slope": weekly_feature_values["weekly_ma20_slope"][index],
-            "weekly_ma50_slope": weekly_feature_values["weekly_ma50_slope"][index],
+            "weekly_ma20_slope_closed": weekly_feature_values["weekly_ma20_slope_closed"][index],
+            "weekly_ma50_slope_closed": weekly_feature_values["weekly_ma50_slope_closed"][index],
+            "weekly_ma20_above_ma50": weekly_feature_values["weekly_ma20_above_ma50"][index],
             "weekly_drawdown": weekly_feature_values["weekly_drawdown"][index],
             "weekly_vol_contraction": weekly_feature_values["weekly_vol_contraction"][index],
+            "close_vs_weekly_ma20": weekly_feature_values["close_vs_weekly_ma20"][index],
+            "close_vs_weekly_ma50": weekly_feature_values["close_vs_weekly_ma50"][index],
         }
         clipper = features.FeatureClipper()
         clipped = clipper.clip({name: values[name] for name in FEATURE_NAMES})
