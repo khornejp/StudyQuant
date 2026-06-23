@@ -2182,7 +2182,8 @@ def load_regime_aware_models(path: Path, strict: bool = False) -> RegimeModelBun
             detector_thresholds = detector.get("thresholds")
         except Exception:
             pass
-    default_regime = max(models_by_regime, key=lambda k: 1) if models_by_regime else None
+    # Default regime: prefer "range", then any available regime
+    default_regime = "range" if "range" in models_by_regime else (next(iter(models_by_regime)) if models_by_regime else None)
     return RegimeModelBundle(models_by_regime, default_regime, detector_config, detector_thresholds)
 
 

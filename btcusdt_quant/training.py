@@ -597,16 +597,27 @@ def _train_single_regime(
     writer.write_json("model.json", ensemble.as_dict())
     print(f"[TRAIN]   Ensemble saved to {regime_output_dir / 'model.json'}")
     
-    # Run a simple CV to get metrics
-    result = run_training(
-        input_path=None,
+    # Create minimal TrainingResult without re-training (ensemble already saved)
+    run_summary = {
+        "regime_aware": False,
+        "regime_source": "user_regime",
+        "trained_regimes": {regime_name: {"status": "trained", "row_count": len(regime_indices)}},
+        "labeled_rows": len(regime_build.labeled_rows),
+        "fold_count": 0,
+        "mean_test_f1": 0.0,
+        "mean_test_accuracy": 0.0,
+        "mean_test_ece": 0.0,
+        "mean_test_brier": 0.0,
+        "artifacts": ["model.json"],
+    }
+    return TrainingResult(
         output_dir=regime_output_dir,
-        config=regime_config,
-        archive_dir=None,
-        external_sources=None,
-        prebuilt_dataset=regime_build,
+        dataset_build=regime_build,
+        splits=[],
+        fold_results=[],
+        run_summary=run_summary,
+        artifacts=["model.json"],
     )
-    return result
 
 
 def _default_regime_by_rows(trained_regimes: Mapping[str, Mapping[str, object]]) -> str | None:
