@@ -550,7 +550,43 @@ def _train_single_regime(
         optuna_enabled=False,
         champion_challenger_enabled=False,
     )
-    return run_training(
+    
+    # Train ensemble: 3 models with different configurations
+    print(f"[TRAIN]   Training ensemble (3 models) for regime '{regime_name}'...")
+    f_matrix = feature_matrix(regime_build.labeled_rows, regime_build.feature_names)
+    labels = [row.label for row in regime_build.labeled_rows]
+    
+    # Model 1: CatBoost fast (shallow, high lr)
+    print(f"[TRAIN]     Model 1/3: CatBoost fast (depth=6, lr=0.1)...")
+    model1 = models.CatBoostAdapter(
+        feature_names=regime_build.feature_names,
+        model_params={"iterations": 200, "learning_rate": 0.1, "depth": 6, "verbose": False},
+    )
+    model1.fit(f_matrix, labels)
+    
+    # Model 2: CatBoost deep (deep, low lr)
+    print(f"[TRAIN]     Model 2/3: CatBoost deep (depth=10, lr=0.01)...")
+    model2 = models.CatBoostAdapter(
+        feature_names=regime_build.feature_names,
+        model_params={"iterations": 500, "learning_rate": 0.01, "depth": 10, "verbose": False},
+    )
+    model2.fit(f_matrix, labels)
+    
+    # Model 3: LightGBM
+    print(f"[TRAIN]     Model 3/3: LightGBM...")
+    model3 = models.LightGBMAdapter(feature_names=regime_build.feature_names)
+    model3.fit(f_matrix, labels)
+    
+    # Create ensemble
+    ensemble = models.EnsembleAdapter([model1, model2, model3], weights=[0.3, 0.4, 0.3])
+    
+    # Save ensemble as model.json
+    writer = governance.ArtifactWriter(regime_output_dir)
+    writer.write_json("model.json", ensemble.as_dict())
+    print(f"[TRAIN]   Ensemble saved to {regime_output_dir / 'model.json'}")
+    
+    # Run a simple CV to get metrics
+    result = run_training(
         input_path=None,
         output_dir=regime_output_dir,
         config=regime_config,
@@ -558,6 +594,7 @@ def _train_single_regime(
         external_sources=None,
         prebuilt_dataset=regime_build,
     )
+    return result
 
 
 def _default_regime_by_rows(trained_regimes: Mapping[str, Mapping[str, object]]) -> str | None:

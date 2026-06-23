@@ -292,6 +292,54 @@ class CatBoostAdapter:
         return probs[0] if probs else 0.5
 
 
+class EnsembleAdapter:
+    """Simple ensemble: train multiple models and average predictions."""
+
+    def __init__(self, models: Sequence[ModelAdapter], weights: Sequence[float] | None = None) -> None:
+        self._models = list(models)
+        self._weights = list(weights) if weights is not None else [1.0 / len(models)] * len(models)
+        if len(self._models) != len(self._weights):
+            raise ValueError("models and weights must have same length")
+        total = sum(self._weights)
+        if total <= 0:
+            raise ValueError("weights must sum to positive value")
+        self._weights = [w / total for w in self._weights]
+
+    @property
+    def model_family(self) -> str:
+        return "ensemble"
+
+    def probability(self, values: Mapping[str, float]) -> float:
+        probs = [float(m.probability(values)) for m in self._models]
+        return sum(p * w for p, w in zip(probs, self._weights))
+
+    def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
+        return [self.probability(dict(zip(self._models[0].feature_names, row))) for row in feature_matrix]
+
+    def fit(self, feature_matrix: FeatureMatrix, labels: Sequence[int], sample_weight: Sequence[float] | None = None) -> "EnsembleAdapter":
+        raise RuntimeError("EnsembleAdapter must be fitted via train_ensemble(), not .fit()")
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "model_family": self.model_family,
+            "models": [m.as_dict() for m in self._models],
+            "weights": self._weights,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "EnsembleAdapter":
+        models = []
+        for m_payload in payload.get("models", []):
+            if isinstance(m_payload, Mapping):
+                family = str(m_payload.get("model_family", ""))
+                if family == "catboost":
+                    models.append(CatBoostAdapter.from_dict(m_payload))
+                elif family == "lightgbm":
+                    models.append(LightGBMAdapter.from_dict(m_payload))
+        weights = [float(w) for w in payload.get("weights", [])]
+        return cls(models, weights)
+
+
 class ModelFactory:
     SUPPORTED_FAMILIES: tuple[str, ...] = ("lightgbm", "catboost", "auto", "stacking_ensemble", "pytorch_multitask")
 

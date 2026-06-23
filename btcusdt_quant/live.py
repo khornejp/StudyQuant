@@ -1401,6 +1401,8 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> models.Model
             return models.LightGBMAdapter.from_dict(payload)
         if model_family == "catboost":
             return models.CatBoostAdapter.from_dict(payload)
+        if model_family == "ensemble":
+            return models.EnsembleAdapter.from_dict(payload)
         if model_family == "stacking_ensemble":
             from . import ensemble
             return ensemble.StackingEnsembleAdapter.from_dict(payload)
@@ -2150,6 +2152,8 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> models.Model
         return models.LightGBMAdapter.from_dict(payload)
     if family == "catboost":
         return models.CatBoostAdapter.from_dict(payload)
+    if family == "ensemble":
+        return models.EnsembleAdapter.from_dict(payload)
     raise ValueError(f"unsupported model family in artifact: {family}")
 
 
