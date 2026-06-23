@@ -173,6 +173,7 @@ def run_backtest(
     models_by_regime: Mapping[str, object] | None = None,
     user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None,
     default_regime: str | None = None,
+    start_date: str | None = None,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -217,7 +218,16 @@ def run_backtest(
 
     feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
 
+    start_dt = None
+    if start_date is not None:
+        from datetime import datetime
+        start_dt = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+
     for i, candle in enumerate(candles):
+        # Skip trading before start_date (but feature_rows still computed with full history)
+        if start_dt is not None and candle.open_time < start_dt:
+            continue
+
         result.signal_counts.setdefault("HOLD", 0)
         result.signal_counts.setdefault("BUY", 0)
         result.signal_counts.setdefault("SELL", 0)
@@ -364,6 +374,7 @@ def compare_strategies(
     models_by_regime: Mapping[str, object] | None = None,
     user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None,
     default_regime: str | None = None,
+    start_date: str | None = None,
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison."""
     if strategies is None:
@@ -384,6 +395,7 @@ def compare_strategies(
             models_by_regime=models_by_regime,
             user_regime_periods=user_regime_periods,
             default_regime=default_regime,
+            start_date=start_date,
         )
 
     best_strategy = max(results, key=lambda k: results[k].total_return)

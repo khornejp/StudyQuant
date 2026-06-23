@@ -394,6 +394,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--output", default="artifacts/backtest", help="backtest output directory")
     backtest_parser.add_argument("--model-artifact", default=None, help="trained model artifact JSON path or regime-aware directory")
     backtest_parser.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods for backtest")
+    backtest_parser.add_argument("--backtest-start", default=None, help="start date for backtest (ISO format, e.g., 2025-01-01); candles before this date are used for feature computation only")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -576,6 +577,7 @@ def main(argv: list[str] | None = None) -> int:
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,
                 default_regime=max(models_by_regime, key=lambda k: 1) if models_by_regime else None,
+                start_date=args.backtest_start,
             )
             result = backtest.run_backtest(
                 candles,
@@ -584,6 +586,7 @@ def main(argv: list[str] | None = None) -> int:
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,
                 default_regime=max(models_by_regime, key=lambda k: 1) if models_by_regime else None,
+                start_date=args.backtest_start,
             )
             summary = {
                 "backtest": result.as_dict(),

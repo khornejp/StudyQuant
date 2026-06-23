@@ -85,12 +85,24 @@ class TrainingResult:
     artifacts: list[str]
 
 
-def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None, prebuilt_dataset: dataset.DatasetBuild | None = None, user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None) -> TrainingResult:
+def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None, prebuilt_dataset: dataset.DatasetBuild | None = None, user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None, cache_path: Path | None = None) -> TrainingResult:
     training_config = config or TrainingConfig()
     if prebuilt_dataset is not None:
         build = prebuilt_dataset
+    elif cache_path is not None and cache_path.exists():
+        print(f"[TRAIN] Loading cached dataset from {cache_path}")
+        import pickle
+        with open(cache_path, "rb") as f:
+            build = pickle.load(f)
+        print(f"[TRAIN] Cached dataset loaded: {len(build.labeled_rows):,} rows")
     else:
         build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir, external_sources=external_sources, user_regime_periods=user_regime_periods)
+        if cache_path is not None:
+            print(f"[TRAIN] Saving dataset cache to {cache_path}")
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            import pickle
+            with open(cache_path, "wb") as f:
+                pickle.dump(build, f)
     if training_config.training_start is not None:
         build = replace(
             build,

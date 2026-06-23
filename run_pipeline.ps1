@@ -159,14 +159,25 @@ $jsonContent = @{
 Write-Host "Generated artifacts/user_regime_periods.json with $($jsonPeriods.Count) periods" -ForegroundColor Green
 
 Write-Host "`n=== STEP 4: Train with user regimes (50-week warmup auto-excluded) ===" -ForegroundColor Cyan
-Write-Host "  Model: catboost (auto fallback chain)"
+Write-Host "  Model: catboost ensemble (3 models per regime)"
 Write-Host "  Regime-aware: user-specified periods"
 $env:PYTHONUNBUFFERED=1
-python -u -m btcusdt_quant train --input $trainParquet --use-user-regime --user-regime-file artifacts/user_regime_periods.json --output artifacts/regime_model
+python -u -m btcusdt_quant train --input $trainParquet --use-user-regime --user-regime-file artifacts/user_regime_periods.json --output artifacts/regime_model --cache-path artifacts/training_dataset_cache.pkl
 $env:PYTHONUNBUFFERED=0
 
 Write-Host "`n=== STEP 5: Backtest on 2025 data ===" -ForegroundColor Cyan
-python -m btcusdt_quant backtest --input $backtestParquet --model-artifact artifacts/regime_model --user-regime-file artifacts/user_regime_periods.json --output artifacts/backtest_results
+# Merge training + backtest data for correct feature computation (rolling windows need history)
+Write-Host "  Merging training(2020-2024) + backtest(2025) for feature continuity..." -ForegroundColor Yellow
+python -c "
+import pyarrow.parquet as pq
+import pyarrow as pa
+train = pq.read_table('$trainParquet')
+bt = pq.read_table('$backtestParquet')
+merged = pa.concat_tables([train, bt])
+pq.write_table(merged, 'artifacts/merged_for_backtest.parquet')
+print(f'  Merged: {merged.num_rows:,} rows ({train.num_rows:,} train + {bt.num_rows:,} backtest)')
+"
+python -m btcusdt_quant backtest --input artifacts/merged_for_backtest.parquet --model-artifact artifacts/regime_model --user-regime-file artifacts/user_regime_periods.json --backtest-start 2025-01-01 --output artifacts/backtest_results
 
 Write-Host "`n=== DONE ===" -ForegroundColor Cyan
 Write-Host "Training model: artifacts/regime_model/"
