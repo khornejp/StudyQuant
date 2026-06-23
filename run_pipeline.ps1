@@ -1,82 +1,73 @@
-# BTCUSDT Pipeline - Sequential Download (Fixed)
-# Uses python collect-archive CLI (verified stable)
+# BTCUSDT Pipeline - Correct Pipeline Order
+# 1. Download 2020-2024 as ONE continuous dataset for proper weekly MA50 computation
+# 2. Download 2025 backtest data separately
+# 3. Generate user_regime_periods.json
+# 4. Train with user regimes (50-week warmup auto-excluded)
+# 5. Backtest on 2025 data
 
 $ErrorActionPreference = "Stop"
 
-$periods = @(
-    # 2020-2024 Full range (headerless CSV fix applied)
-    @{Label="UP2020-01"; Start="2020-01-01"; End="2020-02-13"; Dir="artifacts/futures_up_2020_01"; Regime="up"},
-    @{Label="UP2020-03"; Start="2020-03-13"; End="2020-05-11"; Dir="artifacts/futures_up_2020_03"; Regime="up"},
-    @{Label="UP2020-07"; Start="2020-07-20"; End="2020-09-01"; Dir="artifacts/futures_up_2020_07"; Regime="up"},
-    @{Label="UP2020-10"; Start="2020-10-08"; End="2021-01-08"; Dir="artifacts/futures_up_2020_10"; Regime="up"},
-    @{Label="UP2021-01"; Start="2021-01-27"; End="2021-04-14"; Dir="artifacts/futures_up_2021_01"; Regime="up"},
-    @{Label="UP2021-07"; Start="2021-07-20"; End="2021-09-07"; Dir="artifacts/futures_up_2021_07"; Regime="up"},
-    @{Label="UP2021-09"; Start="2021-09-29"; End="2021-11-10"; Dir="artifacts/futures_up_2021_09"; Regime="up"},
-    @{Label="UP2022-01"; Start="2022-01-24"; End="2022-03-28"; Dir="artifacts/futures_up_2022_01"; Regime="up"},
-    @{Label="UP2023-01"; Start="2023-01-01"; End="2023-02-16"; Dir="artifacts/futures_up_2023_01"; Regime="up"},
-    @{Label="UP2023-03"; Start="2023-03-10"; End="2023-04-14"; Dir="artifacts/futures_up_2023_03"; Regime="up"},
-    @{Label="UP2023-06"; Start="2023-06-15"; End="2023-07-13"; Dir="artifacts/futures_up_2023_06"; Regime="up"},
-    @{Label="UP2023-10"; Start="2023-10-16"; End="2023-12-08"; Dir="artifacts/futures_up_2023_10"; Regime="up"},
-    @{Label="UP2024-01"; Start="2024-01-23"; End="2024-03-14"; Dir="artifacts/futures_up_2024_01"; Regime="up"},
-    @{Label="UP2024-05"; Start="2024-05-01"; End="2024-06-07"; Dir="artifacts/futures_up_2024_05"; Regime="up"},
-    @{Label="UP2024-09"; Start="2024-09-06"; End="2024-10-29"; Dir="artifacts/futures_up_2024_09"; Regime="up"},
-    @{Label="UP2024-11"; Start="2024-11-05"; End="2024-12-17"; Dir="artifacts/futures_up_2024_11"; Regime="up"},
-    @{Label="DN2020-02"; Start="2020-02-13"; End="2020-03-13"; Dir="artifacts/futures_down_2020_02"; Regime="down"},
-    @{Label="DN2021-01"; Start="2021-01-08"; End="2021-01-27"; Dir="artifacts/futures_down_2021_01"; Regime="down"},
-    @{Label="DN2021-04"; Start="2021-04-14"; End="2021-07-20"; Dir="artifacts/futures_down_2021_04"; Regime="down"},
-    @{Label="DN2021-09"; Start="2021-09-07"; End="2021-09-29"; Dir="artifacts/futures_down_2021_09"; Regime="down"},
-    @{Label="DN2021-11"; Start="2021-11-10"; End="2022-01-24"; Dir="artifacts/futures_down_2021_11"; Regime="down"},
-    @{Label="DN2022-03"; Start="2022-03-28"; End="2022-05-12"; Dir="artifacts/futures_down_2022_03"; Regime="down"},
-    @{Label="DN2022-05"; Start="2022-05-12"; End="2022-06-18"; Dir="artifacts/futures_down_2022_05"; Regime="down"},
-    @{Label="DN2022-08"; Start="2022-08-15"; End="2022-09-21"; Dir="artifacts/futures_down_2022_08"; Regime="down"},
-    @{Label="DN2022-11"; Start="2022-11-05"; End="2022-11-21"; Dir="artifacts/futures_down_2022_11"; Regime="down"},
-    @{Label="DN2023-02"; Start="2023-02-16"; End="2023-03-10"; Dir="artifacts/futures_down_2023_02"; Regime="down"},
-    @{Label="DN2023-07"; Start="2023-07-13"; End="2023-09-11"; Dir="artifacts/futures_down_2023_07"; Regime="down"},
-    @{Label="DN2024-01"; Start="2024-01-01"; End="2024-01-23"; Dir="artifacts/futures_down_2024_01"; Regime="down"},
-    @{Label="DN2024-03"; Start="2024-03-14"; End="2024-05-01"; Dir="artifacts/futures_down_2024_03"; Regime="down"},
-    @{Label="DN2024-06"; Start="2024-06-07"; End="2024-08-05"; Dir="artifacts/futures_down_2024_06"; Regime="down"},
-    @{Label="DN2024-12"; Start="2024-12-17"; End="2024-12-31"; Dir="artifacts/futures_down_2024_12"; Regime="down"},
-    @{Label="RG2020-05"; Start="2020-05-11"; End="2020-07-20"; Dir="artifacts/futures_range_2020_05"; Regime="range"},
-    @{Label="RG2020-09"; Start="2020-09-01"; End="2020-10-08"; Dir="artifacts/futures_range_2020_09"; Regime="range"},
-    @{Label="RG2022-06"; Start="2022-06-18"; End="2022-08-15"; Dir="artifacts/futures_range_2022_06"; Regime="range"},
-    @{Label="RG2022-09"; Start="2022-09-21"; End="2022-11-05"; Dir="artifacts/futures_range_2022_09"; Regime="range"},
-    @{Label="RG2022-11"; Start="2022-11-21"; End="2022-12-31"; Dir="artifacts/futures_range_2022_11"; Regime="range"},
-    @{Label="RG2023-04"; Start="2023-04-14"; End="2023-06-15"; Dir="artifacts/futures_range_2023_04"; Regime="range"},
-    @{Label="RG2023-09"; Start="2023-09-11"; End="2023-10-16"; Dir="artifacts/futures_range_2023_09"; Regime="range"},
-    @{Label="RG2023-12"; Start="2023-12-08"; End="2023-12-31"; Dir="artifacts/futures_range_2023_12"; Regime="range"},
-    @{Label="RG2024-08"; Start="2024-08-05"; End="2024-09-06"; Dir="artifacts/futures_range_2024_08"; Regime="range"},
-    @{Label="BT2025"; Start="2025-01-01"; End="2025-06-30"; Dir="artifacts/futures_backtest_2025"; Regime="backtest"}
+# User-defined regime periods (used for labeling, NOT for data downloading)
+$regimePeriods = @(
+    # 2020
+    @{Regime="up";     Start="2020-01-01"; End="2020-02-13"},
+    @{Regime="down";   Start="2020-02-13"; End="2020-03-13"},
+    @{Regime="up";     Start="2020-03-13"; End="2020-05-11"},
+    @{Regime="range";  Start="2020-05-11"; End="2020-07-20"},
+    @{Regime="up";     Start="2020-07-20"; End="2020-09-01"},
+    @{Regime="range";  Start="2020-09-01"; End="2020-10-08"},
+    @{Regime="up";     Start="2020-10-08"; End="2021-01-08"},
+    # 2021
+    @{Regime="down";   Start="2021-01-08"; End="2021-01-27"},
+    @{Regime="up";     Start="2021-01-27"; End="2021-04-14"},
+    @{Regime="down";   Start="2021-04-14"; End="2021-07-20"},
+    @{Regime="up";     Start="2021-07-20"; End="2021-09-07"},
+    @{Regime="down";   Start="2021-09-07"; End="2021-09-29"},
+    @{Regime="up";     Start="2021-09-29"; End="2021-11-10"},
+    @{Regime="down";   Start="2021-11-10"; End="2022-01-24"},
+    # 2022
+    @{Regime="up";     Start="2022-01-24"; End="2022-03-28"},
+    @{Regime="down";   Start="2022-03-28"; End="2022-05-12"},
+    @{Regime="down";   Start="2022-05-12"; End="2022-06-18"},
+    @{Regime="range";  Start="2022-06-18"; End="2022-08-15"},
+    @{Regime="down";   Start="2022-08-15"; End="2022-09-21"},
+    @{Regime="range";  Start="2022-09-21"; End="2022-11-05"},
+    @{Regime="down";   Start="2022-11-05"; End="2022-11-21"},
+    @{Regime="range";  Start="2022-11-21"; End="2022-12-31"},
+    # 2023
+    @{Regime="up";     Start="2023-01-01"; End="2023-02-16"},
+    @{Regime="down";   Start="2023-02-16"; End="2023-03-10"},
+    @{Regime="up";     Start="2023-03-10"; End="2023-04-14"},
+    @{Regime="range";  Start="2023-04-14"; End="2023-06-15"},
+    @{Regime="up";     Start="2023-06-15"; End="2023-07-13"},
+    @{Regime="down";   Start="2023-07-13"; End="2023-09-11"},
+    @{Regime="range";  Start="2023-09-11"; End="2023-10-16"},
+    @{Regime="up";     Start="2023-10-16"; End="2023-12-08"},
+    @{Regime="range";  Start="2023-12-08"; End="2023-12-31"},
+    # 2024
+    @{Regime="down";   Start="2024-01-01"; End="2024-01-23"},
+    @{Regime="up";     Start="2024-01-23"; End="2024-03-14"},
+    @{Regime="down";   Start="2024-03-14"; End="2024-05-01"},
+    @{Regime="up";     Start="2024-05-01"; End="2024-06-07"},
+    @{Regime="down";   Start="2024-06-07"; End="2024-08-05"},
+    @{Regime="range";  Start="2024-08-05"; End="2024-09-06"},
+    @{Regime="up";     Start="2024-09-06"; End="2024-10-29"},
+    @{Regime="up";     Start="2024-11-05"; End="2024-12-17"},
+    @{Regime="down";   Start="2024-12-17"; End="2024-12-31"}
 )
 
-Write-Host "=== STEP 1: Downloading ===" -ForegroundColor Cyan
-$ok = 0; $fail = 0
+# Standard Binance kline columns (for headerless CSV detection)
+$BINANCE_COLS = @(
+    'open_time', 'open', 'high', 'low', 'close', 'volume',
+    'close_time', 'quote_volume', 'count', 'taker_buy_volume',
+    'taker_buy_quote_volume', 'ignore'
+)
 
-foreach ($p in $periods) {
-    $csvPattern = "$($p.Dir)/BTCUSDT-1m-*.csv"
-    if (Test-Path $csvPattern) { Write-Host "[$($p.Label)] Skip (exists)" -ForegroundColor Gray; $ok++; continue }
-    
-    Write-Host "[$($p.Label)] $($p.Start)~$($p.End)" -ForegroundColor Yellow -NoNewline
-    try {
-        $out = python -m btcusdt_quant collect-archive --start $p.Start --end $p.End --output $p.Dir --allow-public-network --min-rows 1 2>&1
-        if (Test-Path $csvPattern) { Write-Host " OK" -ForegroundColor Green; $ok++ }
-        else { Write-Host " FAIL (no CSV)" -ForegroundColor Red; $fail++ }
-    } catch { Write-Host " FAIL: $_" -ForegroundColor Red; $fail++ }
-}
-
-Write-Host "Result: $ok success, $fail failed"
-if ($ok -eq 0) { Write-Host "ERROR: No data!" -ForegroundColor Red; exit 1 }
-
-Write-Host "`n=== STEP 2: CSV to Parquet ===" -ForegroundColor Cyan
-foreach ($p in $periods) {
-    $parquet = "$($p.Dir).parquet"
-    if (Test-Path $parquet) { continue }
-    $csvs = (Get-ChildItem "$($p.Dir)/BTCUSDT-1m-*.csv" -ErrorAction SilentlyContinue)
-    if (-not $csvs) { continue }
-    Write-Host "[$($p.Label)] $($csvs.Count) files" -ForegroundColor Yellow
+function Convert-CsvToParquet($csvDir, $outputParquet) {
+    Write-Host "  Converting CSVs to Parquet: $outputParquet" -ForegroundColor Yellow
     python -c "
 import glob, pyarrow.csv as pv, pyarrow.parquet as pq, pyarrow as pa
 
-# Standard Binance kline columns (before our renaming)
 BINANCE_COLS = [
     'open_time', 'open', 'high', 'low', 'close', 'volume',
     'close_time', 'quote_volume', 'count', 'taker_buy_volume',
@@ -84,19 +75,19 @@ BINANCE_COLS = [
 ]
 
 def read_csv_safe(path):
-    # Peek first line to detect header
     with open(path, 'r', encoding='utf-8') as f:
         first_line = f.readline().strip()
     first_field = first_line.split(',')[0] if first_line else ''
-    # If first field is numeric (timestamp), it's data row = no header
     is_header = not (first_field.replace('.', '').replace('-', '').isdigit())
     if is_header:
         return pv.read_csv(path)
     else:
         return pv.read_csv(path, read_options=pv.ReadOptions(column_names=BINANCE_COLS))
 
-files = sorted(glob.glob('$($p.Dir)/BTCUSDT-1m-*.csv'))
-if not files: exit(0)
+files = sorted(glob.glob('$csvDir/BTCUSDT-1m-*.csv'))
+if not files:
+    print('ERROR: No CSV files found in $csvDir')
+    exit(1)
 tables = [read_csv_safe(f) for f in files]
 t = pa.concat_tables(tables)
 names = []
@@ -106,57 +97,77 @@ for c in t.column_names:
     else: names.append(c)
 t = t.rename_columns(names)
 t = t.select([n for n in names if n not in ('close_time','ignore')])
-pq.write_table(t, '$parquet')
-print(f'  {t.num_rows} rows')
+pq.write_table(t, '$outputParquet')
+print(f'  {t.num_rows} rows ({t.num_rows/60/24:.0f} days)')
 "
 }
 
-Write-Host "`n=== STEP 3: Combine ALL periods into single timeline ===" -ForegroundColor Cyan
-Write-Host "  This ensures continuous history for proper weekly MA computation"
-python -c "
-import pyarrow.parquet as pq, pyarrow.compute as pc, pyarrow as pa, glob
+Write-Host "=== STEP 1: Download 2020-2024 Training Data (Continuous) ===" -ForegroundColor Cyan
+$trainDir = "artifacts/training_2020_2024"
+$trainParquet = "artifacts/training_combined.parquet"
+if (Test-Path "$trainDir/BTCUSDT-1m-*.csv") {
+    Write-Host "Training data already downloaded, skipping..." -ForegroundColor Gray
+} else {
+    Write-Host "Downloading 2020-01-01 ~ 2024-12-31 (this may take a while)..." -ForegroundColor Yellow
+    python -m btcusdt_quant collect-archive --start 2020-01-01 --end 2024-12-31 --output $trainDir --allow-public-network --min-rows 1000000
+    if (-not (Test-Path "$trainDir/BTCUSDT-1m-*.csv")) {
+        Write-Host "ERROR: Failed to download training data" -ForegroundColor Red
+        exit 1
+    }
+}
 
-files = sorted(glob.glob('artifacts/futures_up_*.parquet') + 
-              glob.glob('artifacts/futures_down_*.parquet') + 
-              glob.glob('artifacts/futures_range_*.parquet'))
-if not files:
-    print('ERROR: No parquet files found')
-    exit(1)
+if (-not (Test-Path $trainParquet)) {
+    Convert-CsvToParquet $trainDir $trainParquet
+} else {
+    Write-Host "Training Parquet already exists, skipping conversion..." -ForegroundColor Gray
+}
 
-tables = [pq.read_table(f) for f in files]
-combined = pa.concat_tables(tables)
-combined = combined.take(pc.sort_indices(combined, sort_keys=[('open_time','ascending')]))
-pq.write_table(combined, 'artifacts/training_combined.parquet')
+Write-Host "`n=== STEP 2: Download 2025 Backtest Data ===" -ForegroundColor Cyan
+$backtestDir = "artifacts/backtest_2025"
+$backtestParquet = "artifacts/backtest_2025.parquet"
+if (Test-Path "$backtestDir/BTCUSDT-1m-*.csv") {
+    Write-Host "Backtest data already downloaded, skipping..." -ForegroundColor Gray
+} else {
+    Write-Host "Downloading 2025-01-01 ~ 2025-06-30..." -ForegroundColor Yellow
+    python -m btcusdt_quant collect-archive --start 2025-01-01 --end 2025-06-30 --output $backtestDir --allow-public-network --min-rows 10000
+    if (-not (Test-Path "$backtestDir/BTCUSDT-1m-*.csv")) {
+        Write-Host "ERROR: Failed to download backtest data" -ForegroundColor Red
+        exit 1
+    }
+}
 
-# Also create backtest file if not exists
-bt_files = glob.glob('artifacts/futures_backtest_2025.parquet')
-if bt_files:
-    print(f'Backtest: {bt_files[0]}')
+if (-not (Test-Path $backtestParquet)) {
+    Convert-CsvToParquet $backtestDir $backtestParquet
+} else {
+    Write-Host "Backtest Parquet already exists, skipping conversion..." -ForegroundColor Gray
+}
 
-print(f'Training data: {combined.num_rows} rows ({combined.num_rows/60/24:.0f} days)')
-print(f'  User-specified regimes: up / down / range')
-"
-
-Write-Host "`n=== STEP 4: Generate user_regime_periods.json ===" -ForegroundColor Cyan
-$regimePeriods = @()
-foreach ($p in $periods) {
-    if ($p.Regime -eq "backtest") { continue }
-    $regimePeriods += @{
+Write-Host "`n=== STEP 3: Generate user_regime_periods.json ===" -ForegroundColor Cyan
+$jsonPeriods = @()
+foreach ($p in $regimePeriods) {
+    $jsonPeriods += @{
         regime = $p.Regime
         start = $p.Start
         end_exclusive = $p.End
     }
 }
 $jsonContent = @{
-    periods = $regimePeriods
+    periods = $jsonPeriods
 } | ConvertTo-Json -Depth 3
-$jsonContent | Out-File -FilePath "artifacts/user_regime_periods.json" -Encoding utf8
-Write-Host "Generated artifacts/user_regime_periods.json with $($regimePeriods.Count) periods" -ForegroundColor Green
+# Write without BOM (PowerShell 5.1 Out-File adds BOM)
+[System.IO.File]::WriteAllText("$PWD\artifacts\user_regime_periods.json", $jsonContent, [System.Text.UTF8Encoding]::new($false))
+Write-Host "Generated artifacts/user_regime_periods.json with $($jsonPeriods.Count) periods" -ForegroundColor Green
 
-Write-Host "`n=== STEP 5: Train with user regimes (skip first 50 weeks via --training-start) ===" -ForegroundColor Cyan
-python -m btcusdt_quant train --input artifacts/training_combined.parquet --ensemble --regime-aware --use-user-regime --user-regime-file artifacts/user_regime_periods.json --training-start 2020-12-15 --output artifacts/regime_stacking_model
+Write-Host "`n=== STEP 4: Train with user regimes (50-week warmup auto-excluded) ===" -ForegroundColor Cyan
+Write-Host "  Model: catboost (auto fallback chain)"
+Write-Host "  Regime-aware: user-specified periods"
+$env:PYTHONUNBUFFERED=1
+python -u -m btcusdt_quant train --input $trainParquet --use-user-regime --user-regime-file artifacts/user_regime_periods.json --output artifacts/regime_model
+$env:PYTHONUNBUFFERED=0
 
-Write-Host "`n=== STEP 6: Backtest ===" -ForegroundColor Cyan
-python -m btcusdt_quant backtest --input artifacts/futures_backtest_2025.parquet --model-artifact artifacts/regime_stacking_model --output artifacts/backtest_results
+Write-Host "`n=== STEP 5: Backtest on 2025 data ===" -ForegroundColor Cyan
+python -m btcusdt_quant backtest --input $backtestParquet --model-artifact artifacts/regime_model --user-regime-file artifacts/user_regime_periods.json --output artifacts/backtest_results
 
 Write-Host "`n=== DONE ===" -ForegroundColor Cyan
+Write-Host "Training model: artifacts/regime_model/"
+Write-Host "Backtest results: artifacts/backtest_results/"

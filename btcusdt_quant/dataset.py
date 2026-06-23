@@ -4,11 +4,13 @@ import csv
 import io
 import json
 import logging
+import os
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from math import isfinite, log, sqrt, sin
@@ -943,7 +945,7 @@ def load_user_regime_periods(path: Path) -> list[UserRegimePeriod]:
         ]
     }
     """
-    with path.open("r", encoding="utf-8") as file:
+    with path.open("r", encoding="utf-8-sig") as file:
         data = json.load(file)
     periods_data = data.get("periods", []) if isinstance(data, dict) else data
     periods: list[UserRegimePeriod] = []
@@ -1015,6 +1017,11 @@ def build_dataset(
         external_events=external_events,
         include_warmup=input_path is not None or archive_dir is not None,
     )
+    # Exclude warmup rows: first 50 weeks have unreliable weekly MA features
+    # Only apply for large datasets where meaningful training data remains
+    WEEKLY_WARMUP_BARS = 50 * 7 * 24 * 60  # 504000
+    if len(canonical) >= WEEKLY_WARMUP_BARS + 80:
+        labeled_rows = [row for row in labeled_rows if row.index >= WEEKLY_WARMUP_BARS]
     source_report = sources.train_live_feature_parity_report(
         FEATURE_NAMES,
         source_bundle=resolved_source_bundle,
@@ -1058,7 +1065,13 @@ def build_feature_rows(
     source_bundle: sources.MarketSourceBundle | None = None,
     external_sources: Mapping[str, object] | None = None,
     user_regime_periods: Sequence[UserRegimePeriod] | None = None,
+    _parallel: bool = True,
 ) -> list[FeatureRow]:
+    # Parallel processing for large datasets
+    if _parallel and len(candles) > 50000:
+        return _build_feature_rows_parallel(
+            candles, source_bundle, external_sources, user_regime_periods
+        )
     # Support per-candle external_sources: Mapping[datetime, Mapping[str, object]]
     # or single external_sources for all candles: Mapping[str, object]
     per_candle_external_sources: Mapping[datetime, Mapping[str, object]] | None = None
@@ -1285,6 +1298,101 @@ def build_feature_rows(
             )
         )
     return rows
+
+
+def _build_feature_rows_chunk(
+    chunk_candles: Sequence[data.Candle],
+    source_bundle: sources.MarketSourceBundle | None,
+    external_sources: Mapping[str, object] | None,
+    user_regime_periods: Sequence[UserRegimePeriod] | None,
+    index_offset: int,
+    overlap: int,
+    is_first_chunk: bool,
+) -> list[FeatureRow]:
+    """Process a chunk of candles and return feature rows with corrected indices."""
+    chunk_rows = build_feature_rows(
+        chunk_candles,
+        source_bundle=source_bundle,
+        external_sources=external_sources,
+        user_regime_periods=user_regime_periods,
+        _parallel=False,
+    )
+    result: list[FeatureRow] = []
+    for row in chunk_rows:
+        new_index = row.index + index_offset
+        # Skip overlap rows (except for first chunk which keeps warmup rows)
+        if not is_first_chunk and row.index < overlap:
+            continue
+        result.append(
+            FeatureRow(
+                index=new_index,
+                open_time=row.open_time,
+                features=row.features,
+                gap_flag=row.gap_flag,
+                repaired=row.repaired,
+                warmup_invalid=row.warmup_invalid,
+                source_availability_status=row.source_availability_status,
+                feature_availability_status=row.feature_availability_status,
+                unavailable_sources=row.unavailable_sources,
+                fallback_features=row.fallback_features,
+                user_regime=row.user_regime,
+            )
+        )
+    return result
+
+
+def _process_feature_chunk(
+    args: tuple[int, int, bool, Sequence[data.Candle], sources.MarketSourceBundle | None, Mapping[str, object] | None, Sequence[UserRegimePeriod] | None, int],
+) -> list[FeatureRow]:
+    """Top-level worker for parallel feature computation."""
+    start, end, is_first, candles, source_bundle, external_sources, user_regime_periods, overlap = args
+    chunk_candles = candles[start:end]
+    return _build_feature_rows_chunk(
+        chunk_candles,
+        source_bundle=source_bundle,
+        external_sources=external_sources,
+        user_regime_periods=user_regime_periods,
+        index_offset=start,
+        overlap=overlap,
+        is_first_chunk=is_first,
+    )
+
+
+def _build_feature_rows_parallel(
+    candles: Sequence[data.Candle],
+    source_bundle: sources.MarketSourceBundle | None,
+    external_sources: Mapping[str, object] | None,
+    user_regime_periods: Sequence[UserRegimePeriod] | None,
+) -> list[FeatureRow]:
+    """Parallel feature computation using chunked ProcessPoolExecutor."""
+    n = len(candles)
+    num_workers = min(os.cpu_count() or 4, 8)
+    chunk_size = max(n // num_workers, 10000)
+    overlap = 500
+    print(f"[FEATURE] Parallel feature computation: {n:,} candles, {num_workers} workers, chunk_size={chunk_size:,}, overlap={overlap}")
+
+    # Build chunk ranges
+    chunks: list[tuple[int, int, bool]] = []
+    for i in range(num_workers):
+        start = i * chunk_size
+        end = min(start + chunk_size + overlap, n)
+        if i == num_workers - 1:
+            end = n
+        is_first = i == 0
+        chunks.append((start, end, is_first))
+        if end >= n:
+            break
+
+    all_rows: list[FeatureRow] = []
+    work_items = [
+        (start, end, is_first, candles, source_bundle, external_sources, user_regime_periods, overlap)
+        for start, end, is_first in chunks
+    ]
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        for result in executor.map(_process_feature_chunk, work_items):
+            all_rows.extend(result)
+    print(f"[FEATURE] Parallel computation complete: {len(all_rows):,} rows")
+    return all_rows
 
 
 def attach_labels(

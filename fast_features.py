@@ -68,7 +68,7 @@ def _ema(arr: np.ndarray, span: int) -> np.ndarray:
     """dataset._ema for all rows: adjust=False EMA, zero until span samples."""
     if len(arr) == 0:
         return np.array([], dtype=float)
-    result = pd.Series(arr, dtype="float64").ewm(span=span, adjust=False).mean().to_numpy()
+    result = pd.Series(arr, dtype="float64").ewm(span=span, adjust=False).mean().to_numpy().copy()
     result[: span - 1] = 0.0
     return result
 

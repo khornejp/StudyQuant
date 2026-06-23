@@ -106,7 +106,11 @@ class LightGBMAdapter:
     def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
         if self.model is None:
             raise RuntimeError("lightgbm adapter must be fitted before predict_proba")
-        predictions = getattr(self.model, "predict_proba")(_matrix_to_float_lists(feature_matrix))
+        rows = _matrix_to_float_lists(feature_matrix)
+        if hasattr(self.model, "predict_proba"):
+            predictions = getattr(self.model, "predict_proba")(rows)
+        else:
+            predictions = getattr(self.model, "predict")(rows)
         return _positive_class_probabilities(predictions)
 
     def as_dict(self) -> dict[str, object]:
@@ -139,12 +143,7 @@ class LightGBMAdapter:
         try:
             lgb = _import_optional_module("lightgbm")
             booster = lgb.Booster(model_str=str(serialized))
-            # Reconstruct LGBMClassifier wrapper around booster
-            from sklearn.base import clone
-            model = lgb.LGBMClassifier(**adapter.model_params)
-            model._Booster = booster
-            model.booster_ = booster
-            adapter.model = model
+            adapter.model = booster
         except Exception as error:
             raise ValueError(f"failed to load lightgbm serialized model: {error}") from error
         return adapter
@@ -163,8 +162,11 @@ class CatBoostAdapter:
         "iterations": 80,
         "learning_rate": 0.05,
         "random_seed": 42,
-        "verbose": False,
+        "verbose": True,
         "allow_writing_files": False,
+        "thread_count": -1,
+        "task_type": "GPU",
+        "devices": "0",
     }
 
     def __init__(self, feature_names: Sequence[str] | None = None, model_params: Mapping[str, object] | None = None) -> None:
@@ -189,12 +191,27 @@ class CatBoostAdapter:
             raise ValueError("feature_matrix and labels must have the same length")
         if not self.feature_names:
             self.feature_names = _default_feature_names(rows)
-        model = catboost.CatBoostClassifier(**self.model_params)
-        fit_kwargs: dict[str, object] = {}
-        if sample_weight is not None:
-            fit_kwargs["sample_weight"] = [float(weight) for weight in sample_weight]
-        model.fit(rows, label_values, **fit_kwargs)
-        self.model = model
+        try:
+            model = catboost.CatBoostClassifier(**self.model_params)
+            fit_kwargs: dict[str, object] = {}
+            if sample_weight is not None:
+                fit_kwargs["sample_weight"] = [float(weight) for weight in sample_weight]
+            model.fit(rows, label_values, **fit_kwargs)
+            self.model = model
+        except Exception as e:
+            if self.model_params.get("task_type") == "GPU":
+                print(f"[CatBoost] GPU training failed ({e}), falling back to CPU...")
+                cpu_params = dict(self.model_params)
+                cpu_params.pop("task_type", None)
+                cpu_params.pop("devices", None)
+                model = catboost.CatBoostClassifier(**cpu_params)
+                fit_kwargs: dict[str, object] = {}
+                if sample_weight is not None:
+                    fit_kwargs["sample_weight"] = [float(weight) for weight in sample_weight]
+                model.fit(rows, label_values, **fit_kwargs)
+                self.model = model
+            else:
+                raise
         return self
 
     def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
@@ -283,7 +300,7 @@ class ModelFactory:
         unavailable: dict[str, str] = {}
         for candidate in _candidate_families(requested, fallback_allowed):
             attempted.append(candidate)
-            if candidate == "stdlib" or self._is_available(candidate):
+            if self._is_available(candidate):
                 adapter = self._adapter(candidate, feature_names, model_params)
                 return _selection(adapter, requested, candidate, fallback_allowed, attempted, unavailable, model_params)
             unavailable[candidate] = f"optional dependency '{_module_name(candidate)}' is not installed"
@@ -304,16 +321,16 @@ class ModelFactory:
         unavailable: dict[str, str] = {}
         for candidate in _candidate_families(requested, fallback_allowed):
             attempted.append(candidate)
-            adapter = self._adapter(candidate, feature_names, model_params)
             try:
+                adapter = self._adapter(candidate, feature_names, model_params)
                 adapter.fit(feature_matrix, labels, sample_weight=sample_weight)
                 return _selection(adapter, requested, candidate, fallback_allowed, attempted, unavailable, model_params)
-            except OptionalDependencyUnavailable as error:
+            except (OptionalDependencyUnavailable, ImportError, ModuleNotFoundError) as error:
                 unavailable[candidate] = str(error)
                 if not fallback_allowed:
                     raise
             except Exception as error:
-                if candidate == "stdlib" or not fallback_allowed:
+                if not fallback_allowed:
                     raise
                 unavailable[candidate] = f"fit failed: {error}"
         raise OptionalDependencyUnavailable(_selection_error(requested, attempted, unavailable))
@@ -360,7 +377,7 @@ def _selection(
 ) -> ModelSelection:
     fallback_used = bool(unavailable) or (requested != "auto" and selected != requested)
     reason = "requested family selected"
-    if requested == "auto" and selected != "lightgbm":
+    if requested == "auto" and selected != "catboost":
         reason = "auto fallback chain selected first available family"
     if requested != "auto" and selected != requested:
         reason = f"requested family '{requested}' unavailable; selected '{selected}'"
@@ -371,7 +388,7 @@ def _selection(
 
 def _candidate_families(requested: str, fallback_allowed: bool) -> tuple[str, ...]:
     if requested == "auto":
-        chain = ("lightgbm", "catboost", "pytorch_multitask")
+        chain = ("catboost", "lightgbm", "pytorch_multitask")
     elif requested == "lightgbm":
         chain = ("lightgbm", "catboost", "pytorch_multitask")
     elif requested == "catboost":

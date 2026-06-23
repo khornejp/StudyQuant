@@ -158,8 +158,8 @@ def _close_trade(
 
 def run_backtest(
     candles: Sequence[data.Candle],
-    model: training.LinearClassifier | None,
-    strategy: live.StrategyConfig,
+    model: object | None = None,
+    strategy: live.StrategyConfig | None = None,
     initial_equity: float = 10000.0,
     position_size: float = 0.1,
     tp_sl_method: str = "fixed_pct",
@@ -170,6 +170,9 @@ def run_backtest(
     short_threshold: float | None = None,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
     slippage_rate_per_side: float = DEFAULT_SLIPPAGE_RATE_PER_SIDE,
+    models_by_regime: Mapping[str, object] | None = None,
+    user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None,
+    default_regime: str | None = None,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -177,7 +180,7 @@ def run_backtest(
     ----------
     candles: historical 1m candles
     model: trained model (optional; if None, uses random signals)
-    strategy: strategy config for thresholds and TP/SL
+    strategy: strategy config for thresholds and TP/SL (defaults to balanced)
     initial_equity: starting equity
     position_size: fraction of equity per trade
     tp_sl_method: 'fixed_pct' or 'atr_pct'
@@ -186,9 +189,9 @@ def run_backtest(
     cooldown_bars: bars to wait after exit before re-entry
     long_threshold: override strategy long threshold (default uses strategy.long_threshold)
     short_threshold: override strategy short threshold (default uses strategy.short_threshold)
-    fee_rate_per_side: trading fee charged on entry and exit, as a decimal rate
-    slippage_rate_per_side: fixed slippage charged on entry and exit, as a decimal rate
     """
+    if strategy is None:
+        strategy = live.strategy_for_regime(None, "balanced")
     _validate_cost_rates(fee_rate_per_side, slippage_rate_per_side)
     if label_horizon <= 0:
         raise ValueError("label_horizon must be positive")
@@ -212,17 +215,25 @@ def run_backtest(
     next_entry_index = 0
     returns: list[float] = []
 
-    feature_rows = dataset.build_feature_rows(candles)
+    feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
 
     for i, candle in enumerate(candles):
         result.signal_counts.setdefault("HOLD", 0)
         result.signal_counts.setdefault("BUY", 0)
         result.signal_counts.setdefault("SELL", 0)
 
-        # Model inference
-        if model is not None and i < len(feature_rows):
+        # Model inference (regime-aware if models_by_regime provided)
+        active_model = model
+        if models_by_regime is not None and i < len(feature_rows):
+            regime = feature_rows[i].user_regime
+            if regime is not None and regime in models_by_regime:
+                active_model = models_by_regime[regime]
+            elif default_regime is not None and default_regime in models_by_regime:
+                active_model = models_by_regime[default_regime]
+
+        if active_model is not None and i < len(feature_rows):
             features_dict = feature_rows[i].features
-            prob = model.probability(features_dict)
+            prob = active_model.probability(features_dict)
             lt = long_threshold if long_threshold is not None else strategy.long_threshold
             st = short_threshold if short_threshold is not None else strategy.short_threshold
             if prob > lt:
@@ -344,13 +355,22 @@ def run_backtest(
 
 def compare_strategies(
     candles: Sequence[data.Candle],
-    model: training.LinearClassifier | None,
-    strategies: Mapping[str, live.StrategyConfig],
+    model: object | None = None,
+    strategies: Mapping[str, live.StrategyConfig] | None = None,
     initial_equity: float = 10000.0,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
     slippage_rate_per_side: float = DEFAULT_SLIPPAGE_RATE_PER_SIDE,
+    models_by_regime: Mapping[str, object] | None = None,
+    user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None,
+    default_regime: str | None = None,
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison."""
+    if strategies is None:
+        strategies = {
+            "balanced": live.strategy_for_regime(None, "balanced"),
+            "conservative": live.strategy_for_regime(None, "conservative"),
+            "aggressive": live.strategy_for_regime(None, "aggressive"),
+        }
     results: dict[str, BacktestResult] = {}
     for name, strategy in strategies.items():
         results[name] = run_backtest(
@@ -360,6 +380,9 @@ def compare_strategies(
             initial_equity,
             fee_rate_per_side=fee_rate_per_side,
             slippage_rate_per_side=slippage_rate_per_side,
+            models_by_regime=models_by_regime,
+            user_regime_periods=user_regime_periods,
+            default_regime=default_regime,
         )
 
     best_strategy = max(results, key=lambda k: results[k].total_return)

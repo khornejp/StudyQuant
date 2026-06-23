@@ -180,7 +180,7 @@ def run_train(
         optuna_trials=optuna_trials,
         optuna_budget_profile=optuna_budget_profile,
         champion_challenger_enabled=champion_challenger_enabled,
-        regime_aware=regime_aware,
+        regime_aware=regime_aware or use_user_regime,
         min_regime_rows=min_regime_rows,
         regime_detector_rv_percentile=regime_detector_rv_percentile,
         regime_detector_trend_percentile=regime_detector_trend_percentile,
@@ -392,7 +392,8 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser = subparsers.add_parser("backtest", help="run backtest on historical candles")
     backtest_parser.add_argument("--input", default=None, help="CSV candles path; defaults to fixture")
     backtest_parser.add_argument("--output", default="artifacts/backtest", help="backtest output directory")
-    backtest_parser.add_argument("--model-artifact", default=None, help="trained model artifact JSON path")
+    backtest_parser.add_argument("--model-artifact", default=None, help="trained model artifact JSON path or regime-aware directory")
+    backtest_parser.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods for backtest")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -540,21 +541,50 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "backtest":
         output = Path(args.output)
         try:
-            candles = dataset.load_csv_candles(Path(args.input)) if args.input else data.local_fixture()
+            input_path = Path(args.input) if args.input else None
+            if input_path is not None:
+                if input_path.suffix.lower() == ".parquet":
+                    candles = dataset.load_parquet_candles(input_path)
+                else:
+                    candles = dataset.load_csv_candles(input_path)
+            else:
+                candles = data.local_fixture()
             model = None
+            models_by_regime: dict[str, object] | None = None
+            user_regime_periods = None
+            if args.user_regime_file:
+                user_regime_periods = dataset.load_user_regime_periods(Path(args.user_regime_file))
             if args.model_artifact:
                 model_path = Path(args.model_artifact)
                 if model_path.is_file():
                     model = live.load_model_artifact(model_path)
-                elif model_path.is_dir() and (model_path / "model.json").is_file():
-                    model = live.load_model_artifact(model_path / "model.json")
+                elif model_path.is_dir():
+                    if (model_path / "regime_run_summary.json").is_file():
+                        regime_bundle = live.load_regime_aware_models(model_path)
+                        models_by_regime = regime_bundle.models if regime_bundle else None
+                    elif (model_path / "model.json").is_file():
+                        model = live.load_model_artifact(model_path / "model.json")
             strategies = {
                 "balanced": live.strategy_for_regime(None, "balanced"),
                 "conservative": live.strategy_for_regime(None, "conservative"),
                 "aggressive": live.strategy_for_regime(None, "aggressive"),
             }
-            comparison = backtest.compare_strategies(candles, model, strategies)
-            result = backtest.run_backtest(candles, model, strategies["balanced"])
+            comparison = backtest.compare_strategies(
+                candles,
+                model,
+                strategies,
+                models_by_regime=models_by_regime,
+                user_regime_periods=user_regime_periods,
+                default_regime=max(models_by_regime, key=lambda k: 1) if models_by_regime else None,
+            )
+            result = backtest.run_backtest(
+                candles,
+                model,
+                strategies["balanced"],
+                models_by_regime=models_by_regime,
+                user_regime_periods=user_regime_periods,
+                default_regime=max(models_by_regime, key=lambda k: 1) if models_by_regime else None,
+            )
             summary = {
                 "backtest": result.as_dict(),
                 "strategy_comparison": comparison,

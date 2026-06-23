@@ -1754,8 +1754,11 @@ class EndToEndPipelineV718Tests(unittest.TestCase):
 class E2ECLIV718Tests(unittest.TestCase):
     def test_cli_collect_train_live_pipeline(self) -> None:
         from btcusdt_quant import data
+        import os
         import subprocess
         import sys
+        project_root = str(Path(__file__).parent.parent)
+        env = {**os.environ, "PYTHONPATH": project_root}
         with tempfile.TemporaryDirectory() as tmpdir:
             data_path = Path(tmpdir) / "btcusdt_1m.csv"
             train_dir = Path(tmpdir) / "training"
@@ -1764,21 +1767,21 @@ class E2ECLIV718Tests(unittest.TestCase):
             # 1. CLI collect (default args, no network)
             collect_result = subprocess.run(
                 [sys.executable, "-m", "btcusdt_quant", "collect", "--output", str(data_path), "--rows", "240"],
-                capture_output=True, text=True, timeout=30
+                capture_output=True, text=True, timeout=30, cwd=project_root, env=env,
             )
             self.assertEqual(collect_result.returncode, 0, f"collect failed: {collect_result.stderr}")
             self.assertTrue(data_path.exists(), "collect should write CSV")
             # 2. CLI train (default args, model_family=stdlib)
             train_result = subprocess.run(
                 [sys.executable, "-m", "btcusdt_quant", "train", "--output", str(train_dir), "--input", str(data_path)],
-                capture_output=True, text=True, timeout=30
+                capture_output=True, text=True, timeout=30, cwd=project_root, env=env,
             )
             self.assertEqual(train_result.returncode, 0, f"train failed: {train_result.stderr}")
             self.assertTrue(model_path.exists(), "train should write model.json")
             # 3. CLI live (dry-run with model artifact)
             live_result = subprocess.run(
                 [sys.executable, "-m", "btcusdt_quant", "live", "--dry-run", "--output", str(live_dir), "--model-artifact", str(model_path)],
-                capture_output=True, text=True, timeout=30
+                capture_output=True, text=True, timeout=30, cwd=project_root, env=env,
             )
             self.assertEqual(live_result.returncode, 0, f"live failed: {live_result.stderr}")
             live_summary_path = live_dir / "live_summary.json"
@@ -2105,12 +2108,15 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
 
     def test_cli_advanced_args_wired_to_training(self) -> None:
         """Advanced CLI args (feature-selection, optuna, champion-challenger) must be wired to training config."""
+        import os
         import subprocess
         import sys
+        project_root = str(Path(__file__).parent.parent)
         with tempfile.TemporaryDirectory() as tmpdir:
             data_path = Path(tmpdir) / "btcusdt_1m.csv"
             dataset.collect_candles(data_path, rows=240)
             train_dir = Path(tmpdir) / "training"
+            env = {**os.environ, "PYTHONPATH": project_root}
             result = subprocess.run(
                 [
                     sys.executable, "-m", "btcusdt_quant", "train",
@@ -2124,7 +2130,8 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
-                cwd="D:\\CodexProject",
+                cwd=project_root,
+                env=env,
             )
             self.assertEqual(result.returncode, 0, f"CLI failed: {result.stderr}")
             run_summary_path = Path(train_dir) / "run_summary.json"

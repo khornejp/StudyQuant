@@ -1821,7 +1821,10 @@ class LiveEngine:
                 latest_features = self.feature_rows[-1].features
                 rv_15 = float(latest_features.get("rv_15", 0.0))
                 trend_slope_30 = float(latest_features.get("trend_slope_30", 0.0))
-                detector = features.RegimeDetector(regime_bundle.detector_config)
+                detector_config = regime_bundle.detector_config
+                if isinstance(detector_config, dict):
+                    detector_config = features.RegimeDetectorConfig(**detector_config)
+                detector = features.RegimeDetector(detector_config)
                 active_regime = detector.detect(rv_15, trend_slope_30, thresholds=regime_bundle.detector_thresholds)
                 model = regime_bundle.models.get(active_regime)
                 if model is None and regime_bundle.default_regime is not None:
@@ -2120,6 +2123,63 @@ def run_live(
 def build_live_source_bundle(candles: Sequence[data.Candle], dry_run: bool = True) -> sources.MarketSourceBundle:
     source_name = "live_mock_source_bundle" if dry_run else "live_stream_source_bundle"
     return sources.bundle_from_candles(candles, source=source_name, include_mock_sources=dry_run)
+
+
+@dataclass(frozen=True)
+class RegimeModelBundle:
+    models: dict[str, models.ModelAdapter]
+    default_regime: str | None
+    detector_config: dict[str, object] | None
+    detector_thresholds: dict[str, object] | None
+
+
+def load_model_artifact(path: Path | None, strict: bool = False) -> models.ModelAdapter | None:
+    """Load a trained model artifact from JSON."""
+    if path is None:
+        if strict:
+            raise ValueError("model artifact path is None")
+        return None
+    path = Path(path)
+    if not path.is_file():
+        if strict:
+            raise FileNotFoundError(f"model artifact not found: {path}")
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    family = payload.get("model_family", "auto")
+    if family == "lightgbm":
+        return models.LightGBMAdapter.from_dict(payload)
+    if family == "catboost":
+        return models.CatBoostAdapter.from_dict(payload)
+    raise ValueError(f"unsupported model family in artifact: {family}")
+
+
+def load_regime_aware_models(path: Path, strict: bool = False) -> RegimeModelBundle:
+    """Load regime-aware models from a directory containing regime_*/model.json subdirectories."""
+    models_by_regime: dict[str, models.ModelAdapter] = {}
+    path = Path(path)
+    if not path.is_dir():
+        if strict:
+            raise FileNotFoundError(f"regime model directory not found: {path}")
+        return RegimeModelBundle(models_by_regime, None, None, None)
+    for regime_dir in path.glob("regime_*"):
+        regime_name = regime_dir.name.replace("regime_", "")
+        model_path = regime_dir / "model.json"
+        if model_path.is_file():
+            models_by_regime[regime_name] = load_model_artifact(model_path)
+    # Load detector config and thresholds from regime_run_summary.json if available
+    detector_config: dict[str, object] | None = None
+    detector_thresholds: dict[str, object] | None = None
+    summary_path = path / "regime_run_summary.json"
+    if summary_path.is_file():
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8-sig"))
+            detector = summary.get("regime_detector", {})
+            detector_config = detector.get("config")
+            detector_thresholds = detector.get("thresholds")
+        except Exception:
+            pass
+    default_regime = max(models_by_regime, key=lambda k: 1) if models_by_regime else None
+    return RegimeModelBundle(models_by_regime, default_regime, detector_config, detector_thresholds)
 
 
 def _live_fixture(rows: int) -> list[data.Candle]:

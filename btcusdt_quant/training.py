@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from math import exp, isfinite, log, sqrt
@@ -97,6 +98,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         )
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
+    print(f"[TRAIN] Dataset built: {len(build.labeled_rows):,} labeled rows, {len(build.feature_names)} features")
     # Regime-aware: split by market regime and train separate models
     if training_config.regime_aware:
         return run_regime_aware_training(build, output_dir, training_config)
@@ -185,6 +187,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 )
     fold_results: list[FoldResult] = []
     for fold_index, split in enumerate(splits):
+        print(f"[TRAIN]   Fold {fold_index + 1}/{len(splits)}: train={len(split.train)}, val={len(split.validation)}, test={len(split.test)}")
         train_indices = _split_indices(split.train)
         validation_indices = _split_indices(split.validation)
         test_indices = _split_indices(split.test)
@@ -231,6 +234,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     latency_report = inference_latency_report(final_selection.adapter, feature_matrix(build.labeled_rows, effective_feature_names))
     artifacts = write_training_artifacts(output_dir, build, splits, fold_results, final_selection.adapter, training_config, sample_intervals, uniqueness, final_selection, latency_report)
     run_summary = training_summary(build, splits, fold_results, artifacts, training_config, uniqueness, final_selection, latency_report)
+    print(f"[TRAIN] Training complete: {len(build.labeled_rows):,} rows, {len(splits)} folds, test_f1={run_summary.get('mean_test_f1', 0.0):.4f}")
     model_metadata = model_version_metadata(build, final_selection.adapter, training_config, final_selection)
     run_summary.update(
         {
@@ -430,6 +434,7 @@ def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, tra
     user_regime_names = dataset.USER_REGIME_NAMES
     regimes = [row.user_regime for row in build.labeled_rows]
     regime_counts = {regime: regimes.count(regime) for regime in user_regime_names}
+    print(f"[TRAIN] Regime-aware training (user-specified): {regime_counts}")
     regime_summaries: dict[str, dict[str, object]] = {}
     trained_regimes: dict[str, dict[str, object]] = {}
     skipped_regimes: dict[str, dict[str, object]] = {}
@@ -437,7 +442,9 @@ def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, tra
     for regime_name in user_regime_names:
         regime_indices = [index for index, regime in enumerate(regimes) if regime == regime_name]
         row_count = len(regime_indices)
+        print(f"[TRAIN] Regime '{regime_name}': {row_count:,} rows")
         if row_count < training_config.min_regime_rows:
+            print(f"[TRAIN]   -> SKIP (min {training_config.min_regime_rows} required)")
             skipped_regimes[regime_name] = {
                 "status": "skipped",
                 "reason": "insufficient_rows",
@@ -445,15 +452,26 @@ def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, tra
                 "min_regime_rows": training_config.min_regime_rows,
             }
             continue
-        regime_result = _train_single_regime(build, output_dir, training_config, regime_name, regime_indices)
-        regime_summaries[regime_name] = dict(regime_result.run_summary)
-        trained_regimes[regime_name] = {
-            "status": "trained",
-            "row_count": row_count,
-            "min_regime_rows": training_config.min_regime_rows,
-            "output_dir": f"regime_{regime_name}",
-            "mean_test_f1": float(regime_result.run_summary.get("mean_test_f1", 0.0)),
-        }
+        print(f"[TRAIN]   -> Training...")
+        try:
+            regime_result = _train_single_regime(build, output_dir, training_config, regime_name, regime_indices)
+            print(f"[TRAIN]   -> Done. Test F1: {regime_result.run_summary.get('mean_test_f1', 0.0):.4f}")
+            regime_summaries[regime_name] = dict(regime_result.run_summary)
+            trained_regimes[regime_name] = {
+                "status": "trained",
+                "row_count": row_count,
+                "min_regime_rows": training_config.min_regime_rows,
+                "output_dir": f"regime_{regime_name}",
+                "mean_test_f1": float(regime_result.run_summary.get("mean_test_f1", 0.0)),
+            }
+        except Exception as e:
+            print(f"[TRAIN] Regime '{regime_name}' FAILED: {e}")
+            skipped_regimes[regime_name] = {
+                "status": "failed",
+                "reason": str(e),
+                "row_count": row_count,
+                "min_regime_rows": training_config.min_regime_rows,
+            }
 
     default_regime = _default_regime_by_rows(trained_regimes)
     regime_test_f1_values = [float(summary["mean_test_f1"]) for summary in regime_summaries.values() if "mean_test_f1" in summary]
@@ -493,6 +511,17 @@ def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, tra
     )
 
 
+def _train_single_regime_worker(
+    build: dataset.DatasetBuild,
+    output_dir: Path,
+    training_config: TrainingConfig,
+    regime_name: str,
+    regime_indices: Sequence[int],
+) -> TrainingResult:
+    """Top-level worker function for multiprocessing."""
+    return _train_single_regime(build, output_dir, training_config, regime_name, regime_indices)
+
+
 _REGIME_NAMES = ("high_volatility", "trending", "ranging")
 
 
@@ -503,6 +532,7 @@ def _train_single_regime(
     regime_name: str,
     regime_indices: Sequence[int],
 ) -> TrainingResult:
+    print(f"[TRAIN]   Sub-training regime '{regime_name}' with {len(regime_indices):,} rows...")
     regime_labeled_rows = [build.labeled_rows[index] for index in regime_indices]
     regime_build = replace(
         build,
