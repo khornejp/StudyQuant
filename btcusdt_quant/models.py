@@ -159,14 +159,17 @@ class LightGBMAdapter:
 class CatBoostAdapter:
     DEFAULT_PARAMS: Mapping[str, object] = {
         "loss_function": "Logloss",
-        "iterations": 80,
-        "learning_rate": 0.05,
+        "iterations": 500,
+        "learning_rate": 0.03,
+        "depth": 8,
         "random_seed": 42,
         "verbose": True,
         "allow_writing_files": False,
         "thread_count": -1,
         "task_type": "GPU",
         "devices": "0",
+        "od_type": "Iter",
+        "od_wait": 50,
     }
 
     def __init__(self, feature_names: Sequence[str] | None = None, model_params: Mapping[str, object] | None = None) -> None:
@@ -191,8 +194,19 @@ class CatBoostAdapter:
             raise ValueError("feature_matrix and labels must have the same length")
         if not self.feature_names:
             self.feature_names = _default_feature_names(rows)
+        # Auto class weights for imbalance
+        from collections import Counter
+        counts = Counter(label_values)
+        if len(counts) >= 2:
+            total = len(label_values)
+            class_weights = {cls: total / (len(counts) * count) for cls, count in counts.items()}
+        else:
+            class_weights = None
         try:
-            model = catboost.CatBoostClassifier(**self.model_params)
+            model_params = dict(self.model_params)
+            if class_weights is not None and "class_weights" not in model_params:
+                model_params["class_weights"] = class_weights
+            model = catboost.CatBoostClassifier(**model_params)
             fit_kwargs: dict[str, object] = {}
             if sample_weight is not None:
                 fit_kwargs["sample_weight"] = [float(weight) for weight in sample_weight]
@@ -204,6 +218,8 @@ class CatBoostAdapter:
                 cpu_params = dict(self.model_params)
                 cpu_params.pop("task_type", None)
                 cpu_params.pop("devices", None)
+                if class_weights is not None and "class_weights" not in cpu_params:
+                    cpu_params["class_weights"] = class_weights
                 model = catboost.CatBoostClassifier(**cpu_params)
                 fit_kwargs: dict[str, object] = {}
                 if sample_weight is not None:

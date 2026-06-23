@@ -163,9 +163,9 @@ def run_backtest(
     initial_equity: float = 10000.0,
     position_size: float = 0.1,
     tp_sl_method: str = "fixed_pct",
-    label_horizon: int = 15,
+    label_horizon: int = 60,
     min_hold_bars: int = 0,
-    cooldown_bars: int = 0,
+    cooldown_bars: int = 30,
     long_threshold: float | None = None,
     short_threshold: float | None = None,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
@@ -236,9 +236,10 @@ def run_backtest(
             prob = active_model.probability(features_dict)
             lt = long_threshold if long_threshold is not None else strategy.long_threshold
             st = short_threshold if short_threshold is not None else strategy.short_threshold
-            if prob > lt:
+            # Minimum confidence filter: require clear directional signal
+            if prob > lt and prob >= 0.55:
                 signal = "BUY"
-            elif prob < st:
+            elif prob < st and prob <= 0.45:
                 signal = "SELL"
             else:
                 signal = "HOLD"
