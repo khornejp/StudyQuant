@@ -161,6 +161,7 @@ def run_train(
     use_user_regime: bool = False,
     user_regime_file: str | None = None,
     training_start: str | None = None,
+    cache_path: str | None = None,
 ) -> dict[str, object]:
     if multitask:
         model_family = "pytorch_multitask"
@@ -203,7 +204,8 @@ def run_train(
     if input_path is not None and input_path.is_dir():
         archive_dir = input_path
         input_path = None
-    result = training.run_training(input_path, output, config, archive_dir=archive_dir, external_sources=external_sources, user_regime_periods=user_regime_periods)
+    cache_path_obj = Path(cache_path) if cache_path is not None else None
+    result = training.run_training(input_path, output, config, archive_dir=archive_dir, external_sources=external_sources, user_regime_periods=user_regime_periods, cache_path=cache_path_obj)
     summary = dict(result.run_summary)
     summary["requested_model_family"] = model_family
     return summary
@@ -373,6 +375,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--use-user-regime", action="store_true", help="use user-specified trend periods instead of automatic RegimeDetector for regime-aware training")
     train.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods")
     train.add_argument("--training-start", default=None, help="start date for training data (ISO format, e.g., 2020-12-15); rows before this date are excluded after feature computation")
+    train.add_argument("--cache-path", default=None, help="path to cache computed dataset for faster retraining")
     train.add_argument("--multitask", action="store_true", help="use PyTorch multitask neural network as the model family (shorthand for --model-family pytorch_multitask)")
     live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
     live_parser.add_argument("--output", default="artifacts/live", help="live artifact output directory")
@@ -483,6 +486,7 @@ def main(argv: list[str] | None = None) -> int:
                 use_user_regime=args.use_user_regime,
                 user_regime_file=args.user_regime_file,
                 training_start=args.training_start,
+                cache_path=args.cache_path,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)
