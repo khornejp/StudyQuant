@@ -175,6 +175,7 @@ def run_backtest(
     user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None,
     default_regime: str | None = None,
     start_date: str | None = None,
+    feature_rows: Sequence[dataset.FeatureRow] | None = None,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -217,7 +218,8 @@ def run_backtest(
     next_entry_index = 0
     returns: list[float] = []
 
-    feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
+    if feature_rows is None:
+        feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
 
     start_dt = None
     if start_date is not None:
@@ -384,6 +386,8 @@ def compare_strategies(
             "conservative": live.strategy_for_regime(None, "conservative"),
             "aggressive": live.strategy_for_regime(None, "aggressive"),
         }
+    # Pre-compute feature rows once for all strategies
+    feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
     results: dict[str, BacktestResult] = {}
     for name, strategy in strategies.items():
         results[name] = run_backtest(
@@ -397,6 +401,7 @@ def compare_strategies(
             user_regime_periods=user_regime_periods,
             default_regime=default_regime,
             start_date=start_date,
+            feature_rows=feature_rows,
         )
 
     best_strategy = max(results, key=lambda k: results[k].total_return)
