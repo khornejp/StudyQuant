@@ -161,6 +161,10 @@ def run_train(
     use_user_regime: bool = False,
     user_regime_file: str | None = None,
     training_start: str | None = None,
+    training_end: str | None = None,
+    test_start: str | None = None,
+    test_end: str | None = None,
+    only_build: bool = False,
     cache_path: str | None = None,
 ) -> dict[str, object]:
     if multitask:
@@ -168,6 +172,15 @@ def run_train(
     training_start_dt: datetime | None = None
     if training_start is not None:
         training_start_dt = datetime.fromisoformat(training_start).replace(tzinfo=timezone.utc)
+    training_end_dt: datetime | None = None
+    if training_end is not None:
+        training_end_dt = datetime.fromisoformat(training_end).replace(tzinfo=timezone.utc)
+    test_start_dt: datetime | None = None
+    if test_start is not None:
+        test_start_dt = datetime.fromisoformat(test_start).replace(tzinfo=timezone.utc)
+    test_end_dt: datetime | None = None
+    if test_end is not None:
+        test_end_dt = datetime.fromisoformat(test_end).replace(tzinfo=timezone.utc)
     config = training.TrainingConfig(
         cv_mode=cv_mode,
         embargo_size=embargo_size,
@@ -196,6 +209,10 @@ def run_train(
         ensemble_meta_family=ensemble_meta_family,
         use_user_regime=use_user_regime,
         training_start=training_start_dt,
+        training_end=training_end_dt,
+        test_start=test_start_dt,
+        test_end=test_end_dt,
+        only_build=only_build,
     )
     user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None
     if user_regime_file is not None:
@@ -374,7 +391,11 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--ensemble-meta-family", default="catboost", choices=("catboost",), help="meta model family for final probability")
     train.add_argument("--use-user-regime", action="store_true", help="use user-specified trend periods instead of automatic RegimeDetector for regime-aware training")
     train.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods")
-    train.add_argument("--training-start", default=None, help="start date for training data (ISO format, e.g., 2020-12-15); rows before this date are excluded after feature computation")
+    train.add_argument("--training-start", default=None, help="start date for training data (ISO format, e.g., 2020-01-01); rows before this date are excluded after feature computation")
+    train.add_argument("--training-end", default=None, help="end date for training data (ISO format, e.g., 2024-12-31); rows after this date are excluded from training")
+    train.add_argument("--test-start", default=None, help="start date for test/validation period (ISO format, e.g., 2025-01-01); used for out-of-sample evaluation after training")
+    train.add_argument("--test-end", default=None, help="end date for test/validation period (ISO format, e.g., 2025-06-30)")
+    train.add_argument("--only-build", action="store_true", help="only compute and cache features/labels, skip model training")
     train.add_argument("--cache-path", default=None, help="path to cache computed dataset for faster retraining")
     train.add_argument("--multitask", action="store_true", help="use PyTorch multitask neural network as the model family (shorthand for --model-family pytorch_multitask)")
     live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
@@ -397,7 +418,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--output", default="artifacts/backtest", help="backtest output directory")
     backtest_parser.add_argument("--model-artifact", default=None, help="trained model artifact JSON path or regime-aware directory")
     backtest_parser.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods for backtest")
-    backtest_parser.add_argument("--backtest-start", default=None, help="start date for backtest (ISO format, e.g., 2025-01-01); candles before this date are used for feature computation only")
+    backtest_parser.add_argument("--backtest-start", default="2025-07-01", help="start date for backtest (ISO format, e.g., 2025-07-01); candles before this date are used for feature computation only")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -486,6 +507,10 @@ def main(argv: list[str] | None = None) -> int:
                 use_user_regime=args.use_user_regime,
                 user_regime_file=args.user_regime_file,
                 training_start=args.training_start,
+                training_end=args.training_end,
+                test_start=args.test_start,
+                test_end=args.test_end,
+                only_build=args.only_build,
                 cache_path=args.cache_path,
             )
         except (OSError, RuntimeError, ValueError) as error:

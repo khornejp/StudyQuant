@@ -43,6 +43,10 @@ class TrainingConfig:
     ensemble_meta_family: str = "catboost"
     use_user_regime: bool = False
     training_start: datetime | None = None
+    training_end: datetime | None = None
+    test_start: datetime | None = None
+    test_end: datetime | None = None
+    only_build: bool = False
 
     def __post_init__(self) -> None:
         if self.cv_mode not in {"walk_forward", "combinatorial_purged"}:
@@ -107,6 +111,27 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         build = replace(
             build,
             labeled_rows=[row for row in build.labeled_rows if row.open_time >= training_config.training_start],
+        )
+    if training_config.training_end is not None:
+        build = replace(
+            build,
+            labeled_rows=[row for row in build.labeled_rows if row.open_time <= training_config.training_end],
+        )
+    if training_config.only_build:
+        if cache_path is not None:
+            print(f"[TRAIN] only-build mode: saving dataset cache to {cache_path}")
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            import pickle
+            with open(cache_path, "wb") as f:
+                pickle.dump(build, f)
+        print(f"[TRAIN] only-build complete: {len(build.labeled_rows):,} labeled rows, {len(build.feature_names)} features")
+        return TrainingResult(
+            output_dir=output_dir,
+            dataset_build=build,
+            splits=[],
+            fold_results=[],
+            run_summary={"only_build": True, "labeled_rows": len(build.labeled_rows), "feature_count": len(build.feature_names)},
+            artifacts=[],
         )
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
@@ -405,6 +430,53 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
     default_regime = _default_regime_by_rows(trained_regimes)
     regime_test_f1_values = [float(summary["mean_test_f1"]) for summary in regime_summaries.values() if "mean_test_f1" in summary]
     aggregated_mean_test_f1 = sum(regime_test_f1_values) / len(regime_test_f1_values) if regime_test_f1_values else 0.0
+    # Optional: evaluate on test period if specified
+    test_period_metrics: dict[str, object] | None = None
+    if training_config.test_start is not None or training_config.test_end is not None:
+        test_rows = [
+            row for row in build.labeled_rows
+            if (training_config.test_start is None or row.open_time >= training_config.test_start)
+            and (training_config.test_end is None or row.open_time <= training_config.test_end)
+        ]
+        if test_rows:
+            print(f"[TRAIN] Evaluating on test period: {len(test_rows):,} rows ({training_config.test_start} to {training_config.test_end})")
+            test_matrix = feature_matrix(test_rows, build.feature_names)
+            test_labels = [row.label for row in test_rows]
+            regime_test_metrics: dict[str, dict[str, float]] = {}
+            for regime_name in trained_regimes:
+                model_path = output_dir / f"regime_{regime_name}" / "model.json"
+                if not model_path.is_file():
+                    continue
+                try:
+                    payload = json.loads(model_path.read_text(encoding="utf-8"))
+                    family = payload.get("model_family", "auto")
+                    if family == "ensemble":
+                        model = models.EnsembleAdapter.from_dict(payload)
+                    elif family == "catboost":
+                        model = models.CatBoostAdapter.from_dict(payload)
+                    elif family == "lightgbm":
+                        model = models.LightGBMAdapter.from_dict(payload)
+                    else:
+                        continue
+                    probs = model.predict_proba(test_matrix)
+                    regime_test_metrics[regime_name] = metrics(probs, test_labels, 0.5)
+                    print(f"[TRAIN]   Test period {regime_name}: F1={regime_test_metrics[regime_name]['f1']:.4f}, Acc={regime_test_metrics[regime_name]['accuracy']:.4f}")
+                except Exception as e:
+                    print(f"[TRAIN]   Test period evaluation for {regime_name} failed: {e}")
+            if regime_test_metrics:
+                avg_f1 = mean([m["f1"] for m in regime_test_metrics.values()])
+                avg_acc = mean([m["accuracy"] for m in regime_test_metrics.values()])
+                test_period_metrics = {
+                    "test_period_start": training_config.test_start.isoformat() if training_config.test_start else None,
+                    "test_period_end": training_config.test_end.isoformat() if training_config.test_end else None,
+                    "test_period_rows": len(test_rows),
+                    "regime_metrics": regime_test_metrics,
+                    "mean_test_f1": avg_f1,
+                    "mean_test_accuracy": avg_acc,
+                }
+                print(f"[TRAIN] Test period overall: F1={avg_f1:.4f}, Acc={avg_acc:.4f}")
+        else:
+            print(f"[TRAIN] Warning: no test period rows found ({training_config.test_start} to {training_config.test_end})")
     run_summary = {
         "regime_aware": True,
         "regime_results": regime_summaries,
@@ -429,6 +501,8 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
         "mean_test_brier": 0.0,
         "artifacts": ["regime_run_summary.json"],
     }
+    if test_period_metrics is not None:
+        run_summary["test_period_evaluation"] = test_period_metrics
     writer = governance.ArtifactWriter(output_dir)
     writer.write_json("regime_run_summary.json", run_summary)
     return TrainingResult(
@@ -489,12 +563,61 @@ def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, tra
     regime_test_f1_values = [float(summary["mean_test_f1"]) for summary in regime_summaries.values() if "mean_test_f1" in summary]
     aggregated_mean_test_f1 = sum(regime_test_f1_values) / len(regime_test_f1_values) if regime_test_f1_values else 0.0
     unclassified_count = sum(1 for r in regimes if r is None)
+    # Optional: evaluate on test period (e.g., 2025 H1) if specified
+    test_period_metrics: dict[str, object] | None = None
+    if training_config.test_start is not None or training_config.test_end is not None:
+        test_rows = [
+            row for row in build.labeled_rows
+            if (training_config.test_start is None or row.open_time >= training_config.test_start)
+            and (training_config.test_end is None or row.open_time <= training_config.test_end)
+        ]
+        if test_rows:
+            print(f"[TRAIN] Evaluating on test period: {len(test_rows):,} rows ({training_config.test_start} to {training_config.test_end})")
+            test_matrix = feature_matrix(test_rows, build.feature_names)
+            test_labels = [row.label for row in test_rows]
+            regime_test_metrics: dict[str, dict[str, float]] = {}
+            for regime_name in trained_regimes:
+                model_path = output_dir / f"regime_{regime_name}" / "model.json"
+                if not model_path.is_file():
+                    continue
+                try:
+                    payload = json.loads(model_path.read_text(encoding="utf-8"))
+                    family = payload.get("model_family", "auto")
+                    if family == "ensemble":
+                        model = models.EnsembleAdapter.from_dict(payload)
+                    elif family == "catboost":
+                        model = models.CatBoostAdapter.from_dict(payload)
+                    elif family == "lightgbm":
+                        model = models.LightGBMAdapter.from_dict(payload)
+                    else:
+                        continue
+                    probs = model.predict_proba(test_matrix)
+                    regime_test_metrics[regime_name] = metrics(probs, test_labels, 0.5)
+                    print(f"[TRAIN]   Test period {regime_name}: F1={regime_test_metrics[regime_name]['f1']:.4f}, Acc={regime_test_metrics[regime_name]['accuracy']:.4f}")
+                except Exception as e:
+                    print(f"[TRAIN]   Test period evaluation for {regime_name} failed: {e}")
+            if regime_test_metrics:
+                avg_f1 = mean([m["f1"] for m in regime_test_metrics.values()])
+                avg_acc = mean([m["accuracy"] for m in regime_test_metrics.values()])
+                test_period_metrics = {
+                    "test_period_start": training_config.test_start.isoformat() if training_config.test_start else None,
+                    "test_period_end": training_config.test_end.isoformat() if training_config.test_end else None,
+                    "test_period_rows": len(test_rows),
+                    "regime_metrics": regime_test_metrics,
+                    "mean_test_f1": avg_f1,
+                    "mean_test_accuracy": avg_acc,
+                }
+                print(f"[TRAIN] Test period overall: F1={avg_f1:.4f}, Acc={avg_acc:.4f}")
+        else:
+            print(f"[TRAIN] Warning: no test period rows found ({training_config.test_start} to {training_config.test_end})")
+
     run_summary = {
         "regime_aware": True,
         "regime_source": "user_regime",
         "user_regime_counts": regime_counts,
         "unclassified_rows": unclassified_count,
         "training_start": training_config.training_start.isoformat() if training_config.training_start else None,
+        "training_end": training_config.training_end.isoformat() if training_config.training_end else None,
         "regime_results": regime_summaries,
         "trained_regimes": trained_regimes,
         "skipped_regimes": skipped_regimes,
@@ -511,6 +634,8 @@ def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, tra
         "mean_test_brier": 0.0,
         "artifacts": ["regime_run_summary.json"],
     }
+    if test_period_metrics is not None:
+        run_summary["test_period_evaluation"] = test_period_metrics
     writer = governance.ArtifactWriter(output_dir)
     writer.write_json("regime_run_summary.json", run_summary)
     return TrainingResult(

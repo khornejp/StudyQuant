@@ -1,13 +1,13 @@
-# BTCUSDT Pipeline - Correct Pipeline Order
-# 1. Download 2020-2024 as ONE continuous dataset for proper weekly MA50 computation
-# 2. Download 2025 backtest data separately
-# 3. Generate user_regime_periods.json
-# 4. Train with user regimes (50-week warmup auto-excluded)
-# 5. Backtest on 2025 data
+# BTCUSDT Pipeline - Unified Feature Computation
+# 1. Download 2020-2025 as ONE continuous dataset
+# 2. Compute features ONCE for entire period
+# 3. Train on 2020-2024 with user regimes
+# 4. Test on 2025 H1 (Jan-Jun)
+# 5. Backtest on 2025 H2 (Jul-Dec)
 
 $ErrorActionPreference = "Stop"
 
-# User-defined regime periods (used for labeling, NOT for data downloading)
+# User-defined regime periods (2020-2024 only, used for training)
 $regimePeriods = @(
     # 2020
     @{Regime="up";     Start="2020-01-01"; End="2020-02-13"},
@@ -56,7 +56,7 @@ $regimePeriods = @(
     @{Regime="down";   Start="2024-12-17"; End="2024-12-31"}
 )
 
-# Standard Binance kline columns (for headerless CSV detection)
+# Standard Binance kline columns
 $BINANCE_COLS = @(
     'open_time', 'open', 'high', 'low', 'close', 'volume',
     'close_time', 'quote_volume', 'count', 'taker_buy_volume',
@@ -98,51 +98,32 @@ for c in t.column_names:
 t = t.rename_columns(names)
 t = t.select([n for n in names if n not in ('close_time','ignore')])
 pq.write_table(t, '$outputParquet')
-print(f'  {t.num_rows} rows ({t.num_rows/60/24:.0f} days)')
+print(f'  {t.num_rows:,} rows ({t.num_rows/60/24:.0f} days)')
 "
 }
 
-Write-Host "=== STEP 1: Download 2020-2024 Training Data (Continuous) ===" -ForegroundColor Cyan
-$trainDir = "artifacts/training_2020_2024"
-$trainParquet = "artifacts/training_combined.parquet"
-if (Test-Path "$trainDir/BTCUSDT-1m-*.csv") {
-    Write-Host "Training data already downloaded, skipping..." -ForegroundColor Gray
+Write-Host "=== STEP 1: Download 2020-2025 Full Dataset ===" -ForegroundColor Cyan
+$fullDir = "artifacts/full_2020_2025"
+$fullParquet = "artifacts/full_2020_2025.parquet"
+
+if (Test-Path "$fullDir/BTCUSDT-1m-*.csv") {
+    Write-Host "Full dataset already downloaded, skipping..." -ForegroundColor Gray
 } else {
-    Write-Host "Downloading 2020-01-01 ~ 2024-12-31 (this may take a while)..." -ForegroundColor Yellow
-    python -m btcusdt_quant collect-archive --start 2020-01-01 --end 2024-12-31 --output $trainDir --allow-public-network --min-rows 1000000
-    if (-not (Test-Path "$trainDir/BTCUSDT-1m-*.csv")) {
-        Write-Host "ERROR: Failed to download training data" -ForegroundColor Red
+    Write-Host "Downloading 2020-01-01 ~ 2025-12-31 (this may take a while)..." -ForegroundColor Yellow
+    python -m btcusdt_quant collect-archive --start 2020-01-01 --end 2025-12-31 --output $fullDir --allow-public-network --min-rows 2000000
+    if (-not (Test-Path "$fullDir/BTCUSDT-1m-*.csv")) {
+        Write-Host "ERROR: Failed to download full dataset" -ForegroundColor Red
         exit 1
     }
 }
 
-if (-not (Test-Path $trainParquet)) {
-    Convert-CsvToParquet $trainDir $trainParquet
+if (-not (Test-Path $fullParquet)) {
+    Convert-CsvToParquet $fullDir $fullParquet
 } else {
-    Write-Host "Training Parquet already exists, skipping conversion..." -ForegroundColor Gray
+    Write-Host "Full Parquet already exists, skipping conversion..." -ForegroundColor Gray
 }
 
-Write-Host "`n=== STEP 2: Download 2025 Backtest Data ===" -ForegroundColor Cyan
-$backtestDir = "artifacts/backtest_2025"
-$backtestParquet = "artifacts/backtest_2025.parquet"
-if (Test-Path "$backtestDir/BTCUSDT-1m-*.csv") {
-    Write-Host "Backtest data already downloaded, skipping..." -ForegroundColor Gray
-} else {
-    Write-Host "Downloading 2025-01-01 ~ 2025-06-30..." -ForegroundColor Yellow
-    python -m btcusdt_quant collect-archive --start 2025-01-01 --end 2025-06-30 --output $backtestDir --allow-public-network --min-rows 10000
-    if (-not (Test-Path "$backtestDir/BTCUSDT-1m-*.csv")) {
-        Write-Host "ERROR: Failed to download backtest data" -ForegroundColor Red
-        exit 1
-    }
-}
-
-if (-not (Test-Path $backtestParquet)) {
-    Convert-CsvToParquet $backtestDir $backtestParquet
-} else {
-    Write-Host "Backtest Parquet already exists, skipping conversion..." -ForegroundColor Gray
-}
-
-Write-Host "`n=== STEP 3: Generate user_regime_periods.json ===" -ForegroundColor Cyan
+Write-Host "`n=== STEP 2: Generate user_regime_periods.json ===" -ForegroundColor Cyan
 $jsonPeriods = @()
 foreach ($p in $regimePeriods) {
     $jsonPeriods += @{
@@ -154,30 +135,25 @@ foreach ($p in $regimePeriods) {
 $jsonContent = @{
     periods = $jsonPeriods
 } | ConvertTo-Json -Depth 3
-# Write without BOM (PowerShell 5.1 Out-File adds BOM)
 [System.IO.File]::WriteAllText("$PWD\artifacts\user_regime_periods.json", $jsonContent, [System.Text.UTF8Encoding]::new($false))
 Write-Host "Generated artifacts/user_regime_periods.json with $($jsonPeriods.Count) periods" -ForegroundColor Green
 
-Write-Host "`n=== STEP 4: Train with user regimes (50-week warmup auto-excluded) ===" -ForegroundColor Cyan
-Write-Host "  Model: catboost ensemble (3 models per regime)"
-Write-Host "  Regime-aware: user-specified periods"
+Write-Host "`n=== STEP 3: Compute Features (2020-2025, one-time) ===" -ForegroundColor Cyan
+Write-Host "  This computes all features for the entire period and caches the result." -ForegroundColor Yellow
 $env:PYTHONUNBUFFERED=1
-python -u -m btcusdt_quant train --input $trainParquet --use-user-regime --user-regime-file artifacts/user_regime_periods.json --output artifacts/regime_model --cache-path artifacts/training_dataset_cache.pkl
+python -u -m btcusdt_quant train --input $fullParquet --use-user-regime --user-regime-file artifacts/user_regime_periods.json --output artifacts/regime_model --cache-path artifacts/full_dataset_cache.pkl --training-start 2020-01-01 --only-build
 $env:PYTHONUNBUFFERED=0
 
-Write-Host "`n=== STEP 5: Backtest on 2025 data ===" -ForegroundColor Cyan
-# Merge training + backtest data for correct feature computation (rolling windows need history)
-Write-Host "  Merging training(2020-2024) + backtest(2025) for feature continuity..." -ForegroundColor Yellow
-python -c "
-import pyarrow.parquet as pq
-import pyarrow as pa
-train = pq.read_table('$trainParquet')
-bt = pq.read_table('$backtestParquet')
-merged = pa.concat_tables([train, bt])
-pq.write_table(merged, 'artifacts/merged_for_backtest.parquet')
-print(f'  Merged: {merged.num_rows:,} rows ({train.num_rows:,} train + {bt.num_rows:,} backtest)')
-"
-python -m btcusdt_quant backtest --input artifacts/merged_for_backtest.parquet --model-artifact artifacts/regime_model --user-regime-file artifacts/user_regime_periods.json --backtest-start 2025-01-01 --output artifacts/backtest_results
+Write-Host "`n=== STEP 4: Train on 2020-2024 with Regimes + Test on 2025 H1 ===" -ForegroundColor Cyan
+Write-Host "  Training: 2020-2024 (50-week warmup auto-excluded)" -ForegroundColor Yellow
+Write-Host "  Test: 2025-01-01 to 2025-06-30 (out-of-sample)" -ForegroundColor Yellow
+$env:PYTHONUNBUFFERED=1
+python -u -m btcusdt_quant train --input $fullParquet --use-user-regime --user-regime-file artifacts/user_regime_periods.json --output artifacts/regime_model --cache-path artifacts/full_dataset_cache.pkl --training-start 2020-01-01 --training-end 2024-12-31 --test-start 2025-01-01 --test-end 2025-06-30
+$env:PYTHONUNBUFFERED=0
+
+Write-Host "`n=== STEP 5: Backtest on 2025 H2 (Jul-Dec) ===" -ForegroundColor Cyan
+Write-Host "  Backtest period: 2025-07-01 to 2025-12-31" -ForegroundColor Yellow
+python -m btcusdt_quant backtest --input $fullParquet --model-artifact artifacts/regime_model --user-regime-file artifacts/user_regime_periods.json --backtest-start 2025-07-01 --output artifacts/backtest_results
 
 Write-Host "`n=== DONE ===" -ForegroundColor Cyan
 Write-Host "Training model: artifacts/regime_model/"
