@@ -270,10 +270,11 @@ if (-not $OnlyBacktest -and -not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "Feature build failed" }
 }
 
-# ─── STEP 4: Train on FULL dataset with Regimes ───────────────────────────────
+# ─── STEP 4: Train on 2020-2024 with Regimes + Test on 2025 H1 ────────────────
 if (-not $OnlyBacktest -and -not $SkipBuild) {
-    Write-Host "`n=== STEP 4: Train on FULL dataset ($StartDate ~ $EndDate) with Regimes ===" -ForegroundColor Cyan
-    Write-Host "  Full-period training (50-week warmup auto-excluded)" -ForegroundColor Yellow
+    Write-Host "`n=== STEP 4: Train on $StartDate ~ $TrainEnd with Regimes + Test on $TestStart ~ $TestEnd ===" -ForegroundColor Cyan
+    Write-Host "  Training: $StartDate ~ $TrainEnd (50-week warmup auto-excluded)" -ForegroundColor Yellow
+    Write-Host "  Test: $TestStart ~ $TestEnd (out-of-sample)" -ForegroundColor Yellow
     $env:PYTHONUNBUFFERED = 1
     & $VenvPython -u -m btcusdt_quant train `
         --input $fullParquet `
@@ -281,7 +282,10 @@ if (-not $OnlyBacktest -and -not $SkipBuild) {
         --user-regime-file $regimeJson `
         --output $modelDir `
         --cache-path $cachePath `
-        --training-start $StartDate
+        --training-start $StartDate `
+        --training-end $TrainEnd `
+        --test-start $TestStart `
+        --test-end $TestEnd
     $env:PYTHONUNBUFFERED = 0
     if ($LASTEXITCODE -ne 0) { throw "Training failed" }
 }
