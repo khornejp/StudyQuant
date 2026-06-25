@@ -1517,6 +1517,77 @@ def _coerce_regime_detector_config(payload: object) -> features.RegimeDetectorCo
     )
 
 
+# EV (Expected Value) calculation for LONG/SHORT entry decisions
+EV_COST_CONFIG = {
+    "fee_entry": 0.0002,      # 0.02% Binance taker fee
+    "fee_exit": 0.0002,       # 0.02% Binance taker fee
+    "slippage": 0.0001,       # 0.01% estimated slippage
+    "spread_cost": 0.0001,    # 0.01% estimated spread cost
+    "safety_margin": 0.0002,  # 0.02% safety margin
+}
+
+
+def calculate_net_tp_sl(
+    gross_tp_pct: float,
+    gross_sl_pct: float,
+    cost_config: dict[str, float] | None = None,
+) -> tuple[float, float]:
+    """Calculate net TP/SL after costs."""
+    config = cost_config or EV_COST_CONFIG
+    total_cost = config["fee_entry"] + config["fee_exit"] + config["slippage"] + config["spread_cost"]
+    net_tp = gross_tp_pct - total_cost
+    net_sl = -gross_sl_pct - total_cost  # SL is negative, subtract costs
+    return net_tp, net_sl
+
+
+def calculate_long_ev(
+    long_prob: float,
+    gross_tp_pct: float = 0.0015,
+    gross_sl_pct: float = 0.0010,
+    cost_config: dict[str, float] | None = None,
+) -> float:
+    """Calculate Expected Value for LONG entry."""
+    net_tp, net_sl = calculate_net_tp_sl(gross_tp_pct, gross_sl_pct, cost_config)
+    return long_prob * net_tp + (1.0 - long_prob) * net_sl
+
+
+def calculate_short_ev(
+    short_prob: float,
+    gross_tp_pct: float = 0.0015,
+    gross_sl_pct: float = 0.0010,
+    cost_config: dict[str, float] | None = None,
+) -> float:
+    """Calculate Expected Value for SHORT entry."""
+    net_tp, net_sl = calculate_net_tp_sl(gross_tp_pct, gross_sl_pct, cost_config)
+    return short_prob * net_tp + (1.0 - short_prob) * net_sl
+
+
+def evaluate_entry_signal(
+    long_prob: float,
+    short_prob: float,
+    min_ev: float = 0.0001,
+    long_threshold: float = 0.55,
+    short_threshold: float = 0.55,
+    gross_tp_pct: float = 0.0015,
+    gross_sl_pct: float = 0.0010,
+    cost_config: dict[str, float] | None = None,
+) -> tuple[str, float, float]:
+    """Evaluate entry signal based on EV calculation.
+    
+    Returns:
+        (signal, long_ev, short_ev) where signal is "LONG", "SHORT", or "NO_TRADE"
+    """
+    long_ev = calculate_long_ev(long_prob, gross_tp_pct, gross_sl_pct, cost_config)
+    short_ev = calculate_short_ev(short_prob, gross_tp_pct, gross_sl_pct, cost_config)
+    
+    if long_ev > min_ev and long_prob > long_threshold:
+        return "LONG", long_ev, short_ev
+    elif short_ev > min_ev and short_prob > short_threshold:
+        return "SHORT", long_ev, short_ev
+    else:
+        return "NO_TRADE", long_ev, short_ev
+
+
 class LiveEngine:
     def __init__(
         self,
