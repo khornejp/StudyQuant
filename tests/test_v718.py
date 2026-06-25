@@ -1707,7 +1707,7 @@ class EndToEndPipelineV718Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             # 1. Collect data with default args (240 rows)
             data_path = Path(tmpdir) / "btcusdt_1m.csv"
-            collect_result = dataset.collect_candles(data_path, rows=240)
+            collect_result = dataset.collect_candles(data_path, rows=500)
             self.assertGreaterEqual(collect_result.rows, 200, "collect should produce at least 200 rows")
             
             # 2. Train with default args (model_family defaults to auto)
@@ -1854,7 +1854,7 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
         from btcusdt_quant import training
         with tempfile.TemporaryDirectory() as tmpdir:
             data_path = Path(tmpdir) / "btcusdt_1m.csv"
-            dataset.collect_candles(data_path, rows=240)
+            dataset.collect_candles(data_path, rows=500)
             train_dir = Path(tmpdir) / "training"
             config = training.TrainingConfig(feature_selection_enabled=True)
             result = training.run_training(data_path, train_dir, config=config)
@@ -1869,7 +1869,7 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
         from btcusdt_quant import training
         with tempfile.TemporaryDirectory() as tmpdir:
             data_path = Path(tmpdir) / "btcusdt_1m.csv"
-            dataset.collect_candles(data_path, rows=240)
+            dataset.collect_candles(data_path, rows=500)
             train_dir = Path(tmpdir) / "training"
             config = training.TrainingConfig(optuna_enabled=True, optuna_trials=5, optuna_budget_profile="research_fast")
             result = training.run_training(data_path, train_dir, config=config)
@@ -1882,7 +1882,7 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
         from btcusdt_quant import training
         with tempfile.TemporaryDirectory() as tmpdir:
             data_path = Path(tmpdir) / "btcusdt_1m.csv"
-            dataset.collect_candles(data_path, rows=240)
+            dataset.collect_candles(data_path, rows=500)
             train_dir = Path(tmpdir) / "training"
             config = training.TrainingConfig(champion_challenger_enabled=True)
             result = training.run_training(data_path, train_dir, config=config)
@@ -1929,7 +1929,7 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 data_path = Path(tmpdir) / "btcusdt_1m.csv"
-                dataset.collect_candles(data_path, rows=240)
+                dataset.collect_candles(data_path, rows=500)
                 train_dir = Path(tmpdir) / "training"
                 config = training.TrainingConfig(champion_challenger_enabled=True)
                 result = training.run_training(data_path, train_dir, config=config)
@@ -2044,7 +2044,7 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
         from btcusdt_quant import training, models
         with tempfile.TemporaryDirectory() as tmpdir:
             data_path = Path(tmpdir) / "btcusdt_1m.csv"
-            dataset.collect_candles(data_path, rows=240)
+            dataset.collect_candles(data_path, rows=500)
             train_dir = Path(tmpdir) / "training"
             config = training.TrainingConfig(
                 optuna_enabled=True,
@@ -2077,7 +2077,7 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 data_path = Path(tmpdir) / "btcusdt_1m.csv"
-                dataset.collect_candles(data_path, rows=240)
+                dataset.collect_candles(data_path, rows=500)
                 train_dir = Path(tmpdir) / "training"
                 config = training.TrainingConfig(
                     optuna_enabled=True,
@@ -2114,7 +2114,7 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
         project_root = str(Path(__file__).parent.parent)
         with tempfile.TemporaryDirectory() as tmpdir:
             data_path = Path(tmpdir) / "btcusdt_1m.csv"
-            dataset.collect_candles(data_path, rows=240)
+            dataset.collect_candles(data_path, rows=500)
             train_dir = Path(tmpdir) / "training"
             env = {**os.environ, "PYTHONPATH": project_root}
             result = subprocess.run(
