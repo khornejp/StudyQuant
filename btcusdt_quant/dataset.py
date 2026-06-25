@@ -1458,6 +1458,9 @@ def attach_labels(
             continue
         target_return = (candles[future_index].close - close) / close
         label, label_reason = triple_barrier_label(row.index, candles, horizon, label_threshold, tp_pct, sl_pct, target_return)
+        # LONG/SHORT success labels
+        long_success, long_reason = triple_barrier_label_long(row.index, candles, horizon, tp_pct, sl_pct)
+        short_success, short_reason = triple_barrier_label_short(row.index, candles, horizon, tp_pct, sl_pct)
         # Direction target: simple future return sign
         direction_label = 1 if target_return > 0.0 else 0
         direction_reason = "future_positive" if target_return > 0.0 else "future_negative"
@@ -1480,8 +1483,18 @@ def attach_labels(
                 feature_availability_status=dict(row.feature_availability_status),
                 unavailable_sources=row.unavailable_sources,
                 fallback_features=row.fallback_features,
-                targets={"direction": direction_label, "profitability": label},
-                target_reasons={"direction": direction_reason, "profitability": label_reason},
+                targets={
+                    "direction": direction_label,
+                    "profitability": label,
+                    "long_success": long_success,
+                    "short_success": short_success,
+                },
+                target_reasons={
+                    "direction": direction_reason,
+                    "profitability": label_reason,
+                    "long_success": long_reason,
+                    "short_success": short_reason,
+                },
                 user_regime=row.user_regime,
             )
         )
@@ -1519,6 +1532,64 @@ def triple_barrier_label(
             return 0, "gap_cross_sl" if candle.gap_flag == 1 else "sl_first"
     timeout_reason = "gap_cross_timeout" if gap_seen else "timeout_no_tp"
     return (1 if target_return > label_threshold else 0), timeout_reason
+
+
+def triple_barrier_label_long(
+    entry_index: int,
+    candles: Sequence[data.Candle],
+    horizon: int,
+    tp_pct: float,
+    sl_pct: float,
+) -> tuple[int, str]:
+    """LONG 진입 시 TP가 SL보다 먼저 도달하면 1, 아니면 0."""
+    entry_price = candles[entry_index].close
+    tp_level = entry_price * (1.0 + tp_pct)
+    sl_level = entry_price * (1.0 - sl_pct)
+    gap_seen = False
+    for future_index in range(entry_index + 1, entry_index + horizon + 1):
+        candle = candles[future_index]
+        if candle.gap_flag == 1:
+            gap_seen = True
+        tp_touched = candle.high >= tp_level
+        sl_touched = candle.low <= sl_level
+        if tp_touched and sl_touched:
+            if candle.close > candle.open:
+                return 1, "long_tp_first"
+            return 0, "long_sl_first"
+        if tp_touched:
+            return 1, "long_tp_first"
+        if sl_touched:
+            return 0, "long_sl_first"
+    return 0, "long_timeout"
+
+
+def triple_barrier_label_short(
+    entry_index: int,
+    candles: Sequence[data.Candle],
+    horizon: int,
+    tp_pct: float,
+    sl_pct: float,
+) -> tuple[int, str]:
+    """SHORT 진입 시 TP(가격 하락)가 SL(가격 상승)보다 먼저 도달하면 1, 아니면 0."""
+    entry_price = candles[entry_index].close
+    tp_level = entry_price * (1.0 - tp_pct)  # TP: 가격 하락
+    sl_level = entry_price * (1.0 + sl_pct)  # SL: 가격 상승
+    gap_seen = False
+    for future_index in range(entry_index + 1, entry_index + horizon + 1):
+        candle = candles[future_index]
+        if candle.gap_flag == 1:
+            gap_seen = True
+        tp_touched = candle.low <= tp_level  # 하락 TP 체크
+        sl_touched = candle.high >= sl_level  # 상승 SL 체크
+        if tp_touched and sl_touched:
+            if candle.close < candle.open:
+                return 1, "short_tp_first"
+            return 0, "short_sl_first"
+        if tp_touched:
+            return 1, "short_tp_first"
+        if sl_touched:
+            return 0, "short_sl_first"
+    return 0, "short_timeout"
 
 
 def _external_label(row: FeatureRow, target_return: float, label_threshold: float, external_events: Mapping[object, object] | None) -> tuple[int | None, str | None]:
