@@ -387,7 +387,8 @@ def compare_strategies(
             "aggressive": live.strategy_for_regime(None, "aggressive"),
         }
     # Pre-compute feature rows once for all strategies
-    feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
+    if feature_rows is None:
+        feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
     results: dict[str, BacktestResult] = {}
     for name, strategy in strategies.items():
         results[name] = run_backtest(

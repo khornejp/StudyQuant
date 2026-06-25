@@ -419,6 +419,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--model-artifact", default=None, help="trained model artifact JSON path or regime-aware directory")
     backtest_parser.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods for backtest")
     backtest_parser.add_argument("--backtest-start", default="2025-07-01", help="start date for backtest (ISO format, e.g., 2025-07-01); candles before this date are used for feature computation only")
+    backtest_parser.add_argument("--cache-path", default=None, help="path to cached dataset with pre-computed features (avoids redundant feature computation)")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -582,8 +583,17 @@ def main(argv: list[str] | None = None) -> int:
             model = None
             models_by_regime: dict[str, object] | None = None
             user_regime_periods = None
+            feature_rows = None
             if args.user_regime_file:
                 user_regime_periods = dataset.load_user_regime_periods(Path(args.user_regime_file))
+            # Load cached dataset to avoid redundant feature computation
+            if args.cache_path and Path(args.cache_path).exists():
+                print(f"[BACKTEST] Loading cached dataset from {args.cache_path}")
+                import pickle
+                with open(args.cache_path, "rb") as f:
+                    cached_build = pickle.load(f)
+                feature_rows = cached_build.feature_rows
+                print(f"[BACKTEST] Cached dataset loaded: {len(feature_rows):,} feature rows")
             if args.model_artifact:
                 model_path = Path(args.model_artifact)
                 if model_path.is_file():
@@ -607,6 +617,7 @@ def main(argv: list[str] | None = None) -> int:
                 user_regime_periods=user_regime_periods,
                 default_regime=max(models_by_regime, key=lambda k: 1) if models_by_regime else None,
                 start_date=args.backtest_start,
+                feature_rows=feature_rows,
             )
             result = backtest.run_backtest(
                 candles,
@@ -616,6 +627,7 @@ def main(argv: list[str] | None = None) -> int:
                 user_regime_periods=user_regime_periods,
                 default_regime=max(models_by_regime, key=lambda k: 1) if models_by_regime else None,
                 start_date=args.backtest_start,
+                feature_rows=feature_rows,
             )
             summary = {
                 "backtest": result.as_dict(),

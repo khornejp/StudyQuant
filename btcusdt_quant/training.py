@@ -217,7 +217,6 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             optuna_threshold = float(best_params.get("threshold", 0.5))
             # Update training_config model_params with signal_scale for fold/final training
             if "signal_scale" in best_params:
-                from dataclasses import replace
                 training_config = replace(
                     training_config,
                     model_params={**dict(training_config.model_params), "signal_scale": float(best_params["signal_scale"])},

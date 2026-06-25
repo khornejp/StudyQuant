@@ -153,7 +153,7 @@ $env:PYTHONUNBUFFERED=0
 
 Write-Host "`n=== STEP 5: Backtest on 2025 H2 (Jul-Dec) ===" -ForegroundColor Cyan
 Write-Host "  Backtest period: 2025-07-01 to 2025-12-31" -ForegroundColor Yellow
-python -m btcusdt_quant backtest --input $fullParquet --model-artifact artifacts/regime_model --user-regime-file artifacts/user_regime_periods.json --backtest-start 2025-07-01 --output artifacts/backtest_results
+python -m btcusdt_quant backtest --input $fullParquet --model-artifact artifacts/regime_model --user-regime-file artifacts/user_regime_periods.json --backtest-start 2025-07-01 --cache-path artifacts/full_dataset_cache.pkl --output artifacts/backtest_results
 
 Write-Host "`n=== DONE ===" -ForegroundColor Cyan
 Write-Host "Training model: artifacts/regime_model/"
