@@ -677,51 +677,34 @@ def _train_single_regime(
     )
     regime_output_dir = output_dir / f"regime_{regime_name}"
     regime_output_dir.mkdir(parents=True, exist_ok=True)
-    # Skip metadata/artifacts for sub-regime models: keep only core model training
-    regime_config = replace(
-        training_config,
-        regime_aware=False,
-        lineage_enabled=False,
-        feature_selection_enabled=False,
-        optuna_enabled=False,
-        champion_challenger_enabled=False,
-    )
     
-    # Train ensemble: 3 models with different configurations
-    print(f"[TRAIN]   Training ensemble (3 models) for regime '{regime_name}'...")
     f_matrix = feature_matrix(regime_build.labeled_rows, regime_build.feature_names)
-    labels = [row.label for row in regime_build.labeled_rows]
     
-    # Model 1: CatBoost fast (shallow, high lr)
-    print(f"[TRAIN]     Model 1/3: CatBoost fast (depth=6, lr=0.1)...")
-    model1 = models.CatBoostAdapter(
+    # Train LONG success model
+    print(f"[TRAIN]   Training LONG success model for regime '{regime_name}'...")
+    long_labels = [row.targets.get("long_success", row.label) for row in regime_build.labeled_rows]
+    long_model = models.CatBoostAdapter(
         feature_names=regime_build.feature_names,
-        model_params={"iterations": 200, "learning_rate": 0.1, "depth": 6, "verbose": False},
+        model_params={"iterations": 500, "learning_rate": 0.03, "depth": 8, "verbose": False},
     )
-    model1.fit(f_matrix, labels)
+    long_model.fit(f_matrix, long_labels)
     
-    # Model 2: CatBoost deep (deep, low lr)
-    print(f"[TRAIN]     Model 2/3: CatBoost deep (depth=10, lr=0.01)...")
-    model2 = models.CatBoostAdapter(
+    # Train SHORT success model
+    print(f"[TRAIN]   Training SHORT success model for regime '{regime_name}'...")
+    short_labels = [row.targets.get("short_success", row.label) for row in regime_build.labeled_rows]
+    short_model = models.CatBoostAdapter(
         feature_names=regime_build.feature_names,
-        model_params={"iterations": 500, "learning_rate": 0.01, "depth": 10, "verbose": False},
+        model_params={"iterations": 500, "learning_rate": 0.03, "depth": 8, "verbose": False},
     )
-    model2.fit(f_matrix, labels)
+    short_model.fit(f_matrix, short_labels)
     
-    # Model 3: LightGBM
-    print(f"[TRAIN]     Model 3/3: LightGBM...")
-    model3 = models.LightGBMAdapter(feature_names=regime_build.feature_names)
-    model3.fit(f_matrix, labels)
-    
-    # Create ensemble
-    ensemble = models.EnsembleAdapter([model1, model2, model3], weights=[0.3, 0.4, 0.3])
-    
-    # Save ensemble as model.json
+    # Save models
     writer = governance.ArtifactWriter(regime_output_dir)
-    writer.write_json("model.json", ensemble.as_dict())
-    print(f"[TRAIN]   Ensemble saved to {regime_output_dir / 'model.json'}")
+    writer.write_json("long_model.json", long_model.as_dict())
+    writer.write_json("short_model.json", short_model.as_dict())
+    print(f"[TRAIN]   Models saved to {regime_output_dir}")
     
-    # Create minimal TrainingResult without re-training (ensemble already saved)
+    # Create minimal TrainingResult
     run_summary = {
         "regime_aware": False,
         "regime_source": "user_regime",
@@ -732,7 +715,7 @@ def _train_single_regime(
         "mean_test_accuracy": 0.0,
         "mean_test_ece": 0.0,
         "mean_test_brier": 0.0,
-        "artifacts": ["model.json"],
+        "artifacts": ["long_model.json", "short_model.json"],
     }
     return TrainingResult(
         output_dir=regime_output_dir,
@@ -740,7 +723,7 @@ def _train_single_regime(
         splits=[],
         fold_results=[],
         run_summary=run_summary,
-        artifacts=["model.json"],
+        artifacts=["long_model.json", "short_model.json"],
     )
 
 

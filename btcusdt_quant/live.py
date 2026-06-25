@@ -1421,6 +1421,8 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> models.Model
 @dataclass(frozen=True)
 class RegimeModelBundle:
     models: dict[str, models.ModelAdapter]
+    long_models: dict[str, models.ModelAdapter]
+    short_models: dict[str, models.ModelAdapter]
     detector_thresholds: dict[str, float]
     detector_config: features.RegimeDetectorConfig
     detector_diagnostics: Mapping[str, object]
@@ -1450,22 +1452,40 @@ def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeM
     if not detector_thresholds:
         detector_thresholds = features.RegimeDetector(detector_config).fit_thresholds((), ())
     loaded_models: dict[str, models.ModelAdapter] = {}
-    for regime_name in ("high_volatility", "trending", "ranging"):
-        if regime_name not in regime_results:
+    long_models: dict[str, models.ModelAdapter] = {}
+    short_models: dict[str, models.ModelAdapter] = {}
+    
+    # Support both old (model.json) and new (long_model.json + short_model.json) structures
+    for regime_name in list(regime_results.keys()):
+        regime_dir = path / f"regime_{regime_name}"
+        
+        # Try new structure: long_model.json + short_model.json
+        long_path = regime_dir / "long_model.json"
+        short_path = regime_dir / "short_model.json"
+        if long_path.exists() and short_path.exists():
+            long_model = load_model_artifact(long_path, strict=strict)
+            short_model = load_model_artifact(short_path, strict=strict)
+            if long_model is not None and short_model is not None:
+                long_models[regime_name] = long_model
+                short_models[regime_name] = short_model
+                # Use long model as default for backward compatibility
+                loaded_models[regime_name] = long_model
             continue
-        model_path = path / f"regime_{regime_name}" / "model.json"
-        if not model_path.exists():
-            if strict:
-                raise FileNotFoundError(f"regime model not found: {model_path}")
-            continue
-        model = load_model_artifact(model_path, strict=strict)
-        if model is not None:
-            loaded_models[regime_name] = model
+        
+        # Fallback to old structure: model.json
+        model_path = regime_dir / "model.json"
+        if model_path.exists():
+            model = load_model_artifact(model_path, strict=strict)
+            if model is not None:
+                loaded_models[regime_name] = model
+    
     if not loaded_models:
         return None
     diagnostics_mapping: Mapping[str, object] = detector_diagnostics if isinstance(detector_diagnostics, Mapping) else {}
     return RegimeModelBundle(
         models=loaded_models,
+        long_models=long_models,
+        short_models=short_models,
         detector_thresholds=detector_thresholds,
         detector_config=detector_config,
         detector_diagnostics=diagnostics_mapping,
