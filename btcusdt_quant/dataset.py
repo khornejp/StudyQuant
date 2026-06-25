@@ -1105,6 +1105,19 @@ def build_feature_rows(
     range_pcts = [_range_pct(candle) for candle in candles]
     # Pre-compute weekly features once for all rows
     weekly_feature_values = weekly_features.compute_weekly_features(candles)
+    # Pre-compute F15 momentum indicators once for all rows (optimized O(n))
+    rsi_7_values = _rsi_series(closes, 7)
+    rsi_14_values = _rsi_series(closes, 14)
+    ema_12_values = _ema_series(closes, 12)
+    ema_26_values = _ema_series(closes, 26)
+    macd_line_values = [ema_12_values[i] - ema_26_values[i] for i in range(len(candles))]
+    macd_signal_values = _ema_series(macd_line_values, 9)
+    bb_width_20_values, bb_percent_b_values = _bb_series(closes, 20)
+    ema_5_slope_values = _ema_slope_series(closes, 5, 5)
+    ema_20_slope_values = _ema_slope_series(closes, 20, 10)
+    ema_60_slope_values = _ema_slope_series(closes, 60, 10)
+    rolling_vwap_20_values = _rolling_vwap_series(closes, volumes, 20)
+    rolling_vwap_60_values = _rolling_vwap_series(closes, volumes, 60)
     warmup_cutoff = max_feature_min_samples() - 1
     for index, candle in enumerate(candles):
         warmup_invalid = index < warmup_cutoff
@@ -1267,6 +1280,30 @@ def build_feature_rows(
             "weekly_vol_contraction": weekly_feature_values["weekly_vol_contraction"][index],
             "close_vs_weekly_ma20": weekly_feature_values["close_vs_weekly_ma20"][index],
             "close_vs_weekly_ma50": weekly_feature_values["close_vs_weekly_ma50"][index],
+            # F14: Time / Session features
+            "hour": float(candle.open_time.hour),
+            "minute": float(candle.open_time.minute),
+            "day_of_week": float(candle.open_time.weekday()),
+            "session_asia": 1.0 if 0 <= candle.open_time.hour < 8 else 0.0,
+            "session_europe": 1.0 if 8 <= candle.open_time.hour < 16 else 0.0,
+            "session_us": 1.0 if 16 <= candle.open_time.hour < 24 else 0.0,
+            "session_overlap": 1.0 if 8 <= candle.open_time.hour < 16 else 0.0,
+            "weekend_flag": 1.0 if candle.open_time.weekday() >= 5 else 0.0,
+            # F15: Momentum indicators (pre-computed)
+            "rsi_7": rsi_7_values[index],
+            "rsi_14": rsi_14_values[index],
+            "macd_line": macd_line_values[index],
+            "macd_signal": macd_signal_values[index],
+            "macd_hist": macd_line_values[index] - macd_signal_values[index],
+            "bb_width_20": bb_width_20_values[index],
+            "bb_percent_b": bb_percent_b_values[index],
+            "ema_5_slope": ema_5_slope_values[index],
+            "ema_20_slope": ema_20_slope_values[index],
+            "ema_60_slope": ema_60_slope_values[index],
+            "rolling_vwap_20": rolling_vwap_20_values[index],
+            "rolling_vwap_60": rolling_vwap_60_values[index],
+            "price_vs_rolling_vwap_20": _divide(candle.close, rolling_vwap_20_values[index]) - 1.0,
+            "price_vs_rolling_vwap_60": _divide(candle.close, rolling_vwap_60_values[index]) - 1.0,
         }
         clipper = features.FeatureClipper()
         clipped = clipper.clip({name: values[name] for name in FEATURE_NAMES})
@@ -1676,6 +1713,118 @@ def _ema(values: Sequence[float], index: int, span: int) -> float:
     return value
 
 
+def _ema_series(values: Sequence[float], span: int) -> list[float]:
+    """Compute EMA for all indices in O(n) time."""
+    if not values or span <= 0:
+        return [0.0] * len(values)
+    alpha = 2.0 / (span + 1.0)
+    result: list[float] = []
+    ema = values[0]
+    for index, value in enumerate(values):
+        if index == 0:
+            ema = value
+        else:
+            ema = alpha * value + (1.0 - alpha) * ema
+        if index + 1 >= span:
+            result.append(ema)
+        else:
+            result.append(0.0)
+    return result
+
+
+def _rsi_series(values: Sequence[float], period: int) -> list[float]:
+    """Compute RSI for all indices in O(n) time."""
+    if len(values) < period + 1 or period <= 0:
+        return [50.0] * len(values)
+    result: list[float] = []
+    # Calculate initial average gain/loss
+    gains = 0.0
+    losses = 0.0
+    for i in range(1, period + 1):
+        change = values[i] - values[i - 1]
+        if change > 0:
+            gains += change
+        else:
+            losses += abs(change)
+    avg_gain = gains / period
+    avg_loss = losses / period
+    # RSI for index=period
+    if avg_loss == 0.0:
+        result.extend([50.0] * period)
+        result.append(100.0 if avg_gain > 0 else 50.0)
+    else:
+        rs = avg_gain / avg_loss
+        result.extend([50.0] * period)
+        result.append(100.0 - (100.0 / (1.0 + rs)))
+    # Wilder's smoothing for remaining indices
+    for index in range(period + 1, len(values)):
+        change = values[index] - values[index - 1]
+        gain = max(change, 0.0)
+        loss = abs(min(change, 0.0))
+        avg_gain = (avg_gain * (period - 1) + gain) / period
+        avg_loss = (avg_loss * (period - 1) + loss) / period
+        if avg_loss == 0.0:
+            result.append(100.0 if avg_gain > 0 else 50.0)
+        else:
+            rs = avg_gain / avg_loss
+            result.append(100.0 - (100.0 / (1.0 + rs)))
+    return result
+
+
+def _bb_series(values: Sequence[float], window: int) -> tuple[list[float], list[float]]:
+    """Compute Bollinger Band width and %B for all indices."""
+    width_values = []
+    percent_b_values = []
+    for index in range(len(values)):
+        if index + 1 < window:
+            width_values.append(0.0)
+            percent_b_values.append(0.5)
+            continue
+        sample = values[index + 1 - window:index + 1]
+        mean_value = mean(sample)
+        std_value = _stddev(sample)
+        if mean_value == 0.0:
+            width_values.append(0.0)
+        else:
+            width_values.append((2.0 * std_value) / mean_value)
+        upper = mean_value + 2.0 * std_value
+        lower = mean_value - 2.0 * std_value
+        if upper == lower:
+            percent_b_values.append(0.5)
+        else:
+            percent_b_values.append((values[index] - lower) / (upper - lower))
+    return width_values, percent_b_values
+
+
+def _ema_slope_series(values: Sequence[float], ema_period: int, slope_window: int) -> list[float]:
+    """Compute EMA slope for all indices."""
+    ema_values = _ema_series(values, ema_period)
+    result = []
+    for index in range(len(values)):
+        if index + 1 < ema_period + slope_window:
+            result.append(0.0)
+            continue
+        slope_ema_values = ema_values[index + 1 - slope_window:index + 1]
+        result.append(_trend_slope(slope_ema_values, slope_window - 1, slope_window))
+    return result
+
+
+def _rolling_vwap_series(closes: Sequence[float], volumes: Sequence[float], window: int) -> list[float]:
+    """Compute rolling VWAP for all indices."""
+    result = []
+    for index in range(len(closes)):
+        if index + 1 < window:
+            result.append(0.0)
+            continue
+        total_value = 0.0
+        total_volume = 0.0
+        for position in range(index + 1 - window, index + 1):
+            total_value += closes[position] * volumes[position]
+            total_volume += volumes[position]
+        result.append(total_value / total_volume if total_volume > 0 else 0.0)
+    return result
+
+
 def _spread_to_close(left: float, right: float, close: float) -> float:
     if close == 0.0:
         return 0.0
@@ -1858,6 +2007,67 @@ def _zscore(values: Sequence[float], index: int, window: int) -> float:
     if scale == 0.0:
         return 0.0
     return (values[index] - mean(sample)) / scale
+
+
+def _rsi(values: Sequence[float], index: int, period: int) -> float:
+    if index < period:
+        return 50.0
+    gains = 0.0
+    losses = 0.0
+    for position in range(index + 1 - period, index + 1):
+        change = values[position] - values[position - 1]
+        if change > 0:
+            gains += change
+        else:
+            losses += abs(change)
+    avg_gain = gains / period
+    avg_loss = losses / period
+    if avg_loss == 0.0:
+        return 100.0 if avg_gain > 0 else 50.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def _bb_width(values: Sequence[float], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    sample = values[index + 1 - window:index + 1]
+    mean_value = mean(sample)
+    std_value = _stddev(sample)
+    if mean_value == 0.0:
+        return 0.0
+    return (2.0 * std_value) / mean_value
+
+
+def _bb_percent_b(values: Sequence[float], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.5
+    sample = values[index + 1 - window:index + 1]
+    mean_value = mean(sample)
+    std_value = _stddev(sample)
+    upper = mean_value + 2.0 * std_value
+    lower = mean_value - 2.0 * std_value
+    if upper == lower:
+        return 0.5
+    return (values[index] - lower) / (upper - lower)
+
+
+def _ema_slope(values: Sequence[float], index: int, ema_period: int, slope_window: int) -> float:
+    if index + 1 < ema_period + slope_window:
+        return 0.0
+    ema_values = [_ema(values, position, ema_period) for position in range(index + 1 - slope_window, index + 1)]
+    return _trend_slope(ema_values, slope_window - 1, slope_window)
+
+
+def _rolling_vwap(closes: Sequence[float], volumes: Sequence[float], index: int, window: int) -> float:
+    if index + 1 < window:
+        return 0.0
+    total_value = 0.0
+    total_volume = 0.0
+    for position in range(index + 1 - window, index + 1):
+        total_value += closes[position] * volumes[position]
+        total_volume += volumes[position]
+    return total_value / total_volume if total_volume > 0 else 0.0
 
 
 def _stddev(values: Sequence[float]) -> float:

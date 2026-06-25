@@ -34,6 +34,8 @@ VOL_ADJUSTED_FLOW = "volatility_adjusted_candle_flow_features"
 MICROSTRUCTURE = "microstructure_features"
 EXCHANGE_SAFETY = "exchange_funding_safety_features"
 HIGHER_TIMEFRAME = "higher_timeframe_features"
+TIME_SESSION = "time_session_features"
+MOMENTUM_INDICATORS = "momentum_indicator_features"
 
 
 def _feature(
@@ -185,6 +187,30 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("weekly_vol_contraction", "F13", HIGHER_TIMEFRAME, "std(weekly_close, 20) / std(weekly_close, 50)", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("close_vs_weekly_ma20", "F13", HIGHER_TIMEFRAME, "current_close / SMA(weekly_close, 20) - 1", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("close_vs_weekly_ma50", "F13", HIGHER_TIMEFRAME, "current_close / SMA(weekly_close, 50) - 1", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    # F14: Time / Session Features
+    _feature("hour", "F14", TIME_SESSION, "hour_of_day(open_time)", 1, 1, "klines_1m", warmup_rule="none", leakage_risk="none"),
+    _feature("minute", "F14", TIME_SESSION, "minute_of_hour(open_time)", 1, 1, "klines_1m", warmup_rule="none", leakage_risk="none"),
+    _feature("day_of_week", "F14", TIME_SESSION, "day_of_week(open_time)", 1, 1, "klines_1m", warmup_rule="none", leakage_risk="none"),
+    _feature("session_asia", "F14", TIME_SESSION, "1 if hour in [0,1,2,3,4,5,6,7] else 0", 1, 1, "klines_1m", warmup_rule="none", leakage_risk="none"),
+    _feature("session_europe", "F14", TIME_SESSION, "1 if hour in [8,9,10,11,12,13,14,15] else 0", 1, 1, "klines_1m", warmup_rule="none", leakage_risk="none"),
+    _feature("session_us", "F14", TIME_SESSION, "1 if hour in [16,17,18,19,20,21,22,23] else 0", 1, 1, "klines_1m", warmup_rule="none", leakage_risk="none"),
+    _feature("session_overlap", "F14", TIME_SESSION, "1 if hour in [8,9,10,11,12,13,14,15] else 0", 1, 1, "klines_1m", warmup_rule="none", leakage_risk="none"),
+    _feature("weekend_flag", "F14", TIME_SESSION, "1 if day_of_week in [5,6] else 0", 1, 1, "klines_1m", warmup_rule="none", leakage_risk="none"),
+    # F15: Momentum Indicators (RSI, MACD, Bollinger, VWAP)
+    _feature("rsi_7", "F15", MOMENTUM_INDICATORS, "RSI(close, 7)", 8, 8, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("rsi_14", "F15", MOMENTUM_INDICATORS, "RSI(close, 14)", 15, 15, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("macd_line", "F15", MOMENTUM_INDICATORS, "EMA(close,12) - EMA(close,26)", 26, 26, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("macd_signal", "F15", MOMENTUM_INDICATORS, "EMA(macd_line, 9)", 35, 35, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("macd_hist", "F15", MOMENTUM_INDICATORS, "macd_line - macd_signal", 35, 35, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("bb_width_20", "F15", MOMENTUM_INDICATORS, "(BB_upper_20 - BB_lower_20) / BB_middle_20", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("bb_percent_b", "F15", MOMENTUM_INDICATORS, "(close - BB_lower_20) / (BB_upper_20 - BB_lower_20)", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("ema_5_slope", "F15", MOMENTUM_INDICATORS, "linear_regression_slope(EMA(close,5), last 5 bars)", 10, 10, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("ema_20_slope", "F15", MOMENTUM_INDICATORS, "linear_regression_slope(EMA(close,20), last 10 bars)", 30, 30, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("ema_60_slope", "F15", MOMENTUM_INDICATORS, "linear_regression_slope(EMA(close,60), last 10 bars)", 70, 70, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("rolling_vwap_20", "F15", MOMENTUM_INDICATORS, "cumulative(close*volume, 20) / cumulative(volume, 20)", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("rolling_vwap_60", "F15", MOMENTUM_INDICATORS, "cumulative(close*volume, 60) / cumulative(volume, 60)", 60, 60, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("price_vs_rolling_vwap_20", "F15", MOMENTUM_INDICATORS, "close / rolling_vwap_20 - 1", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("price_vs_rolling_vwap_60", "F15", MOMENTUM_INDICATORS, "close / rolling_vwap_60 - 1", 60, 60, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
 ]
 
 
