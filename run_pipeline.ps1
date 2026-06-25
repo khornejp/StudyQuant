@@ -1,13 +1,96 @@
-# BTCUSDT Pipeline - Unified Feature Computation
-# 1. Download 2020-2025 as ONE continuous dataset
-# 2. Compute features ONCE for entire period
-# 3. Train on 2020-2024 with user regimes
-# 4. Test on 2025 H1 (Jan-Jun)
-# 5. Backtest on 2025 H2 (Jul-Dec)
+# BTCUSDT Pipeline - Unified Feature Computation (Portable)
+# Usage:
+#   .\run_pipeline.ps1                           # Run full pipeline
+#   .\run_pipeline.ps1 -VenvPath ".\venv_btcusdt" # Use custom venv
+#   .\run_pipeline.ps1 -SkipDownload             # Skip archive download
+#   .\run_pipeline.ps1 -SkipBuild                # Skip dataset build
+#   .\run_pipeline.ps1 -OnlyBacktest             # Only run backtest
+#
+# Requirements:
+#   - PowerShell 5.1+
+#   - Python venv with btcusdt_quant dependencies installed
+#   - pyarrow (for CSV to Parquet conversion)
+
+[CmdletBinding()]
+param(
+    [string]$VenvPath = ".\venv_btcusdt",
+    [string]$DataDir = "artifacts",
+    [string]$StartDate = "2020-01-01",
+    [string]$EndDate = "2025-12-31",
+    [string]$TrainEnd = "2024-12-31",
+    [string]$TestStart = "2025-01-01",
+    [string]$TestEnd = "2025-06-30",
+    [string]$BacktestStart = "2025-07-01",
+    [switch]$SkipDownload,
+    [switch]$SkipBuild,
+    [switch]$OnlyBacktest,
+    [switch]$DryRun
+)
 
 $ErrorActionPreference = "Stop"
 
-# User-defined regime periods (2020-2024 only, used for training)
+# ─── Resolve paths ────────────────────────────────────────────────────────────
+$RepoRoot = $PSScriptRoot
+if (-not $RepoRoot) { $RepoRoot = $PWD.Path }
+Set-Location $RepoRoot
+
+$VenvPath = Resolve-Path $VenvPath -ErrorAction SilentlyContinue
+if (-not $VenvPath) {
+    $VenvPath = Join-Path $RepoRoot $VenvPath
+}
+
+$DataDir = Join-Path $RepoRoot $DataDir
+$VenvPython = Join-Path $VenvPath "Scripts\python.exe"
+$VenvPip = Join-Path $VenvPath "Scripts\pip.exe"
+
+# ─── Validate environment ─────────────────────────────────────────────────────
+function Test-Prereqs {
+    if (-not (Test-Path $VenvPython)) {
+        Write-Host "ERROR: Python not found in venv: $VenvPython" -ForegroundColor Red
+        Write-Host "Please create the venv first:" -ForegroundColor Yellow
+        Write-Host "  python -m venv venv_btcusdt" -ForegroundColor Cyan
+        Write-Host "  .\venv_btcusdt\Scripts\activate.bat" -ForegroundColor Cyan
+        Write-Host "  pip install -e .`"[ml]`"" -ForegroundColor Cyan
+        exit 1
+    }
+
+    # Check pyarrow (needed for CSV→Parquet conversion)
+    $hasPyarrow = & $VenvPython -c "import pyarrow" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Installing pyarrow (required for CSV to Parquet conversion)..." -ForegroundColor Yellow
+        & $VenvPip install pyarrow
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: Failed to install pyarrow" -ForegroundColor Red
+            exit 1
+        }
+    }
+
+    # Verify btcusdt_quant is importable
+    $hasModule = & $VenvPython -c "import btcusdt_quant" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: btcusdt_quant module not found in venv" -ForegroundColor Red
+        Write-Host "Please install the project in editable mode:" -ForegroundColor Yellow
+        Write-Host "  $VenvPip install -e .`"[ml]`"" -ForegroundColor Cyan
+        exit 1
+    }
+
+    Write-Host "Environment OK: $VenvPython" -ForegroundColor Green
+}
+
+# ─── Wrapper for venv python ──────────────────────────────────────────────────
+function Invoke-VenvPython {
+    param([string]$Arguments)
+    if ($DryRun) {
+        Write-Host "[DRY-RUN] $VenvPython $Arguments" -ForegroundColor Gray
+        return
+    }
+    & $VenvPython @($Arguments -split ' ')
+    if ($LASTEXITCODE -ne 0) {
+        throw "Command failed: $VenvPython $Arguments"
+    }
+}
+
+# ─── User-defined regime periods (2020-2024 only, used for training) ──────────
 $regimePeriods = @(
     # 2020
     @{Regime="up";     Start="2020-01-01"; End="2020-02-13"},
@@ -65,7 +148,7 @@ $BINANCE_COLS = @(
 
 function Convert-CsvToParquet($csvDir, $outputParquet) {
     Write-Host "  Converting CSVs to Parquet: $outputParquet" -ForegroundColor Yellow
-    python -c "
+    $script = @"
 import glob, pyarrow.csv as pv, pyarrow.parquet as pq, pyarrow as pa
 
 BINANCE_COLS = [
@@ -99,62 +182,124 @@ t = t.rename_columns(names)
 t = t.select([n for n in names if n not in ('close_time','ignore')])
 pq.write_table(t, '$outputParquet')
 print(f'  {t.num_rows:,} rows ({t.num_rows/60/24:.0f} days)')
-"
-}
-
-Write-Host "=== STEP 1: Download 2020-2025 Full Dataset ===" -ForegroundColor Cyan
-$fullDir = "artifacts/full_2020_2025"
-$fullParquet = "artifacts/full_2020_2025.parquet"
-
-if (Test-Path "$fullDir/BTCUSDT-1m-*.csv") {
-    Write-Host "Full dataset already downloaded, skipping..." -ForegroundColor Gray
-} else {
-    Write-Host "Downloading 2020-01-01 ~ 2025-12-31 (this may take a while)..." -ForegroundColor Yellow
-    python -m btcusdt_quant collect-archive --start 2020-01-01 --end 2025-12-31 --output $fullDir --allow-public-network --min-rows 2000000
-    if (-not (Test-Path "$fullDir/BTCUSDT-1m-*.csv")) {
-        Write-Host "ERROR: Failed to download full dataset" -ForegroundColor Red
-        exit 1
+"@
+    if ($DryRun) {
+        Write-Host "[DRY-RUN] Convert CSV to Parquet" -ForegroundColor Gray
+        return
     }
+    & $VenvPython -c $script
+    if ($LASTEXITCODE -ne 0) { throw "CSV to Parquet conversion failed" }
 }
 
-if (-not (Test-Path $fullParquet)) {
-    Convert-CsvToParquet $fullDir $fullParquet
-} else {
-    Write-Host "Full Parquet already exists, skipping conversion..." -ForegroundColor Gray
-}
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAIN PIPELINE
+# ═══════════════════════════════════════════════════════════════════════════════
 
-Write-Host "`n=== STEP 2: Generate user_regime_periods.json ===" -ForegroundColor Cyan
-$jsonPeriods = @()
-foreach ($p in $regimePeriods) {
-    $jsonPeriods += @{
-        regime = $p.Regime
-        start = $p.Start
-        end_exclusive = $p.End
+Test-Prereqs
+
+$fullDir = Join-Path $DataDir "full_2020_2025"
+$fullParquet = Join-Path $DataDir "full_2020_2025.parquet"
+$regimeJson = Join-Path $DataDir "user_regime_periods.json"
+$cachePath = Join-Path $DataDir "full_dataset_cache.pkl"
+$modelDir = Join-Path $DataDir "regime_model"
+$backtestDir = Join-Path $DataDir "backtest_results"
+
+New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+New-Item -ItemType Directory -Force -Path $fullDir | Out-Null
+
+# ─── STEP 1: Download 2020-2025 Full Dataset ──────────────────────────────────
+if (-not $OnlyBacktest -and -not $SkipDownload) {
+    Write-Host "`n=== STEP 1: Download $StartDate ~ $EndDate Full Dataset ===" -ForegroundColor Cyan
+    if (Test-Path "$fullDir\BTCUSDT-1m-*.csv") {
+        Write-Host "Full dataset already downloaded, skipping..." -ForegroundColor Gray
+    } else {
+        Write-Host "Downloading (this may take a while)..." -ForegroundColor Yellow
+        & $VenvPython -m btcusdt_quant collect-archive --start $StartDate --end $EndDate --output $fullDir --allow-public-network --min-rows 2000000
+        if (-not (Test-Path "$fullDir\BTCUSDT-1m-*.csv")) {
+            Write-Host "ERROR: Failed to download full dataset" -ForegroundColor Red
+            exit 1
+        }
     }
+} else {
+    Write-Host "`n=== STEP 1: SKIPPED (download) ===" -ForegroundColor Gray
 }
-$jsonContent = @{
-    periods = $jsonPeriods
-} | ConvertTo-Json -Depth 3
-[System.IO.File]::WriteAllText("$PWD\artifacts\user_regime_periods.json", $jsonContent, [System.Text.UTF8Encoding]::new($false))
-Write-Host "Generated artifacts/user_regime_periods.json with $($jsonPeriods.Count) periods" -ForegroundColor Green
 
-Write-Host "`n=== STEP 3: Compute Features (2020-2025, one-time) ===" -ForegroundColor Cyan
-Write-Host "  This computes all features for the entire period and caches the result." -ForegroundColor Yellow
-$env:PYTHONUNBUFFERED=1
-python -u -m btcusdt_quant train --input $fullParquet --use-user-regime --user-regime-file artifacts/user_regime_periods.json --output artifacts/regime_model --cache-path artifacts/full_dataset_cache.pkl --training-start 2020-01-01 --only-build
-$env:PYTHONUNBUFFERED=0
+# ─── STEP 1b: Convert CSV to Parquet ──────────────────────────────────────────
+if (-not $OnlyBacktest -and -not $SkipBuild) {
+    if (-not (Test-Path $fullParquet)) {
+        Convert-CsvToParquet $fullDir $fullParquet
+    } else {
+        Write-Host "Full Parquet already exists, skipping conversion..." -ForegroundColor Gray
+    }
+} else {
+    Write-Host "Parquet build skipped..." -ForegroundColor Gray
+}
 
-Write-Host "`n=== STEP 4: Train on 2020-2024 with Regimes + Test on 2025 H1 ===" -ForegroundColor Cyan
-Write-Host "  Training: 2020-2024 (50-week warmup auto-excluded)" -ForegroundColor Yellow
-Write-Host "  Test: 2025-01-01 to 2025-06-30 (out-of-sample)" -ForegroundColor Yellow
-$env:PYTHONUNBUFFERED=1
-python -u -m btcusdt_quant train --input $fullParquet --use-user-regime --user-regime-file artifacts/user_regime_periods.json --output artifacts/regime_model --cache-path artifacts/full_dataset_cache.pkl --training-start 2020-01-01 --training-end 2024-12-31 --test-start 2025-01-01 --test-end 2025-06-30
-$env:PYTHONUNBUFFERED=0
+# ─── STEP 2: Generate user_regime_periods.json ────────────────────────────────
+if (-not $OnlyBacktest) {
+    Write-Host "`n=== STEP 2: Generate user_regime_periods.json ===" -ForegroundColor Cyan
+    $jsonPeriods = @()
+    foreach ($p in $regimePeriods) {
+        $jsonPeriods += @{
+            regime = $p.Regime
+            start = $p.Start
+            end_exclusive = $p.End
+        }
+    }
+    $jsonContent = @{
+        periods = $jsonPeriods
+    } | ConvertTo-Json -Depth 3
+    [System.IO.File]::WriteAllText($regimeJson, $jsonContent, [System.Text.UTF8Encoding]::new($false))
+    Write-Host "Generated $regimeJson with $($jsonPeriods.Count) periods" -ForegroundColor Green
+}
 
-Write-Host "`n=== STEP 5: Backtest on 2025 H2 (Jul-Dec) ===" -ForegroundColor Cyan
-Write-Host "  Backtest period: 2025-07-01 to 2025-12-31" -ForegroundColor Yellow
-python -m btcusdt_quant backtest --input $fullParquet --model-artifact artifacts/regime_model --user-regime-file artifacts/user_regime_periods.json --backtest-start 2025-07-01 --cache-path artifacts/full_dataset_cache.pkl --output artifacts/backtest_results
+# ─── STEP 3: Compute Features (one-time build with cache) ─────────────────────
+if (-not $OnlyBacktest -and -not $SkipBuild) {
+    Write-Host "`n=== STEP 3: Compute Features ($StartDate ~ $EndDate, one-time) ===" -ForegroundColor Cyan
+    Write-Host "  This computes all features for the entire period and caches the result." -ForegroundColor Yellow
+    $env:PYTHONUNBUFFERED = 1
+    & $VenvPython -u -m btcusdt_quant train `
+        --input $fullParquet `
+        --use-user-regime `
+        --user-regime-file $regimeJson `
+        --output $modelDir `
+        --cache-path $cachePath `
+        --training-start $StartDate `
+        --only-build
+    $env:PYTHONUNBUFFERED = 0
+    if ($LASTEXITCODE -ne 0) { throw "Feature build failed" }
+}
+
+# ─── STEP 4: Train on FULL dataset with Regimes ───────────────────────────────
+if (-not $OnlyBacktest -and -not $SkipBuild) {
+    Write-Host "`n=== STEP 4: Train on FULL dataset ($StartDate ~ $EndDate) with Regimes ===" -ForegroundColor Cyan
+    Write-Host "  Full-period training (50-week warmup auto-excluded)" -ForegroundColor Yellow
+    $env:PYTHONUNBUFFERED = 1
+    & $VenvPython -u -m btcusdt_quant train `
+        --input $fullParquet `
+        --use-user-regime `
+        --user-regime-file $regimeJson `
+        --output $modelDir `
+        --cache-path $cachePath `
+        --training-start $StartDate
+    $env:PYTHONUNBUFFERED = 0
+    if ($LASTEXITCODE -ne 0) { throw "Training failed" }
+}
+
+# ─── STEP 5: Backtest on 2025 H2 (Jul-Dec) ────────────────────────────────────
+Write-Host "`n=== STEP 5: Backtest on $BacktestStart ~ $EndDate ===" -ForegroundColor Cyan
+Write-Host "  Backtest period: $BacktestStart ~ $EndDate" -ForegroundColor Yellow
+& $VenvPython -m btcusdt_quant backtest `
+    --input $fullParquet `
+    --model-artifact $modelDir `
+    --user-regime-file $regimeJson `
+    --backtest-start $BacktestStart `
+    --cache-path $cachePath `
+    --output $backtestDir
+if ($LASTEXITCODE -ne 0) { throw "Backtest failed" }
 
 Write-Host "`n=== DONE ===" -ForegroundColor Cyan
-Write-Host "Training model: artifacts/regime_model/"
-Write-Host "Backtest results: artifacts/backtest_results/"
+Write-Host "Training model: $modelDir" -ForegroundColor Green
+Write-Host "Backtest results: $backtestDir" -ForegroundColor Green
+Write-Host "Dataset cache: $cachePath" -ForegroundColor Green
+Write-Host "Regime config: $regimeJson" -ForegroundColor Green

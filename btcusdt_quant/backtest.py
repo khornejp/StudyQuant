@@ -378,6 +378,7 @@ def compare_strategies(
     user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None,
     default_regime: str | None = None,
     start_date: str | None = None,
+    feature_rows: Sequence[dataset.FeatureRow] | None = None,
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison."""
     if strategies is None:

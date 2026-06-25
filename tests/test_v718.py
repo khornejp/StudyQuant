@@ -20,12 +20,12 @@ class FeatureRegistryV718Tests(unittest.TestCase):
         registry_features = cast(list[dict[str, object]], registry["features"])
         self.assertGreaterEqual(len(registry_features), 70, "v7.18 requires at least 70 features")
 
-    def test_all_categories_f01_through_f12_present(self) -> None:
+    def test_all_categories_f01_through_f15_present(self) -> None:
         registry = dataset.feature_formula_registry()
         registry_features = cast(list[dict[str, object]], registry["features"])
         categories = {str(feature["category"]) for feature in registry_features}
-        expected = {f"F{index:02d}" for index in range(1, 14)}
-        self.assertEqual(categories, expected, "v7.18 requires F01-F13 categories")
+        expected = {f"F{index:02d}" for index in range(1, 16)}
+        self.assertEqual(categories, expected, "v7.18 requires F01-F15 categories")
 
     def test_all_active_features_have_required_fields(self) -> None:
         registry = dataset.feature_formula_registry()
@@ -2393,6 +2393,7 @@ class TestBacktest(unittest.TestCase):
             initial_equity=100.0,
             position_size=1.0,
             label_horizon=1,
+            cooldown_bars=0,
             fee_rate_per_side=0.0002,
             slippage_rate_per_side=0.0002,
         )

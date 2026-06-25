@@ -1849,7 +1849,7 @@ def _bb_series(values: Sequence[float], window: int) -> tuple[list[float], list[
     for index in range(len(values)):
         if index + 1 < window:
             width_values.append(0.0)
-            percent_b_values.append(0.5)
+            percent_b_values.append(0.0)
             continue
         sample = values[index + 1 - window:index + 1]
         mean_value = mean(sample)

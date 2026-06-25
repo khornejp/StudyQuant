@@ -154,7 +154,7 @@ class DataPipelineTests(unittest.TestCase):
         registry = dataset.feature_formula_registry()
         registry_features = cast(list[dict[str, object]], registry["features"])
         categories = {feature["category"] for feature in registry_features}
-        self.assertEqual(categories, {f"F{index:02d}" for index in range(1, 14)})
+        self.assertEqual(categories, {f"F{index:02d}" for index in range(1, 16)})
 
     def test_feature_registry_all_features_active(self) -> None:
         registry = dataset.feature_formula_registry()
@@ -292,7 +292,7 @@ class DataPipelineTests(unittest.TestCase):
                 price = 100000.0 + index * 20.0
                 lines.append(f"{(base.replace(minute=index)).isoformat()},{price},{price + 5.0},{price - 5.0},{price + 2.0},10.0,{price * 10.0},100")
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            build = dataset.build_dataset(path)
+            build = dataset.build_dataset(path, horizon=5)
             self.assertEqual(build.raw_rows, 17)
             self.assertEqual(build.gap_report.repaired_rows, 1)
             self.assertGreater(len(build.labeled_rows), 0)
@@ -384,7 +384,7 @@ class ArchiveDownloaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp)
             (archive / "BTCUSDT-1m-2024-01-01.csv").write_text(make_archive_csv(rows=30), encoding="utf-8")
-            build = dataset.build_dataset(archive_dir=archive)
+            build = dataset.build_dataset(archive_dir=archive, horizon=10)
             self.assertEqual(build.source, archive.as_posix())
             self.assertEqual(build.raw_rows, 30)
             self.assertEqual(build.gap_report.canonical_rows, 30)

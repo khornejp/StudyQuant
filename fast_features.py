@@ -416,6 +416,74 @@ def compute_features_fast(candles: Sequence[data.Candle]) -> pd.DataFrame:
     for key, values in weekly_data.items():
         df[key] = np.array(values, dtype=float)
 
+    # F14: Time/Session features
+    timestamps = pd.to_datetime([c.open_time for c in candles])
+    df["hour"] = timestamps.hour.astype(float)
+    df["minute"] = timestamps.minute.astype(float)
+    df["day_of_week"] = timestamps.dayofweek.astype(float)
+    hour = timestamps.hour
+    df["session_asia"] = ((hour >= 0) & (hour < 8)).astype(float)
+    df["session_europe"] = ((hour >= 8) & (hour < 16)).astype(float)
+    df["session_us"] = ((hour >= 13) & (hour < 21)).astype(float)
+    df["session_overlap"] = ((hour >= 8) & (hour < 13)).astype(float)
+    df["weekend_flag"] = timestamps.dayofweek.isin([5, 6]).astype(float)
+
+    # F15: Momentum indicators
+    # RSI
+    def _rsi(arr: np.ndarray, window: int) -> np.ndarray:
+        deltas = np.diff(arr, prepend=arr[0])
+        gains = np.where(deltas > 0, deltas, 0.0)
+        losses = np.where(deltas < 0, -deltas, 0.0)
+        avg_gains = _rolling_mean_value(gains, window)
+        avg_losses = _rolling_mean_value(losses, window)
+        rs = _safe_divide(avg_gains, avg_losses)
+        return 100.0 - (100.0 / (1.0 + rs))
+
+    df["rsi_7"] = _rsi(closes, 7)
+    df["rsi_14"] = _rsi(closes, 14)
+
+    # MACD
+    ema_12_macd = _ema(closes, 12)
+    ema_26_macd = _ema(closes, 26)
+    df["macd_line"] = (ema_12_macd - ema_26_macd) / np.where(closes != 0, closes, 1e-12)
+    df["macd_signal"] = _ema(df["macd_line"].to_numpy(), 9)
+    df["macd_hist"] = df["macd_line"].to_numpy() - df["macd_signal"].to_numpy()
+
+    # Bollinger Bands
+    def _bb_width(arr: np.ndarray, window: int) -> tuple[np.ndarray, np.ndarray]:
+        sma = _rolling_mean_value(arr, window)
+        std = _rolling_std(arr, window)
+        upper = sma + 2.0 * std
+        lower = sma - 2.0 * std
+        width = _safe_divide(upper - lower, arr)
+        percent_b = _safe_divide(arr - lower, upper - lower)
+        return width, percent_b
+
+    bb_width, bb_percent_b = _bb_width(closes, 20)
+    df["bb_width_20"] = bb_width
+    df["bb_percent_b"] = bb_percent_b
+
+    # EMA slopes
+    ema_5 = _ema(closes, 5)
+    ema_20 = _ema(closes, 20)
+    ema_60 = _ema(closes, 60)
+    df["ema_5_slope"] = _trend_slope(ema_5, 10)
+    df["ema_20_slope"] = _trend_slope(ema_20, 10)
+    df["ema_60_slope"] = _trend_slope(ema_60, 10)
+
+    # Rolling VWAP
+    def _rolling_vwap(price: np.ndarray, volume: np.ndarray, window: int) -> np.ndarray:
+        cumsum_pv = np.convolve(price * volume, np.ones(window, dtype=float), mode="same")
+        cumsum_vol = np.convolve(volume, np.ones(window, dtype=float), mode="same")
+        return _safe_divide(cumsum_pv, cumsum_vol)
+
+    rvwap_20 = _rolling_vwap(closes, volumes, 20)
+    rvwap_60 = _rolling_vwap(closes, volumes, 60)
+    df["rolling_vwap_20"] = rvwap_20
+    df["rolling_vwap_60"] = rvwap_60
+    df["price_vs_rolling_vwap_20"] = _ratio_to_value(closes, rvwap_20)
+    df["price_vs_rolling_vwap_60"] = _ratio_to_value(closes, rvwap_60)
+
     df = df.fillna(0.0)
     df = df.loc[:, FEATURE_NAMES].copy()
     return _clip_feature_columns(df)
