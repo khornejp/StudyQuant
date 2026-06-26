@@ -1,3 +1,0 @@
-availability_grade,backfill_available,live_capture_required,source_name
-A,True,True,klines_1m
-C,False,True,aggTrades

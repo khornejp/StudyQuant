@@ -1,3 +1,0 @@
-availability_grade,source_name,train_live_feature_parity_passed
-A,klines_1m,True
-C,aggTrades,False

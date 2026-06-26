@@ -1,4 +1,0 @@
-dataset_id: local_btcusdt_fixture_v1
-symbol: BTCUSDT
-bar_interval: 1m
-train_live_feature_parity_passed: true

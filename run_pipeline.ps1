@@ -148,6 +148,9 @@ $BINANCE_COLS = @(
 
 function Convert-CsvToParquet($csvDir, $outputParquet) {
     Write-Host "  Converting CSVs to Parquet: $outputParquet" -ForegroundColor Yellow
+    # Normalize backslashes to forward slashes so Python does not treat \a, \f, etc. as escapes
+    $csvDirPy = $csvDir -replace '\\', '/'
+    $outputParquetPy = $outputParquet -replace '\\', '/'
     $script = @"
 import glob, pyarrow.csv as pv, pyarrow.parquet as pq, pyarrow as pa
 
@@ -167,9 +170,9 @@ def read_csv_safe(path):
     else:
         return pv.read_csv(path, read_options=pv.ReadOptions(column_names=BINANCE_COLS))
 
-files = sorted(glob.glob('$csvDir/BTCUSDT-1m-*.csv'))
+files = sorted(glob.glob('$csvDirPy/BTCUSDT-1m-*.csv'))
 if not files:
-    print('ERROR: No CSV files found in $csvDir')
+    print('ERROR: No CSV files found in $csvDirPy')
     exit(1)
 tables = [read_csv_safe(f) for f in files]
 t = pa.concat_tables(tables)
@@ -180,7 +183,7 @@ for c in t.column_names:
     else: names.append(c)
 t = t.rename_columns(names)
 t = t.select([n for n in names if n not in ('close_time','ignore')])
-pq.write_table(t, '$outputParquet')
+pq.write_table(t, '$outputParquetPy')
 print(f'  {t.num_rows:,} rows ({t.num_rows/60/24:.0f} days)')
 "@
     if ($DryRun) {
