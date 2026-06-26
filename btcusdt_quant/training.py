@@ -680,28 +680,39 @@ def _train_single_regime(
     
     f_matrix = feature_matrix(regime_build.labeled_rows, regime_build.feature_names)
     
-    # Train LONG success model
-    print(f"[TRAIN]   Training LONG success model for regime '{regime_name}'...")
-    long_labels = [row.targets.get("long_success", row.label) for row in regime_build.labeled_rows]
-    long_model = models.CatBoostAdapter(
-        feature_names=regime_build.feature_names,
-        model_params={"iterations": 500, "learning_rate": 0.03, "depth": 8, "verbose": False},
-    )
-    long_model.fit(f_matrix, long_labels)
+    # Determine which models to train based on regime direction policy
+    # up → Long만 학습 (상승장 추세追随)
+    # down → Short만 학습 (하락장 추세追随)
+    # range → Long + Short 모두 학습 (횡보장 평균회귀)
+    train_long = regime_name in ("up", "range")
+    train_short = regime_name in ("down", "range")
     
-    # Train SHORT success model
-    print(f"[TRAIN]   Training SHORT success model for regime '{regime_name}'...")
-    short_labels = [row.targets.get("short_success", row.label) for row in regime_build.labeled_rows]
-    short_model = models.CatBoostAdapter(
-        feature_names=regime_build.feature_names,
-        model_params={"iterations": 500, "learning_rate": 0.03, "depth": 8, "verbose": False},
-    )
-    short_model.fit(f_matrix, short_labels)
+    artifacts = []
     
-    # Save models
-    writer = governance.ArtifactWriter(regime_output_dir)
-    writer.write_json("long_model.json", long_model.as_dict())
-    writer.write_json("short_model.json", short_model.as_dict())
+    if train_long:
+        print(f"[TRAIN]   Training LONG success model for regime '{regime_name}'...")
+        long_labels = [row.targets.get("long_success", row.label) for row in regime_build.labeled_rows]
+        long_model = models.CatBoostAdapter(
+            feature_names=regime_build.feature_names,
+            model_params={"iterations": 500, "learning_rate": 0.03, "depth": 8, "verbose": False},
+        )
+        long_model.fit(f_matrix, long_labels)
+        writer = governance.ArtifactWriter(regime_output_dir)
+        writer.write_json("long_model.json", long_model.as_dict())
+        artifacts.append("long_model.json")
+    
+    if train_short:
+        print(f"[TRAIN]   Training SHORT success model for regime '{regime_name}'...")
+        short_labels = [row.targets.get("short_success", row.label) for row in regime_build.labeled_rows]
+        short_model = models.CatBoostAdapter(
+            feature_names=regime_build.feature_names,
+            model_params={"iterations": 500, "learning_rate": 0.03, "depth": 8, "verbose": False},
+        )
+        short_model.fit(f_matrix, short_labels)
+        writer = governance.ArtifactWriter(regime_output_dir)
+        writer.write_json("short_model.json", short_model.as_dict())
+        artifacts.append("short_model.json")
+    
     print(f"[TRAIN]   Models saved to {regime_output_dir}")
     
     # Create minimal TrainingResult
@@ -715,7 +726,7 @@ def _train_single_regime(
         "mean_test_accuracy": 0.0,
         "mean_test_ece": 0.0,
         "mean_test_brier": 0.0,
-        "artifacts": ["long_model.json", "short_model.json"],
+        "artifacts": artifacts,
     }
     return TrainingResult(
         output_dir=regime_output_dir,
@@ -723,7 +734,7 @@ def _train_single_regime(
         splits=[],
         fold_results=[],
         run_summary=run_summary,
-        artifacts=["long_model.json", "short_model.json"],
+        artifacts=artifacts,
     )
 
 

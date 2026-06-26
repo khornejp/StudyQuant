@@ -551,11 +551,15 @@ class DataQualityEdgeTests(unittest.TestCase):
         mock_features = {str(f["feature_name"]) for f in registry["features"] if f.get("scaffold_status") == "mock_implemented"}
         # F11/F12 features compute from external_sources (or fallback defaults) and do not depend on OHLCV
         external_source_features = {str(f["feature_name"]) for f in registry["features"] if f.get("source") in {"depth_snapshot", "adl_quantile", "funding_rate", "mark_price_1m", "premium_index_1m", "leverage_bracket"}}
+        # F14 time/session features are computed from open_time (timestamp), not OHLCV values
+        time_features = {"hour", "minute", "day_of_week", "session_asia", "session_europe", "session_us", "session_overlap", "weekend_flag"}
+        # F15 momentum indicators have neutral default values during warmup
+        momentum_defaults = {"rsi_7", "rsi_14"}  # RSI neutral = 50.0 during warmup
         for row in rows:
             self.assertEqual(set(row.features), set(dataset.FEATURE_NAMES))
             for name, value in row.features.items():
-                if name in mock_features or name in external_source_features:
-                    # Features with mock defaults or external source fallbacks return values even when OHLCV inputs are NaN
+                if name in mock_features or name in external_source_features or name in time_features or name in momentum_defaults:
+                    # Features with mock defaults, external source fallbacks, or time-based features return values even when OHLCV inputs are NaN
                     self.assertIsNotNone(value)
                 else:
                     self.assertTrue(value == 0.0 or value != value or value is None, f"feature {name} must be 0.0 or NaN or None when all inputs are NaN")

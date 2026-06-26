@@ -1427,6 +1427,7 @@ class RegimeModelBundle:
     detector_config: features.RegimeDetectorConfig
     detector_diagnostics: Mapping[str, object]
     default_regime: str | None = None
+    direction_policy: dict[str, set[str]] | None = None  # regime -> {"LONG"}, {"SHORT"}, {"LONG", "SHORT"}, set()
 
 
 def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeModelBundle | None:
@@ -1454,30 +1455,45 @@ def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeM
     loaded_models: dict[str, models.ModelAdapter] = {}
     long_models: dict[str, models.ModelAdapter] = {}
     short_models: dict[str, models.ModelAdapter] = {}
+    direction_policy: dict[str, set[str]] = {}
     
     # Support both old (model.json) and new (long_model.json + short_model.json) structures
     for regime_name in list(regime_results.keys()):
         regime_dir = path / f"regime_{regime_name}"
+        regime_directions: set[str] = set()
         
-        # Try new structure: long_model.json + short_model.json
+        # Try new structure: long_model.json + short_model.json (may have only one)
         long_path = regime_dir / "long_model.json"
         short_path = regime_dir / "short_model.json"
-        if long_path.exists() and short_path.exists():
+        
+        if long_path.exists():
             long_model = load_model_artifact(long_path, strict=strict)
-            short_model = load_model_artifact(short_path, strict=strict)
-            if long_model is not None and short_model is not None:
+            if long_model is not None:
                 long_models[regime_name] = long_model
-                short_models[regime_name] = short_model
-                # Use long model as default for backward compatibility
                 loaded_models[regime_name] = long_model
-            continue
+                regime_directions.add("LONG")
+        
+        if short_path.exists():
+            short_model = load_model_artifact(short_path, strict=strict)
+            if short_model is not None:
+                short_models[regime_name] = short_model
+                # Only set as default model if long wasn't loaded
+                if regime_name not in loaded_models:
+                    loaded_models[regime_name] = short_model
+                regime_directions.add("SHORT")
         
         # Fallback to old structure: model.json
-        model_path = regime_dir / "model.json"
-        if model_path.exists():
-            model = load_model_artifact(model_path, strict=strict)
-            if model is not None:
-                loaded_models[regime_name] = model
+        if not regime_directions:
+            model_path = regime_dir / "model.json"
+            if model_path.exists():
+                model = load_model_artifact(model_path, strict=strict)
+                if model is not None:
+                    loaded_models[regime_name] = model
+                    # Old structure defaults to both directions
+                    regime_directions = {"LONG", "SHORT"}
+        
+        if regime_directions:
+            direction_policy[regime_name] = regime_directions
     
     if not loaded_models:
         return None
@@ -1490,6 +1506,7 @@ def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeM
         detector_config=detector_config,
         detector_diagnostics=diagnostics_mapping,
         default_regime=str(default_regime) if isinstance(default_regime, str) else None,
+        direction_policy=direction_policy,
     )
 
 
@@ -1905,42 +1922,115 @@ class LiveEngine:
 
     def _compute_signal(self) -> None:
         strict_artifact = self.model_artifact_path is not None
-        model: models.ModelAdapter | None = None
         active_regime: str | None = None
         fallback_regime: str | None = None
+        
         if self.regime_aware and self.model_artifact_path is not None:
             regime_bundle = load_regime_aware_models(self.model_artifact_path, strict=strict_artifact)
             if regime_bundle is not None and self.feature_rows:
                 latest_features = self.feature_rows[-1].features
-                rv_15 = float(latest_features.get("rv_15", 0.0))
-                trend_slope_30 = float(latest_features.get("trend_slope_30", 0.0))
-                detector_config = regime_bundle.detector_config
-                if isinstance(detector_config, dict):
-                    detector_config = features.RegimeDetectorConfig(**detector_config)
-                detector = features.RegimeDetector(detector_config)
-                active_regime = detector.detect(rv_15, trend_slope_30, thresholds=regime_bundle.detector_thresholds)
-                model = regime_bundle.models.get(active_regime)
-                if model is None and regime_bundle.default_regime is not None:
-                    model = regime_bundle.models.get(regime_bundle.default_regime)
+                latest_row = self.feature_rows[-1]
+                
+                # Priority 1: Use user_regime from feature row if available
+                if hasattr(latest_row, 'user_regime') and latest_row.user_regime is not None:
+                    active_regime = latest_row.user_regime
+                else:
+                    # Priority 2: Fall back to automatic regime detection
+                    rv_15 = float(latest_features.get("rv_15", 0.0))
+                    trend_slope_30 = float(latest_features.get("trend_slope_30", 0.0))
+                    detector_config = regime_bundle.detector_config
+                    if isinstance(detector_config, dict):
+                        detector_config = features.RegimeDetectorConfig(**detector_config)
+                    detector = features.RegimeDetector(detector_config)
+                    active_regime = detector.detect(rv_15, trend_slope_30, thresholds=regime_bundle.detector_thresholds)
+                
+                # Get direction policy for this regime
+                allowed_directions = regime_bundle.direction_policy.get(active_regime, {"LONG", "SHORT"})
+                
+                # Get probabilities from available models
+                long_prob = None
+                short_prob = None
+                
+                if "LONG" in allowed_directions and active_regime in regime_bundle.long_models:
+                    try:
+                        long_prob = regime_bundle.long_models[active_regime].probability(latest_features)
+                    except Exception:
+                        pass
+                
+                if "SHORT" in allowed_directions and active_regime in regime_bundle.short_models:
+                    try:
+                        short_prob = regime_bundle.short_models[active_regime].probability(latest_features)
+                    except Exception:
+                        pass
+                
+                # Use evaluate_entry_signal if we have at least one probability
+                if long_prob is not None or short_prob is not None:
+                    long_prob = long_prob if long_prob is not None else 0.0
+                    short_prob = short_prob if short_prob is not None else 0.0
+                    
+                    signal, long_ev, short_ev = evaluate_entry_signal(
+                        long_prob, short_prob,
+                        min_ev=self.strategy_config.min_ev if hasattr(self.strategy_config, 'min_ev') else 0.0001,
+                        long_threshold=self.strategy_config.long_threshold,
+                        short_threshold=self.strategy_config.short_threshold,
+                    )
+                    
+                    # Convert to BUY/SELL/HOLD
+                    if signal == "LONG":
+                        self.signal = "BUY"
+                    elif signal == "SHORT":
+                        self.signal = "SELL"
+                    else:
+                        self.signal = "HOLD"
+                    
+                    self.model_inference = {
+                        "probability": max(long_prob, short_prob),
+                        "long_prob": long_prob,
+                        "short_prob": short_prob,
+                        "long_ev": long_ev,
+                        "short_ev": short_ev,
+                        "signal": self.signal,
+                        "model_loaded": True,
+                        "regime": active_regime,
+                        "fallback_regime": fallback_regime,
+                        "allowed_directions": list(allowed_directions),
+                    }
+                else:
+                    # Fall back to default model if available
+                    model = regime_bundle.models.get(active_regime)
+                    if model is None and regime_bundle.default_regime is not None:
+                        model = regime_bundle.models.get(regime_bundle.default_regime)
+                        if model is not None:
+                            fallback_regime = regime_bundle.default_regime
+                    
                     if model is not None:
-                        fallback_regime = regime_bundle.default_regime
+                        probability = model.probability(latest_features)
+                        self.signal = self._apply_strategy_decision(probability, active_regime, "HOLD")
+                        self.model_inference = {"probability": probability, "signal": self.signal, "model_loaded": True, "regime": active_regime, "fallback_regime": fallback_regime}
+                    else:
+                        self.signal = "HOLD"
+                        self.model_inference = {"probability": None, "signal": self.signal, "model_loaded": False, "regime": active_regime, "fallback_regime": fallback_regime}
+            else:
+                self.signal = "HOLD"
+                self.model_inference = {"probability": None, "signal": self.signal, "model_loaded": False}
         else:
             model = load_model_artifact(self.model_artifact_path, strict=strict_artifact)
-        if model is not None and self.feature_rows:
-            latest_features = self.feature_rows[-1].features
-            try:
-                probability = model.probability(latest_features)
-                self.signal = self._apply_strategy_decision(probability, active_regime, "HOLD")
-                self.model_inference = {"probability": probability, "signal": self.signal, "model_loaded": True, "regime": active_regime, "fallback_regime": fallback_regime}
-            except Exception as inference_error:
-                self.signal = "HOLD"
-                self._apply_strategy_decision(None, active_regime, "HOLD")
-                self.model_inference = {"probability": None, "signal": self.signal, "model_loaded": True, "error": str(inference_error), "regime": active_regime, "fallback_regime": fallback_regime}
-        else:
-            last_return = data.returns(self.canonical)[-1] if self.canonical else 0.0
-            fallback_signal = "BUY" if last_return > 0 else "SELL" if last_return < 0 else "HOLD"
-            self.signal = self._apply_strategy_decision(None, active_regime, fallback_signal)
-            self.model_inference = {"probability": None, "signal": self.signal, "model_loaded": False, "fallback": "last_return", "regime": active_regime, "fallback_regime": None}
+            if model is not None and self.feature_rows:
+                latest_features = self.feature_rows[-1].features
+                try:
+                    probability = model.probability(latest_features)
+                    self.signal = self._apply_strategy_decision(probability, active_regime, "HOLD")
+                    self.model_inference = {"probability": probability, "signal": self.signal, "model_loaded": True, "regime": active_regime, "fallback_regime": fallback_regime}
+                except Exception as inference_error:
+                    self.signal = "HOLD"
+                    self._apply_strategy_decision(None, active_regime, "HOLD")
+                    self.model_inference = {"probability": None, "signal": self.signal, "model_loaded": True, "error": str(inference_error), "regime": active_regime, "fallback_regime": fallback_regime}
+            else:
+                last_return = data.returns(self.canonical)[-1] if self.canonical else 0.0
+                fallback_signal = "BUY" if last_return > 0 else "SELL" if last_return < 0 else "HOLD"
+                self.signal = self._apply_strategy_decision(None, active_regime, fallback_signal)
+                self.model_inference = {"probability": None, "signal": self.signal, "model_loaded": False, "fallback": "last_return", "regime": active_regime, "fallback_regime": None}
+        
         latest_gap_ratio = float(self.feature_rows[-1].features.get("gap_ratio_20", 0.0)) if self.feature_rows else 0.0
         latest_max_gap_run = float(self.feature_rows[-1].features.get("max_gap_run_120", 0.0)) if self.feature_rows else 0.0
         self.gap_action = governance.fallback_action("gap_ratio_20", latest_gap_ratio)
@@ -2216,66 +2306,6 @@ def run_live(
 def build_live_source_bundle(candles: Sequence[data.Candle], dry_run: bool = True) -> sources.MarketSourceBundle:
     source_name = "live_mock_source_bundle" if dry_run else "live_stream_source_bundle"
     return sources.bundle_from_candles(candles, source=source_name, include_mock_sources=dry_run)
-
-
-@dataclass(frozen=True)
-class RegimeModelBundle:
-    models: dict[str, models.ModelAdapter]
-    default_regime: str | None
-    detector_config: dict[str, object] | None
-    detector_thresholds: dict[str, object] | None
-
-
-def load_model_artifact(path: Path | None, strict: bool = False) -> models.ModelAdapter | None:
-    """Load a trained model artifact from JSON."""
-    if path is None:
-        if strict:
-            raise ValueError("model artifact path is None")
-        return None
-    path = Path(path)
-    if not path.is_file():
-        if strict:
-            raise FileNotFoundError(f"model artifact not found: {path}")
-        return None
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    family = payload.get("model_family", "auto")
-    if family == "lightgbm":
-        return models.LightGBMAdapter.from_dict(payload)
-    if family == "catboost":
-        return models.CatBoostAdapter.from_dict(payload)
-    if family == "ensemble":
-        return models.EnsembleAdapter.from_dict(payload)
-    raise ValueError(f"unsupported model family in artifact: {family}")
-
-
-def load_regime_aware_models(path: Path, strict: bool = False) -> RegimeModelBundle:
-    """Load regime-aware models from a directory containing regime_*/model.json subdirectories."""
-    models_by_regime: dict[str, models.ModelAdapter] = {}
-    path = Path(path)
-    if not path.is_dir():
-        if strict:
-            raise FileNotFoundError(f"regime model directory not found: {path}")
-        return RegimeModelBundle(models_by_regime, None, None, None)
-    for regime_dir in path.glob("regime_*"):
-        regime_name = regime_dir.name.replace("regime_", "")
-        model_path = regime_dir / "model.json"
-        if model_path.is_file():
-            models_by_regime[regime_name] = load_model_artifact(model_path)
-    # Load detector config and thresholds from regime_run_summary.json if available
-    detector_config: dict[str, object] | None = None
-    detector_thresholds: dict[str, object] | None = None
-    summary_path = path / "regime_run_summary.json"
-    if summary_path.is_file():
-        try:
-            summary = json.loads(summary_path.read_text(encoding="utf-8-sig"))
-            detector = summary.get("regime_detector", {})
-            detector_config = detector.get("config")
-            detector_thresholds = detector.get("thresholds")
-        except Exception:
-            pass
-    # Default regime: prefer "range", then any available regime
-    default_regime = "range" if "range" in models_by_regime else (next(iter(models_by_regime)) if models_by_regime else None)
-    return RegimeModelBundle(models_by_regime, default_regime, detector_config, detector_thresholds)
 
 
 def _live_fixture(rows: int) -> list[data.Candle]:

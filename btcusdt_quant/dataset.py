@@ -1302,8 +1302,8 @@ def build_feature_rows(
             "ema_60_slope": ema_60_slope_values[index],
             "rolling_vwap_20": rolling_vwap_20_values[index],
             "rolling_vwap_60": rolling_vwap_60_values[index],
-            "price_vs_rolling_vwap_20": _divide(candle.close, rolling_vwap_20_values[index]) - 1.0,
-            "price_vs_rolling_vwap_60": _divide(candle.close, rolling_vwap_60_values[index]) - 1.0,
+            "price_vs_rolling_vwap_20": _divide(candle.close, rolling_vwap_20_values[index]) - 1.0 if rolling_vwap_20_values[index] != 0.0 else 0.0,
+            "price_vs_rolling_vwap_60": _divide(candle.close, rolling_vwap_60_values[index]) - 1.0 if rolling_vwap_60_values[index] != 0.0 else 0.0,
         }
         clipper = features.FeatureClipper()
         clipped = clipper.clip({name: values[name] for name in FEATURE_NAMES})

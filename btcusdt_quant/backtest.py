@@ -236,28 +236,85 @@ def run_backtest(
         result.signal_counts.setdefault("SELL", 0)
 
         # Model inference (regime-aware if models_by_regime provided)
-        active_model = model
+        signal = "HOLD"
         if models_by_regime is not None and i < len(feature_rows):
             regime = feature_rows[i].user_regime
             if regime is not None and regime in models_by_regime:
-                active_model = models_by_regime[regime]
+                # Check if models_by_regime is a RegimeModelBundle with direction policy
+                regime_bundle = models_by_regime.get(regime)
+                if hasattr(regime_bundle, 'direction_policy'):
+                    # New structure: RegimeModelBundle with long/short models
+                    allowed_directions = regime_bundle.direction_policy.get(regime, {"LONG", "SHORT"})
+                    features_dict = feature_rows[i].features
+                    
+                    long_prob = None
+                    short_prob = None
+                    
+                    if "LONG" in allowed_directions and hasattr(regime_bundle, 'long_models') and regime in regime_bundle.long_models:
+                        long_prob = regime_bundle.long_models[regime].probability(features_dict)
+                    
+                    if "SHORT" in allowed_directions and hasattr(regime_bundle, 'short_models') and regime in regime_bundle.short_models:
+                        short_prob = regime_bundle.short_models[regime].probability(features_dict)
+                    
+                    if long_prob is not None or short_prob is not None:
+                        from btcusdt_quant.live import evaluate_entry_signal
+                        long_prob = long_prob if long_prob is not None else 0.0
+                        short_prob = short_prob if short_prob is not None else 0.0
+                        
+                        lt = long_threshold if long_threshold is not None else strategy.long_threshold
+                        st = short_threshold if short_threshold is not None else strategy.short_threshold
+                        
+                        entry_signal, _, _ = evaluate_entry_signal(
+                            long_prob, short_prob,
+                            long_threshold=lt,
+                            short_threshold=st,
+                        )
+                        
+                        if entry_signal == "LONG":
+                            signal = "BUY"
+                        elif entry_signal == "SHORT":
+                            signal = "SELL"
+                        else:
+                            signal = "HOLD"
+                    else:
+                        signal = "HOLD"
+                else:
+                    # Legacy structure: single model per regime
+                    active_model = regime_bundle
+                    features_dict = feature_rows[i].features
+                    prob = active_model.probability(features_dict)
+                    lt = long_threshold if long_threshold is not None else strategy.long_threshold
+                    st = short_threshold if short_threshold is not None else strategy.short_threshold
+                    if prob > lt and prob >= 0.55:
+                        signal = "BUY"
+                    elif prob < st and prob <= 0.45:
+                        signal = "SELL"
+                    else:
+                        signal = "HOLD"
             elif default_regime is not None and default_regime in models_by_regime:
+                # Use default regime model
                 active_model = models_by_regime[default_regime]
-
-        if active_model is not None and i < len(feature_rows):
+                features_dict = feature_rows[i].features
+                prob = active_model.probability(features_dict)
+                lt = long_threshold if long_threshold is not None else strategy.long_threshold
+                st = short_threshold if short_threshold is not None else strategy.short_threshold
+                if prob > lt and prob >= 0.55:
+                    signal = "BUY"
+                elif prob < st and prob <= 0.45:
+                    signal = "SELL"
+                else:
+                    signal = "HOLD"
+        elif model is not None and i < len(feature_rows):
             features_dict = feature_rows[i].features
-            prob = active_model.probability(features_dict)
+            prob = model.probability(features_dict)
             lt = long_threshold if long_threshold is not None else strategy.long_threshold
             st = short_threshold if short_threshold is not None else strategy.short_threshold
-            # Minimum confidence filter: require clear directional signal
             if prob > lt and prob >= 0.55:
                 signal = "BUY"
             elif prob < st and prob <= 0.45:
                 signal = "SELL"
             else:
                 signal = "HOLD"
-        else:
-            signal = "HOLD"
 
         result.signal_counts[signal] += 1
 
