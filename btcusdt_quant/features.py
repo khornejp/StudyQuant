@@ -23,6 +23,7 @@ class FeatureClipper:
         "vol_adj": 10.0,
         "bps": 10_000.0,
         "vol": 10.0,
+        "price": 1_000_000.0,
         "regime": 10.0,
         "flag": 1.0,
         "minutes": 1440.0,
@@ -48,6 +49,8 @@ class FeatureClipper:
             return "regime"
         if "zscore" in lower:
             return "zscore"
+        if lower.startswith("range_high_") or lower.startswith("range_low_") or lower.startswith("range_mid_") or lower.startswith("rolling_vwap_"):
+            return "price"
         if lower.startswith("rv_") or lower.startswith("atr") or lower.startswith("har_rv") or "volatility" in lower or "_vol" in lower:
             return "vol"
         if "ratio" in lower or "pct" in lower or "vs_" in lower:

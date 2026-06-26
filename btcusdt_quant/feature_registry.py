@@ -36,6 +36,7 @@ EXCHANGE_SAFETY = "exchange_funding_safety_features"
 HIGHER_TIMEFRAME = "higher_timeframe_features"
 TIME_SESSION = "time_session_features"
 MOMENTUM_INDICATORS = "momentum_indicator_features"
+RANGE_MEAN_REVERSION = "range_mean_reversion_features"
 
 
 def _feature(
@@ -211,6 +212,17 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("rolling_vwap_60", "F15", MOMENTUM_INDICATORS, "cumulative(close*volume, 60) / cumulative(volume, 60)", 60, 60, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("price_vs_rolling_vwap_20", "F15", MOMENTUM_INDICATORS, "close / rolling_vwap_20 - 1", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("price_vs_rolling_vwap_60", "F15", MOMENTUM_INDICATORS, "close / rolling_vwap_60 - 1", 60, 60, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("range_high_20", "F15", RANGE_MEAN_REVERSION, "rolling max(high,20) ending at t", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("range_low_20", "F15", RANGE_MEAN_REVERSION, "rolling min(low,20) ending at t", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("range_mid_20", "F15", RANGE_MEAN_REVERSION, "(range_high_20 + range_low_20) / 2", 20, 20, "klines_1m", ("range_high_20", "range_low_20"), warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("range_position_20", "F15", RANGE_MEAN_REVERSION, "clamp((close_t - range_low_20) / (range_high_20 - range_low_20), 0, 1)", 20, 20, "klines_1m", ("range_high_20", "range_low_20"), warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("distance_to_range_high", "F15", RANGE_MEAN_REVERSION, "close_t / range_high_20 - 1", 20, 20, "klines_1m", ("range_high_20",), warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("distance_to_range_low", "F15", RANGE_MEAN_REVERSION, "close_t / range_low_20 - 1", 20, 20, "klines_1m", ("range_low_20",), warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("fake_break_low", "F15", RANGE_MEAN_REVERSION, "1 if prev close >= prev range low and close_t < prev range low with bullish rejection else 0", 20, 20, "klines_1m", ("range_low_20",), warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("fake_break_high", "F15", RANGE_MEAN_REVERSION, "1 if prev close <= prev range high and close_t > prev range high with bearish rejection else 0", 20, 20, "klines_1m", ("range_high_20",), warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("close_back_inside_range", "F15", RANGE_MEAN_REVERSION, "1 if previous close was outside previous 20-bar range and current close is inside current 20-bar range else 0", 20, 20, "klines_1m", ("range_high_20", "range_low_20"), warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("vwap_deviation_zscore", "F15", RANGE_MEAN_REVERSION, "(close_t - rolling_vwap_20) / stddev(close - rolling_vwap_20,20)", 39, 39, "klines_1m", ("rolling_vwap_20",), warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("bb_zscore", "F15", RANGE_MEAN_REVERSION, "(close_t - SMA(close,20)) / stddev(close,20)", 20, 20, "klines_1m", ("close_zscore_20",), warmup_rule="strict", leakage_risk="low_past_only"),
 ]
 
 

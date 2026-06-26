@@ -10,6 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from collections import deque
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -1118,6 +1119,14 @@ def build_feature_rows(
     ema_60_slope_values = _ema_slope_series(closes, 60, 10)
     rolling_vwap_20_values = _rolling_vwap_series(closes, volumes, 20)
     rolling_vwap_60_values = _rolling_vwap_series(closes, volumes, 60)
+    range_high_20_values = _range_high_series(highs, 20)
+    range_low_20_values = _range_low_series(lows, 20)
+    range_mid_20_values = _range_mid_series(range_high_20_values, range_low_20_values)
+    range_position_20_values = _range_position_series(closes, range_low_20_values, range_high_20_values)
+    fake_break_low_values = _fake_break_low_series(opens, closes, range_low_20_values)
+    fake_break_high_values = _fake_break_high_series(opens, closes, range_high_20_values)
+    close_back_inside_range_values = _close_back_inside_range_series(closes, range_low_20_values, range_high_20_values)
+    vwap_deviation_zscore_values = _vwap_deviation_zscore_series(closes, rolling_vwap_20_values, 20)
     warmup_cutoff = max_feature_min_samples() - 1
     for index, candle in enumerate(candles):
         warmup_invalid = index < warmup_cutoff
@@ -1304,6 +1313,17 @@ def build_feature_rows(
             "rolling_vwap_60": rolling_vwap_60_values[index],
             "price_vs_rolling_vwap_20": _divide(candle.close, rolling_vwap_20_values[index]) - 1.0 if rolling_vwap_20_values[index] != 0.0 else 0.0,
             "price_vs_rolling_vwap_60": _divide(candle.close, rolling_vwap_60_values[index]) - 1.0 if rolling_vwap_60_values[index] != 0.0 else 0.0,
+            "range_high_20": range_high_20_values[index],
+            "range_low_20": range_low_20_values[index],
+            "range_mid_20": range_mid_20_values[index],
+            "range_position_20": range_position_20_values[index],
+            "distance_to_range_high": _ratio_to_value(candle.close, range_high_20_values[index]),
+            "distance_to_range_low": _ratio_to_value(candle.close, range_low_20_values[index]),
+            "fake_break_low": fake_break_low_values[index],
+            "fake_break_high": fake_break_high_values[index],
+            "close_back_inside_range": close_back_inside_range_values[index],
+            "vwap_deviation_zscore": vwap_deviation_zscore_values[index],
+            "bb_zscore": close_zscore_20,
         }
         clipper = features.FeatureClipper()
         clipped = clipper.clip({name: values[name] for name in FEATURE_NAMES})
@@ -1893,6 +1913,96 @@ def _rolling_vwap_series(closes: Sequence[float], volumes: Sequence[float], wind
             total_value += closes[position] * volumes[position]
             total_volume += volumes[position]
         result.append(total_value / total_volume if total_volume > 0 else 0.0)
+    return result
+
+
+def _rolling_extreme_series(values: Sequence[float], window: int, use_max: bool) -> list[float]:
+    if window <= 0:
+        return [0.0] * len(values)
+    result = [0.0] * len(values)
+    candidates: deque[int] = deque()
+    for index, value in enumerate(values):
+        while candidates and candidates[0] <= index - window:
+            candidates.popleft()
+        while candidates and ((values[candidates[-1]] <= value) if use_max else (values[candidates[-1]] >= value)):
+            candidates.pop()
+        candidates.append(index)
+        if index + 1 >= window:
+            result[index] = values[candidates[0]]
+    return result
+
+
+def _range_high_series(highs: Sequence[float], window: int) -> list[float]:
+    return _rolling_extreme_series(highs, window, use_max=True)
+
+
+def _range_low_series(lows: Sequence[float], window: int) -> list[float]:
+    return _rolling_extreme_series(lows, window, use_max=False)
+
+
+def _range_mid_series(range_highs: Sequence[float], range_lows: Sequence[float]) -> list[float]:
+    return [(high + low) / 2.0 if high != 0.0 or low != 0.0 else 0.0 for high, low in zip(range_highs, range_lows)]
+
+
+def _range_position_series(closes: Sequence[float], range_lows: Sequence[float], range_highs: Sequence[float]) -> list[float]:
+    result: list[float] = []
+    for close, range_low, range_high in zip(closes, range_lows, range_highs):
+        width = range_high - range_low
+        if width <= 0.0:
+            result.append(0.0)
+            continue
+        position = (close - range_low) / width
+        result.append(max(0.0, min(1.0, position)))
+    return result
+
+
+def _fake_break_low_series(opens: Sequence[float], closes: Sequence[float], range_lows: Sequence[float]) -> list[float]:
+    result = [0.0] * len(closes)
+    for index in range(1, len(closes)):
+        previous_range_low = range_lows[index - 1]
+        if previous_range_low == 0.0 or range_lows[index] == 0.0:
+            continue
+        if closes[index - 1] >= previous_range_low and closes[index] < previous_range_low and closes[index] > opens[index]:
+            result[index] = 1.0
+    return result
+
+
+def _fake_break_high_series(opens: Sequence[float], closes: Sequence[float], range_highs: Sequence[float]) -> list[float]:
+    result = [0.0] * len(closes)
+    for index in range(1, len(closes)):
+        previous_range_high = range_highs[index - 1]
+        if previous_range_high == 0.0 or range_highs[index] == 0.0:
+            continue
+        if closes[index - 1] <= previous_range_high and closes[index] > previous_range_high and closes[index] < opens[index]:
+            result[index] = 1.0
+    return result
+
+
+def _close_back_inside_range_series(closes: Sequence[float], range_lows: Sequence[float], range_highs: Sequence[float]) -> list[float]:
+    result = [0.0] * len(closes)
+    for index in range(1, len(closes)):
+        previous_low = range_lows[index - 1]
+        previous_high = range_highs[index - 1]
+        current_low = range_lows[index]
+        current_high = range_highs[index]
+        if previous_low == 0.0 or previous_high == 0.0 or current_low == 0.0 or current_high == 0.0:
+            continue
+        previous_outside = closes[index - 1] < previous_low or closes[index - 1] > previous_high
+        current_inside = current_low <= closes[index] <= current_high
+        if previous_outside and current_inside:
+            result[index] = 1.0
+    return result
+
+
+def _vwap_deviation_zscore_series(closes: Sequence[float], vwaps: Sequence[float], window: int) -> list[float]:
+    deviations = [close - vwap if vwap != 0.0 else 0.0 for close, vwap in zip(closes, vwaps)]
+    result = [0.0] * len(closes)
+    first_valid_index = (window - 1) * 2
+    for index in range(first_valid_index, len(closes)):
+        sample = deviations[index + 1 - window:index + 1]
+        scale = _stddev(sample)
+        if scale != 0.0:
+            result[index] = deviations[index] / scale
     return result
 
 

@@ -2621,5 +2621,159 @@ class TestUserRegime(unittest.TestCase):
             self.assertEqual(trained["range"]["row_count"], 200)
 
 
+class TestRangeMeanReversionFeatures(unittest.TestCase):
+    def test_range_features_exist_in_registry(self) -> None:
+        registry = dataset.feature_formula_registry()
+        feature_names = {str(f["feature_name"]) for f in registry["features"]}
+        required = {
+            "range_high_20", "range_low_20", "range_mid_20",
+            "range_position_20", "distance_to_range_high", "distance_to_range_low",
+            "fake_break_low", "fake_break_high", "close_back_inside_range",
+            "vwap_deviation_zscore", "bb_zscore",
+        }
+        missing = required - feature_names
+        self.assertEqual(missing, set(), f"Missing range features: {missing}")
+
+    def test_range_features_compute_correctly(self) -> None:
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        # Create 25 candles with known highs/lows for a clear range
+        candles = []
+        for i in range(25):
+            if i < 10:
+                high, low = 110.0, 90.0  # Wide range
+            elif i < 20:
+                high, low = 105.0, 95.0   # Narrower range
+            else:
+                high, low = 108.0, 92.0   # Medium range
+            candles.append(data.Candle(
+                open_time=base + timedelta(minutes=i),
+                open=100.0,
+                high=high,
+                low=low,
+                close=100.0,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            ))
+        rows = dataset.build_feature_rows(candles)
+        self.assertGreaterEqual(len(rows), 20)
+
+        # After 20 bars, range_high_20 and range_low_20 should be known
+        row_20 = rows[19]
+        self.assertIn("range_high_20", row_20.features)
+        self.assertIn("range_low_20", row_20.features)
+        self.assertIn("range_position_20", row_20.features)
+
+        # range_high_20 should be max of highs in the last 20 bars
+        expected_high = max(c.high for c in candles[0:20])
+        expected_low = min(c.low for c in candles[0:20])
+        self.assertAlmostEqual(row_20.features["range_high_20"], expected_high, places=5)
+        self.assertAlmostEqual(row_20.features["range_low_20"], expected_low, places=5)
+
+        # range_position_20 with close=100, high=110, low=90 -> (100-90)/(110-90) = 0.5
+        expected_pos = (100.0 - expected_low) / (expected_high - expected_low)
+        self.assertAlmostEqual(row_20.features["range_position_20"], expected_pos, places=5)
+
+        # Warmup rows should have 0.0
+        row_5 = rows[4]
+        self.assertEqual(row_5.features["range_high_20"], 0.0)
+        self.assertEqual(row_5.features["range_low_20"], 0.0)
+        self.assertEqual(row_5.features["range_position_20"], 0.0)
+
+    def test_range_position_clamped(self) -> None:
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        candles = []
+        for i in range(25):
+            candles.append(data.Candle(
+                open_time=base + timedelta(minutes=i),
+                open=100.0,
+                high=110.0,
+                low=90.0,
+                close=115.0 if i >= 20 else 100.0,  # Above range
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            ))
+        rows = dataset.build_feature_rows(candles)
+        # When close > range_high, position should be clamped to 1.0
+        row_21 = rows[20]
+        self.assertAlmostEqual(row_21.features["range_position_20"], 1.0, places=5)
+
+    def test_range_gate_blocks_middle(self) -> None:
+        from btcusdt_quant.live import apply_range_mean_reversion_gate
+        # Range position 0.5 (middle) -> no directions allowed
+        result = apply_range_mean_reversion_gate("range", {"range_position_20": 0.5}, {"LONG", "SHORT"})
+        self.assertEqual(result, set())
+
+    def test_range_gate_allows_low(self) -> None:
+        from btcusdt_quant.live import apply_range_mean_reversion_gate
+        # Range position 0.1 (near low) -> LONG only
+        result = apply_range_mean_reversion_gate("range", {"range_position_20": 0.1}, {"LONG", "SHORT"})
+        self.assertEqual(result, {"LONG"})
+
+    def test_range_gate_allows_high(self) -> None:
+        from btcusdt_quant.live import apply_range_mean_reversion_gate
+        # Range position 0.9 (near high) -> SHORT only
+        result = apply_range_mean_reversion_gate("range", {"range_position_20": 0.9}, {"LONG", "SHORT"})
+        self.assertEqual(result, {"SHORT"})
+
+    def test_range_gate_passes_non_range(self) -> None:
+        from btcusdt_quant.live import apply_range_mean_reversion_gate
+        # Non-range regimes pass through unchanged
+        result = apply_range_mean_reversion_gate("up", {"range_position_20": 0.5}, {"LONG", "SHORT"})
+        self.assertEqual(result, {"LONG", "SHORT"})
+
+    def test_range_gate_missing_feature(self) -> None:
+        from btcusdt_quant.live import apply_range_mean_reversion_gate
+        # Missing range_position_20 defaults to 0.5 (middle, no trade)
+        result = apply_range_mean_reversion_gate("range", {}, {"LONG", "SHORT"})
+        self.assertEqual(result, set())
+
+    def test_fast_features_range_parity(self) -> None:
+        from fast_features import compute_features_fast
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        candles = []
+        for i in range(25):
+            candles.append(data.Candle(
+                open_time=base + timedelta(minutes=i),
+                open=100.0,
+                high=110.0 - i * 0.5,
+                low=90.0 + i * 0.3,
+                close=100.0 + i * 0.2,
+                volume=10.0,
+                quote_volume=1000.0,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=500.0,
+            ))
+        df_fast = compute_features_fast(candles)
+        rows = dataset.build_feature_rows(candles)
+
+        # Compare a sample row (index 20) for key range features
+        index = 20
+        self.assertAlmostEqual(
+            df_fast.loc[index, "range_high_20"],
+            rows[index].features["range_high_20"],
+            places=5,
+            msg="range_high_20 mismatch between fast and canonical",
+        )
+        self.assertAlmostEqual(
+            df_fast.loc[index, "range_low_20"],
+            rows[index].features["range_low_20"],
+            places=5,
+            msg="range_low_20 mismatch between fast and canonical",
+        )
+        self.assertAlmostEqual(
+            df_fast.loc[index, "range_position_20"],
+            rows[index].features["range_position_20"],
+            places=5,
+            msg="range_position_20 mismatch between fast and canonical",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

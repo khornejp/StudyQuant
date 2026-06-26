@@ -15,6 +15,19 @@ DEFAULT_SLIPPAGE_RATE_PER_SIDE = 0.0002
 DEFAULT_ROUND_TRIP_COST_PCT = 2.0 * (DEFAULT_FEE_RATE_PER_SIDE + DEFAULT_SLIPPAGE_RATE_PER_SIDE)
 
 
+def apply_range_mean_reversion_gate(regime: str, features: dict[str, float], allowed_directions: set[str]) -> set[str]:
+    """Apply mean-reversion direction gate for the range regime."""
+    if regime != "range":
+        return allowed_directions
+
+    range_pos = features.get("range_position_20", 0.5)
+    if range_pos < 0.25:
+        return {"LONG"}
+    if range_pos > 0.75:
+        return {"SHORT"}
+    return set()
+
+
 @dataclass
 class BacktestTrade:
     entry_time: str
@@ -246,6 +259,7 @@ def run_backtest(
                     # New structure: RegimeModelBundle with long/short models
                     allowed_directions = regime_bundle.direction_policy.get(regime, {"LONG", "SHORT"})
                     features_dict = feature_rows[i].features
+                    allowed_directions = apply_range_mean_reversion_gate(regime, features_dict, allowed_directions)
                     
                     long_prob = None
                     short_prob = None

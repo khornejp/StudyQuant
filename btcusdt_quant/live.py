@@ -1534,6 +1534,19 @@ def _coerce_regime_detector_config(payload: object) -> features.RegimeDetectorCo
     )
 
 
+def apply_range_mean_reversion_gate(regime: str, features: dict[str, float], allowed_directions: set[str]) -> set[str]:
+    """Apply mean-reversion direction gate for the range regime."""
+    if regime != "range":
+        return allowed_directions
+
+    range_pos = features.get("range_position_20", 0.5)
+    if range_pos < 0.25:
+        return {"LONG"}
+    if range_pos > 0.75:
+        return {"SHORT"}
+    return set()
+
+
 # EV (Expected Value) calculation for LONG/SHORT entry decisions
 EV_COST_CONFIG = {
     "fee_entry": 0.0002,      # 0.02% Binance taker fee
@@ -1946,6 +1959,19 @@ class LiveEngine:
                 
                 # Get direction policy for this regime
                 allowed_directions = regime_bundle.direction_policy.get(active_regime, {"LONG", "SHORT"})
+                allowed_directions = apply_range_mean_reversion_gate(active_regime, latest_features, allowed_directions)
+                if not allowed_directions:
+                    self.signal = "HOLD"
+                    self.model_inference = {
+                        "probability": None,
+                        "signal": self.signal,
+                        "model_loaded": True,
+                        "regime": active_regime,
+                        "fallback_regime": fallback_regime,
+                        "allowed_directions": [],
+                        "gate_reason": "range_middle",
+                    }
+                    return
                 
                 # Get probabilities from available models
                 long_prob = None

@@ -152,6 +152,67 @@ def _rolling_min(arr: np.ndarray, window: int) -> np.ndarray:
     return result
 
 
+def _range_position(closes: np.ndarray, range_lows: np.ndarray, range_highs: np.ndarray) -> np.ndarray:
+    width = range_highs - range_lows
+    result = np.zeros(len(closes), dtype=float)
+    valid = width > 0.0
+    result[valid] = (closes[valid] - range_lows[valid]) / width[valid]
+    return np.clip(result, 0.0, 1.0)
+
+
+def _fake_break_low(opens: np.ndarray, closes: np.ndarray, range_lows: np.ndarray) -> np.ndarray:
+    result = np.zeros(len(closes), dtype=float)
+    if len(closes) < 2:
+        return result
+    previous_range_low = range_lows[:-1]
+    valid = (previous_range_low != 0.0) & (range_lows[1:] != 0.0)
+    triggered = valid & (closes[:-1] >= previous_range_low) & (closes[1:] < previous_range_low) & (closes[1:] > opens[1:])
+    result[1:] = np.where(triggered, 1.0, 0.0)
+    return result
+
+
+def _fake_break_high(opens: np.ndarray, closes: np.ndarray, range_highs: np.ndarray) -> np.ndarray:
+    result = np.zeros(len(closes), dtype=float)
+    if len(closes) < 2:
+        return result
+    previous_range_high = range_highs[:-1]
+    valid = (previous_range_high != 0.0) & (range_highs[1:] != 0.0)
+    triggered = valid & (closes[:-1] <= previous_range_high) & (closes[1:] > previous_range_high) & (closes[1:] < opens[1:])
+    result[1:] = np.where(triggered, 1.0, 0.0)
+    return result
+
+
+def _close_back_inside_range(closes: np.ndarray, range_lows: np.ndarray, range_highs: np.ndarray) -> np.ndarray:
+    result = np.zeros(len(closes), dtype=float)
+    if len(closes) < 2:
+        return result
+    valid_previous = (range_lows[:-1] != 0.0) & (range_highs[:-1] != 0.0)
+    valid_current = (range_lows[1:] != 0.0) & (range_highs[1:] != 0.0)
+    previous_outside = (closes[:-1] < range_lows[:-1]) | (closes[:-1] > range_highs[:-1])
+    current_inside = (closes[1:] >= range_lows[1:]) & (closes[1:] <= range_highs[1:])
+    result[1:] = np.where(valid_previous & valid_current & previous_outside & current_inside, 1.0, 0.0)
+    return result
+
+
+def _vwap_deviation_zscore(closes: np.ndarray, vwaps: np.ndarray, window: int) -> np.ndarray:
+    deviations = np.where(vwaps != 0.0, closes - vwaps, 0.0)
+    scale = _rolling_std(deviations, window)
+    result = np.zeros(len(closes), dtype=float)
+    first_valid_index = (window - 1) * 2
+    valid = (np.arange(len(closes)) >= first_valid_index) & (scale != 0.0)
+    result[valid] = deviations[valid] / scale[valid]
+    return result
+
+
+def _rolling_vwap_strict(price: np.ndarray, volume: np.ndarray, window: int) -> np.ndarray:
+    pv_mean = _rolling_mean(price * volume, window)
+    volume_mean = _rolling_mean(volume, window)
+    result = np.zeros(len(price), dtype=float)
+    valid = np.isfinite(pv_mean) & np.isfinite(volume_mean) & (volume_mean > 0.0)
+    result[valid] = pv_mean[valid] / volume_mean[valid]
+    return result
+
+
 def _zscore(arr: np.ndarray, window: int) -> np.ndarray:
     average = _rolling_mean(arr, window)
     scale = _rolling_std(arr, window)
@@ -313,8 +374,10 @@ def compute_features_fast(candles: Sequence[data.Candle]) -> pd.DataFrame:
         change[valid] = prev_closes[valid] / start_closes[valid] - 1.0
         prev_horizon[15:] = np.where(change > 0.001, 1.0, np.where(change < -0.001, -1.0, 0.0))
     df["prev_horizon_trend"] = prev_horizon
-    df["distance_to_high_20"] = _ratio_to_value(closes, _rolling_max(highs, 20))
-    df["distance_to_low_20"] = _ratio_to_value(closes, _rolling_min(lows, 20))
+    high_20 = _rolling_max(highs, 20)
+    low_20 = _rolling_min(lows, 20)
+    df["distance_to_high_20"] = _ratio_to_value(closes, high_20)
+    df["distance_to_low_20"] = _ratio_to_value(closes, low_20)
 
     df["rv_5"] = _rolling_return_std(returns_1, 5)
     df["rv_15"] = _rolling_return_std(returns_1, 15)
@@ -472,17 +535,23 @@ def compute_features_fast(candles: Sequence[data.Candle]) -> pd.DataFrame:
     df["ema_60_slope"] = _trend_slope(ema_60, 10)
 
     # Rolling VWAP
-    def _rolling_vwap(price: np.ndarray, volume: np.ndarray, window: int) -> np.ndarray:
-        cumsum_pv = np.convolve(price * volume, np.ones(window, dtype=float), mode="same")
-        cumsum_vol = np.convolve(volume, np.ones(window, dtype=float), mode="same")
-        return _safe_divide(cumsum_pv, cumsum_vol)
-
-    rvwap_20 = _rolling_vwap(closes, volumes, 20)
-    rvwap_60 = _rolling_vwap(closes, volumes, 60)
+    rvwap_20 = _rolling_vwap_strict(closes, volumes, 20)
+    rvwap_60 = _rolling_vwap_strict(closes, volumes, 60)
     df["rolling_vwap_20"] = rvwap_20
     df["rolling_vwap_60"] = rvwap_60
     df["price_vs_rolling_vwap_20"] = _ratio_to_value(closes, rvwap_20)
     df["price_vs_rolling_vwap_60"] = _ratio_to_value(closes, rvwap_60)
+    df["range_high_20"] = high_20
+    df["range_low_20"] = low_20
+    df["range_mid_20"] = np.where((high_20 != 0.0) | (low_20 != 0.0), (high_20 + low_20) / 2.0, 0.0)
+    df["range_position_20"] = _range_position(closes, low_20, high_20)
+    df["distance_to_range_high"] = _ratio_to_value(closes, high_20)
+    df["distance_to_range_low"] = _ratio_to_value(closes, low_20)
+    df["fake_break_low"] = _fake_break_low(opens, closes, low_20)
+    df["fake_break_high"] = _fake_break_high(opens, closes, high_20)
+    df["close_back_inside_range"] = _close_back_inside_range(closes, low_20, high_20)
+    df["vwap_deviation_zscore"] = _vwap_deviation_zscore(closes, rvwap_20, 20)
+    df["bb_zscore"] = df["close_zscore_20"].to_numpy()
 
     df = df.fillna(0.0)
     df = df.loc[:, FEATURE_NAMES].copy()
