@@ -597,9 +597,7 @@ def main(argv: list[str] | None = None) -> int:
             # Load cached dataset to avoid redundant feature computation
             if args.cache_path and Path(args.cache_path).exists():
                 print(f"[BACKTEST] Loading cached dataset from {args.cache_path}")
-                import pickle
-                with open(args.cache_path, "rb") as f:
-                    cached_build = pickle.load(f)
+                cached_build = dataset.load_dataset_cache(Path(args.cache_path), expected_feature_names=dataset.FEATURE_NAMES)
                 feature_rows = cached_build.feature_rows
                 print(f"[BACKTEST] Cached dataset loaded: {len(feature_rows):,} feature rows")
             if args.model_artifact:

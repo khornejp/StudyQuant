@@ -9,7 +9,6 @@ This script optimizes backtest speed by:
 3. Using a subset of core features for quick testing
 """
 import json
-import pickle
 import time
 from pathlib import Path
 
@@ -18,19 +17,18 @@ from btcusdt_quant import backtest, dataset, live, training
 
 def load_or_build_features(candles_path: Path, cache_path: Path) -> list:
     """Load features from cache or build and cache them."""
-    if cache_path.exists():
-        print(f"Loading cached features from {cache_path}...")
-        with open(cache_path, 'rb') as f:
-            return pickle.load(f)
-    
+    from btcusdt_quant import dataset
+    cache_dir = dataset.dataset_cache_dir(cache_path)
+    if cache_dir.exists():
+        print(f"Loading cached features from {cache_dir}...")
+        return dataset.load_feature_rows_cache(cache_path, expected_feature_names=dataset.FEATURE_NAMES)
+
     print("Building features (this may take a while)...")
     candles = dataset.load_parquet_candles(candles_path) if candles_path.suffix == '.parquet' else dataset.load_csv_candles(candles_path)
     features = dataset.build_feature_rows(candles)
-    
-    print(f"Caching features to {cache_path}...")
-    with open(cache_path, 'wb') as f:
-        pickle.dump(features, f)
-    
+
+    print(f"Caching features to {cache_dir}...")
+    dataset.save_feature_rows_cache(cache_path, features, dataset.FEATURE_NAMES)
     return features
 
 

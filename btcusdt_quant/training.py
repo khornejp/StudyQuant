@@ -93,20 +93,15 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     training_config = config or TrainingConfig()
     if prebuilt_dataset is not None:
         build = prebuilt_dataset
-    elif cache_path is not None and cache_path.exists():
+    elif cache_path is not None and (dataset.dataset_cache_dir(cache_path).exists() or cache_path.exists()):
         print(f"[TRAIN] Loading cached dataset from {cache_path}")
-        import pickle
-        with open(cache_path, "rb") as f:
-            build = pickle.load(f)
+        build = dataset.load_dataset_cache(cache_path, expected_feature_names=dataset.FEATURE_NAMES)
         print(f"[TRAIN] Cached dataset loaded: {len(build.labeled_rows):,} rows")
     else:
         build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir, external_sources=external_sources, user_regime_periods=user_regime_periods)
         if cache_path is not None:
             print(f"[TRAIN] Saving dataset cache to {cache_path}")
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            import pickle
-            with open(cache_path, "wb") as f:
-                pickle.dump(build, f)
+            dataset.save_dataset_cache(cache_path, build)
     if training_config.training_start is not None:
         build = replace(
             build,
@@ -120,10 +115,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     if training_config.only_build:
         if cache_path is not None:
             print(f"[TRAIN] only-build mode: saving dataset cache to {cache_path}")
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            import pickle
-            with open(cache_path, "wb") as f:
-                pickle.dump(build, f)
+            dataset.save_dataset_cache(cache_path, build)
         print(f"[TRAIN] only-build complete: {len(build.labeled_rows):,} labeled rows, {len(build.feature_names)} features")
         return TrainingResult(
             output_dir=output_dir,
