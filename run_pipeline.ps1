@@ -204,6 +204,7 @@ $fullDir = Join-Path $DataDir "full_2020_2025"
 $fullParquet = Join-Path $DataDir "full_2020_2025.parquet"
 $regimeJson = Join-Path $DataDir "user_regime_periods.json"
 $cachePath = Join-Path $DataDir "full_dataset_cache.pkl"
+$cacheDir = Join-Path $DataDir "full_dataset_cache.parquet_cache"
 $modelDir = Join-Path $DataDir "regime_model"
 $backtestDir = Join-Path $DataDir "backtest_results"
 
@@ -308,5 +309,5 @@ if ($LASTEXITCODE -ne 0) { throw "Backtest failed" }
 Write-Host "`n=== DONE ===" -ForegroundColor Cyan
 Write-Host "Training model: $modelDir" -ForegroundColor Green
 Write-Host "Backtest results: $backtestDir" -ForegroundColor Green
-Write-Host "Dataset cache: $cachePath" -ForegroundColor Green
+Write-Host "Dataset cache (Parquet): $cacheDir" -ForegroundColor Green
 Write-Host "Regime config: $regimeJson" -ForegroundColor Green
