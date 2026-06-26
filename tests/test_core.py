@@ -13,8 +13,10 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Mapping, cast
 from unittest import mock
+import warnings
 
-from btcusdt_quant import data, dataset, features, governance, live, training
+import btcusdt_quant.dataset as dataset
+from btcusdt_quant import data, features, governance, live, training
 from btcusdt_quant.cli import main, run_collect, run_demo, run_live, run_train
 
 
@@ -1344,6 +1346,106 @@ class EndToEndArtifactRegressionTests(unittest.TestCase):
             summary = run_train(output)
             self.assertFalse(summary["network_used"])
             self.assertTrue((output / "artifact_manifest.json").exists())
+
+
+class TestDatasetCacheParquet(unittest.TestCase):
+    def _build_dataset(self, rows: int = 5, feature_names: tuple[str, ...] = ("return_1", "return_5", "momentum_10", "volatility_20")) -> dataset.DatasetBuild:
+        base = data.utc_minute(2026, 1, 1, 0, 0)
+        labeled_rows: list[dataset.LabeledRow] = []
+        feature_rows: list[dataset.FeatureRow] = []
+        for index in range(rows):
+            open_time = base + timedelta(minutes=index)
+            row_features = {
+                "return_1": 0.01 + index * 0.001,
+                "return_5": 0.02 + index * 0.001,
+                "momentum_10": 0.5 + index * 0.01,
+                "volatility_20": 0.3 + index * 0.02,
+            }
+            feature_rows.append(dataset.FeatureRow(index, open_time, dict(row_features), 0, False, False))
+            labeled_rows.append(
+                dataset.LabeledRow(
+                    index,
+                    open_time,
+                    dict(row_features),
+                    index % 2,
+                    "tp_first" if index % 2 else "timeout_no_tp",
+                    0.01 if index % 2 else -0.01,
+                    0,
+                    False,
+                    False,
+                )
+            )
+        gap_report = dataset.GapReport(rows, rows, 0, 0.0, 0, base.isoformat(), (base + timedelta(minutes=rows - 1)).isoformat())
+        source_report = {
+            "feature_space_parity_passed": True,
+            "train_live_feature_parity_passed": True,
+            "source_hashes": {},
+            "unavailable_sources": (),
+            "grade_c_sources": (),
+            "fallback_features": (),
+            "approval_block_reasons": (),
+        }
+        return dataset.DatasetBuild(
+            source="synthetic_cache_fixture",
+            symbol="BTCUSDT",
+            interval="1m",
+            raw_rows=rows,
+            canonical=[],
+            gap_report=gap_report,
+            feature_rows=feature_rows,
+            labeled_rows=labeled_rows,
+            feature_names=feature_names,
+            label_horizon=5,
+            label_threshold=0.001,
+            source_availability_report=source_report,
+        )
+
+    def test_parquet_round_trip_preserves_rows(self) -> None:
+        build = self._build_dataset()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "dataset_cache.pkl"
+            dataset.save_dataset_cache(cache_path, build)
+            loaded = dataset.load_dataset_cache(cache_path)
+        self.assertEqual(len(loaded.labeled_rows), len(build.labeled_rows))
+        self.assertEqual(len(loaded.feature_rows), len(build.feature_rows))
+        self.assertEqual(loaded.feature_names, build.feature_names)
+        self.assertEqual(loaded.labeled_rows[0].features["return_1"], build.labeled_rows[0].features["return_1"])
+        self.assertEqual(loaded.feature_rows[0].features["return_1"], build.feature_rows[0].features["return_1"])
+
+    def test_parquet_missing_feature_fills_gracefully(self) -> None:
+        build = self._build_dataset(feature_names=("return_1", "return_5"))
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "dataset_cache.pkl"
+            dataset.save_dataset_cache(cache_path, build)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                loaded = dataset.load_dataset_cache(
+                    cache_path,
+                    expected_feature_names=["return_1", "return_5", "momentum_10"],
+                    allow_missing_features=True,
+                )
+        self.assertEqual(loaded.labeled_rows[0].features["momentum_10"], 0.0)
+        self.assertEqual(loaded.feature_rows[0].features["momentum_10"], 0.0)
+        self.assertTrue(any("momentum_10" in str(warning.message) and "missing" in str(warning.message).lower() for warning in caught))
+
+    def test_parquet_feature_count_mismatch_detected(self) -> None:
+        build = self._build_dataset(feature_names=("return_1",))
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "dataset_cache.pkl"
+            dataset.save_dataset_cache(cache_path, build)
+            with self.assertRaises(ValueError):
+                dataset.load_dataset_cache(
+                    cache_path,
+                    expected_feature_names=["return_1", "return_5"],
+                    allow_missing_features=False,
+                )
+
+    def test_pkl_path_derives_parquet_cache_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "dataset_cache.pkl"
+            cache_dir = dataset.dataset_cache_dir(cache_path)
+        cache_dir_str = str(cache_dir).replace("\\", "/").rstrip("/")
+        self.assertTrue(cache_dir_str.endswith(".parquet_cache"))
 
 
 if __name__ == "__main__":
