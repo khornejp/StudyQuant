@@ -5,14 +5,16 @@ import io
 import json
 import logging
 import os
+import pickle
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import warnings
 import zipfile
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import date, datetime, timedelta, timezone
 from math import isfinite, log, sqrt, sin
 from pathlib import Path
@@ -107,6 +109,20 @@ class UserRegimePeriod:
 
 
 USER_REGIME_NAMES: tuple[str, ...] = ("up", "down", "range")
+
+DATASET_CACHE_SCHEMA_VERSION = 1
+DATASET_CACHE_METADATA_FILE = "_metadata.json"
+DATASET_CACHE_FEATURE_ROWS_FILE = "feature_rows.parquet"
+DATASET_CACHE_LABELED_ROWS_FILE = "labeled_rows.parquet"
+DATASET_CACHE_CANONICAL_FILE = "canonical.parquet"
+
+
+@dataclass(frozen=True)
+class DatasetCacheValidation:
+    feature_count_matches: bool
+    missing_features: tuple[str, ...]
+    extra_features: tuple[str, ...]
+    schema_version: int
 
 
 @dataclass(frozen=True)
@@ -851,6 +867,406 @@ def load_parquet_candles(path: Path) -> list[data.Candle]:
             )
         )
     return candles
+
+
+def dataset_cache_dir(path: Path) -> Path:
+    if path.suffix == ".pkl":
+        return path.with_suffix(".parquet_cache")
+    return path
+
+
+def validate_dataset_cache_schema(
+    stored_feature_names: Sequence[str],
+    expected_feature_names: Sequence[str] | None = None,
+    schema_version: int = DATASET_CACHE_SCHEMA_VERSION,
+) -> DatasetCacheValidation:
+    stored = tuple(str(name) for name in stored_feature_names)
+    expected = tuple(str(name) for name in expected_feature_names) if expected_feature_names is not None else stored
+    stored_set = set(stored)
+    expected_set = set(expected)
+    return DatasetCacheValidation(
+        feature_count_matches=len(stored) == len(expected),
+        missing_features=tuple(name for name in expected if name not in stored_set),
+        extra_features=tuple(name for name in stored if name not in expected_set),
+        schema_version=int(schema_version),
+    )
+
+
+def save_dataset_cache(path: Path, build: DatasetBuild) -> Path:
+    cache_dir = dataset_cache_dir(path)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "schema_version": DATASET_CACHE_SCHEMA_VERSION,
+        "source": build.source,
+        "symbol": build.symbol,
+        "interval": build.interval,
+        "raw_rows": build.raw_rows,
+        "feature_names": list(build.feature_names),
+        "label_horizon": build.label_horizon,
+        "label_threshold": build.label_threshold,
+        "gap_report": asdict(build.gap_report),
+        "source_availability_report": build.source_availability_report or {},
+    }
+    with (cache_dir / DATASET_CACHE_METADATA_FILE).open("w", encoding="utf-8") as handle:
+        json.dump(metadata, handle, default=_dataset_cache_json_default, indent=2, sort_keys=True)
+    _write_feature_rows_parquet(cache_dir / DATASET_CACHE_FEATURE_ROWS_FILE, build.feature_rows, build.feature_names)
+    _write_labeled_rows_parquet(cache_dir / DATASET_CACHE_LABELED_ROWS_FILE, build.labeled_rows, build.feature_names)
+    write_candles_parquet(cache_dir / DATASET_CACHE_CANONICAL_FILE, build.canonical)
+    return cache_dir
+
+
+def load_dataset_cache(
+    path: Path,
+    *,
+    expected_feature_names: Sequence[str] | None = None,
+    allow_missing_features: bool = True,
+    allow_pickle_fallback: bool = True,
+) -> DatasetBuild:
+    cache_dir = dataset_cache_dir(path)
+    if cache_dir.exists():
+        metadata = _read_dataset_cache_metadata(cache_dir)
+        schema_version = int(metadata.get("schema_version", 0))
+        if schema_version != DATASET_CACHE_SCHEMA_VERSION:
+            raise ValueError(f"unsupported dataset cache schema version: {schema_version}")
+        stored_feature_names = tuple(str(name) for name in metadata.get("feature_names", ()))
+        _validate_dataset_cache_features(stored_feature_names, expected_feature_names, allow_missing_features, schema_version)
+        feature_names = tuple(str(name) for name in expected_feature_names) if expected_feature_names is not None else stored_feature_names
+        feature_rows = _load_feature_rows_parquet(
+            cache_dir / DATASET_CACHE_FEATURE_ROWS_FILE,
+            stored_feature_names=stored_feature_names,
+            expected_feature_names=expected_feature_names,
+            allow_missing_features=allow_missing_features,
+        )
+        labeled_rows = _load_labeled_rows_parquet(
+            cache_dir / DATASET_CACHE_LABELED_ROWS_FILE,
+            stored_feature_names=stored_feature_names,
+            expected_feature_names=expected_feature_names,
+            allow_missing_features=allow_missing_features,
+        )
+        canonical = load_parquet_candles(cache_dir / DATASET_CACHE_CANONICAL_FILE)
+        return DatasetBuild(
+            source=str(metadata.get("source", "")),
+            symbol=str(metadata.get("symbol", "BTCUSDT")),
+            interval=str(metadata.get("interval", "1m")),
+            raw_rows=int(metadata.get("raw_rows", len(canonical))),
+            canonical=canonical,
+            gap_report=_gap_report_from_metadata(metadata.get("gap_report", {})),
+            feature_rows=feature_rows,
+            labeled_rows=labeled_rows,
+            feature_names=feature_names,
+            label_horizon=int(metadata.get("label_horizon", 0)),
+            label_threshold=float(metadata.get("label_threshold", 0.0)),
+            source_availability_report=_metadata_mapping(metadata.get("source_availability_report", {})),
+        )
+    if allow_pickle_fallback and path.exists():
+        with path.open("rb") as handle:
+            build = pickle.load(handle)
+        if not isinstance(build, DatasetBuild):
+            raise TypeError("pickle dataset cache did not contain a DatasetBuild")
+        save_dataset_cache(path, build)
+        return load_dataset_cache(
+            path,
+            expected_feature_names=expected_feature_names,
+            allow_missing_features=allow_missing_features,
+            allow_pickle_fallback=False,
+        )
+    raise FileNotFoundError(cache_dir)
+
+
+def save_feature_rows_cache(path: Path, rows: Sequence[FeatureRow], feature_names: Sequence[str]) -> Path:
+    cache_dir = dataset_cache_dir(path)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    output_path = cache_dir / DATASET_CACHE_FEATURE_ROWS_FILE
+    _write_feature_rows_parquet(output_path, rows, feature_names)
+    return output_path
+
+
+def load_feature_rows_cache(
+    path: Path,
+    *,
+    expected_feature_names: Sequence[str] | None = None,
+    allow_missing_features: bool = True,
+) -> list[FeatureRow]:
+    cache_dir = dataset_cache_dir(path)
+    return _load_feature_rows_parquet(
+        cache_dir / DATASET_CACHE_FEATURE_ROWS_FILE,
+        stored_feature_names=None,
+        expected_feature_names=expected_feature_names,
+        allow_missing_features=allow_missing_features,
+    )
+
+
+def _dataset_cache_json_default(value: object) -> object:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return value.as_posix()
+    if is_dataclass(value):
+        return asdict(value)  # type: ignore[arg-type]
+    if isinstance(value, set):
+        return sorted(value)
+    return str(value)
+
+
+def _read_dataset_cache_metadata(cache_dir: Path) -> dict[str, object]:
+    with (cache_dir / DATASET_CACHE_METADATA_FILE).open("r", encoding="utf-8") as handle:
+        data_loaded = json.load(handle)
+    if not isinstance(data_loaded, dict):
+        raise ValueError("dataset cache metadata must be a JSON object")
+    return data_loaded
+
+
+def _validate_dataset_cache_features(
+    stored_feature_names: Sequence[str],
+    expected_feature_names: Sequence[str] | None,
+    allow_missing_features: bool,
+    schema_version: int = DATASET_CACHE_SCHEMA_VERSION,
+) -> DatasetCacheValidation:
+    validation = validate_dataset_cache_schema(stored_feature_names, expected_feature_names, schema_version)
+    if expected_feature_names is None:
+        return validation
+    if validation.missing_features:
+        message = "dataset cache missing expected features: " + ", ".join(validation.missing_features)
+        if allow_missing_features:
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
+        else:
+            raise ValueError(message)
+    if not allow_missing_features and (validation.extra_features or not validation.feature_count_matches):
+        details: list[str] = []
+        if validation.extra_features:
+            details.append("extra features: " + ", ".join(validation.extra_features))
+        if not validation.feature_count_matches:
+            details.append("feature count mismatch")
+        raise ValueError("dataset cache feature schema mismatch" + (": " + "; ".join(details) if details else ""))
+    return validation
+
+
+def _write_feature_rows_parquet(path: Path, rows: Sequence[FeatureRow], feature_names: Sequence[str]) -> None:
+    _write_rows_parquet(path, rows, feature_names, labeled=False)
+
+
+def _write_labeled_rows_parquet(path: Path, rows: Sequence[LabeledRow], feature_names: Sequence[str]) -> None:
+    _write_rows_parquet(path, rows, feature_names, labeled=True)
+
+
+def _write_rows_parquet(path: Path, rows: Sequence[FeatureRow] | Sequence[LabeledRow], feature_names: Sequence[str], *, labeled: bool) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except Exception as exc:
+        raise RuntimeError("pyarrow is required for Parquet support: pip install pyarrow") from exc
+
+    arrays: dict[str, object] = {
+        "index": pa.array([row.index for row in rows], type=pa.int64()),
+        "open_time": pa.array([_as_utc_datetime(row.open_time) for row in rows], type=pa.timestamp("us", tz="UTC")),
+        "gap_flag": pa.array([row.gap_flag for row in rows], type=pa.int64()),
+        "repaired": pa.array([row.repaired for row in rows], type=pa.bool_()),
+        "warmup_invalid": pa.array([row.warmup_invalid for row in rows], type=pa.bool_()),
+        "user_regime": pa.array([row.user_regime for row in rows], type=pa.string()),
+        "source_availability_status_json": pa.array([_json_dump(row.source_availability_status) for row in rows], type=pa.string()),
+        "feature_availability_status_json": pa.array([_json_dump(row.feature_availability_status) for row in rows], type=pa.string()),
+        "unavailable_sources_json": pa.array([_json_dump(list(row.unavailable_sources)) for row in rows], type=pa.string()),
+        "fallback_features_json": pa.array([_json_dump(list(row.fallback_features)) for row in rows], type=pa.string()),
+    }
+    if labeled:
+        labeled_rows = rows  # type: ignore[assignment]
+        arrays.update(
+            {
+                "label": pa.array([row.label for row in labeled_rows], type=pa.int64()),
+                "label_reason": pa.array([row.label_reason for row in labeled_rows], type=pa.string()),
+                "target_return": pa.array([row.target_return for row in labeled_rows], type=pa.float64()),
+                "targets_json": pa.array([_json_dump(row.targets) for row in labeled_rows], type=pa.string()),
+                "target_reasons_json": pa.array([_json_dump(row.target_reasons) for row in labeled_rows], type=pa.string()),
+            }
+        )
+    for name in feature_names:
+        feature_name = str(name)
+        arrays[feature_name] = pa.array([_nullable_float(row.features.get(feature_name)) for row in rows], type=pa.float64())
+    pq.write_table(pa.table(arrays), path)
+
+
+def _load_feature_rows_parquet(
+    path: Path,
+    *,
+    stored_feature_names: Sequence[str] | None,
+    expected_feature_names: Sequence[str] | None,
+    allow_missing_features: bool,
+) -> list[FeatureRow]:
+    try:
+        import pyarrow.parquet as pq
+    except Exception as exc:
+        raise RuntimeError("pyarrow is required for Parquet support: pip install pyarrow") from exc
+    table = pq.read_table(path)
+    columns = {name: table.column(name).to_pylist() for name in table.column_names}
+    stored = tuple(str(name) for name in stored_feature_names) if stored_feature_names is not None else _infer_feature_names(table.column_names, expected_feature_names, labeled=False)
+    _validate_dataset_cache_features(stored, expected_feature_names, allow_missing_features)
+    feature_names = tuple(str(name) for name in expected_feature_names) if expected_feature_names is not None else stored
+    rows: list[FeatureRow] = []
+    for index in range(table.num_rows):
+        rows.append(
+            FeatureRow(
+                index=int(columns["index"][index]),
+                open_time=_datetime_from_cache_value(columns["open_time"][index]),
+                features=_features_from_columns(columns, index, feature_names),
+                gap_flag=int(columns["gap_flag"][index]),
+                repaired=bool(columns["repaired"][index]),
+                warmup_invalid=bool(columns["warmup_invalid"][index]),
+                source_availability_status=_json_dict_str(columns.get("source_availability_status_json", [None] * table.num_rows)[index]),
+                feature_availability_status=_json_dict_str(columns.get("feature_availability_status_json", [None] * table.num_rows)[index]),
+                unavailable_sources=_json_tuple_str(columns.get("unavailable_sources_json", [None] * table.num_rows)[index]),
+                fallback_features=_json_tuple_str(columns.get("fallback_features_json", [None] * table.num_rows)[index]),
+                user_regime=columns.get("user_regime", [None] * table.num_rows)[index],
+            )
+        )
+    return rows
+
+
+def _load_labeled_rows_parquet(
+    path: Path,
+    *,
+    stored_feature_names: Sequence[str],
+    expected_feature_names: Sequence[str] | None,
+    allow_missing_features: bool,
+) -> list[LabeledRow]:
+    try:
+        import pyarrow.parquet as pq
+    except Exception as exc:
+        raise RuntimeError("pyarrow is required for Parquet support: pip install pyarrow") from exc
+    table = pq.read_table(path)
+    columns = {name: table.column(name).to_pylist() for name in table.column_names}
+    _validate_dataset_cache_features(stored_feature_names, expected_feature_names, allow_missing_features)
+    feature_names = tuple(str(name) for name in expected_feature_names) if expected_feature_names is not None else tuple(str(name) for name in stored_feature_names)
+    rows: list[LabeledRow] = []
+    for index in range(table.num_rows):
+        rows.append(
+            LabeledRow(
+                index=int(columns["index"][index]),
+                open_time=_datetime_from_cache_value(columns["open_time"][index]),
+                features=_features_from_columns(columns, index, feature_names),
+                label=int(columns["label"][index]),
+                label_reason=str(columns["label_reason"][index]),
+                target_return=float(columns["target_return"][index]),
+                gap_flag=int(columns["gap_flag"][index]),
+                repaired=bool(columns["repaired"][index]),
+                warmup_invalid=bool(columns["warmup_invalid"][index]),
+                source_availability_status=_json_dict_str(columns.get("source_availability_status_json", [None] * table.num_rows)[index]),
+                feature_availability_status=_json_dict_str(columns.get("feature_availability_status_json", [None] * table.num_rows)[index]),
+                unavailable_sources=_json_tuple_str(columns.get("unavailable_sources_json", [None] * table.num_rows)[index]),
+                fallback_features=_json_tuple_str(columns.get("fallback_features_json", [None] * table.num_rows)[index]),
+                targets=_json_dict_int(columns.get("targets_json", [None] * table.num_rows)[index]),
+                target_reasons=_json_dict_str(columns.get("target_reasons_json", [None] * table.num_rows)[index]),
+                user_regime=columns.get("user_regime", [None] * table.num_rows)[index],
+            )
+        )
+    return rows
+
+
+def _infer_feature_names(column_names: Sequence[str], expected_feature_names: Sequence[str] | None, *, labeled: bool) -> tuple[str, ...]:
+    reserved = {
+        "index",
+        "open_time",
+        "gap_flag",
+        "repaired",
+        "warmup_invalid",
+        "user_regime",
+        "source_availability_status_json",
+        "feature_availability_status_json",
+        "unavailable_sources_json",
+        "fallback_features_json",
+    }
+    if labeled:
+        reserved.update({"label", "label_reason", "target_return", "targets_json", "target_reasons_json"})
+    inferred = [name for name in column_names if name not in reserved]
+    if expected_feature_names is not None:
+        for name in expected_feature_names:
+            if name in column_names and name not in inferred:
+                inferred.append(str(name))
+    return tuple(inferred)
+
+
+def _features_from_columns(columns: Mapping[str, Sequence[object]], row_index: int, feature_names: Sequence[str]) -> dict[str, float]:
+    output: dict[str, float] = {}
+    for name in feature_names:
+        if name in columns:
+            value = columns[name][row_index]
+            output[name] = 0.0 if value is None else float(value)
+        else:
+            output[name] = 0.0
+    return output
+
+
+def _gap_report_from_metadata(value: object) -> GapReport:
+    report = _metadata_mapping(value)
+    return GapReport(
+        raw_rows=int(report.get("raw_rows", 0)),
+        canonical_rows=int(report.get("canonical_rows", 0)),
+        repaired_rows=int(report.get("repaired_rows", 0)),
+        gap_ratio_total=float(report.get("gap_ratio_total", 0.0)),
+        max_gap_run=int(report.get("max_gap_run", 0)),
+        first_open_time=str(report.get("first_open_time", "")),
+        last_open_time=str(report.get("last_open_time", "")),
+    )
+
+
+def _metadata_mapping(value: object) -> dict[str, object]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _json_dump(value: object) -> str:
+    return json.dumps(value, default=_dataset_cache_json_default, sort_keys=True)
+
+
+def _json_load(value: object, default: object) -> object:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    if not isinstance(value, str):
+        return default
+    return json.loads(value)
+
+
+def _json_dict_str(value: object) -> dict[str, str]:
+    loaded = _json_load(value, {})
+    if not isinstance(loaded, Mapping):
+        return {}
+    return {str(key): str(item) for key, item in loaded.items()}
+
+
+def _json_dict_int(value: object) -> dict[str, int]:
+    loaded = _json_load(value, {})
+    if not isinstance(loaded, Mapping):
+        return {}
+    return {str(key): int(item) for key, item in loaded.items()}
+
+
+def _json_tuple_str(value: object) -> tuple[str, ...]:
+    loaded = _json_load(value, [])
+    if not isinstance(loaded, Sequence) or isinstance(loaded, (str, bytes)):
+        return ()
+    return tuple(str(item) for item in loaded)
+
+
+def _nullable_float(value: object) -> float | None:
+    return None if value is None else float(value)
+
+
+def _as_utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _datetime_from_cache_value(value: object) -> datetime:
+    if isinstance(value, datetime):
+        return _as_utc_datetime(value)
+    if isinstance(value, str):
+        return _as_utc_datetime(datetime.fromisoformat(value))
+    if isinstance(value, (int, float)):
+        scale = 1000.0 if abs(float(value)) > 10_000_000_000 else 1.0
+        return datetime.fromtimestamp(float(value) / scale, tz=timezone.utc)
+    raise TypeError(f"unsupported cached datetime value: {value!r}")
 
 
 def _interval_to_ms(interval: str) -> int:
