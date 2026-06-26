@@ -165,7 +165,6 @@ def run_train(
     test_start: str | None = None,
     test_end: str | None = None,
     only_build: bool = False,
-    cache_path: str | None = None,
 ) -> dict[str, object]:
     if multitask:
         model_family = "pytorch_multitask"
@@ -221,8 +220,7 @@ def run_train(
     if input_path is not None and input_path.is_dir():
         archive_dir = input_path
         input_path = None
-    cache_path_obj = Path(cache_path) if cache_path is not None else None
-    result = training.run_training(input_path, output, config, archive_dir=archive_dir, external_sources=external_sources, user_regime_periods=user_regime_periods, cache_path=cache_path_obj)
+    result = training.run_training(input_path, output, config, archive_dir=archive_dir, external_sources=external_sources, user_regime_periods=user_regime_periods)
     summary = dict(result.run_summary)
     summary["requested_model_family"] = model_family
     return summary
@@ -395,8 +393,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--training-end", default=None, help="end date for training data (ISO format, e.g., 2024-12-31); rows after this date are excluded from training")
     train.add_argument("--test-start", default=None, help="start date for test/validation period (ISO format, e.g., 2025-01-01); used for out-of-sample evaluation after training")
     train.add_argument("--test-end", default=None, help="end date for test/validation period (ISO format, e.g., 2025-06-30)")
-    train.add_argument("--only-build", action="store_true", help="only compute and cache features/labels, skip model training")
-    train.add_argument("--cache-path", default=None, help="path to cache computed dataset for faster retraining")
+    train.add_argument("--only-build", action="store_true", help="only compute features/labels, skip model training")
     train.add_argument("--multitask", action="store_true", help="use PyTorch multitask neural network as the model family (shorthand for --model-family pytorch_multitask)")
     train.add_argument("--long-threshold", type=float, default=0.55, help="minimum probability threshold for LONG entry signals")
     train.add_argument("--short-threshold", type=float, default=0.55, help="minimum probability threshold for SHORT entry signals")
@@ -427,7 +424,6 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--model-artifact", default=None, help="trained model artifact JSON path or regime-aware directory")
     backtest_parser.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods for backtest")
     backtest_parser.add_argument("--backtest-start", default="2025-07-01", help="start date for backtest (ISO format, e.g., 2025-07-01); candles before this date are used for feature computation only")
-    backtest_parser.add_argument("--cache-path", default=None, help="path to cached dataset with pre-computed features (avoids redundant feature computation)")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -520,7 +516,6 @@ def main(argv: list[str] | None = None) -> int:
                 test_start=args.test_start,
                 test_end=args.test_end,
                 only_build=args.only_build,
-                cache_path=args.cache_path,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)
@@ -591,15 +586,8 @@ def main(argv: list[str] | None = None) -> int:
             model = None
             models_by_regime: dict[str, object] | None = None
             user_regime_periods = None
-            feature_rows = None
             if args.user_regime_file:
                 user_regime_periods = dataset.load_user_regime_periods(Path(args.user_regime_file))
-            # Load cached dataset to avoid redundant feature computation
-            if args.cache_path and Path(args.cache_path).exists():
-                print(f"[BACKTEST] Loading cached dataset from {args.cache_path}")
-                cached_build = dataset.load_dataset_cache(Path(args.cache_path), expected_feature_names=dataset.FEATURE_NAMES)
-                feature_rows = cached_build.feature_rows
-                print(f"[BACKTEST] Cached dataset loaded: {len(feature_rows):,} feature rows")
             if args.model_artifact:
                 model_path = Path(args.model_artifact)
                 if model_path.is_file():
@@ -623,7 +611,6 @@ def main(argv: list[str] | None = None) -> int:
                 user_regime_periods=user_regime_periods,
                 default_regime=max(models_by_regime, key=lambda k: 1) if models_by_regime else None,
                 start_date=args.backtest_start,
-                feature_rows=feature_rows,
             )
             result = backtest.run_backtest(
                 candles,
@@ -633,7 +620,6 @@ def main(argv: list[str] | None = None) -> int:
                 user_regime_periods=user_regime_periods,
                 default_regime=max(models_by_regime, key=lambda k: 1) if models_by_regime else None,
                 start_date=args.backtest_start,
-                feature_rows=feature_rows,
             )
             summary = {
                 "backtest": result.as_dict(),

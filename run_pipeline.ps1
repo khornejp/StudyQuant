@@ -203,8 +203,6 @@ Test-Prereqs
 $fullDir = Join-Path $DataDir "full_2020_2025"
 $fullParquet = Join-Path $DataDir "full_2020_2025.parquet"
 $regimeJson = Join-Path $DataDir "user_regime_periods.json"
-$cachePath = Join-Path $DataDir "full_dataset_cache.pkl"
-$cacheDir = Join-Path $DataDir "full_dataset_cache.parquet_cache"
 $modelDir = Join-Path $DataDir "regime_model"
 $backtestDir = Join-Path $DataDir "backtest_results"
 
@@ -257,17 +255,16 @@ if (-not $OnlyBacktest) {
     Write-Host "Generated $regimeJson with $($jsonPeriods.Count) periods" -ForegroundColor Green
 }
 
-# ─── STEP 3: Compute Features (one-time build with cache) ─────────────────────
+# ─── STEP 3: Compute Features (fresh build) ───────────────────────────────────
 if (-not $OnlyBacktest -and -not $SkipBuild) {
-    Write-Host "`n=== STEP 3: Compute Features ($StartDate ~ $EndDate, one-time) ===" -ForegroundColor Cyan
-    Write-Host "  This computes all features for the entire period and caches the result." -ForegroundColor Yellow
+    Write-Host "`n=== STEP 3: Compute Features ($StartDate ~ $EndDate, fresh) ===" -ForegroundColor Cyan
+    Write-Host "  This computes all features for the entire period from scratch." -ForegroundColor Yellow
     $env:PYTHONUNBUFFERED = 1
     & $VenvPython -u -m btcusdt_quant train `
         --input $fullParquet `
         --use-user-regime `
         --user-regime-file $regimeJson `
         --output $modelDir `
-        --cache-path $cachePath `
         --training-start $StartDate `
         --only-build
     $env:PYTHONUNBUFFERED = 0
@@ -285,7 +282,6 @@ if (-not $OnlyBacktest -and -not $SkipBuild) {
         --use-user-regime `
         --user-regime-file $regimeJson `
         --output $modelDir `
-        --cache-path $cachePath `
         --training-start $StartDate `
         --training-end $TrainEnd `
         --test-start $TestStart `
@@ -302,12 +298,10 @@ Write-Host "  Backtest period: $BacktestStart ~ $EndDate" -ForegroundColor Yello
     --model-artifact $modelDir `
     --user-regime-file $regimeJson `
     --backtest-start $BacktestStart `
-    --cache-path $cachePath `
     --output $backtestDir
 if ($LASTEXITCODE -ne 0) { throw "Backtest failed" }
 
 Write-Host "`n=== DONE ===" -ForegroundColor Cyan
 Write-Host "Training model: $modelDir" -ForegroundColor Green
 Write-Host "Backtest results: $backtestDir" -ForegroundColor Green
-Write-Host "Dataset cache (Parquet): $cacheDir" -ForegroundColor Green
 Write-Host "Regime config: $regimeJson" -ForegroundColor Green

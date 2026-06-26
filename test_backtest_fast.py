@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Fast Backtest with $100 Initial Capital using Parquet + Feature Caching
+Fast Backtest with $100 Initial Capital using Parquet
 Usage: python test_backtest_fast.py
 
-This script optimizes backtest speed by:
-1. Loading data from Parquet (faster for large files)
-2. Caching computed features to avoid recomputation
-3. Using a subset of core features for quick testing
+This script runs a quick backtest by:
+1. Loading data from Parquet when available
+2. Computing features from the selected candle subset
+3. Using a subset of candles for quick testing
 """
 import json
 import time
@@ -15,28 +15,10 @@ from pathlib import Path
 from btcusdt_quant import backtest, dataset, live, training
 
 
-def load_or_build_features(candles_path: Path, cache_path: Path) -> list:
-    """Load features from cache or build and cache them."""
-    from btcusdt_quant import dataset
-    cache_dir = dataset.dataset_cache_dir(cache_path)
-    if cache_dir.exists():
-        print(f"Loading cached features from {cache_dir}...")
-        return dataset.load_feature_rows_cache(cache_path, expected_feature_names=dataset.FEATURE_NAMES)
-
-    print("Building features (this may take a while)...")
-    candles = dataset.load_parquet_candles(candles_path) if candles_path.suffix == '.parquet' else dataset.load_csv_candles(candles_path)
-    features = dataset.build_feature_rows(candles)
-
-    print(f"Caching features to {cache_dir}...")
-    dataset.save_feature_rows_cache(cache_path, features, dataset.FEATURE_NAMES)
-    return features
-
-
 def main():
     # Configuration
     INPUT_PATH = Path("artifacts/btcusdt_1m_2024_01_02.parquet")
     CSV_FALLBACK = Path("artifacts/btcusdt_1m_2024_01_02.csv")
-    CACHE_PATH = Path("artifacts/feature_cache.pkl")
     OUTPUT_PATH = Path("artifacts/backtest_100usd_fast")
     
     INITIAL_EQUITY = 100.0
