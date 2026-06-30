@@ -353,9 +353,12 @@ class BinanceArchiveDownloader:
         max_retries: int = 5,
         urlopen: Callable[..., object] | None = None,
         sleep: Callable[[float], None] | None = None,
+        request_interval_seconds: float = 0.2,
     ) -> None:
         if max_retries <= 0:
             raise ValueError("max_retries must be positive")
+        if request_interval_seconds < 0.0:
+            raise ValueError("request_interval_seconds must be non-negative")
         self.base_url = base_url.rstrip("/")
         self.symbol = symbol
         self.interval = interval
@@ -363,6 +366,12 @@ class BinanceArchiveDownloader:
         self.max_retries = max_retries
         self.urlopen = urlopen or urllib.request.urlopen
         self.sleep = sleep or time.sleep
+        # Multi-year archive downloads (e.g. 2020-2025 = ~2,200 daily requests)
+        # hit data.binance.vision back-to-back with no delay otherwise, which
+        # risks a 418 hard ban. A small fixed delay between successful
+        # downloads keeps the request rate conservative without meaningfully
+        # slowing down a 2000+ day backfill (a few minutes total).
+        self.request_interval_seconds = request_interval_seconds
 
     def download_range(
         self,
@@ -412,6 +421,8 @@ class BinanceArchiveDownloader:
             checkpoint["downloaded_files"] = downloaded_files
             checkpoint["failed_dates"] = failed_dates
             _write_archive_checkpoint(checkpoint_path, checkpoint)
+            if self.request_interval_seconds > 0.0:
+                self.sleep(self.request_interval_seconds)
 
         return _archive_summary(destination, checkpoint_path, start, end, checkpoint)
 

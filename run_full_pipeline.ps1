@@ -90,65 +90,27 @@ Write-Host "[Phase 2] Combining daily archive files into a single Parquet..." -F
 $FullParquet = Join-Path $ArtifactsDir "btcusdt_2020_2025.parquet"
 
 if (-not (Test-Path $FullParquet)) {
-    # Stream-concatenate to avoid loading all 6 years into memory at once.
-    # Column renames match dataset.load_parquet_candles expectations:
-    #   count               -> number_of_trades
-    #   taker_buy_volume    -> taker_buy_base_volume
-    # close_time and ignore are dropped (not used downstream).
+    # Reuse dataset.py's own archive parser (handles header/no-header
+    # auto-detection, OHLCV validation, duplicate open_time dedup) instead of
+    # re-implementing CSV parsing here. This guarantees the exact same
+    # parsing rules used everywhere else in the codebase (training, backtest,
+    # tests) are applied to the data that feeds the pipeline.
     python -c @"
-import glob, os, sys
-import pyarrow.csv as pv
-import pyarrow.parquet as pq
-import pyarrow as pa
+import sys
+from pathlib import Path
+from btcusdt_quant import dataset
 
-archive_dir = r'$ArchiveDir'
-out_path    = r'$FullParquet'
+archive_dir = Path(r'$ArchiveDir')
+out_path    = Path(r'$FullParquet')
 
-files = sorted(glob.glob(os.path.join(archive_dir, 'BTCUSDT-1m-*.csv')))
-if not files:
-    print(f'no archive csv files in {archive_dir}', file=sys.stderr)
-    sys.exit(1)
-print(f'concatenating {len(files)} daily files...')
+print('loading archive candles (this auto-detects header/no-header CSVs, '
+      'validates OHLCV, and de-duplicates by open_time)...')
+candles = dataset.load_archive_candles(archive_dir)
+print(f'  loaded {len(candles):,} raw candles')
 
-writer = None
-total_rows = 0
-batch = []
-BATCH_SIZE = 30  # ~1 month at a time
-
-def flush_batch(writer, batch):
-    if not batch:
-        return writer, 0
-    tbl = pa.concat_tables(batch, promote=True)
-    renamed = []
-    for n in tbl.column_names:
-        if n == 'count':                   renamed.append('number_of_trades')
-        elif n == 'taker_buy_volume':       renamed.append('taker_buy_base_volume')
-        else:                                renamed.append(n)
-    tbl = tbl.rename_columns(renamed)
-    keep = [n for n in renamed if n not in ('close_time', 'ignore')]
-    tbl = tbl.select(keep)
-    if writer is None:
-        writer = pq.ParquetWriter(out_path, tbl.schema)
-    writer.write_table(tbl)
-    return writer, tbl.num_rows
-
-for path in files:
-    try:
-        batch.append(pv.read_csv(path))
-    except Exception as e:
-        print(f'WARN: failed to read {path}: {e}', file=sys.stderr)
-        continue
-    if len(batch) >= BATCH_SIZE:
-        writer, n = flush_batch(writer, batch)
-        total_rows += n
-        batch = []
-
-writer, n = flush_batch(writer, batch)
-total_rows += n
-if writer is not None:
-    writer.close()
-
-print(f'  -> wrote {total_rows:,} rows to {out_path}')
+print('writing Parquet...')
+dataset.write_candles_parquet(out_path, candles)
+print(f'  -> wrote {len(candles):,} rows to {out_path}')
 "@
 } else {
     Write-Host "  (using cached $FullParquet)"
@@ -164,7 +126,13 @@ Write-Host "  Features are computed once over the full 2020-2025 series." -Foreg
 Write-Host "  Training rows are restricted to $DownloadStart -> $TrainingEnd via --training-end." -ForegroundColor Gray
 Write-Host "  Validation rows are $ValidationStart -> $ValidationEnd via --test-start/--test-end." -ForegroundColor Gray
 Write-Host "  Regime labels come from $RegimeFile (--use-user-regime)." -ForegroundColor Gray
-Write-Host "  Expect 30-60 minutes depending on hardware." -ForegroundColor Gray
+Write-Host ""
+Write-Host "  Per-regime Optuna tuning (--optuna) IS applied: each long/short" -ForegroundColor DarkYellow
+Write-Host "  CatBoost model gets its own small Optuna study to pick iterations," -ForegroundColor DarkYellow
+Write-Host "  learning_rate, depth, and l2_leaf_reg on a chronological 80/20" -ForegroundColor DarkYellow
+Write-Host "  holdout of that regime's rows. Other flags (--ensemble, --cv-mode," -ForegroundColor DarkYellow
+Write-Host "  --threshold-objective, --feature-selection) are NOT applied on" -ForegroundColor DarkYellow
+Write-Host "  this path." -ForegroundColor DarkYellow
 Write-Host ""
 
 $ModelDir = Join-Path $ArtifactsDir "regime_stacking_model"
@@ -173,15 +141,12 @@ python -m btcusdt_quant train `
     --input $FullParquet `
     --use-user-regime `
     --user-regime-file $RegimeFile `
-    --ensemble `
     --training-start $DownloadStart `
     --training-end $TrainingEnd `
     --test-start $ValidationStart `
     --test-end $ValidationEnd `
-    --cv-mode combinatorial_purged `
-    --n-groups 6 `
-    --test-group-count 2 `
-    --threshold-objective trading_pnl `
+    --optuna `
+    --optuna-trials 30 `
     --output $ModelDir
 
 Write-Host ""

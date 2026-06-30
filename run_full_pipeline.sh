@@ -82,60 +82,25 @@ echo "[Phase 2] Combining daily archive files into a single Parquet..."
 FULL_PARQUET="$ARTIFACTS_DIR/btcusdt_2020_2025.parquet"
 
 if [[ ! -f "$FULL_PARQUET" ]]; then
+    # Reuse dataset.py's own archive parser (handles header/no-header
+    # auto-detection, OHLCV validation, duplicate open_time dedup) instead of
+    # re-implementing CSV parsing here.
     python - <<PY
-import glob, os, sys
-import pyarrow.csv as pv
-import pyarrow.parquet as pq
-import pyarrow as pa
+import sys
+from pathlib import Path
+from btcusdt_quant import dataset
 
-archive_dir = "$ARCHIVE_DIR"
-out_path    = "$FULL_PARQUET"
+archive_dir = Path("$ARCHIVE_DIR")
+out_path    = Path("$FULL_PARQUET")
 
-files = sorted(glob.glob(os.path.join(archive_dir, 'BTCUSDT-1m-*.csv')))
-if not files:
-    print(f'no archive csv files in {archive_dir}', file=sys.stderr)
-    sys.exit(1)
-print(f'concatenating {len(files)} daily files...')
+print('loading archive candles (this auto-detects header/no-header CSVs, '
+      'validates OHLCV, and de-duplicates by open_time)...')
+candles = dataset.load_archive_candles(archive_dir)
+print(f'  loaded {len(candles):,} raw candles')
 
-writer = None
-total_rows = 0
-batch = []
-BATCH_SIZE = 30
-
-def flush_batch(writer, batch):
-    if not batch:
-        return writer, 0
-    tbl = pa.concat_tables(batch, promote=True)
-    renamed = []
-    for n in tbl.column_names:
-        if n == 'count':                   renamed.append('number_of_trades')
-        elif n == 'taker_buy_volume':       renamed.append('taker_buy_base_volume')
-        else:                                renamed.append(n)
-    tbl = tbl.rename_columns(renamed)
-    keep = [n for n in renamed if n not in ('close_time', 'ignore')]
-    tbl = tbl.select(keep)
-    if writer is None:
-        writer = pq.ParquetWriter(out_path, tbl.schema)
-    writer.write_table(tbl)
-    return writer, tbl.num_rows
-
-for path in files:
-    try:
-        batch.append(pv.read_csv(path))
-    except Exception as e:
-        print(f'WARN: failed to read {path}: {e}', file=sys.stderr)
-        continue
-    if len(batch) >= BATCH_SIZE:
-        writer, n = flush_batch(writer, batch)
-        total_rows += n
-        batch = []
-
-writer, n = flush_batch(writer, batch)
-total_rows += n
-if writer is not None:
-    writer.close()
-
-print(f'  -> wrote {total_rows:,} rows to {out_path}')
+print('writing Parquet...')
+dataset.write_candles_parquet(out_path, candles)
+print(f'  -> wrote {len(candles):,} rows to {out_path}')
 PY
 else
     echo "  (using cached $FULL_PARQUET)"
@@ -151,6 +116,12 @@ echo "  Training rows: $DOWNLOAD_START -> $TRAINING_END"
 echo "  Validation rows: $VALIDATION_START -> $VALIDATION_END"
 echo "  Regime labels from: $REGIME_FILE"
 echo ""
+echo "  Per-regime Optuna tuning (--optuna) IS applied: each long/short"
+echo "  CatBoost model gets its own small Optuna study to pick iterations,"
+echo "  learning_rate, depth, and l2_leaf_reg on a chronological 80/20"
+echo "  holdout. Other flags (--ensemble, --cv-mode, --threshold-objective,"
+echo "  --feature-selection) are NOT applied on this path."
+echo ""
 
 MODEL_DIR="$ARTIFACTS_DIR/regime_stacking_model"
 
@@ -158,15 +129,12 @@ python -m btcusdt_quant train \
     --input "$FULL_PARQUET" \
     --use-user-regime \
     --user-regime-file "$REGIME_FILE" \
-    --ensemble \
     --training-start "$DOWNLOAD_START" \
     --training-end "$TRAINING_END" \
     --test-start "$VALIDATION_START" \
     --test-end "$VALIDATION_END" \
-    --cv-mode combinatorial_purged \
-    --n-groups 6 \
-    --test-group-count 2 \
-    --threshold-objective trading_pnl \
+    --optuna \
+    --optuna-trials 30 \
     --output "$MODEL_DIR"
 
 echo ""

@@ -677,6 +677,144 @@ def _train_single_regime_worker(
 _REGIME_NAMES = ("high_volatility", "trending", "ranging")
 
 
+# Default CatBoost hyperparameters used when Optuna tuning is disabled or
+# Optuna itself is unavailable in the runtime. Kept identical to the values
+# that were hard-coded in _train_single_regime before tuning was introduced,
+# so disabling --optuna restores the previous baseline exactly.
+_REGIME_CATBOOST_DEFAULT_PARAMS: dict[str, object] = {
+    "iterations": 500,
+    "learning_rate": 0.03,
+    "depth": 8,
+    "verbose": False,
+}
+
+
+def _tune_catboost_with_optuna(
+    feature_matrix_values: Sequence[Sequence[float]],
+    labels: Sequence[int],
+    feature_names: Sequence[str],
+    n_trials: int,
+    label_horizon: int,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Search CatBoost hyperparameters for a single (regime, target) slice.
+
+    Returns (best_params_dict, study_report) where best_params_dict is the
+    merged param dictionary ready to feed CatBoostAdapter, and study_report
+    is a JSON-serializable summary saved into run_summary.
+
+    If optuna or catboost is not importable we silently fall back to the
+    default params and record optuna_available=False in the report, so the
+    pipeline still completes end-to-end.
+    """
+    rows = [list(row) for row in feature_matrix_values]
+    y_values = [int(value) for value in labels]
+    default_params = dict(_REGIME_CATBOOST_DEFAULT_PARAMS)
+
+    if not rows or not y_values or len(rows) != len(y_values):
+        return default_params, {"optuna_available": False, "reason": "empty_or_mismatched_inputs"}
+
+    label_set = set(y_values)
+    if len(label_set) < 2:
+        # Optuna can't meaningfully tune a degenerate single-class slice.
+        return default_params, {
+            "optuna_available": False,
+            "reason": "single_class_labels",
+            "label_distribution": {int(label): y_values.count(label) for label in label_set},
+        }
+
+    try:
+        optuna = __import__("optuna")
+    except Exception as exc:
+        return default_params, {"optuna_available": False, "reason": f"optuna_import_failed: {exc!s}"}
+
+    try:
+        __import__("catboost")
+    except Exception as exc:
+        return default_params, {"optuna_available": False, "reason": f"catboost_import_failed: {exc!s}"}
+
+    # Inner time-series sequential split: train on the first 80% of rows,
+    # validate on the last 20%. A single contiguous holdout matches how the
+    # outer train/test split is also chronological. We insert a small purge
+    # gap between train tail and validation head to mitigate label leakage
+    # from overlapping triple-barrier windows, but cap the gap so it never
+    # consumes the validation slice on small regime slices (label_horizon
+    # alone can be larger than the slice itself for, e.g., a 60-bar horizon
+    # against only a few hundred rows in a thinly-populated regime).
+    n = len(rows)
+    if n < 50:
+        return default_params, {"optuna_available": False, "reason": "too_few_rows_to_tune", "rows": n}
+    split_index = max(1, int(n * 0.8))
+    horizon_gap = min(max(0, int(label_horizon)), max(0, (n - split_index) // 4))
+    val_start = split_index + horizon_gap
+    if val_start >= n - 10:
+        return default_params, {"optuna_available": False, "reason": "insufficient_rows_for_holdout", "rows": n}
+
+    train_x = rows[:split_index]
+    train_y = y_values[:split_index]
+    val_x = rows[val_start:]
+    val_y = y_values[val_start:]
+    if not val_x or len(set(train_y)) < 2 or len(set(val_y)) < 2:
+        return default_params, {"optuna_available": False, "reason": "degenerate_split", "rows": n}
+
+    trial_history: list[dict[str, object]] = []
+
+    def _objective(trial: object) -> float:
+        suggest_int = getattr(trial, "suggest_int")
+        suggest_float = getattr(trial, "suggest_float")
+        params = {
+            "iterations": int(suggest_int("iterations", 200, 800)),
+            "learning_rate": float(suggest_float("learning_rate", 0.01, 0.1, log=True)),
+            "depth": int(suggest_int("depth", 4, 10)),
+            "l2_leaf_reg": float(suggest_float("l2_leaf_reg", 1.0, 10.0, log=True)),
+            "verbose": False,
+        }
+        adapter = models.CatBoostAdapter(feature_names=list(feature_names), model_params=dict(params))
+        adapter.fit(train_x, train_y)
+        val_probs = adapter.predict_proba(val_x)
+        # Binary cross-entropy (lower is better). Clamp to avoid log(0).
+        eps = 1e-12
+        loss = 0.0
+        for prob, true_label in zip(val_probs, val_y):
+            p = max(eps, min(1.0 - eps, float(prob)))
+            if int(true_label) == 1:
+                loss -= log(p)
+            else:
+                loss -= log(1.0 - p)
+        loss /= max(1, len(val_y))
+        trial_number = int(getattr(trial, "number", len(trial_history)))
+        trial_history.append({"number": trial_number, "params": dict(params), "value": loss})
+        return loss
+
+    effective_trials = n_trials if n_trials > 0 else 20
+    study = optuna.create_study(
+        direction="minimize",
+        sampler=optuna.samplers.TPESampler(seed=42),
+    )
+    try:
+        study.optimize(_objective, n_trials=effective_trials, show_progress_bar=False)
+    except Exception as exc:
+        return default_params, {
+            "optuna_available": True,
+            "reason": f"study_failed: {exc!s}",
+            "trial_history": trial_history,
+        }
+
+    best = dict(study.best_params)
+    merged = {**default_params, **best}
+    merged["verbose"] = False
+    report = {
+        "optuna_available": True,
+        "n_trials_requested": effective_trials,
+        "n_trials_completed": len(trial_history),
+        "best_params": best,
+        "best_value": float(study.best_value),
+        "train_rows": len(train_x),
+        "validation_rows": len(val_x),
+        "trial_history": trial_history,
+    }
+    return merged, report
+
+
 def _train_single_regime(
     build: dataset.DatasetBuild,
     output_dir: Path,
@@ -704,35 +842,76 @@ def _train_single_regime(
     train_short = regime_name in ("down", "range")
     
     artifacts = []
-    
+    optuna_reports: dict[str, dict[str, object]] = {}
+
+    def _resolve_model_params(target_name: str, labels: Sequence[int]) -> tuple[dict[str, object], dict[str, object] | None]:
+        """Return (catboost_params, optuna_report_or_None) for one target.
+
+        When training_config.optuna_enabled is True we run a small Optuna
+        study on a chronological 70/30 holdout of this regime's rows to
+        pick CatBoost hyperparameters; otherwise we use the legacy fixed
+        defaults so existing behavior is preserved.
+        """
+        if not training_config.optuna_enabled:
+            return dict(_REGIME_CATBOOST_DEFAULT_PARAMS), None
+        print(
+            f"[TRAIN]   Optuna tuning CatBoost for regime '{regime_name}' / "
+            f"{target_name} ({training_config.optuna_trials or 20} trials)..."
+        )
+        params, report = _tune_catboost_with_optuna(
+            feature_matrix_values=f_matrix,
+            labels=labels,
+            feature_names=regime_build.feature_names,
+            n_trials=training_config.optuna_trials,
+            label_horizon=build.label_horizon,
+        )
+        if report.get("optuna_available"):
+            best = report.get("best_params", {})
+            best_value = report.get("best_value")
+            print(
+                f"[TRAIN]     -> best logloss={best_value:.4f}  params={best}"
+            )
+        else:
+            print(
+                f"[TRAIN]     -> Optuna unavailable or unable to tune "
+                f"({report.get('reason', 'unknown')}); using defaults."
+            )
+        return params, report
+
     if train_long:
         print(f"[TRAIN]   Training LONG success model for regime '{regime_name}'...")
         long_labels = [row.targets.get("long_success", row.label) for row in regime_build.labeled_rows]
+        long_params, long_report = _resolve_model_params("long", long_labels)
         long_model = models.CatBoostAdapter(
             feature_names=regime_build.feature_names,
-            model_params={"iterations": 500, "learning_rate": 0.03, "depth": 8, "verbose": False},
+            model_params=long_params,
         )
         long_model.fit(f_matrix, long_labels)
         writer = governance.ArtifactWriter(regime_output_dir)
         writer.write_json("long_model.json", long_model.as_dict())
         artifacts.append("long_model.json")
-    
+        if long_report is not None:
+            optuna_reports["long"] = long_report
+
     if train_short:
         print(f"[TRAIN]   Training SHORT success model for regime '{regime_name}'...")
         short_labels = [row.targets.get("short_success", row.label) for row in regime_build.labeled_rows]
+        short_params, short_report = _resolve_model_params("short", short_labels)
         short_model = models.CatBoostAdapter(
             feature_names=regime_build.feature_names,
-            model_params={"iterations": 500, "learning_rate": 0.03, "depth": 8, "verbose": False},
+            model_params=short_params,
         )
         short_model.fit(f_matrix, short_labels)
         writer = governance.ArtifactWriter(regime_output_dir)
         writer.write_json("short_model.json", short_model.as_dict())
         artifacts.append("short_model.json")
+        if short_report is not None:
+            optuna_reports["short"] = short_report
     
     print(f"[TRAIN]   Models saved to {regime_output_dir}")
     
     # Create minimal TrainingResult
-    run_summary = {
+    run_summary: dict[str, object] = {
         "regime_aware": False,
         "regime_source": "user_regime",
         "trained_regimes": {regime_name: {"status": "trained", "row_count": len(regime_indices)}},
@@ -744,6 +923,16 @@ def _train_single_regime(
         "mean_test_brier": 0.0,
         "artifacts": artifacts,
     }
+    if optuna_reports:
+        run_summary["optuna"] = {
+            "enabled": True,
+            "trials_requested": training_config.optuna_trials or 20,
+            "per_target": optuna_reports,
+        }
+    elif training_config.optuna_enabled:
+        run_summary["optuna"] = {"enabled": True, "per_target": {}, "note": "no targets tuned"}
+    else:
+        run_summary["optuna"] = {"enabled": False}
     return TrainingResult(
         output_dir=regime_output_dir,
         dataset_build=regime_build,

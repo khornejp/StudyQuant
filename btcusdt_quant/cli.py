@@ -491,6 +491,37 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "train":
         output = Path(args.output)
         input_path = Path(args.input) if args.input else None
+        if args.use_user_regime:
+            # _run_user_regime_training (the path --use-user-regime takes)
+            # trains one fixed-hyperparameter CatBoost long/short model per
+            # regime directly via .fit() — it does not run the ensemble
+            # stacking pipeline, cross-validation, or threshold search. Warn
+            # loudly if the user also asked for options that silently have
+            # no effect on this path, so they don't believe those options
+            # were applied to the resulting model.
+            ignored_flags: list[str] = []
+            if args.ensemble:
+                ignored_flags.append("--ensemble")
+            if args.cv_mode != "walk_forward":
+                ignored_flags.append(f"--cv-mode {args.cv_mode}")
+            if args.n_groups != 5:
+                ignored_flags.append(f"--n-groups {args.n_groups}")
+            if args.test_group_count != 1:
+                ignored_flags.append(f"--test-group-count {args.test_group_count}")
+            if args.threshold_objective != "precision_recall":
+                ignored_flags.append(f"--threshold-objective {args.threshold_objective}")
+            if args.feature_selection:
+                ignored_flags.append("--feature-selection")
+            if ignored_flags:
+                print(
+                    "WARNING: --use-user-regime trains one CatBoost model per "
+                    "regime via direct .fit() (Optuna tuning IS applied when "
+                    "--optuna is set, but the following flags are NOT applied "
+                    "on this path and are silently ignored: "
+                    f"{', '.join(ignored_flags)}. See "
+                    "btcusdt_quant/training.py::_train_single_regime.",
+                    file=sys.stderr,
+                )
         external_sources = None
         if args.collect_external_sources:
             if input_path is None:
