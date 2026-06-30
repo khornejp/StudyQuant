@@ -31,7 +31,21 @@ class FeatureClipper:
         "adl": 4.0,
     }
 
+    def __init__(self) -> None:
+        # Memoize the classification of each feature name. The same name is
+        # classified many thousands of times across the per-candle clip loop;
+        # the result depends only on the name, so cache it.
+        self._classify_cache: dict[str, str] = {}
+
     def classify(self, feature_name: str) -> str:
+        cached = self._classify_cache.get(feature_name)
+        if cached is not None:
+            return cached
+        result = self._classify_uncached(feature_name)
+        self._classify_cache[feature_name] = result
+        return result
+
+    def _classify_uncached(self, feature_name: str) -> str:
         lower = feature_name.lower()
         if "vol_adj" in lower:
             return "vol_adj"
@@ -85,6 +99,29 @@ class FeatureClipper:
                 }
             )
         return ClipResult(values, report)
+
+    def clip_values_only(self, features: Mapping[str, float]) -> dict[str, float | None]:
+        """Fast path for hot per-candle paths that do not need the clip report.
+
+        Skips the per-feature report construction and the sort over feature
+        names. Produces the same `values` mapping as `clip(...)`.
+        """
+        values: dict[str, float | None] = {}
+        limits = self.LIMITS
+        classify = self.classify
+        for name, raw in features.items():
+            limit = limits[classify(name)]
+            if raw != raw or raw == float("inf") or raw == float("-inf"):
+                # NaN/+-inf branch — isfinite() check inlined for speed
+                values[name] = None
+                continue
+            if raw > limit:
+                values[name] = limit
+            elif raw < -limit:
+                values[name] = -limit
+            else:
+                values[name] = raw
+        return values
 
 
 class NaNSourceClassifier:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from math import exp, isfinite, log, sqrt
@@ -47,6 +46,17 @@ class TrainingConfig:
     test_start: datetime | None = None
     test_end: datetime | None = None
     only_build: bool = False
+    # Decision-threshold selection objective.
+    #   "precision_recall" (default, backward-compatible): rank candidates by
+    #     precision with a recall>=0.3 floor; fall back to F1 otherwise.
+    #   "trading_pnl": rank by (calmar, sharpe, f1, -|t-0.5|) on the trading
+    #     PnL simulator. Strongly recommended for trading models where the
+    #     classification trade-off does not map cleanly to economic outcomes.
+    threshold_objective: str = "precision_recall"
+    # Minimum number of "trades" (predicted-positive samples) required for a
+    # threshold candidate to be considered under the trading_pnl objective.
+    # None lets select_threshold pick a default of max(1, 5% of rows).
+    threshold_min_trades: int | None = None
 
     def __post_init__(self) -> None:
         if self.cv_mode not in {"walk_forward", "combinatorial_purged"}:
@@ -64,6 +74,10 @@ class TrainingConfig:
             raise ValueError(f"model_family must be one of {valid_families}")
         if self.min_regime_rows <= 0:
             raise ValueError("min_regime_rows must be positive")
+        if self.threshold_objective not in {"precision_recall", "trading_pnl"}:
+            raise ValueError("threshold_objective must be 'precision_recall' or 'trading_pnl'")
+        if self.threshold_min_trades is not None and self.threshold_min_trades < 0:
+            raise ValueError("threshold_min_trades must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -171,6 +185,21 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     optuna_report: dict[str, object] | None = None
     optuna_threshold: float | None = None
     if training_config.optuna_enabled:
+        # Restrict Optuna's view to data that lies strictly before the first
+        # walk-forward test fold. Using `build.labeled_rows` in its entirety
+        # would let Optuna's trial-selection process implicitly peek at the
+        # CV test windows used downstream, biasing the chosen hyperparameters.
+        first_test_start = len(build.labeled_rows)
+        for split in splits:
+            test_indices = _split_indices(split.test)
+            if test_indices:
+                first_test_start = min(first_test_start, _min_index(test_indices))
+        optuna_rows = build.labeled_rows[:first_test_start] if first_test_start > 0 else list(build.labeled_rows)
+        if len(optuna_rows) < 30:
+            # Not enough data ahead of the first test fold to tune safely; fall
+            # back to the full set rather than crashing, but flag it.
+            print(f"[TRAIN] Optuna tuning window too small ({len(optuna_rows)} rows < 30); falling back to full dataset")
+            optuna_rows = list(build.labeled_rows)
         optuna_runner = features.OptunaStudyRunner()
         # Optuna requires a callable model_factory, not an instance
         # Only signal_scale is a model constructor param; threshold is a decision param
@@ -188,8 +217,8 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             )
         optuna_report = optuna_runner.run_study(
             model_factory=_optuna_model_factory,
-            feature_matrix=feature_matrix(build.labeled_rows, effective_feature_names),
-            labels=[row.label for row in build.labeled_rows],
+            feature_matrix=feature_matrix(optuna_rows, effective_feature_names),
+            labels=[row.label for row in optuna_rows],
             n_trials=training_config.optuna_trials,
             budget_profile=training_config.optuna_budget_profile,
         )
@@ -225,7 +254,12 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         offset = calibration_offset(validation_probabilities, validation_labels)
         calibrator = features.CalibrationModule().fit(validation_probabilities, validation_labels, positive_samples=sum(validation_labels))
         calibrated_validation = calibrator.transform(validation_probabilities)
-        threshold = select_threshold(calibrated_validation, validation_labels)
+        threshold = select_threshold(
+            calibrated_validation,
+            validation_labels,
+            objective=training_config.threshold_objective,
+            min_trades=training_config.threshold_min_trades,
+        )
         # Override with Optuna best threshold if available (decision param, not model param)
         if optuna_threshold is not None:
             threshold = optuna_threshold
@@ -815,11 +849,56 @@ def calibration_offset(probabilities: Sequence[float], labels: Sequence[int]) ->
     return safe_logit(observed_rate) - safe_logit(predicted_rate)
 
 
-def select_threshold(probabilities: Sequence[float], labels: Sequence[int]) -> float:
+def select_threshold(
+    probabilities: Sequence[float],
+    labels: Sequence[int],
+    objective: str = "precision_recall",
+    min_trades: int | None = None,
+) -> float:
+    """Choose a decision threshold from a discrete grid of candidates.
+
+    `objective` controls the ranking criterion used to pick among candidates:
+
+    - "precision_recall" (default, backward-compatible): precision with a
+      minimum recall constraint of 0.3, falling back to F1 if recall is
+      insufficient. This is the legacy behavior.
+    - "trading_pnl": rank by (calmar, sharpe, f1, -|t-0.5|) using the
+      `_trading_pnl` simulator. Recommended for trading models, since the
+      classification trade-off does not map cleanly to PnL when the label
+      base rate is unbalanced.
+
+    `min_trades`: minimum number of predictions != 0 (i.e. actual trades)
+    required for a candidate to be considered. Defaults to max(1, 5% of rows)
+    for the trading_pnl objective to avoid picking a degenerate threshold
+    that almost never trades.
+    """
     if not probabilities or not labels:
         return 0.5
     candidates = {round(index / 20.0, 2) for index in range(1, 20)}
     candidates.update(round(value, 4) for value in probabilities)
+
+    if objective == "trading_pnl":
+        effective_min_trades = min_trades if min_trades is not None else max(1, len(labels) // 20)
+        best_threshold = 0.5
+        # Tuple ordering: (calmar, sharpe, f1, -|t-0.5|). All higher is better.
+        best_score = (-float("inf"), -float("inf"), -1.0, -float("inf"))
+        for threshold in sorted(candidates):
+            current = metrics(probabilities, labels, threshold)
+            trade_count = int(round(current.get("predicted_positive_rate", 0.0) * len(labels)))
+            if trade_count < effective_min_trades:
+                continue
+            score = (
+                current.get("calmar", 0.0),
+                current.get("sharpe", 0.0),
+                current.get("f1", 0.0),
+                -abs(threshold - 0.5),
+            )
+            if score > best_score:
+                best_score = score
+                best_threshold = threshold
+        return best_threshold
+
+    # Default legacy path: precision-recall with recall>=0.3 floor.
     best_threshold = 0.5
     best_score = (-1.0, -1.0, 0.0)
     for threshold in sorted(candidates):

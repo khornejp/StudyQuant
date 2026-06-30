@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import io
-import json
-import math
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 import torch

@@ -18,7 +18,32 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import date, datetime, timedelta, timezone
 from math import isfinite, log, sqrt, sin
 from pathlib import Path
-from statistics import mean
+from statistics import mean as _statistics_mean
+
+import numpy as np
+
+
+def mean(values):
+    """Fast arithmetic mean for sequences of floats.
+
+    Replaces statistics.mean (which uses Fraction-based exact arithmetic and
+    dominates the build_feature_rows profile). For our feature pipeline,
+    float-precision averaging is sufficient. Falls back to statistics.mean for
+    non-numeric inputs to preserve the original contract.
+    """
+    if not values:
+        # statistics.mean raises StatisticsError on empty input; preserve that
+        return _statistics_mean(values)
+    # Iterate once to compute both sum and length without materializing a list
+    total = 0.0
+    count = 0
+    try:
+        for value in values:
+            total += value
+            count += 1
+    except TypeError:
+        return _statistics_mean(values)
+    return total / count
 from typing import Callable, Mapping, Sequence
 
 from . import data, feature_registry, features, parity, sources, weekly_features
@@ -1520,6 +1545,77 @@ def build_feature_rows(
     trades = [float(candle.number_of_trades) for candle in candles]
     ranges = [_range_value(candle) for candle in candles]
     range_pcts = [_range_pct(candle) for candle in candles]
+
+    # ---- NumPy arrays for vectorized rolling reductions ----
+    # The list copies above remain for the few helpers still consumed as
+    # sequences; we materialize float arrays once and reuse them everywhere.
+    opens_np = np.asarray(opens, dtype=float)
+    highs_np = np.asarray(highs, dtype=float)
+    lows_np = np.asarray(lows, dtype=float)
+    closes_np = np.asarray(closes, dtype=float)
+    volumes_np = np.asarray(volumes, dtype=float)
+    quote_volumes_np = np.asarray(quote_volumes, dtype=float)
+    trades_np = np.asarray(trades, dtype=float)
+    ranges_np = np.asarray(ranges, dtype=float)
+    range_pcts_np = np.asarray(range_pcts, dtype=float)
+
+    # Returns (every lookback used in the per-candle loop)
+    return_1_np  = _np_return_series(closes_np, 1)
+    return_3_np  = _np_return_series(closes_np, 3)
+    return_5_np  = _np_return_series(closes_np, 5)
+    return_10_np = _np_return_series(closes_np, 10)
+    return_15_np = _np_return_series(closes_np, 15)
+    return_30_np = _np_return_series(closes_np, 30)
+    return_60_np = _np_return_series(closes_np, 60)
+    log_return_1_np = _np_log_return_series(closes_np, 1)
+    log_return_5_np = _np_log_return_series(closes_np, 5)
+
+    # SMAs and ratio-to-mean
+    sma_5_np  = _np_rolling_mean_strict(closes_np, 5)
+    sma_20_np = _np_rolling_mean_strict(closes_np, 20)
+    sma_60_np = _np_rolling_mean_strict(closes_np, 60)
+    close_sma_5_ratio_np  = _np_ratio_to_mean_series(closes_np, 5)
+    close_sma_10_ratio_np = _np_ratio_to_mean_series(closes_np, 10)
+    close_sma_20_ratio_np = _np_ratio_to_mean_series(closes_np, 20)
+    close_sma_60_ratio_np = _np_ratio_to_mean_series(closes_np, 60)
+    volume_sma_5_ratio_np   = _np_ratio_to_mean_series(volumes_np, 5)
+    volume_sma_20_ratio_np  = _np_ratio_to_mean_series(volumes_np, 20)
+    volume_sma_60_ratio_np  = _np_ratio_to_mean_series(volumes_np, 60)
+    quote_vol_sma_20_ratio_np = _np_ratio_to_mean_series(quote_volumes_np, 20)
+    trade_count_ratio_np = _np_ratio_to_mean_series(trades_np, 20)
+    range_sma_20_ratio_np = _np_ratio_to_mean_series(ranges_np, 20)
+
+    # Zscores
+    close_zscore_20_np  = _np_zscore_series(closes_np, 20)
+    close_zscore_60_np  = _np_zscore_series(closes_np, 60)
+    volume_zscore_5_np  = _np_zscore_series(volumes_np, 5)
+    volume_zscore_20_np = _np_zscore_series(volumes_np, 20)
+    trade_count_zscore_20_np = _np_zscore_series(trades_np, 20)
+    range_zscore_20_np = _np_zscore_series(range_pcts_np, 20)
+    # Indicator zscore / ratio-to-mean over rv_5 and rv_15 require rv arrays
+    # built below; we'll compute them once those exist.
+
+    # Trend slopes
+    trend_slope_10_np = _np_trend_slope_series(closes_np, 10)
+    trend_slope_30_np = _np_trend_slope_series(closes_np, 30)
+
+    # Rolling return extremes
+    rolling_return_max_20_np = _np_rolling_return_extreme_series(closes_np, 20, True)
+    rolling_return_min_20_np = _np_rolling_return_extreme_series(closes_np, 20, False)
+
+    # Rolling extremes on highs/lows for distance-to-extreme features
+    rolling_high_20_np = _np_rolling_max_strict(highs_np, 20)
+    rolling_low_20_np  = _np_rolling_min_strict(lows_np, 20)
+
+    # Volatility (Parkinson / Garman-Klass)
+    parkinson_vol_20_np = _np_parkinson_vol_series(highs_np, lows_np, 20)
+    garman_klass_vol_20_np = _np_garman_klass_vol_series(opens_np, highs_np, lows_np, closes_np, 20)
+    range_vol_20_np = _np_rolling_std_strict(range_pcts_np, 20)
+
+    # Inside/outside bar flags
+    inside_bar_flag_np = _np_inside_bar_flag_series(highs_np, lows_np)
+    outside_bar_flag_np = _np_outside_bar_flag_series(highs_np, lows_np)
+
     # Pre-compute weekly features once for all rows
     weekly_feature_values = weekly_features.compute_weekly_features(candles)
     # Pre-compute F15 momentum indicators once for all rows (optimized O(n))
@@ -1543,39 +1639,60 @@ def build_feature_rows(
     fake_break_high_values = _fake_break_high_series(opens, closes, range_high_20_values)
     close_back_inside_range_values = _close_back_inside_range_series(closes, range_low_20_values, range_high_20_values)
     vwap_deviation_zscore_values = _vwap_deviation_zscore_series(closes, rolling_vwap_20_values, 20)
+    # Rolling return-std series: precomputed once per window (O(n) total per window)
+    # instead of recomputing the full window every candle inside the per-candle loop.
+    rv_5_values = _rolling_return_std_series(closes, 5)
+    rv_15_values = _rolling_return_std_series(closes, 15)
+    rv_30_values = _rolling_return_std_series(closes, 30)
+    rv_60_values = _rolling_return_std_series(closes, 60)
+    rv_120_values = _rolling_return_std_series(closes, 120)
+    atr_pct_14_values = _atr_pct_series(candles, 14)
+    atr_pct_30_values = _atr_pct_series(candles, 30)
+
+    # Indicator zscore / ratio-to-mean: rv_5/rv_15 over a 60-bar window.
+    # Inline the same prefix-sum recipe as _np_zscore_series / _np_ratio_to_mean_series,
+    # operating on the rv arrays.
+    rv_5_np  = np.asarray(rv_5_values, dtype=float)
+    rv_15_np = np.asarray(rv_15_values, dtype=float)
+    rv_zscore_60_np = _np_zscore_series(rv_5_np, 60)
+    volatility_regime_60_np = _np_ratio_to_mean_series(rv_15_np, 60)
+
     warmup_cutoff = max_feature_min_samples() - 1
+    # Stateless helpers — instantiate once outside the per-candle loop
+    clipper = features.FeatureClipper()
+    nan_classifier = features.NaNSourceClassifier(optional_noncritical_features=set(fallback_features))
     for index, candle in enumerate(candles):
         warmup_invalid = index < warmup_cutoff
-        return_1 = _return(closes, index, 1)
-        return_3 = _return(closes, index, 3)
-        return_5 = _return(closes, index, 5)
-        return_10 = _return(closes, index, 10)
-        return_15 = _return(closes, index, 15)
-        return_30 = _return(closes, index, 30)
-        return_60 = _return(closes, index, 60)
+        return_1 = float(return_1_np[index])
+        return_3 = float(return_3_np[index])
+        return_5 = float(return_5_np[index])
+        return_10 = float(return_10_np[index])
+        return_15 = float(return_15_np[index])
+        return_30 = float(return_30_np[index])
+        return_60 = float(return_60_np[index])
         momentum_10 = return_10
         momentum_30 = return_30
-        sma_5 = _rolling_mean_value(closes, index, 5)
-        sma_20 = _rolling_mean_value(closes, index, 20)
-        sma_60 = _rolling_mean_value(closes, index, 60)
-        ema_12 = _ema(closes, index, 12)
-        ema_26 = _ema(closes, index, 26)
+        sma_5 = float(sma_5_np[index])
+        sma_20 = float(sma_20_np[index])
+        sma_60 = float(sma_60_np[index])
+        ema_12 = ema_12_values[index]
+        ema_26 = ema_26_values[index]
         ema_12_26_spread = _spread_to_close(ema_12, ema_26, candle.close)
         sma_20_60_spread = _spread_to_close(sma_20, sma_60, candle.close)
-        rv_15 = _rolling_return_std(closes, index, 15)
-        rv_5 = _rolling_return_std(closes, index, 5)
-        rv_30 = _rolling_return_std(closes, index, 30)
-        rv_60 = _rolling_return_std(closes, index, 60)
-        rv_120 = _rolling_return_std(closes, index, 120)
-        atr_pct = _atr_pct(candles, index, 14)
-        atr_pct_30 = _atr_pct(candles, index, 30)
+        rv_15 = rv_15_values[index]
+        rv_5 = rv_5_values[index]
+        rv_30 = rv_30_values[index]
+        rv_60 = rv_60_values[index]
+        rv_120 = rv_120_values[index]
+        atr_pct = atr_pct_14_values[index]
+        atr_pct_30 = atr_pct_30_values[index]
         volatility_denominator = _positive_denominator(rv_15, rv_60, rv_120, atr_pct)
         rv_60_denominator = _positive_denominator(rv_60)
-        close_zscore_20 = _zscore(closes, index, 20)
-        close_zscore_60 = _zscore(closes, index, 60)
-        volume_zscore_5 = _zscore(volumes, index, 5)
-        volume_zscore_20 = _zscore(volumes, index, 20)
-        trade_count_zscore_20 = _zscore(trades, index, 20)
+        close_zscore_20 = float(close_zscore_20_np[index])
+        close_zscore_60 = float(close_zscore_60_np[index])
+        volume_zscore_5 = float(volume_zscore_5_np[index])
+        volume_zscore_20 = float(volume_zscore_20_np[index])
+        trade_count_zscore_20 = float(trade_count_zscore_20_np[index])
         high_low_range = range_pcts[index]
         body_pct = _body_pct(candle)
         upper_shadow_raw = max(0.0, candle.high - max(candle.open, candle.close))
@@ -1595,26 +1712,26 @@ def build_feature_rows(
             "return_15": return_15,
             "return_30": return_30,
             "return_60": return_60,
-            "log_return_1": _log_return(closes, index, 1),
-            "log_return_5": _log_return(closes, index, 5),
+            "log_return_1": float(log_return_1_np[index]),
+            "log_return_5": float(log_return_5_np[index]),
             "momentum_10": momentum_10,
             "momentum_30": momentum_30,
-            "rolling_return_max_20": _rolling_return_extreme(closes, index, 20, use_max=True),
-            "rolling_return_min_20": _rolling_return_extreme(closes, index, 20, use_max=False),
-            "close_sma_5_ratio": _ratio_to_mean(closes, index, 5),
-            "close_sma_10_ratio": _ratio_to_mean(closes, index, 10),
-            "close_sma_20_ratio": _ratio_to_mean(closes, index, 20),
-            "close_sma_60_ratio": _ratio_to_mean(closes, index, 60),
+            "rolling_return_max_20": float(rolling_return_max_20_np[index]),
+            "rolling_return_min_20": float(rolling_return_min_20_np[index]),
+            "close_sma_5_ratio": float(close_sma_5_ratio_np[index]),
+            "close_sma_10_ratio": float(close_sma_10_ratio_np[index]),
+            "close_sma_20_ratio": float(close_sma_20_ratio_np[index]),
+            "close_sma_60_ratio": float(close_sma_60_ratio_np[index]),
             "close_ema_12_ratio": _ratio_to_value(candle.close, ema_12),
             "close_ema_26_ratio": _ratio_to_value(candle.close, ema_26),
             "ema_12_26_spread": ema_12_26_spread,
             "sma_5_20_spread": _spread_to_close(sma_5, sma_20, candle.close),
             "sma_20_60_spread": sma_20_60_spread,
-            "trend_slope_10": _trend_slope(closes, index, 10),
-            "trend_slope_30": _trend_slope(closes, index, 30),
+            "trend_slope_10": float(trend_slope_10_np[index]),
+            "trend_slope_30": float(trend_slope_30_np[index]),
             "prev_horizon_trend": _prev_horizon_trend(closes, index),
-            "distance_to_high_20": _distance_to_extreme(candle.close, _rolling_max(highs, index, 20)),
-            "distance_to_low_20": _distance_to_extreme(candle.close, _rolling_min(lows, index, 20)),
+            "distance_to_high_20": _distance_to_extreme(candle.close, float(rolling_high_20_np[index])),
+            "distance_to_low_20": _distance_to_extreme(candle.close, float(rolling_low_20_np[index])),
             "rv_5": rv_5,
             "rv_15": rv_15,
             "rv_30": rv_30,
@@ -1622,20 +1739,20 @@ def build_feature_rows(
             "rv_120": rv_120,
             "atr_pct": atr_pct,
             "atr_pct_30": atr_pct_30,
-            "parkinson_vol_20": _parkinson_vol(candles, index, 20),
-            "garman_klass_vol_20": _garman_klass_vol(candles, index, 20),
-            "range_vol_20": _rolling_std(range_pcts, index, 20),
+            "parkinson_vol_20": float(parkinson_vol_20_np[index]),
+            "garman_klass_vol_20": float(garman_klass_vol_20_np[index]),
+            "range_vol_20": float(range_vol_20_np[index]),
             "har_rv_short": rv_5,
             "har_rv_medium": rv_30,
             "har_rv_long": rv_120,
-            "volume_sma_5_ratio": _ratio_to_mean(volumes, index, 5),
-            "volume_sma_20_ratio": _ratio_to_mean(volumes, index, 20),
-            "volume_sma_60_ratio": _ratio_to_mean(volumes, index, 60),
-            "quote_volume_sma_20_ratio": _ratio_to_mean(quote_volumes, index, 20),
+            "volume_sma_5_ratio": float(volume_sma_5_ratio_np[index]),
+            "volume_sma_20_ratio": float(volume_sma_20_ratio_np[index]),
+            "volume_sma_60_ratio": float(volume_sma_60_ratio_np[index]),
+            "quote_volume_sma_20_ratio": float(quote_vol_sma_20_ratio_np[index]),
             "taker_ratio": taker_ratio,
             "taker_imbalance": taker_imbalance,
             "taker_quote_ratio": taker_quote_ratio,
-            "trade_count_ratio": _ratio_to_mean(trades, index, 20),
+            "trade_count_ratio": float(trade_count_ratio_np[index]),
             "trade_count_zscore_20": trade_count_zscore_20,
             "volume_per_trade": _divide(candle.volume, float(candle.number_of_trades)),
             "quote_volume_per_trade": _divide(candle.quote_volume, float(candle.number_of_trades)),
@@ -1647,9 +1764,9 @@ def build_feature_rows(
             "close_location_value": _divide((candle.close - candle.low) - (candle.high - candle.close), range_value),
             "wick_imbalance": _divide(upper_shadow_raw - lower_shadow_raw, range_value),
             "body_to_range": _divide(abs(candle.close - candle.open), range_value),
-            "range_sma_20_ratio": _ratio_to_mean(ranges, index, 20),
-            "inside_bar_flag": _inside_bar_flag(candles, index),
-            "outside_bar_flag": _outside_bar_flag(candles, index),
+            "range_sma_20_ratio": float(range_sma_20_ratio_np[index]),
+            "inside_bar_flag": float(inside_bar_flag_np[index]),
+            "outside_bar_flag": float(outside_bar_flag_np[index]),
             "gap_flag": float(candle.gap_flag),
             "gap_ratio_20": candle.gap_ratio_20,
             "gap_ratio_60": candle.gap_ratio_60,
@@ -1662,10 +1779,10 @@ def build_feature_rows(
             "close_zscore_60": close_zscore_60,
             "volume_zscore_5": volume_zscore_5,
             "volume_zscore_20": volume_zscore_20,
-            "rv_zscore_60": _indicator_zscore(lambda position: _rolling_return_std(closes, position, 5), index, 60),
-            "range_zscore_20": _zscore(range_pcts, index, 20),
-            "volatility_regime_60": _indicator_ratio_to_mean(lambda position: _rolling_return_std(closes, position, 15), index, 60),
-            "volume_regime_60": _ratio_to_mean(volumes, index, 60),
+            "rv_zscore_60": float(rv_zscore_60_np[index]),
+            "range_zscore_20": float(range_zscore_20_np[index]),
+            "volatility_regime_60": float(volatility_regime_60_np[index]),
+            "volume_regime_60": float(volume_sma_60_ratio_np[index]),
             "return_1_vol_adj": return_1 / volatility_denominator,
             "return_5_vol_adj": return_5 / volatility_denominator,
             "return_10_vol_adj": return_10 / volatility_denominator,
@@ -1741,16 +1858,14 @@ def build_feature_rows(
             "vwap_deviation_zscore": vwap_deviation_zscore_values[index],
             "bb_zscore": close_zscore_20,
         }
-        clipper = features.FeatureClipper()
-        clipped = clipper.clip({name: values[name] for name in FEATURE_NAMES})
-        nan_classifier = features.NaNSourceClassifier(optional_noncritical_features=set(fallback_features))
+        clipped_values = clipper.clip_values_only({name: values[name] for name in FEATURE_NAMES})
         row_context = {
             "gap_flag": candle.gap_flag,
             "canonical_candle_repaired": candle.repaired,
             "warmup_invalid": warmup_invalid,
         }
         nan_status: dict[str, str] = {}
-        for name, value in clipped.values.items():
+        for name, value in clipped_values.items():
             if value is None:
                 nan_status[name] = nan_classifier.classify(row_context, name)
         merged_feature_status = dict(feature_availability_status)
@@ -1759,7 +1874,7 @@ def build_feature_rows(
             FeatureRow(
                 index,
                 candle.open_time,
-                clipped.values,
+                clipped_values,
                 candle.gap_flag,
                 candle.repaired,
                 warmup_invalid,
@@ -2473,6 +2588,46 @@ def _rolling_return_std(values: Sequence[float], index: int, window: int) -> flo
     return _stddev(returns)
 
 
+def _rolling_return_std_series(values: Sequence[float], window: int) -> list[float]:
+    """Rolling stddev of 1-bar returns for every index. Matches _rolling_return_std.
+
+    Uses prefix sums of returns and squared returns so each index is O(1) amortized.
+    Returns 0.0 for index < window (matches the strict warmup of the original).
+    """
+    n = len(values)
+    if n == 0 or window <= 0:
+        return [0.0] * n
+    # Build the return series first (same semantics as _return(values, i, 1))
+    returns = [0.0] * n
+    for i in range(1, n):
+        prev = values[i - 1]
+        if prev != 0.0:
+            returns[i] = values[i] / prev - 1.0
+    # Prefix sums over the return series; prefix_sum[k] = sum(returns[:k])
+    prefix_sum = [0.0] * (n + 1)
+    prefix_sum_sq = [0.0] * (n + 1)
+    for i in range(n):
+        prefix_sum[i + 1] = prefix_sum[i] + returns[i]
+        prefix_sum_sq[i + 1] = prefix_sum_sq[i] + returns[i] * returns[i]
+    result = [0.0] * n
+    for index in range(window, n):
+        # _rolling_return_std uses returns at positions [index+1-window .. index]
+        # which corresponds to slice indices [index+1-window, index+1)
+        lo = index + 1 - window
+        hi = index + 1
+        window_sum = prefix_sum[hi] - prefix_sum[lo]
+        window_sum_sq = prefix_sum_sq[hi] - prefix_sum_sq[lo]
+        window_mean = window_sum / window
+        # population variance (matches _stddev which uses ddof=0)
+        variance = window_sum_sq / window - window_mean * window_mean
+        # Clamp tiny negative values from float cancellation before sqrt
+        if variance > 0.0:
+            result[index] = sqrt(variance)
+        else:
+            result[index] = 0.0
+    return result
+
+
 def _rolling_std(values: Sequence[float], index: int, window: int) -> float:
     if index + 1 < window:
         return 0.0
@@ -2489,6 +2644,45 @@ def _atr_pct(candles: Sequence[data.Candle], index: int, window: int) -> float:
         true_ranges.append(max(candle.high - candle.low, abs(candle.high - previous_close), abs(candle.low - previous_close)))
     close = candles[index].close
     return mean(true_ranges) / close if close else 0.0
+
+
+def _atr_pct_series(candles: Sequence[data.Candle], window: int) -> list[float]:
+    """ATR percentage for every index. Matches _atr_pct.
+
+    Builds the true-range series once and uses a prefix sum to compute the
+    rolling mean in O(1) per index.
+    """
+    n = len(candles)
+    if n == 0 or window <= 0:
+        return [0.0] * n
+    true_ranges = [0.0] * n
+    for position in range(n):
+        candle = candles[position]
+        prev_close = candles[position - 1].close if position > 0 else candle.close
+        diff_high_low = candle.high - candle.low
+        diff_high_pc = candle.high - prev_close
+        if diff_high_pc < 0.0:
+            diff_high_pc = -diff_high_pc
+        diff_low_pc = candle.low - prev_close
+        if diff_low_pc < 0.0:
+            diff_low_pc = -diff_low_pc
+        tr = diff_high_low
+        if diff_high_pc > tr:
+            tr = diff_high_pc
+        if diff_low_pc > tr:
+            tr = diff_low_pc
+        true_ranges[position] = tr
+    prefix = [0.0] * (n + 1)
+    for i in range(n):
+        prefix[i + 1] = prefix[i] + true_ranges[i]
+    result = [0.0] * n
+    for index in range(window - 1, n):
+        lo = index + 1 - window
+        hi = index + 1
+        window_mean = (prefix[hi] - prefix[lo]) / window
+        close = candles[index].close
+        result[index] = window_mean / close if close else 0.0
+    return result
 
 
 def _parkinson_vol(candles: Sequence[data.Candle], index: int, window: int) -> float:
@@ -2673,6 +2867,268 @@ def _stddev(values: Sequence[float]) -> float:
     average = mean(values)
     variance = mean([(value - average) ** 2 for value in values])
     return sqrt(variance) if variance > 0.0 else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Vectorized NumPy series helpers used by build_feature_rows.
+#
+# Each helper produces the same per-index value as the equivalent scalar
+# function above (e.g. _np_return_series matches _return(values, i, lookback)
+# for every i). These exist purely so the main per-candle loop in
+# build_feature_rows can index into pre-computed arrays instead of recomputing
+# rolling reductions for every candle.
+# ---------------------------------------------------------------------------
+
+
+def _np_return_series(values: np.ndarray, lookback: int) -> np.ndarray:
+    """Per-index return matching _return(values, i, lookback).
+
+    return[i] = values[i] / values[i - lookback] - 1.0 if i >= lookback and
+    values[i - lookback] != 0.0, else 0.0.
+    """
+    n = len(values)
+    result = np.zeros(n, dtype=float)
+    if lookback <= 0 or n <= lookback:
+        return result
+    prev = values[:-lookback]
+    curr = values[lookback:]
+    mask = prev != 0.0
+    result[lookback:] = np.where(mask, curr / np.where(mask, prev, 1.0) - 1.0, 0.0)
+    return result
+
+
+def _np_log_return_series(values: np.ndarray, lookback: int) -> np.ndarray:
+    """Per-index log-return matching _log_return(values, i, lookback)."""
+    n = len(values)
+    result = np.zeros(n, dtype=float)
+    if lookback <= 0 or n <= lookback:
+        return result
+    prev = values[:-lookback]
+    curr = values[lookback:]
+    valid = (prev > 0.0) & (curr > 0.0)
+    safe_ratio = np.where(valid, curr / np.where(valid, prev, 1.0), 1.0)
+    result[lookback:] = np.where(valid, np.log(safe_ratio), 0.0)
+    return result
+
+
+def _np_rolling_mean_strict(values: np.ndarray, window: int) -> np.ndarray:
+    """Rolling mean with strict warmup (returns 0.0 before window is full).
+
+    Matches _rolling_mean_value: 0.0 while index + 1 < window, then the
+    plain arithmetic mean of values[index+1-window:index+1].
+    """
+    n = len(values)
+    result = np.zeros(n, dtype=float)
+    if n == 0 or window <= 0 or n < window:
+        return result
+    cumsum = np.concatenate(([0.0], np.cumsum(values)))
+    result[window - 1:] = (cumsum[window:] - cumsum[:-window]) / window
+    return result
+
+
+def _np_rolling_std_strict(values: np.ndarray, window: int) -> np.ndarray:
+    """Rolling population stddev (ddof=0) with strict warmup.
+
+    Matches _rolling_std (which calls _stddev internally on a slice).
+    Uses prefix sums of values and squared values for O(n) total time.
+    """
+    n = len(values)
+    result = np.zeros(n, dtype=float)
+    if n == 0 or window <= 0 or n < window:
+        return result
+    cumsum = np.concatenate(([0.0], np.cumsum(values)))
+    cumsum_sq = np.concatenate(([0.0], np.cumsum(values * values)))
+    window_sum = cumsum[window:] - cumsum[:-window]
+    window_sum_sq = cumsum_sq[window:] - cumsum_sq[:-window]
+    window_mean = window_sum / window
+    variance = window_sum_sq / window - window_mean * window_mean
+    # Floating-point cancellation can drive variance slightly negative; clamp.
+    variance = np.where(variance > 0.0, variance, 0.0)
+    result[window - 1:] = np.sqrt(variance)
+    return result
+
+
+def _np_zscore_series(values: np.ndarray, window: int) -> np.ndarray:
+    """Per-index zscore matching _zscore: (x - mean) / std with std==0 -> 0."""
+    n = len(values)
+    result = np.zeros(n, dtype=float)
+    if n == 0 or window <= 0 or n < window:
+        return result
+    cumsum = np.concatenate(([0.0], np.cumsum(values)))
+    cumsum_sq = np.concatenate(([0.0], np.cumsum(values * values)))
+    window_sum = cumsum[window:] - cumsum[:-window]
+    window_sum_sq = cumsum_sq[window:] - cumsum_sq[:-window]
+    window_mean = window_sum / window
+    variance = window_sum_sq / window - window_mean * window_mean
+    variance = np.where(variance > 0.0, variance, 0.0)
+    scale = np.sqrt(variance)
+    current = values[window - 1:]
+    z = np.where(scale > 0.0, (current - window_mean) / np.where(scale > 0.0, scale, 1.0), 0.0)
+    result[window - 1:] = z
+    return result
+
+
+def _np_rolling_max_strict(values: np.ndarray, window: int) -> np.ndarray:
+    """Rolling max with strict warmup. Matches _rolling_max."""
+    n = len(values)
+    result = np.zeros(n, dtype=float)
+    if n == 0 or window <= 0 or n < window:
+        return result
+    windows = np.lib.stride_tricks.sliding_window_view(values, window_shape=window)
+    result[window - 1:] = windows.max(axis=1)
+    return result
+
+
+def _np_rolling_min_strict(values: np.ndarray, window: int) -> np.ndarray:
+    """Rolling min with strict warmup. Matches _rolling_min."""
+    n = len(values)
+    result = np.zeros(n, dtype=float)
+    if n == 0 or window <= 0 or n < window:
+        return result
+    windows = np.lib.stride_tricks.sliding_window_view(values, window_shape=window)
+    result[window - 1:] = windows.min(axis=1)
+    return result
+
+
+def _np_trend_slope_series(values: np.ndarray, window: int) -> np.ndarray:
+    """Per-index trend slope matching _trend_slope.
+
+    slope = sum((pos - x_mean) * (val - y_mean)) / sum((pos - x_mean)^2),
+    then divided by values[index]. Returns 0 where index + 1 < window
+    or values[index] == 0.
+    """
+    n = len(values)
+    result = np.zeros(n, dtype=float)
+    if n == 0 or window <= 0 or n < window:
+        return result
+    x = np.arange(window, dtype=float)
+    x_mean = (window - 1) / 2.0
+    denom = float(np.sum((x - x_mean) ** 2))
+    if denom == 0.0:
+        return result
+    # Use convolutions equivalent to the original sums over each window
+    sum_y = np.convolve(values, np.ones(window, dtype=float), mode="valid")
+    sum_xy = np.convolve(values, x[::-1], mode="valid")
+    slopes = (sum_xy - x_mean * sum_y) / denom
+    current = values[window - 1:]
+    safe = current != 0.0
+    result[window - 1:] = np.where(safe, slopes / np.where(safe, current, 1.0), 0.0)
+    return result
+
+
+def _np_ratio_to_mean_series(values: np.ndarray, window: int) -> np.ndarray:
+    """Per-index ratio-to-rolling-mean matching _ratio_to_mean.
+
+    result[i] = values[i] / mean(values[i+1-window:i+1]) - 1.0
+    Returns 0.0 in warmup or when the rolling mean is exactly 0.
+    """
+    n = len(values)
+    result = np.zeros(n, dtype=float)
+    if n == 0 or window <= 0 or n < window:
+        return result
+    sma = _np_rolling_mean_strict(values, window)
+    current = values[window - 1:]
+    sma_slice = sma[window - 1:]
+    safe = sma_slice != 0.0
+    result[window - 1:] = np.where(safe, current / np.where(safe, sma_slice, 1.0) - 1.0, 0.0)
+    return result
+
+
+def _np_rolling_return_extreme_series(values: np.ndarray, window: int, use_max: bool) -> np.ndarray:
+    """Per-index rolling max/min over the 1-bar return series.
+
+    Matches _rolling_return_extreme: returns 0.0 for index < window
+    (note: original uses `index < window`, not `index + 1 < window`).
+    """
+    n = len(values)
+    result = np.zeros(n, dtype=float)
+    if n == 0 or window <= 0 or n <= window:
+        return result
+    one_bar_returns = _np_return_series(values, 1)
+    # The original takes positions [index+1-window .. index]; in array terms
+    # this is a sliding window of size `window` over `one_bar_returns`.
+    # Original sets result for index < window to 0.0 (i.e. starts at index = window).
+    windows = np.lib.stride_tricks.sliding_window_view(one_bar_returns, window_shape=window)
+    # windows[i] covers one_bar_returns[i:i+window]; we want the window ending
+    # at index i, i.e. one_bar_returns[i+1-window:i+1] = windows[i+1-window].
+    # The valid window-end index range is [window-1, n-1], but the original
+    # condition `index < window` discards index == window-1 too, so we start
+    # at index == window.
+    agg = windows.max(axis=1) if use_max else windows.min(axis=1)
+    # agg[k] corresponds to index = k + window - 1 in the original series.
+    # Original wants index >= window, i.e. k >= 1.
+    result[window:] = agg[1:]
+    return result
+
+
+def _np_parkinson_vol_series(highs: np.ndarray, lows: np.ndarray, window: int) -> np.ndarray:
+    """Matches _parkinson_vol for every index."""
+    n = len(highs)
+    result = np.zeros(n, dtype=float)
+    if n == 0 or window <= 0 or n < window:
+        return result
+    valid = (highs > 0.0) & (lows > 0.0)
+    ratio = np.where(valid, highs / np.where(valid, lows, 1.0), 1.0)
+    hl_log = np.where(valid, np.log(ratio), 0.0)
+    terms = hl_log * hl_log
+    # rolling mean of terms
+    cumsum = np.concatenate(([0.0], np.cumsum(terms)))
+    window_mean = (cumsum[window:] - cumsum[:-window]) / window
+    variance = window_mean / (4.0 * log(2.0))
+    variance = np.where(variance > 0.0, variance, 0.0)
+    result[window - 1:] = np.sqrt(variance)
+    return result
+
+
+def _np_garman_klass_vol_series(
+    opens: np.ndarray,
+    highs: np.ndarray,
+    lows: np.ndarray,
+    closes: np.ndarray,
+    window: int,
+) -> np.ndarray:
+    """Matches _garman_klass_vol for every index."""
+    n = len(highs)
+    result = np.zeros(n, dtype=float)
+    if n == 0 or window <= 0 or n < window:
+        return result
+    valid = (highs > 0.0) & (lows > 0.0) & (opens > 0.0) & (closes > 0.0)
+    hl_ratio = np.where(valid, highs / np.where(valid, lows, 1.0), 1.0)
+    co_ratio = np.where(valid, closes / np.where(valid, opens, 1.0), 1.0)
+    hl_log = np.where(valid, np.log(hl_ratio), 0.0)
+    co_log = np.where(valid, np.log(co_ratio), 0.0)
+    terms = np.where(
+        valid,
+        0.5 * hl_log * hl_log - (2.0 * log(2.0) - 1.0) * co_log * co_log,
+        0.0,
+    )
+    cumsum = np.concatenate(([0.0], np.cumsum(terms)))
+    window_mean = (cumsum[window:] - cumsum[:-window]) / window
+    variance = np.where(window_mean > 0.0, window_mean, 0.0)
+    result[window - 1:] = np.sqrt(variance)
+    return result
+
+
+def _np_inside_bar_flag_series(highs: np.ndarray, lows: np.ndarray) -> np.ndarray:
+    """Matches _inside_bar_flag: 1.0 when current bar is fully inside prev bar."""
+    n = len(highs)
+    result = np.zeros(n, dtype=float)
+    if n < 2:
+        return result
+    inside = (highs[1:] <= highs[:-1]) & (lows[1:] >= lows[:-1])
+    result[1:] = inside.astype(float)
+    return result
+
+
+def _np_outside_bar_flag_series(highs: np.ndarray, lows: np.ndarray) -> np.ndarray:
+    """Matches _outside_bar_flag: 1.0 when current bar engulfs prev bar."""
+    n = len(highs)
+    result = np.zeros(n, dtype=float)
+    if n < 2:
+        return result
+    outside = (highs[1:] >= highs[:-1]) & (lows[1:] <= lows[:-1])
+    result[1:] = outside.astype(float)
+    return result
 
 
 def labeled_row_dict(row: LabeledRow, feature_names: Sequence[str]) -> dict[str, object]:

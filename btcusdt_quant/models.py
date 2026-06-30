@@ -7,7 +7,7 @@ import importlib.util
 import io
 import json
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Mapping, Protocol, Sequence, runtime_checkable
 
 
 FeatureMatrix = Sequence[Sequence[float]]

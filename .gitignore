@@ -14,3 +14,14 @@ artifacts/demo_review/
 artifacts/
 
 venv_btcusdt/
+
+# OpenCode internal
+.omo/
+
+# Test output files
+test_results*.txt
+
+# Misc artifacts
+python
+data.csv
+convertparquet.txt

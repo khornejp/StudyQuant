@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from math import isfinite
-from pathlib import Path
 from typing import Mapping, Sequence
 
-from . import data, dataset, features, live, training
+from . import data, dataset, features, live
 
 
 DEFAULT_FEE_RATE_PER_SIDE = 0.0002
@@ -225,6 +223,7 @@ def run_backtest(
     result.cooldown_bars = cooldown_bars
     equity = initial_equity
     gross_equity = initial_equity
+    max_drawdown_pct = 0.0
     peak_equity = initial_equity
     active_trade: BacktestTrade | None = None
     bar_count = 0
@@ -371,6 +370,7 @@ def run_backtest(
                 result.total_slippage += active_trade.slippage_paid
                 result.total_costs += active_trade.cost_paid
                 peak_equity = max(peak_equity, equity)
+                max_drawdown_pct = max(max_drawdown_pct, 1.0 - equity / peak_equity if peak_equity > 0 else 0.0)
                 result.trades.append(active_trade)
                 returns.append(pnl_pct)
                 active_trade = None
@@ -416,6 +416,7 @@ def run_backtest(
         result.total_slippage += active_trade.slippage_paid
         result.total_costs += active_trade.cost_paid
         peak_equity = max(peak_equity, equity)
+        max_drawdown_pct = max(max_drawdown_pct, 1.0 - equity / peak_equity if peak_equity > 0 else 0.0)
         result.trades.append(active_trade)
         returns.append(pnl_pct)
 
@@ -429,7 +430,7 @@ def run_backtest(
         gross_profit = sum(t.pnl_pct for t in result.trades if t.pnl_pct > 0)
         gross_loss = abs(sum(t.pnl_pct for t in result.trades if t.pnl_pct < 0))
         result.profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
-    result.max_drawdown = 1.0 - equity / peak_equity if peak_equity > 0 else 0.0
+    result.max_drawdown = max_drawdown_pct
     if returns:
         avg_return = sum(returns) / len(returns)
         variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)

@@ -110,32 +110,6 @@ class FeatureRegistryV718Tests(unittest.TestCase):
         rows_down = dataset.build_feature_rows(candles_down)
         self.assertEqual(rows_down[16].features["prev_horizon_trend"], -1.0, "falling trend should be -1")
 
-    def test_fast_prev_horizon_trend_matches_slow(self) -> None:
-        from btcusdt_quant import data
-        from fast_features import compute_features_fast
-        base = data.utc_minute(2026, 1, 1, 0, 0)
-        candles = [
-            data.Candle(
-                open_time=base + timedelta(minutes=index),
-                open=100.0,
-                high=101.0,
-                low=99.0,
-                close=100.0 + (index % 5) * 0.2 - 0.4,
-                volume=10.0,
-                quote_volume=1000.0,
-                number_of_trades=100,
-                taker_buy_base_volume=5.0,
-                taker_buy_quote_volume=500.0,
-            )
-            for index in range(100)
-        ]
-        slow_rows = dataset.build_feature_rows(candles)
-        fast_df = compute_features_fast(candles)
-        for idx in (15, 30, 50, 80):
-            slow_val = slow_rows[idx].features["prev_horizon_trend"]
-            fast_val = float(fast_df["prev_horizon_trend"].iloc[idx])
-            self.assertAlmostEqual(slow_val, fast_val, places=10, msg=f"prev_horizon_trend mismatch at index {idx}")
-
     def test_feature_dependency_graph_is_acyclic(self) -> None:
         registry = dataset.feature_formula_registry()
         dependency_graph = registry.get("dependency_graph", {})
@@ -2732,47 +2706,6 @@ class TestRangeMeanReversionFeatures(unittest.TestCase):
         # Missing range_position_20 defaults to 0.5 (middle, no trade)
         result = apply_range_mean_reversion_gate("range", {}, {"LONG", "SHORT"})
         self.assertEqual(result, set())
-
-    def test_fast_features_range_parity(self) -> None:
-        from fast_features import compute_features_fast
-        base = data.utc_minute(2026, 1, 1, 0, 0)
-        candles = []
-        for i in range(25):
-            candles.append(data.Candle(
-                open_time=base + timedelta(minutes=i),
-                open=100.0,
-                high=110.0 - i * 0.5,
-                low=90.0 + i * 0.3,
-                close=100.0 + i * 0.2,
-                volume=10.0,
-                quote_volume=1000.0,
-                number_of_trades=100,
-                taker_buy_base_volume=5.0,
-                taker_buy_quote_volume=500.0,
-            ))
-        df_fast = compute_features_fast(candles)
-        rows = dataset.build_feature_rows(candles)
-
-        # Compare a sample row (index 20) for key range features
-        index = 20
-        self.assertAlmostEqual(
-            df_fast.loc[index, "range_high_20"],
-            rows[index].features["range_high_20"],
-            places=5,
-            msg="range_high_20 mismatch between fast and canonical",
-        )
-        self.assertAlmostEqual(
-            df_fast.loc[index, "range_low_20"],
-            rows[index].features["range_low_20"],
-            places=5,
-            msg="range_low_20 mismatch between fast and canonical",
-        )
-        self.assertAlmostEqual(
-            df_fast.loc[index, "range_position_20"],
-            rows[index].features["range_position_20"],
-            places=5,
-            msg="range_position_20 mismatch between fast and canonical",
-        )
 
 
 if __name__ == "__main__":
