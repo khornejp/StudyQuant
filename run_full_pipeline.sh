@@ -1,199 +1,197 @@
-#!/bin/bash
-# BTCUSDT Regime-Aware Stacking Ensemble - Complete Pipeline
-# Run this on a machine with sufficient RAM (16GB+) and CPU cores
+#!/usr/bin/env bash
+# BTCUSDT User-Regime Pipeline (Linux/macOS shell)
+# ---------------------------------------------------------------------------
+# Intended flow (same as run_full_pipeline.ps1):
+#   1. Download 2020-01-01 ~ 2025-12-31 Binance archive (full 6-year span)
+#   2. Combine into one Parquet file
+#   3. Train regime-aware models on YOUR user-specified up/down/range
+#      periods (regimes.json), with training restricted to 2020-2024 and
+#      validation on 2025-01-01 ~ 2025-06-30
+#   4. Backtest on 2025-07-01 ~ 2025-12-31 (out-of-sample)
+#
+# Requirements:
+#   - Python with pyarrow, catboost, numpy, pandas installed
+#   - ~16GB RAM
+#   - regimes.json with your up/down/range period definitions
+#   - Network access to data.binance.vision
+#
+# Usage:
+#   chmod +x run_full_pipeline.sh
+#   ./run_full_pipeline.sh
+# ---------------------------------------------------------------------------
 
-set -e
+set -euo pipefail
 
-echo "=== BTCUSDT Regime-Aware Stacking Pipeline ==="
-echo "This script will:"
-echo "  1. Collect training data from multiple market regimes"
-echo "  2. Convert to Parquet format"
-echo "  3. Train regime-aware stacking ensemble"
-echo "  4. Collect 2025 backtest data"
-echo "  5. Run backtest with regime-aware inference"
+# ====== Configuration =====================================================
+REGIME_FILE="${REGIME_FILE:-regimes.json}"
+DOWNLOAD_START="${DOWNLOAD_START:-2020-01-01}"
+TRAINING_END="${TRAINING_END:-2024-12-31}"
+VALIDATION_START="${VALIDATION_START:-2025-01-01}"
+VALIDATION_END="${VALIDATION_END:-2025-06-30}"
+BACKTEST_START="${BACKTEST_START:-2025-07-01}"
+BACKTEST_END="${BACKTEST_END:-2025-12-31}"
+ARTIFACTS_DIR="${ARTIFACTS_DIR:-artifacts}"
+# ==========================================================================
+
+echo "=== BTCUSDT User-Regime Pipeline ==="
+echo "Training span    : $DOWNLOAD_START -> $TRAINING_END"
+echo "Validation span  : $VALIDATION_START -> $VALIDATION_END (held out)"
+echo "Backtest span    : $BACKTEST_START -> $BACKTEST_END (out of sample)"
+echo "Regime file      : $REGIME_FILE"
 echo ""
 
-# Configuration
-TRAINING_DIR="artifacts/training"
-BACKTEST_DIR="artifacts/backtest"
-
-# ============================================================================
-# PHASE 1: Data Collection (Training)
-# ============================================================================
-
-echo "[Phase 1] Collecting training data from multiple regimes..."
-
-# Uptrend periods
-if [ ! -f "artifacts/regime_up.parquet" ]; then
-    echo "  [1/3] Collecting uptrend data (2024-10~12)..."
-    python -m btcusdt_quant collect-archive \
-        --start 2024-10-01 --end 2024-12-31 \
-        --output artifacts/archive_up_2024 \
-        --allow-public-network
-    
-    python -c "
-import glob, pyarrow.csv as pv, pyarrow.parquet as pq, pyarrow as pa
-files = sorted(glob.glob('artifacts/archive_up_2024/BTCUSDT-1m-*.csv'))
-tables = [pv.read_csv(f) for f in files]
-combined = pa.concat_tables(tables)
-old_names = combined.column_names
-new_names = []
-for name in old_names:
-    if name == 'count': new_names.append('number_of_trades')
-    elif name == 'taker_buy_volume': new_names.append('taker_buy_base_volume')
-    else: new_names.append(name)
-combined = combined.rename_columns(new_names)
-keep = [n for n in new_names if n not in ('close_time', 'ignore')]
-combined = combined.select(keep)
-pq.write_table(combined, 'artifacts/regime_up.parquet')
-print(f'  Saved {combined.num_rows} rows')
-"
+if [[ ! -f "$REGIME_FILE" ]]; then
+    echo "ERROR: regime file not found: $REGIME_FILE" >&2
+    echo ""
+    echo "Create $REGIME_FILE with this shape:" >&2
+    cat >&2 <<'JSON_EOF'
+{
+  "periods": [
+    {"regime": "up",    "start": "2020-04-01", "end_exclusive": "2021-05-15"},
+    {"regime": "down",  "start": "2021-05-15", "end_exclusive": "2021-08-01"},
+    {"regime": "range", "start": "2021-08-01", "end_exclusive": "2021-10-15"}
+    // ... cover the full 2020-01-01 -> 2024-12-31 range
+  ]
+}
+JSON_EOF
+    echo "Allowed regime values: up, down, range" >&2
+    exit 1
 fi
 
-# Downtrend periods
-if [ ! -f "artifacts/regime_down.parquet" ]; then
-    echo "  [2/3] Collecting downtrend data (2024-08~09)..."
-    python -m btcusdt_quant collect-archive \
-        --start 2024-08-01 --end 2024-09-30 \
-        --output artifacts/archive_down_2024 \
-        --allow-public-network
-    
-    python -c "
-import glob, pyarrow.csv as pv, pyarrow.parquet as pq, pyarrow as pa
-files = sorted(glob.glob('artifacts/archive_down_2024/BTCUSDT-1m-*.csv'))
-tables = [pv.read_csv(f) for f in files]
-combined = pa.concat_tables(tables)
-old_names = combined.column_names
-new_names = []
-for name in old_names:
-    if name == 'count': new_names.append('number_of_trades')
-    elif name == 'taker_buy_volume': new_names.append('taker_buy_base_volume')
-    else: new_names.append(name)
-combined = combined.rename_columns(new_names)
-keep = [n for n in new_names if n not in ('close_time', 'ignore')]
-combined = combined.select(keep)
-pq.write_table(combined, 'artifacts/regime_down.parquet')
-print(f'  Saved {combined.num_rows} rows')
-"
-fi
+mkdir -p "$ARTIFACTS_DIR"
 
-# Ranging periods
-if [ ! -f "artifacts/regime_range.parquet" ]; then
-    echo "  [3/3] Collecting ranging data (2024-03~04)..."
-    python -m btcusdt_quant collect-archive \
-        --start 2024-03-01 --end 2024-04-30 \
-        --output artifacts/archive_2months \
-        --allow-public-network
-    
-    python -c "
-import glob, pyarrow.csv as pv, pyarrow.parquet as pq, pyarrow as pa
-files = sorted(glob.glob('artifacts/archive_2months/BTCUSDT-1m-*.csv'))
-tables = [pv.read_csv(f) for f in files]
-combined = pa.concat_tables(tables)
-old_names = combined.column_names
-new_names = []
-for name in old_names:
-    if name == 'count': new_names.append('number_of_trades')
-    elif name == 'taker_buy_volume': new_names.append('taker_buy_base_volume')
-    else: new_names.append(name)
-combined = combined.rename_columns(new_names)
-keep = [n for n in new_names if n not in ('close_time', 'ignore')]
-combined = combined.select(keep)
-pq.write_table(combined, 'artifacts/regime_range.parquet')
-print(f'  Saved {combined.num_rows} rows')
-"
-fi
+# ----------------------------------------------------------------------------
+# PHASE 1: Download the full 2020-01-01 ~ 2025-12-31 archive
+# ----------------------------------------------------------------------------
+echo "[Phase 1] Downloading Binance archive ($DOWNLOAD_START -> $BACKTEST_END)..."
 
-# ============================================================================
-# PHASE 2: Combine Training Data
-# ============================================================================
+ARCHIVE_DIR="$ARTIFACTS_DIR/archive_full"
+mkdir -p "$ARCHIVE_DIR"
 
+python -m btcusdt_quant collect-archive \
+    --start "$DOWNLOAD_START" --end "$BACKTEST_END" \
+    --output "$ARCHIVE_DIR" \
+    --allow-public-network
+
+# ----------------------------------------------------------------------------
+# PHASE 2: Combine daily CSVs into a single Parquet
+# ----------------------------------------------------------------------------
 echo ""
-echo "[Phase 2] Combining training data..."
-python -c "
+echo "[Phase 2] Combining daily archive files into a single Parquet..."
+
+FULL_PARQUET="$ARTIFACTS_DIR/btcusdt_2020_2025.parquet"
+
+if [[ ! -f "$FULL_PARQUET" ]]; then
+    python - <<PY
+import glob, os, sys
+import pyarrow.csv as pv
 import pyarrow.parquet as pq
 import pyarrow as pa
 
-up = pq.read_table('artifacts/regime_up.parquet')
-down = pq.read_table('artifacts/regime_down.parquet')
-range_data = pq.read_table('artifacts/regime_range.parquet')
-combined = pa.concat_tables([up, down, range_data])
-pq.write_table(combined, 'artifacts/training_combined.parquet')
-print(f'Combined: {combined.num_rows} rows')
-print(f'  Uptrend: {up.num_rows}')
-print(f'  Downtrend: {down.num_rows}')
-print(f'  Ranging: {range_data.num_rows}')
-"
+archive_dir = "$ARCHIVE_DIR"
+out_path    = "$FULL_PARQUET"
 
-# ============================================================================
-# PHASE 3: Train Regime-Aware Stacking Ensemble
-# ============================================================================
+files = sorted(glob.glob(os.path.join(archive_dir, 'BTCUSDT-1m-*.csv')))
+if not files:
+    print(f'no archive csv files in {archive_dir}', file=sys.stderr)
+    sys.exit(1)
+print(f'concatenating {len(files)} daily files...')
 
-echo ""
-echo "[Phase 3] Training Regime-Aware Stacking Ensemble..."
-echo "  This will take 30-60 minutes depending on your hardware..."
-echo ""
+writer = None
+total_rows = 0
+batch = []
+BATCH_SIZE = 30
 
-python -m btcusdt_quant train \
-    --input artifacts/training_combined.parquet \
-    --ensemble \
-    --regime-aware \
-    --output artifacts/regime_stacking_model
+def flush_batch(writer, batch):
+    if not batch:
+        return writer, 0
+    tbl = pa.concat_tables(batch, promote=True)
+    renamed = []
+    for n in tbl.column_names:
+        if n == 'count':                   renamed.append('number_of_trades')
+        elif n == 'taker_buy_volume':       renamed.append('taker_buy_base_volume')
+        else:                                renamed.append(n)
+    tbl = tbl.rename_columns(renamed)
+    keep = [n for n in renamed if n not in ('close_time', 'ignore')]
+    tbl = tbl.select(keep)
+    if writer is None:
+        writer = pq.ParquetWriter(out_path, tbl.schema)
+    writer.write_table(tbl)
+    return writer, tbl.num_rows
 
-echo ""
-echo "  Training complete!"
-echo "  Model saved to: artifacts/regime_stacking_model/"
+for path in files:
+    try:
+        batch.append(pv.read_csv(path))
+    except Exception as e:
+        print(f'WARN: failed to read {path}: {e}', file=sys.stderr)
+        continue
+    if len(batch) >= BATCH_SIZE:
+        writer, n = flush_batch(writer, batch)
+        total_rows += n
+        batch = []
 
-# ============================================================================
-# PHASE 4: Collect 2025 Backtest Data
-# ============================================================================
+writer, n = flush_batch(writer, batch)
+total_rows += n
+if writer is not None:
+    writer.close()
 
-echo ""
-echo "[Phase 4] Collecting 2025 backtest data (unseen)..."
-
-if [ ! -f "artifacts/backtest_2025.parquet" ]; then
-    python -m btcusdt_quant collect-archive \
-        --start 2025-01-01 --end 2025-06-30 \
-        --output artifacts/archive_2025 \
-        --allow-public-network
-    
-    python -c "
-import glob, pyarrow.csv as pv, pyarrow.parquet as pq, pyarrow as pa
-files = sorted(glob.glob('artifacts/archive_2025/BTCUSDT-1m-*.csv'))
-tables = [pv.read_csv(f) for f in files]
-combined = pa.concat_tables(tables)
-old_names = combined.column_names
-new_names = []
-for name in old_names:
-    if name == 'count': new_names.append('number_of_trades')
-    elif name == 'taker_buy_volume': new_names.append('taker_buy_base_volume')
-    else: new_names.append(name)
-combined = combined.rename_columns(new_names)
-keep = [n for n in new_names if n not in ('close_time', 'ignore')]
-combined = combined.select(keep)
-pq.write_table(combined, 'artifacts/backtest_2025.parquet')
-print(f'  Saved {combined.num_rows} rows')
-"
+print(f'  -> wrote {total_rows:,} rows to {out_path}')
+PY
+else
+    echo "  (using cached $FULL_PARQUET)"
 fi
 
-# ============================================================================
-# PHASE 5: Backtest on 2025 Data
-# ============================================================================
+# ----------------------------------------------------------------------------
+# PHASE 3: Train on 2020 -> 2024, validate on 2025 H1
+# ----------------------------------------------------------------------------
+echo ""
+echo "[Phase 3] Training regime-aware ensemble..."
+echo "  Features are computed once over the full 2020-2025 series."
+echo "  Training rows: $DOWNLOAD_START -> $TRAINING_END"
+echo "  Validation rows: $VALIDATION_START -> $VALIDATION_END"
+echo "  Regime labels from: $REGIME_FILE"
+echo ""
+
+MODEL_DIR="$ARTIFACTS_DIR/regime_stacking_model"
+
+python -m btcusdt_quant train \
+    --input "$FULL_PARQUET" \
+    --use-user-regime \
+    --user-regime-file "$REGIME_FILE" \
+    --ensemble \
+    --training-start "$DOWNLOAD_START" \
+    --training-end "$TRAINING_END" \
+    --test-start "$VALIDATION_START" \
+    --test-end "$VALIDATION_END" \
+    --cv-mode combinatorial_purged \
+    --n-groups 6 \
+    --test-group-count 2 \
+    --threshold-objective trading_pnl \
+    --output "$MODEL_DIR"
 
 echo ""
-echo "[Phase 5] Running backtest on 2025 data..."
+echo "  Training complete."
+echo "  Model:        $MODEL_DIR"
+
+# ----------------------------------------------------------------------------
+# PHASE 4: Backtest on 2025 H2 (out-of-sample)
+# ----------------------------------------------------------------------------
+echo ""
+echo "[Phase 4] Running backtest on $BACKTEST_START -> $BACKTEST_END ..."
+
+BACKTEST_DIR="$ARTIFACTS_DIR/backtest_results"
 
 python -m btcusdt_quant backtest \
-    --input artifacts/backtest_2025.parquet \
-    --model-artifact artifacts/regime_stacking_model \
-    --output artifacts/backtest_results
+    --input "$FULL_PARQUET" \
+    --model-artifact "$MODEL_DIR" \
+    --user-regime-file "$REGIME_FILE" \
+    --backtest-start "$BACKTEST_START" \
+    --output "$BACKTEST_DIR"
 
 echo ""
 echo "=== Pipeline Complete ==="
 echo ""
-echo "Results:"
-echo "  Model: artifacts/regime_stacking_model/"
-echo "  Backtest: artifacts/backtest_results/"
-echo ""
-echo "To view results:"
-echo "  cat artifacts/backtest_results/run_summary.json"
+echo "Outputs:"
+echo "  Combined data : $FULL_PARQUET"
+echo "  Model         : $MODEL_DIR"
+echo "  Backtest      : $BACKTEST_DIR"

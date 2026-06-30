@@ -165,6 +165,8 @@ def run_train(
     test_start: str | None = None,
     test_end: str | None = None,
     only_build: bool = False,
+    threshold_objective: str = "precision_recall",
+    threshold_min_trades: int | None = None,
 ) -> dict[str, object]:
     if multitask:
         model_family = "pytorch_multitask"
@@ -212,6 +214,8 @@ def run_train(
         test_start=test_start_dt,
         test_end=test_end_dt,
         only_build=only_build,
+        threshold_objective=threshold_objective,
+        threshold_min_trades=threshold_min_trades,
     )
     user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None
     if user_regime_file is not None:
@@ -400,6 +404,18 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--min-ev", type=float, default=0.0001, help="minimum expected value for entry signals (0.01%% = 0.0001)")
     train.add_argument("--tp-pct", type=float, default=0.0015, help="take profit percentage for triple-barrier labeling (0.15%% = 0.0015)")
     train.add_argument("--sl-pct", type=float, default=0.0010, help="stop loss percentage for triple-barrier labeling (0.10%% = 0.0010)")
+    train.add_argument(
+        "--threshold-objective",
+        default="precision_recall",
+        choices=("precision_recall", "trading_pnl"),
+        help="objective used by select_threshold: 'precision_recall' (legacy default; precision with recall>=0.3 floor) or 'trading_pnl' (rank by calmar/sharpe/f1 on the trading PnL simulator — recommended for trading models)",
+    )
+    train.add_argument(
+        "--threshold-min-trades",
+        type=int,
+        default=None,
+        help="minimum number of trades (predicted-positives) for a candidate threshold to be considered under --threshold-objective=trading_pnl. Defaults to max(1, 5%% of rows).",
+    )
     live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
     live_parser.add_argument("--output", default="artifacts/live", help="live artifact output directory")
     live_parser.add_argument("--dry-run", action="store_true", help="use deterministic fixture WebSocket and REST backfill")
@@ -516,6 +532,8 @@ def main(argv: list[str] | None = None) -> int:
                 test_start=args.test_start,
                 test_end=args.test_end,
                 only_build=args.only_build,
+                threshold_objective=args.threshold_objective,
+                threshold_min_trades=args.threshold_min_trades,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)
