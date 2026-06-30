@@ -181,13 +181,24 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("premium_index", "F12", EXCHANGE_SAFETY, "exchange premium index observed at t", 1, 1, "premium_index_1m", warmup_rule="state", leakage_risk="low_state_snapshot"),
     _feature("leverage_bracket_utilization", "F12", EXCHANGE_SAFETY, "position notional_t / max(current leverage bracket cap_t, 1e-12)", 1, 1, "leverage_bracket", warmup_rule="state", leakage_risk="low_state_snapshot"),
     # F13: Higher Timeframe Features (Weekly)
-    _feature("weekly_ma20_slope_closed", "F13", HIGHER_TIMEFRAME, "pct_change(SMA(weekly_close, 20))", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("weekly_ma50_slope_closed", "F13", HIGHER_TIMEFRAME, "pct_change(SMA(weekly_close, 50))", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("weekly_ma20_above_ma50", "F13", HIGHER_TIMEFRAME, "1 if SMA(weekly_close, 20) > SMA(weekly_close, 50) else 0", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("weekly_drawdown", "F13", HIGHER_TIMEFRAME, "weekly_close_t / cummax(weekly_close) - 1", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("weekly_vol_contraction", "F13", HIGHER_TIMEFRAME, "std(weekly_close, 20) / std(weekly_close, 50)", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("close_vs_weekly_ma20", "F13", HIGHER_TIMEFRAME, "current_close / SMA(weekly_close, 20) - 1", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("close_vs_weekly_ma50", "F13", HIGHER_TIMEFRAME, "current_close / SMA(weekly_close, 50) - 1", 5040, 5040, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    # Weekly higher-timeframe features.
+    #
+    # weekly_features.compute_weekly_features() short-circuits to all-zero
+    # output if it sees fewer than 50 completed weekly closes (it needs the
+    # full window for ma50/vol50/cross). So every weekly_* feature is only
+    # trustworthy once we have 50 completed weeks of 1m candles.
+    #
+    # 50 weeks * 7 days * 24 hours * 60 minutes = 504,000 minutes. We set
+    # both lookback and min_samples to that value so max_feature_min_samples()
+    # propagates the correct warmup cutoff and rows before that point are
+    # marked warmup_invalid (and thus excluded from labeled training data).
+    _feature("weekly_ma20_slope_closed", "F13", HIGHER_TIMEFRAME, "pct_change(SMA(weekly_close, 20))", 504000, 504000, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_ma50_slope_closed", "F13", HIGHER_TIMEFRAME, "pct_change(SMA(weekly_close, 50))", 504000, 504000, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_ma20_above_ma50", "F13", HIGHER_TIMEFRAME, "1 if SMA(weekly_close, 20) > SMA(weekly_close, 50) else 0", 504000, 504000, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_drawdown", "F13", HIGHER_TIMEFRAME, "weekly_close_t / cummax(weekly_close) - 1", 504000, 504000, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("weekly_vol_contraction", "F13", HIGHER_TIMEFRAME, "std(weekly_close, 20) / std(weekly_close, 50)", 504000, 504000, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("close_vs_weekly_ma20", "F13", HIGHER_TIMEFRAME, "current_close / SMA(weekly_close, 20) - 1", 504000, 504000, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("close_vs_weekly_ma50", "F13", HIGHER_TIMEFRAME, "current_close / SMA(weekly_close, 50) - 1", 504000, 504000, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     # F14: Time / Session Features
     _feature("hour", "F14", TIME_SESSION, "hour_of_day(open_time)", 1, 1, "klines_1m", warmup_rule="none", leakage_risk="none"),
     _feature("minute", "F14", TIME_SESSION, "minute_of_hour(open_time)", 1, 1, "klines_1m", warmup_rule="none", leakage_risk="none"),
