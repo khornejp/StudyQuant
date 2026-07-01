@@ -306,6 +306,19 @@ class StrategyConfig:
     atr_multiplier_tp: float
     atr_multiplier_sl: float
     min_reward_risk: float
+    # Minimum TP/SL as an absolute fraction of entry price. ATR-derived
+    # deltas on BTCUSDT 1m are often ~0.05%, which is below the ~0.08%
+    # round-trip cost, so a winning trade still loses money. These floors
+    # clamp the ATR-based deltas up to a cost-aware minimum. Defaults are
+    # set to 4x / 2x the default 0.08% round-trip cost. Setting either to
+    # 0.0 disables that floor (legacy behavior).
+    min_tp_floor_pct: float = 0.0032
+    min_sl_floor_pct: float = 0.0016
+    # When False, ATR-based sizing is disabled and TP/SL are taken exactly
+    # from the floors (or tp_pct/sl_pct if floors are 0). This is used by the
+    # TP/SL sweep so the backtest trades exactly the barrier the model was
+    # labeled/trained against, rather than a larger ATR-derived barrier.
+    use_atr_pricing: bool = True
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.long_threshold <= 1.0:
@@ -318,6 +331,8 @@ class StrategyConfig:
             raise ValueError("ATR multipliers must be positive")
         if self.min_reward_risk < 0.0:
             raise ValueError("min_reward_risk must be non-negative")
+        if self.min_tp_floor_pct < 0.0 or self.min_sl_floor_pct < 0.0:
+            raise ValueError("TP/SL floors must be non-negative")
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -329,6 +344,8 @@ class StrategyConfig:
             "atr_multiplier_tp": self.atr_multiplier_tp,
             "atr_multiplier_sl": self.atr_multiplier_sl,
             "min_reward_risk": self.min_reward_risk,
+            "min_tp_floor_pct": self.min_tp_floor_pct,
+            "min_sl_floor_pct": self.min_sl_floor_pct,
         }
 
 
@@ -338,23 +355,37 @@ class RegimeStrategyProfile:
     strategy: StrategyConfig
 
 
-_BALANCED_DEFAULT_STRATEGY = StrategyConfig("balanced_default", 0.50, 0.50, 0.010, 0.005, 1.0, 0.5, 1.0)
+# TP/SL design notes:
+#   - min_tp_floor_pct / min_sl_floor_pct are cost-aware absolute floors
+#     (default 0.32% / 0.16% = 4x / 2x the 0.08% round-trip cost).
+#   - ATR multipliers are raised so that in higher-volatility periods the
+#     ATR-derived delta can exceed the floor and adapt upward, while calm
+#     periods fall back to the floor. On BTCUSDT 1m, atr_pct is often
+#     ~0.03-0.06%, so multipliers in the 6-12 range put ATR deltas in the
+#     same 0.2-0.7% neighborhood as the floors.
+#   - TP:SL kept near 2:1 for a positive reward:risk baseline.
+_BALANCED_DEFAULT_STRATEGY = StrategyConfig("balanced_default", 0.50, 0.50, 0.010, 0.005, 8.0, 4.0, 1.0, 0.0032, 0.0016)
 _BALANCED_REGIME_STRATEGIES: dict[str, RegimeStrategyProfile] = {
-    "high_volatility": RegimeStrategyProfile("high_volatility", StrategyConfig("balanced_high_volatility", 0.45, 0.55, 0.015, 0.010, 1.5, 1.0, 1.0)),
-    "ranging": RegimeStrategyProfile("ranging", StrategyConfig("balanced_ranging", 0.52, 0.48, 0.008, 0.004, 0.8, 0.4, 1.0)),
-    "trending": RegimeStrategyProfile("trending", StrategyConfig("balanced_trending", 0.48, 0.52, 0.010, 0.005, 1.0, 0.5, 1.0)),
+    "high_volatility": RegimeStrategyProfile("high_volatility", StrategyConfig("balanced_high_volatility", 0.45, 0.55, 0.015, 0.010, 10.0, 6.0, 1.0, 0.0048, 0.0024)),
+    "ranging": RegimeStrategyProfile("ranging", StrategyConfig("balanced_ranging", 0.52, 0.48, 0.008, 0.004, 6.0, 3.0, 1.0, 0.0024, 0.0012)),
+    "trending": RegimeStrategyProfile("trending", StrategyConfig("balanced_trending", 0.48, 0.52, 0.010, 0.005, 8.0, 4.0, 1.0, 0.0032, 0.0016)),
 }
 DEFAULT_STRATEGY_PROFILES: Mapping[str, RegimeStrategyProfile] = _BALANCED_REGIME_STRATEGIES
 
 
-def strategy_for_regime(active_regime: str | None, strategy_profile: str = "balanced") -> StrategyConfig:
+def strategy_for_regime(
+    active_regime: str | None,
+    strategy_profile: str = "balanced",
+    long_threshold_override: float | None = None,
+    short_threshold_override: float | None = None,
+) -> StrategyConfig:
     if strategy_profile not in STRATEGY_PROFILE_CHOICES:
         raise ValueError(f"unsupported strategy profile: {strategy_profile}")
     base = _BALANCED_REGIME_STRATEGIES.get(str(active_regime or "")).strategy if active_regime in _BALANCED_REGIME_STRATEGIES else _BALANCED_DEFAULT_STRATEGY
     if strategy_profile == "balanced":
-        return base
-    if strategy_profile == "conservative":
-        return StrategyConfig(
+        result = base
+    elif strategy_profile == "conservative":
+        result = StrategyConfig(
             f"conservative_{base.name}",
             min(0.95, base.long_threshold + 0.03),
             max(0.05, base.short_threshold - 0.03),
@@ -363,17 +394,37 @@ def strategy_for_regime(active_regime: str | None, strategy_profile: str = "bala
             base.atr_multiplier_tp,
             base.atr_multiplier_sl,
             max(base.min_reward_risk, 1.25),
+            base.min_tp_floor_pct,
+            base.min_sl_floor_pct,
+            base.use_atr_pricing,
         )
-    return StrategyConfig(
-        f"aggressive_{base.name}",
-        max(0.05, base.long_threshold - 0.03),
-        min(0.95, base.short_threshold + 0.03),
-        base.tp_pct * 1.10,
-        base.sl_pct * 1.10,
-        base.atr_multiplier_tp * 1.10,
-        base.atr_multiplier_sl * 1.10,
-        min(base.min_reward_risk, 0.80),
-    )
+    else:
+        result = StrategyConfig(
+            f"aggressive_{base.name}",
+            max(0.05, base.long_threshold - 0.03),
+            min(0.95, base.short_threshold + 0.03),
+            base.tp_pct * 1.10,
+            base.sl_pct * 1.10,
+            base.atr_multiplier_tp * 1.10,
+            base.atr_multiplier_sl * 1.10,
+            min(base.min_reward_risk, 0.80),
+            base.min_tp_floor_pct * 1.10,
+            base.min_sl_floor_pct * 1.10,
+            base.use_atr_pricing,
+        )
+    # Apply explicit CLI threshold overrides last so they win over the
+    # profile-derived thresholds. Previously --long-threshold/--short-threshold
+    # were parsed but never wired through, so user-supplied thresholds were
+    # silently ignored in both live and backtest.
+    if long_threshold_override is not None or short_threshold_override is not None:
+        import dataclasses as _dc
+        overrides: dict[str, float] = {}
+        if long_threshold_override is not None:
+            overrides["long_threshold"] = long_threshold_override
+        if short_threshold_override is not None:
+            overrides["short_threshold"] = short_threshold_override
+        result = _dc.replace(result, **overrides)
+    return result
 
 
 def optimized_tp_sl(entry_price: float, side: str, features: Mapping[str, float], strategy: StrategyConfig) -> tuple[float, float, dict[str, object]]:
@@ -382,14 +433,32 @@ def optimized_tp_sl(entry_price: float, side: str, features: Mapping[str, float]
     if side not in {"BUY", "SELL"}:
         raise ValueError("side must be BUY or SELL")
     atr_value = features.get("atr_pct")
-    if atr_value is not None and float(atr_value) > 0.0:
+    if getattr(strategy, "use_atr_pricing", True) and atr_value is not None and float(atr_value) > 0.0:
         tp_delta = strategy.atr_multiplier_tp * float(atr_value)
         sl_delta = strategy.atr_multiplier_sl * float(atr_value)
         pricing_method = "atr_pct"
+    elif not getattr(strategy, "use_atr_pricing", True):
+        # Fixed mode: take TP/SL exactly from the floors (fallback to tp_pct/
+        # sl_pct if a floor is 0). Used by the sweep for label/backtest parity.
+        tp_delta = strategy.min_tp_floor_pct if strategy.min_tp_floor_pct > 0.0 else strategy.tp_pct
+        sl_delta = strategy.min_sl_floor_pct if strategy.min_sl_floor_pct > 0.0 else strategy.sl_pct
+        pricing_method = "fixed_floor"
     else:
         tp_delta = strategy.tp_pct
         sl_delta = strategy.sl_pct
         pricing_method = "fixed_pct"
+    # Cost-aware floor: ATR-derived deltas on BTCUSDT 1m are frequently below
+    # the round-trip trading cost, which makes even winning trades unprofitable.
+    # Clamp both deltas up to their configured minimum so TP/SL are always a
+    # meaningful multiple of cost. This keeps ATR's adaptivity in high-vol
+    # periods while preventing degenerate sub-cost barriers in calm periods.
+    floored = False
+    if strategy.min_tp_floor_pct > 0.0 and tp_delta < strategy.min_tp_floor_pct:
+        tp_delta = strategy.min_tp_floor_pct
+        floored = True
+    if strategy.min_sl_floor_pct > 0.0 and sl_delta < strategy.min_sl_floor_pct:
+        sl_delta = strategy.min_sl_floor_pct
+        floored = True
     if side == "BUY":
         tp_price = entry_price * (1.0 + tp_delta)
         sl_price = entry_price * (1.0 - sl_delta)
@@ -407,6 +476,7 @@ def optimized_tp_sl(entry_price: float, side: str, features: Mapping[str, float]
         "stop_loss_price": sl_price,
         "reward_risk": reward_risk,
         "pricing_method": pricing_method,
+        "floor_applied": floored,
     }
     return tp_price, sl_price, decision
 
@@ -1634,6 +1704,8 @@ class LiveEngine:
         strategy_profile: str = "balanced",
         soak_duration_hours: float = 0.0,
         soak_report_interval_minutes: float = 60.0,
+        long_threshold_override: float | None = None,
+        short_threshold_override: float | None = None,
     ) -> None:
         if strategy_profile not in STRATEGY_PROFILE_CHOICES:
             raise ValueError(f"unsupported strategy profile: {strategy_profile}")
@@ -1648,6 +1720,8 @@ class LiveEngine:
         self.source_parity_passed = source_parity_passed
         self.regime_aware = regime_aware
         self.strategy_profile = strategy_profile
+        self.long_threshold_override = long_threshold_override
+        self.short_threshold_override = short_threshold_override
         self.soak_duration_hours = soak_duration_hours
         self.soak_report_interval_minutes = soak_report_interval_minutes
         self.bus = EventBus()
@@ -1686,7 +1760,7 @@ class LiveEngine:
         self.source_report: Mapping[str, object] = {}
         self.signal = "HOLD"
         self.model_inference: dict[str, object] = {"probability": None, "signal": "HOLD", "model_loaded": False}
-        self.strategy_config = strategy_for_regime(None, self.strategy_profile)
+        self.strategy_config = strategy_for_regime(None, self.strategy_profile, self.long_threshold_override, self.short_threshold_override)
         self.strategy_decision: dict[str, object] = {"profile": self.strategy_profile, "strategy": self.strategy_config.as_dict(), "signal": "HOLD"}
         self.bracket_pricing: dict[str, object] | None = None
         self.gap_action = "allow"
@@ -1901,7 +1975,7 @@ class LiveEngine:
         self.bus.publish(SignalEvent(self.signal, self.model_inference, latest_row))
 
     def _apply_strategy_decision(self, probability: float | None, active_regime: str | None, fallback_signal: str) -> str:
-        strategy = strategy_for_regime(active_regime, self.strategy_profile)
+        strategy = strategy_for_regime(active_regime, self.strategy_profile, self.long_threshold_override, self.short_threshold_override)
         threshold_signal = select_signal(probability, active_regime or "", strategy) if probability is not None else fallback_signal
         latest_features = self.feature_rows[-1].features if self.feature_rows else {}
         entry_price = self.canonical[-1].close if self.canonical else 0.0
@@ -2311,6 +2385,8 @@ def run_live(
     strategy_profile: str = "balanced",
     soak_duration_hours: float = 0.0,
     soak_report_interval_minutes: float = 60.0,
+    long_threshold_override: float | None = None,
+    short_threshold_override: float | None = None,
 ) -> LiveRunResult:
     return LiveEngine(
         output,
@@ -2326,6 +2402,8 @@ def run_live(
         strategy_profile=strategy_profile,
         soak_duration_hours=soak_duration_hours,
         soak_report_interval_minutes=soak_report_interval_minutes,
+        long_threshold_override=long_threshold_override,
+        short_threshold_override=short_threshold_override,
     ).run()
 
 

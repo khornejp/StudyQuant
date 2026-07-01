@@ -358,7 +358,11 @@ class ArchiveDownloaderTests(unittest.TestCase):
             summary = downloader.download_range("2024-01-01", "2024-01-01", Path(tmp), Path(tmp) / "checkpoint.json")
             self.assertEqual(summary.downloaded_days, 1)
             self.assertEqual(urlopen.call_count, 2)
-            sleep.assert_called_once_with(1.0)
+            # The downloader sleeps 1.0s to back off after the 429, then sleeps
+            # request_interval_seconds (default 0.2s) after the successful
+            # download to keep the request rate conservative on large backfills.
+            self.assertIn(mock.call(1.0), sleep.call_args_list)
+            self.assertIn(mock.call(downloader.request_interval_seconds), sleep.call_args_list)
 
     def test_archive_downloader_validates_csv_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

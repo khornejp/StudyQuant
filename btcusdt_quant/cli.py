@@ -167,6 +167,10 @@ def run_train(
     only_build: bool = False,
     threshold_objective: str = "precision_recall",
     threshold_min_trades: int | None = None,
+    tp_pct: float = 0.003,
+    sl_pct: float = 0.0015,
+    label_horizon: int = 60,
+    label_threshold: float = 0.001,
 ) -> dict[str, object]:
     if multitask:
         model_family = "pytorch_multitask"
@@ -216,6 +220,10 @@ def run_train(
         only_build=only_build,
         threshold_objective=threshold_objective,
         threshold_min_trades=threshold_min_trades,
+        tp_pct=tp_pct,
+        sl_pct=sl_pct,
+        label_horizon=label_horizon,
+        label_threshold=label_threshold,
     )
     user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None
     if user_regime_file is not None:
@@ -326,6 +334,8 @@ def run_live(
     strategy_profile: str = "balanced",
     soak_duration_hours: float = 0.0,
     soak_report_interval_minutes: float = 60.0,
+    long_threshold_override: float | None = None,
+    short_threshold_override: float | None = None,
 ) -> dict[str, object]:
     exchange_adapter = create_exchange_adapter(exchange_name, allow_signed_network, allow_prod, approval_artifacts, recv_window_ms)
     result = live.run_live(
@@ -339,6 +349,8 @@ def run_live(
         strategy_profile=strategy_profile,
         soak_duration_hours=soak_duration_hours,
         soak_report_interval_minutes=soak_report_interval_minutes,
+        long_threshold_override=long_threshold_override,
+        short_threshold_override=short_threshold_override,
     )
     summary = dict(result.summary)
     summary["exchange"] = exchange_name
@@ -402,8 +414,10 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--long-threshold", type=float, default=0.55, help="minimum probability threshold for LONG entry signals")
     train.add_argument("--short-threshold", type=float, default=0.55, help="minimum probability threshold for SHORT entry signals")
     train.add_argument("--min-ev", type=float, default=0.0001, help="minimum expected value for entry signals (0.01%% = 0.0001)")
-    train.add_argument("--tp-pct", type=float, default=0.0015, help="take profit percentage for triple-barrier labeling (0.15%% = 0.0015)")
-    train.add_argument("--sl-pct", type=float, default=0.0010, help="stop loss percentage for triple-barrier labeling (0.10%% = 0.0010)")
+    train.add_argument("--tp-pct", type=float, default=0.003, help="take profit %% for triple-barrier labeling. MUST match backtest TP floor. (0.30%% = 0.003)")
+    train.add_argument("--sl-pct", type=float, default=0.0015, help="stop loss %% for triple-barrier labeling. MUST match backtest SL floor. (0.15%% = 0.0015)")
+    train.add_argument("--horizon", type=int, default=60, help="triple-barrier horizon in bars (minutes for 1m data); default 60")
+    train.add_argument("--label-threshold", type=float, default=0.001, help="return threshold for directional labeling (0.10%% = 0.001)")
     train.add_argument(
         "--threshold-objective",
         default="precision_recall",
@@ -440,6 +454,9 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--model-artifact", default=None, help="trained model artifact JSON path or regime-aware directory")
     backtest_parser.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods for backtest")
     backtest_parser.add_argument("--backtest-start", default="2025-07-01", help="start date for backtest (ISO format, e.g., 2025-07-01); candles before this date are used for feature computation only")
+    backtest_parser.add_argument("--tp-floor", type=float, default=None, help="override TP floor (fraction, e.g. 0.003 = 0.30%%) for all strategy profiles. Use to match the tp_pct used at training time for a consistent sweep.")
+    backtest_parser.add_argument("--sl-floor", type=float, default=None, help="override SL floor (fraction, e.g. 0.0015 = 0.15%%) for all strategy profiles.")
+    backtest_parser.add_argument("--fixed-tp-sl", action="store_true", help="disable ATR-based TP/SL sizing and trade EXACTLY the tp-floor/sl-floor. Use for the TP/SL sweep so backtest barriers match the training labels.")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -491,6 +508,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "train":
         output = Path(args.output)
         input_path = Path(args.input) if args.input else None
+        # --long-threshold / --short-threshold / --min-ev only affect the
+        # live/backtest DECISION stage, not label-based model training. They
+        # were previously parsed but never used anywhere; warn so users don't
+        # assume they influenced the trained model.
+        train_noop_flags: list[str] = []
+        if abs(args.long_threshold - 0.55) > 1e-12:
+            train_noop_flags.append(f"--long-threshold {args.long_threshold}")
+        if abs(args.short_threshold - 0.55) > 1e-12:
+            train_noop_flags.append(f"--short-threshold {args.short_threshold}")
+        if abs(args.min_ev - 0.0001) > 1e-12:
+            train_noop_flags.append(f"--min-ev {args.min_ev}")
+        if train_noop_flags:
+            print(
+                "WARNING: the following flags do not affect model training "
+                "(they are decision-stage parameters for live/backtest) and "
+                f"are ignored here: {', '.join(train_noop_flags)}.",
+                file=sys.stderr,
+            )
         if args.use_user_regime:
             # _run_user_regime_training (the path --use-user-regime takes)
             # trains one fixed-hyperparameter CatBoost long/short model per
@@ -565,6 +600,10 @@ def main(argv: list[str] | None = None) -> int:
                 only_build=args.only_build,
                 threshold_objective=args.threshold_objective,
                 threshold_min_trades=args.threshold_min_trades,
+                tp_pct=args.tp_pct,
+                sl_pct=args.sl_pct,
+                label_horizon=args.horizon,
+                label_threshold=args.label_threshold,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)
@@ -582,6 +621,14 @@ def main(argv: list[str] | None = None) -> int:
         try:
             approval_artifacts = Path(args.approval_artifacts) if args.approval_artifacts else None
             model_artifact_path = Path(args.model_artifact) if args.model_artifact else None
+            # --min-ev is parsed but there is no EV gate wired into the live
+            # decision path, so warn instead of silently ignoring it.
+            if abs(args.min_ev - 0.0001) > 1e-12:
+                print(
+                    f"WARNING: --min-ev {args.min_ev} has no effect; expected-value "
+                    "gating is not wired into the live decision path.",
+                    file=sys.stderr,
+                )
             summary = run_live(
                 output,
                 dry_run=args.dry_run,
@@ -597,6 +644,8 @@ def main(argv: list[str] | None = None) -> int:
                 strategy_profile=args.strategy_profile,
                 soak_duration_hours=args.soak_duration_hours,
                 soak_report_interval_minutes=args.soak_report_interval_minutes,
+                long_threshold_override=args.long_threshold,
+                short_threshold_override=args.short_threshold,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"live failed: {error}", file=sys.stderr)
@@ -634,6 +683,7 @@ def main(argv: list[str] | None = None) -> int:
                 candles = data.local_fixture()
             model = None
             models_by_regime: dict[str, object] | None = None
+            regime_bundle = None
             user_regime_periods = None
             if args.user_regime_file:
                 user_regime_periods = dataset.load_user_regime_periods(Path(args.user_regime_file))
@@ -644,7 +694,22 @@ def main(argv: list[str] | None = None) -> int:
                 elif model_path.is_dir():
                     if (model_path / "regime_run_summary.json").is_file():
                         regime_bundle = live.load_regime_aware_models(model_path)
-                        models_by_regime = regime_bundle.models if regime_bundle else None
+                        # backtest expects models_by_regime[regime] to be the
+                        # RegimeModelBundle itself (it reads .direction_policy /
+                        # .long_models / .short_models off the value). Passing
+                        # regime_bundle.models (a {regime: ModelAdapter} dict)
+                        # made hasattr(value, 'direction_policy') always False,
+                        # silently disabling per-direction (long/short) routing
+                        # and letting long-only regimes emit short signals.
+                        # Map every regime name to the same bundle so the
+                        # direction-aware path activates.
+                        if regime_bundle is not None:
+                            models_by_regime = {
+                                regime_name: regime_bundle
+                                for regime_name in regime_bundle.models.keys()
+                            }
+                        else:
+                            models_by_regime = None
                     elif (model_path / "model.json").is_file():
                         model = live.load_model_artifact(model_path / "model.json")
             strategies = {
@@ -652,13 +717,30 @@ def main(argv: list[str] | None = None) -> int:
                 "conservative": live.strategy_for_regime(None, "conservative"),
                 "aggressive": live.strategy_for_regime(None, "aggressive"),
             }
+            # Sweep support: override the TP/SL floors on every profile so the
+            # backtest trades the same barriers the model was trained against.
+            if args.tp_floor is not None or args.sl_floor is not None or args.fixed_tp_sl:
+                import dataclasses as _dc
+                overridden: dict[str, live.StrategyConfig] = {}
+                for name, strat in strategies.items():
+                    kwargs: dict[str, object] = {}
+                    if args.tp_floor is not None:
+                        kwargs["min_tp_floor_pct"] = args.tp_floor
+                    if args.sl_floor is not None:
+                        kwargs["min_sl_floor_pct"] = args.sl_floor
+                    if args.fixed_tp_sl:
+                        kwargs["use_atr_pricing"] = False
+                    overridden[name] = _dc.replace(strat, **kwargs)
+                strategies = overridden
+                print(f"[BACKTEST] TP/SL floor override: tp={args.tp_floor}, sl={args.sl_floor}, fixed={args.fixed_tp_sl}")
+            resolved_default_regime = regime_bundle.default_regime if regime_bundle is not None else None
             comparison = backtest.compare_strategies(
                 candles,
                 model,
                 strategies,
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,
-                default_regime=max(models_by_regime, key=lambda k: 1) if models_by_regime else None,
+                default_regime=resolved_default_regime,
                 start_date=args.backtest_start,
             )
             result = backtest.run_backtest(
@@ -667,7 +749,7 @@ def main(argv: list[str] | None = None) -> int:
                 strategies["balanced"],
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,
-                default_regime=max(models_by_regime, key=lambda k: 1) if models_by_regime else None,
+                default_regime=resolved_default_regime,
                 start_date=args.backtest_start,
             )
             summary = {

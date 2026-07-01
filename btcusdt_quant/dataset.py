@@ -1668,7 +1668,11 @@ def build_feature_rows(
     rv_zscore_60_np = _np_zscore_series(rv_5_np, 60)
     volatility_regime_60_np = _np_ratio_to_mean_series(rv_15_np, 60)
 
-    warmup_cutoff = max_feature_min_samples() - 1
+    # Pass the candle count so features that cannot be computed on this
+    # dataset (min_samples > len(candles), e.g. weekly MA50 on a short
+    # fixture) do not invalidate every row. On full multi-year data this is
+    # unchanged (504,000).
+    warmup_cutoff = max_feature_min_samples(len(candles)) - 1
     # Stateless helpers — instantiate once outside the per-candle loop
     clipper = features.FeatureClipper()
     nan_classifier = features.NaNSourceClassifier(optional_noncritical_features=set(fallback_features))
@@ -1943,9 +1947,15 @@ def _build_feature_rows_chunk(
 def _process_feature_chunk(
     args: tuple[int, int, bool, Sequence[data.Candle], sources.MarketSourceBundle | None, Mapping[str, object] | None, Sequence[UserRegimePeriod] | None, int],
 ) -> list[FeatureRow]:
-    """Top-level worker for parallel feature computation."""
-    start, end, is_first, candles, source_bundle, external_sources, user_regime_periods, overlap = args
-    chunk_candles = candles[start:end]
+    """Top-level worker for parallel feature computation.
+
+    NOTE: ``chunk_candles`` here is ALREADY the sliced sub-range for this
+    worker (sliced in the parent before dispatch). Previously each worker
+    received the ENTIRE candle list and sliced it locally, which pickled the
+    full multi-million-candle list once per worker (N-fold blow-up) and
+    caused BrokenProcessPool on large multi-year runs.
+    """
+    start, end, is_first, chunk_candles, source_bundle, external_sources, user_regime_periods, overlap = args
     return _build_feature_rows_chunk(
         chunk_candles,
         source_bundle=source_bundle,
@@ -1966,16 +1976,32 @@ def _build_feature_rows_parallel(
     """Parallel feature computation using chunked ProcessPoolExecutor."""
     n = len(candles)
     num_workers = min(os.cpu_count() or 4, 8)
-    chunk_size = max(n // num_workers, 10000)
+    # Cap chunk size independently of worker count. build_feature_rows_chunk
+    # materializes ~50 full-length float64 NumPy arrays per chunk; with a very
+    # large chunk (e.g. a single worker handling 500k+ candles) the peak
+    # memory of those arrays plus overlap can exceed the process limit and
+    # kill the worker (BrokenProcessPool). Splitting into bounded chunks keeps
+    # each task's peak memory low and lets executor.map stream them, even when
+    # os.cpu_count() reports 1.
+    # Bounded chunk size: caps the peak memory of the ~50 full-length NumPy
+    # arrays each chunk materializes, and caps per-task pickle size. 250k is a
+    # balance between overhead (too many tiny chunks) and peak memory (one huge
+    # chunk). Lower this if workers are memory-constrained.
+    MAX_CHUNK = 250_000
+    chunk_size = max(min(n // num_workers if num_workers > 0 else n, MAX_CHUNK), 10000)
     overlap = 500
-    print(f"[FEATURE] Parallel feature computation: {n:,} candles, {num_workers} workers, chunk_size={chunk_size:,}, overlap={overlap}")
+    # Number of chunks now derives from data size, not worker count.
+    num_chunks = max(1, (n + chunk_size - 1) // chunk_size)
+    print(f"[FEATURE] Parallel feature computation: {n:,} candles, {num_workers} workers, {num_chunks} chunks, chunk_size={chunk_size:,}, overlap={overlap}")
 
     # Build chunk ranges
     chunks: list[tuple[int, int, bool]] = []
-    for i in range(num_workers):
+    for i in range(num_chunks):
         start = i * chunk_size
+        if start >= n:
+            break
         end = min(start + chunk_size + overlap, n)
-        if i == num_workers - 1:
+        if i == num_chunks - 1:
             end = n
         is_first = i == 0
         chunks.append((start, end, is_first))
@@ -1983,8 +2009,11 @@ def _build_feature_rows_parallel(
             break
 
     all_rows: list[FeatureRow] = []
+    # Slice each chunk's candles HERE (in the parent) so each worker only
+    # receives its own sub-range, not the entire candle list. This avoids
+    # pickling the full multi-million-candle list once per worker.
     work_items = [
-        (start, end, is_first, candles, source_bundle, external_sources, user_regime_periods, overlap)
+        (start, end, is_first, candles[start:end], source_bundle, external_sources, user_regime_periods, overlap)
         for start, end, is_first in chunks
     ]
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -2269,7 +2298,17 @@ def _source_availability_status(source_report: Mapping[str, object]) -> dict[str
     return status
 
 
-def max_feature_min_samples() -> int:
+def max_feature_min_samples(n_candles: int | None = None) -> int:
+    """Largest feature warmup requirement.
+
+    When ``n_candles`` is given, features whose ``min_samples`` exceeds the
+    available candle count are excluded from the maximum: such features can
+    never be computed on this dataset (e.g. weekly MA50 needs 504,000 1m bars
+    = 50 weeks), so gating the whole warmup on them would invalidate every row
+    on a short dataset. On a full multi-year dataset all features qualify and
+    the result is unchanged (504,000). This keeps real-world behavior intact
+    while letting short fixtures/tests produce labeled rows.
+    """
     values: list[int] = []
     for row in FEATURE_FORMULAS:
         value = row.get("min_samples", 1)
@@ -2277,6 +2316,10 @@ def max_feature_min_samples() -> int:
             raise ValueError("feature min_samples must be an integer")
         if value <= 0:
             raise ValueError("feature min_samples must be positive")
+        if n_candles is not None and value > n_candles:
+            # This feature cannot be computed on a dataset this short; do not
+            # let its warmup requirement invalidate the entire dataset.
+            continue
         values.append(value)
     return max(values, default=1)
 

@@ -46,6 +46,14 @@ class TrainingConfig:
     test_start: datetime | None = None
     test_end: datetime | None = None
     only_build: bool = False
+    # Triple-barrier labeling parameters. These MUST match the TP/SL used in
+    # the backtest/live strategy, otherwise the model learns to predict a
+    # different barrier than the one it actually trades against. Defaults
+    # mirror build_dataset (0.30% TP / 0.15% SL, 60-bar horizon).
+    label_horizon: int = 60
+    label_threshold: float = 0.001
+    tp_pct: float = 0.003
+    sl_pct: float = 0.0015
     # Decision-threshold selection objective.
     #   "precision_recall" (default, backward-compatible): rank candidates by
     #     precision with a recall>=0.3 floor; fall back to F1 otherwise.
@@ -108,7 +116,21 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     if prebuilt_dataset is not None:
         build = prebuilt_dataset
     else:
-        build = dataset.build_dataset(input_path=input_path, archive_dir=archive_dir, external_sources=external_sources, user_regime_periods=user_regime_periods)
+        build = dataset.build_dataset(
+            input_path=input_path,
+            archive_dir=archive_dir,
+            external_sources=external_sources,
+            user_regime_periods=user_regime_periods,
+            horizon=training_config.label_horizon,
+            label_threshold=training_config.label_threshold,
+            tp_pct=training_config.tp_pct,
+            sl_pct=training_config.sl_pct,
+        )
+    # Snapshot the full labeled set BEFORE applying training_start/training_end
+    # cutoffs, so a post-cutoff test window (e.g. 2025 H1) can still be
+    # evaluated by the regime-aware path even though those rows are removed
+    # from the training data below.
+    full_labeled_rows = list(build.labeled_rows)
     if training_config.training_start is not None:
         build = replace(
             build,
@@ -132,9 +154,12 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
     print(f"[TRAIN] Dataset built: {len(build.labeled_rows):,} labeled rows, {len(build.feature_names)} features")
-    # Regime-aware: split by market regime and train separate models
+    # Regime-aware: split by market regime and train separate models.
+    # Pass the pre-cutoff dataset (full_labeled_rows) so the regime path can
+    # evaluate on a test window (e.g. 2025 H1) that lies *after* training_end
+    # and was therefore removed from build.labeled_rows above.
     if training_config.regime_aware:
-        return run_regime_aware_training(build, output_dir, training_config)
+        return run_regime_aware_training(build, output_dir, training_config, full_labeled_rows=full_labeled_rows)
     # Ensemble stacking: train direction + profitability + meta model
     if training_config.ensemble_enabled:
         return run_ensemble_training(build, output_dir, training_config)
@@ -398,9 +423,9 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     return TrainingResult(output_dir, build, splits, fold_results, run_summary, manifest)
 
 
-def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, training_config: TrainingConfig) -> TrainingResult:
+def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, training_config: TrainingConfig, full_labeled_rows: Sequence[dataset.LabeledRow] | None = None) -> TrainingResult:
     if training_config.use_user_regime:
-        return _run_user_regime_training(build, output_dir, training_config)
+        return _run_user_regime_training(build, output_dir, training_config, full_labeled_rows=full_labeled_rows)
     detector = features.RegimeDetector(
         config=features.RegimeDetectorConfig(
             rv_percentile=training_config.regime_detector_rv_percentile,
@@ -530,7 +555,7 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
     )
 
 
-def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, training_config: TrainingConfig) -> TrainingResult:
+def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, training_config: TrainingConfig, full_labeled_rows: Sequence[dataset.LabeledRow] | None = None) -> TrainingResult:
     """Train separate models per user-specified regime (up/down/range)."""
     user_regime_names = dataset.USER_REGIME_NAMES
     regimes = [row.user_regime for row in build.labeled_rows]
@@ -578,39 +603,55 @@ def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, tra
     regime_test_f1_values = [float(summary["mean_test_f1"]) for summary in regime_summaries.values() if "mean_test_f1" in summary]
     aggregated_mean_test_f1 = sum(regime_test_f1_values) / len(regime_test_f1_values) if regime_test_f1_values else 0.0
     unclassified_count = sum(1 for r in regimes if r is None)
-    # Optional: evaluate on test period (e.g., 2025 H1) if specified
+    # Optional: evaluate on test period (e.g., 2025 H1) if specified.
+    #
+    # The test window typically lies AFTER training_end, so those rows were
+    # already stripped from build.labeled_rows. Use full_labeled_rows (the
+    # pre-cutoff snapshot) when available so the test window is actually
+    # populated. Each regime stores separate long_model.json / short_model.json
+    # trained on the long_success / short_success targets, so we evaluate each
+    # against the matching target rather than a single generic model.json.
     test_period_metrics: dict[str, object] | None = None
     if training_config.test_start is not None or training_config.test_end is not None:
+        eval_source_rows = list(full_labeled_rows) if full_labeled_rows is not None else list(build.labeled_rows)
         test_rows = [
-            row for row in build.labeled_rows
+            row for row in eval_source_rows
             if (training_config.test_start is None or row.open_time >= training_config.test_start)
             and (training_config.test_end is None or row.open_time <= training_config.test_end)
         ]
         if test_rows:
             print(f"[TRAIN] Evaluating on test period: {len(test_rows):,} rows ({training_config.test_start} to {training_config.test_end})")
             test_matrix = feature_matrix(test_rows, build.feature_names)
-            test_labels = [row.label for row in test_rows]
             regime_test_metrics: dict[str, dict[str, float]] = {}
             for regime_name in trained_regimes:
-                model_path = output_dir / f"regime_{regime_name}" / "model.json"
-                if not model_path.is_file():
-                    continue
-                try:
-                    payload = json.loads(model_path.read_text(encoding="utf-8"))
-                    family = payload.get("model_family", "auto")
-                    if family == "ensemble":
-                        model = models.EnsembleAdapter.from_dict(payload)
-                    elif family == "catboost":
-                        model = models.CatBoostAdapter.from_dict(payload)
-                    elif family == "lightgbm":
-                        model = models.LightGBMAdapter.from_dict(payload)
-                    else:
+                regime_dir = output_dir / f"regime_{regime_name}"
+                for side, target_key, filename in (
+                    ("long", "long_success", "long_model.json"),
+                    ("short", "short_success", "short_model.json"),
+                ):
+                    model_path = regime_dir / filename
+                    if not model_path.is_file():
                         continue
-                    probs = model.predict_proba(test_matrix)
-                    regime_test_metrics[regime_name] = metrics(probs, test_labels, 0.5)
-                    print(f"[TRAIN]   Test period {regime_name}: F1={regime_test_metrics[regime_name]['f1']:.4f}, Acc={regime_test_metrics[regime_name]['accuracy']:.4f}")
-                except Exception as e:
-                    print(f"[TRAIN]   Test period evaluation for {regime_name} failed: {e}")
+                    try:
+                        payload = json.loads(model_path.read_text(encoding="utf-8"))
+                        family = payload.get("model_family", payload.get("family", "catboost"))
+                        if family == "ensemble":
+                            model = models.EnsembleAdapter.from_dict(payload)
+                        elif family == "lightgbm":
+                            model = models.LightGBMAdapter.from_dict(payload)
+                        else:
+                            model = models.CatBoostAdapter.from_dict(payload)
+                        side_labels = [int(row.targets.get(target_key, row.label)) for row in test_rows]
+                        # Skip degenerate single-class targets (metrics would be meaningless)
+                        if len(set(side_labels)) < 2:
+                            print(f"[TRAIN]   Test period {regime_name}/{side}: skipped (single-class target)")
+                            continue
+                        probs = model.predict_proba(test_matrix)
+                        key = f"{regime_name}_{side}"
+                        regime_test_metrics[key] = metrics(probs, side_labels, 0.5)
+                        print(f"[TRAIN]   Test period {regime_name}/{side}: F1={regime_test_metrics[key]['f1']:.4f}, Acc={regime_test_metrics[key]['accuracy']:.4f}")
+                    except Exception as e:
+                        print(f"[TRAIN]   Test period evaluation for {regime_name}/{side} failed: {e}")
             if regime_test_metrics:
                 avg_f1 = mean([m["f1"] for m in regime_test_metrics.values()])
                 avg_acc = mean([m["accuracy"] for m in regime_test_metrics.values()])

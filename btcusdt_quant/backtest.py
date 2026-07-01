@@ -305,18 +305,43 @@ def run_backtest(
                     else:
                         signal = "HOLD"
             elif default_regime is not None and default_regime in models_by_regime:
-                # Use default regime model
-                active_model = models_by_regime[default_regime]
+                # Fallback to the default regime's models when the current bar
+                # has no user_regime (e.g. outside any configured regime period).
+                regime_bundle = models_by_regime.get(default_regime)
                 features_dict = feature_rows[i].features
-                prob = active_model.probability(features_dict)
-                lt = long_threshold if long_threshold is not None else strategy.long_threshold
-                st = short_threshold if short_threshold is not None else strategy.short_threshold
-                if prob > lt and prob >= 0.55:
-                    signal = "BUY"
-                elif prob < st and prob <= 0.45:
-                    signal = "SELL"
+                if hasattr(regime_bundle, 'direction_policy'):
+                    # New structure: route through long/short models with the
+                    # default regime's direction policy, mirroring the main path.
+                    allowed_directions = regime_bundle.direction_policy.get(default_regime, {"LONG", "SHORT"})
+                    allowed_directions = apply_range_mean_reversion_gate(default_regime, features_dict, allowed_directions)
+                    long_prob = None
+                    short_prob = None
+                    if "LONG" in allowed_directions and hasattr(regime_bundle, 'long_models') and default_regime in regime_bundle.long_models:
+                        long_prob = regime_bundle.long_models[default_regime].probability(features_dict)
+                    if "SHORT" in allowed_directions and hasattr(regime_bundle, 'short_models') and default_regime in regime_bundle.short_models:
+                        short_prob = regime_bundle.short_models[default_regime].probability(features_dict)
+                    if long_prob is not None or short_prob is not None:
+                        from btcusdt_quant.live import evaluate_entry_signal
+                        long_prob = long_prob if long_prob is not None else 0.0
+                        short_prob = short_prob if short_prob is not None else 0.0
+                        lt = long_threshold if long_threshold is not None else strategy.long_threshold
+                        st = short_threshold if short_threshold is not None else strategy.short_threshold
+                        entry_signal, _, _ = evaluate_entry_signal(long_prob, short_prob, long_threshold=lt, short_threshold=st)
+                        signal = "BUY" if entry_signal == "LONG" else ("SELL" if entry_signal == "SHORT" else "HOLD")
+                    else:
+                        signal = "HOLD"
                 else:
-                    signal = "HOLD"
+                    # Legacy structure: single model per regime.
+                    active_model = regime_bundle
+                    prob = active_model.probability(features_dict)
+                    lt = long_threshold if long_threshold is not None else strategy.long_threshold
+                    st = short_threshold if short_threshold is not None else strategy.short_threshold
+                    if prob > lt and prob >= 0.55:
+                        signal = "BUY"
+                    elif prob < st and prob <= 0.45:
+                        signal = "SELL"
+                    else:
+                        signal = "HOLD"
         elif model is not None and i < len(feature_rows):
             features_dict = feature_rows[i].features
             prob = model.probability(features_dict)
@@ -346,7 +371,29 @@ def run_backtest(
 
             can_exit_for_barrier = bar_count >= min_hold_bars
             if (can_exit_for_barrier and (hit_tp or hit_sl)) or bar_count >= label_horizon:
-                if hit_tp and can_exit_for_barrier:
+                # When BOTH barriers are touched in the same candle, we cannot
+                # know from OHLC which came first. Mirror the labeling rule in
+                # dataset.triple_barrier_label_* (which decides via candle
+                # direction: close>open => TP first, else SL first) so the
+                # backtest resolves ties the SAME way the model was trained.
+                # Previously the backtest always assumed TP first, an
+                # optimistic bias that inflated win rate vs the labels.
+                both_hit = hit_tp and hit_sl and can_exit_for_barrier
+                if both_hit:
+                    # Side-specific tie-break matching the labeler:
+                    #   long  (BUY):  close > open  => TP first
+                    #   short (SELL): close < open  => TP first
+                    if active_trade.side == "BUY":
+                        tp_first = candle.close > candle.open
+                    else:
+                        tp_first = candle.close < candle.open
+                    if tp_first:
+                        exit_price = active_trade.tp_price
+                        outcome = "TP"
+                    else:
+                        exit_price = active_trade.sl_price
+                        outcome = "SL"
+                elif hit_tp and can_exit_for_barrier:
                     exit_price = active_trade.tp_price
                     outcome = "TP"
                 elif hit_sl and can_exit_for_barrier:
