@@ -2022,14 +2022,29 @@ class LiveEngine:
                 if hasattr(latest_row, 'user_regime') and latest_row.user_regime is not None:
                     active_regime = latest_row.user_regime
                 else:
-                    # Priority 2: Fall back to automatic regime detection
+                    # Priority 2: Fall back to automatic regime detection.
+                    # Use DIRECTIONAL detection (up/down/range) so the regime
+                    # matches the trained model keys. The base detect() returns
+                    # trending/ranging/high_volatility, which never match the
+                    # up/down/range models and would silently disable routing.
                     rv_15 = float(latest_features.get("rv_15", 0.0))
                     trend_slope_30 = float(latest_features.get("trend_slope_30", 0.0))
                     detector_config = regime_bundle.detector_config
                     if isinstance(detector_config, dict):
                         detector_config = features.RegimeDetectorConfig(**detector_config)
                     detector = features.RegimeDetector(detector_config)
-                    active_regime = detector.detect(rv_15, trend_slope_30, thresholds=regime_bundle.detector_thresholds)
+                    # Calibrate the directional threshold from the trend-slope
+                    # history available so far (all buffered feature rows).
+                    hist_slopes = [
+                        float(r.features.get("trend_slope_30", 0.0))
+                        for r in self.feature_rows
+                    ]
+                    dir_thresholds = detector.fit_directional_threshold(hist_slopes) if hist_slopes else None
+                    active_regime = detector.detect_directional(
+                        trend_slope_30,
+                        thresholds=dir_thresholds,
+                        historical_trend_slope_30_values=hist_slopes if not dir_thresholds else None,
+                    )
                 
                 # Get direction policy for this regime
                 allowed_directions = regime_bundle.direction_policy.get(active_regime, {"LONG", "SHORT"})
