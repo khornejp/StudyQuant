@@ -457,6 +457,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--tp-floor", type=float, default=None, help="override TP floor (fraction, e.g. 0.003 = 0.30%%) for all strategy profiles. Use to match the tp_pct used at training time for a consistent sweep.")
     backtest_parser.add_argument("--sl-floor", type=float, default=None, help="override SL floor (fraction, e.g. 0.0015 = 0.15%%) for all strategy profiles.")
     backtest_parser.add_argument("--fixed-tp-sl", action="store_true", help="disable ATR-based TP/SL sizing and trade EXACTLY the tp-floor/sl-floor. Use for the TP/SL sweep so backtest barriers match the training labels.")
+    backtest_parser.add_argument("--auto-regime", action="store_true", help="detect regimes in real time with RegimeDetector (directional up/down/range from trend slope) instead of a hand-labeled --user-regime-file. This is what a live deployment does, since future regimes can't be known in advance. Ignored if --user-regime-file is given.")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -687,6 +688,19 @@ def main(argv: list[str] | None = None) -> int:
             user_regime_periods = None
             if args.user_regime_file:
                 user_regime_periods = dataset.load_user_regime_periods(Path(args.user_regime_file))
+            # Real-time regime detection (live-compatible). Only used when no
+            # explicit regime file is given — a hand-labeled file always wins.
+            regime_detector = None
+            if args.auto_regime:
+                if user_regime_periods is not None:
+                    print(
+                        "WARNING: --auto-regime ignored because --user-regime-file was provided.",
+                        file=sys.stderr,
+                    )
+                else:
+                    from btcusdt_quant.features import RegimeDetector, RegimeDetectorConfig
+                    regime_detector = RegimeDetector(RegimeDetectorConfig())
+                    print("[BACKTEST] auto-regime: detecting up/down/range in real time via RegimeDetector")
             if args.model_artifact:
                 model_path = Path(args.model_artifact)
                 if model_path.is_file():
@@ -742,6 +756,7 @@ def main(argv: list[str] | None = None) -> int:
                 user_regime_periods=user_regime_periods,
                 default_regime=resolved_default_regime,
                 start_date=args.backtest_start,
+                regime_detector=regime_detector,
             )
             result = backtest.run_backtest(
                 candles,
@@ -751,6 +766,7 @@ def main(argv: list[str] | None = None) -> int:
                 user_regime_periods=user_regime_periods,
                 default_regime=resolved_default_regime,
                 start_date=args.backtest_start,
+                regime_detector=regime_detector,
             )
             summary = {
                 "backtest": result.as_dict(),
@@ -763,6 +779,35 @@ def main(argv: list[str] | None = None) -> int:
             print(f"total_return={result.total_return:.4f}")
             print(f"win_rate={result.win_rate:.4f}")
             print(f"best_strategy={comparison['best_strategy']}")
+            # Warn if the regime file does not cover the backtest window. When
+            # most bars fall back to default_regime, direction routing is
+            # effectively single-regime (e.g. a long-only default emits zero
+            # SELLs), which silently defeats regime-aware backtesting.
+            if models_by_regime is not None:
+                cov = result.regime_coverage
+                matched = cov.get("matched", 0)
+                fallback = cov.get("default_fallback", 0)
+                no_model = cov.get("no_model", 0)
+                total_eval = matched + fallback + no_model
+                if total_eval > 0:
+                    fb_share = fallback / total_eval
+                    if matched == 0:
+                        print(
+                            f"WARNING: no backtest bar matched any configured regime period; "
+                            f"all {total_eval:,} bars fell back to default_regime="
+                            f"'{resolved_default_regime}'. Your regime file likely does not "
+                            f"cover the backtest window (--backtest-start {args.backtest_start}). "
+                            f"Direction routing is effectively single-regime.",
+                            file=sys.stderr,
+                        )
+                    elif fb_share > 0.20:
+                        print(
+                            f"WARNING: {fb_share*100:.0f}% of backtest bars fell back to "
+                            f"default_regime='{resolved_default_regime}' (regime file coverage "
+                            f"gap). Regime-aware routing only applied to {matched:,} of "
+                            f"{total_eval:,} bars.",
+                            file=sys.stderr,
+                        )
             print(f"artifacts={output}")
             return 0
         except (OSError, RuntimeError, ValueError) as error:
