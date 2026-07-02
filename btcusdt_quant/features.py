@@ -1255,6 +1255,88 @@ class RegimeDetector:
             raw_regimes.append(self._classify_raw(rv, trend, effective_thresholds))
         return self._apply_hysteresis(raw_regimes)
 
+    def _classify_directional(self, trend_slope_30: float, thresholds: Mapping[str, float]) -> str:
+        """Map trend slope to a DIRECTIONAL regime: 'up' | 'down' | 'range'.
+
+        The user-regime models are trained on directional regimes (up/down/
+        range), but the base RegimeDetector only distinguishes trend STRENGTH
+        (trending / ranging / high_volatility) via abs(slope). To drive those
+        models in real time we need the trend SIGN as well:
+          - slope > +dir_threshold  -> "up"
+          - slope < -dir_threshold  -> "down"
+          - otherwise               -> "range"
+        Uses ``dir_threshold`` — a directional threshold calibrated at a lower
+        percentile than the strength threshold. The strength classifier uses a
+        high percentile (0.90) to isolate the strongest trends; but a
+        directional split needs a lower bar, otherwise almost every bar lands
+        in "range" and the up/down models never fire. Falls back to
+        trend_threshold / min_trend_abs if dir_threshold is absent.
+        """
+        dir_threshold = float(thresholds.get(
+            "dir_threshold",
+            max(float(thresholds.get("trend_threshold", self.config.min_trend_abs)),
+                float(thresholds.get("trend_min", self.config.min_trend_abs))),
+        ))
+        slope = float(trend_slope_30) if isfinite(float(trend_slope_30)) else 0.0
+        if slope > dir_threshold:
+            return "up"
+        if slope < -dir_threshold:
+            return "down"
+        return "range"
+
+    def fit_directional_threshold(self, trend_slope_30_values: Sequence[float], percentile: float = 0.55) -> dict[str, float]:
+        """Calibrate the directional (up/down vs range) threshold.
+
+        Uses the ``percentile``-th quantile of |slope| as the boundary between
+        a directional regime and range. Default 0.55 means slopes above the
+        median-ish magnitude count as trending in their sign direction, so
+        roughly the trend is split into up/down/range in balanced proportions.
+        Always at least min_trend_abs so a flat market stays range.
+        """
+        strength_values = [abs(v) for v in self._finite_values(trend_slope_30_values)]
+        pct = self._percentile(strength_values, percentile, fallback=self.config.min_trend_abs)
+        dir_threshold = max(float(self.config.min_trend_abs), pct)
+        return {"dir_threshold": dir_threshold}
+
+    def detect_all_directional(
+        self,
+        rv_15_values: Sequence[float],
+        trend_slope_30_values: Sequence[float],
+        thresholds: Mapping[str, float] | None = None,
+    ) -> list[str]:
+        """Directional (up/down/range) regime per row, with hysteresis.
+
+        Uses the full-history distribution to calibrate the directional
+        threshold once, then classifies each row by trend sign. Applies the
+        same run-length hysteresis as detect_all so single-bar flips don't
+        create churn. This is the real-time-compatible driver for the
+        user-regime (up/down/range) models: at bar i it only needs slope[i]
+        and thresholds calibrated on data up to i, so it can run live.
+        """
+        effective_thresholds = dict(thresholds) if thresholds else {}
+        if "dir_threshold" not in effective_thresholds:
+            effective_thresholds.update(self.fit_directional_threshold(trend_slope_30_values))
+        raw_regimes = [
+            self._classify_directional(trend, effective_thresholds)
+            for trend in trend_slope_30_values
+        ]
+        return self._apply_hysteresis(raw_regimes)
+
+    def detect_directional(self, trend_slope_30: float, thresholds: Mapping[str, float] | None = None, historical_rv_15_values: Sequence[float] | None = None, historical_trend_slope_30_values: Sequence[float] | None = None) -> str:
+        """Single-bar directional detection for live use.
+
+        Provide either explicit ``thresholds`` (containing dir_threshold) or
+        historical series to calibrate them. Falls back to config min_trend_abs
+        when neither is available (degenerate but safe).
+        """
+        effective_thresholds = dict(thresholds) if thresholds else {}
+        if "dir_threshold" not in effective_thresholds:
+            if historical_trend_slope_30_values is not None:
+                effective_thresholds.update(self.fit_directional_threshold(historical_trend_slope_30_values))
+            else:
+                effective_thresholds["dir_threshold"] = self.config.min_trend_abs
+        return self._classify_directional(trend_slope_30, effective_thresholds)
+
     def diagnostics(self, rv_15_values: Sequence[float], trend_slope_30_values: Sequence[float]) -> dict[str, object]:
         thresholds = self.fit_thresholds(rv_15_values, trend_slope_30_values)
         regimes = self.detect_all(rv_15_values, trend_slope_30_values, thresholds=thresholds)
