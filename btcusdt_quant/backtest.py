@@ -66,6 +66,12 @@ class BacktestResult:
     total_costs: float = 0.0
     min_hold_bars: int = 0
     cooldown_bars: int = 0
+    # Regime coverage diagnostics: how many evaluated bars had an explicit
+    # user_regime vs. fell back to default_regime (because they lay outside
+    # every configured regime period). A high fallback share means the
+    # regime file does not cover the backtest window, so direction routing is
+    # effectively single-regime.
+    regime_coverage: dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -87,6 +93,7 @@ class BacktestResult:
             "total_costs": self.total_costs,
             "min_hold_bars": self.min_hold_bars,
             "cooldown_bars": self.cooldown_bars,
+            "regime_coverage": self.regime_coverage,
             "trades": [
                 {
                     "entry_time": t.entry_time,
@@ -187,6 +194,7 @@ def run_backtest(
     default_regime: str | None = None,
     start_date: str | None = None,
     feature_rows: Sequence[dataset.FeatureRow] | None = None,
+    regime_detector: object | None = None,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -233,6 +241,23 @@ def run_backtest(
     if feature_rows is None:
         feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
 
+    # Real-time regime detection: when a RegimeDetector is supplied (and no
+    # user regime periods were given), classify each bar's regime from its
+    # trend slope instead of a hand-labeled regime file. This is what a live
+    # deployment must do — future regimes can't be known in advance, so the
+    # up/down/range models are driven by the detector's directional output.
+    # We overwrite feature_rows[i].user_regime in place so the existing
+    # regime-routing logic downstream works unchanged.
+    if regime_detector is not None and user_regime_periods is None:
+        import dataclasses as _dc
+        trend_slopes = [float(r.features.get("trend_slope_30", 0.0)) for r in feature_rows]
+        rv_values = [float(r.features.get("rv_15", 0.0)) for r in feature_rows]
+        detected = regime_detector.detect_all_directional(rv_values, trend_slopes)
+        feature_rows = [
+            _dc.replace(row, user_regime=regime)
+            for row, regime in zip(feature_rows, detected)
+        ]
+
     start_dt = None
     if start_date is not None:
         from datetime import datetime
@@ -251,6 +276,12 @@ def run_backtest(
         signal = "HOLD"
         if models_by_regime is not None and i < len(feature_rows):
             regime = feature_rows[i].user_regime
+            if regime is not None and regime in models_by_regime:
+                result.regime_coverage["matched"] = result.regime_coverage.get("matched", 0) + 1
+            elif default_regime is not None and default_regime in models_by_regime:
+                result.regime_coverage["default_fallback"] = result.regime_coverage.get("default_fallback", 0) + 1
+            else:
+                result.regime_coverage["no_model"] = result.regime_coverage.get("no_model", 0) + 1
             if regime is not None and regime in models_by_regime:
                 # Check if models_by_regime is a RegimeModelBundle with direction policy
                 regime_bundle = models_by_regime.get(regime)
@@ -498,6 +529,7 @@ def compare_strategies(
     default_regime: str | None = None,
     start_date: str | None = None,
     feature_rows: Sequence[dataset.FeatureRow] | None = None,
+    regime_detector: object | None = None,
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison."""
     if strategies is None:
@@ -509,6 +541,17 @@ def compare_strategies(
     # Pre-compute feature rows once for all strategies
     if feature_rows is None:
         feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
+    # Apply real-time regime detection once on the shared feature rows so every
+    # strategy sees identical regimes and the detector runs a single time.
+    if regime_detector is not None and user_regime_periods is None:
+        import dataclasses as _dc
+        trend_slopes = [float(r.features.get("trend_slope_30", 0.0)) for r in feature_rows]
+        rv_values = [float(r.features.get("rv_15", 0.0)) for r in feature_rows]
+        detected = regime_detector.detect_all_directional(rv_values, trend_slopes)
+        feature_rows = [
+            _dc.replace(row, user_regime=regime)
+            for row, regime in zip(feature_rows, detected)
+        ]
     results: dict[str, BacktestResult] = {}
     for name, strategy in strategies.items():
         results[name] = run_backtest(
