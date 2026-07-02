@@ -1,51 +1,261 @@
 {
   "_comment": [
-    "User-specified market regime periods for regime-aware training.",
-    "Each entry describes one continuous window labeled as 'up', 'down', or 'range'.",
-    "Windows must use 'start' inclusive and 'end_exclusive' exclusive.",
-    "Cover the full training span (e.g. 2020-01-01 -> 2024-12-31).",
-    "These values are placeholders -- replace them with YOUR own regime calls."
+    "Regime periods for BTCUSDT. Each: {regime, start (inclusive), end_exclusive}.",
+    "2020-2024: original template. 2025: added from actual BTC price action (web-sourced).",
+    "WARNING: 2025 regimes are labeled in hindsight (look-ahead bias). Backtest results",
+    "using these reflect 'how the model does WHEN regime routing works', not live performance.",
+    "For live/forward trading, regimes must be detected in real time (RegimeDetector), not from this file."
   ],
   "periods": [
-    {"regime":"up",     "start":"2020-01-01", "end_exclusive":"2020-02-13"},
-    {"regime":"down",   "start":"2020-02-13", "end_exclusive":"2020-03-13"},
-    {"regime":"up",     "start":"2020-03-13", "end_exclusive":"2020-05-11"},
-    {"regime":"range",  "start":"2020-05-11", "end_exclusive":"2020-07-20"},
-    {"regime":"up",     "start":"2020-07-20", "end_exclusive":"2020-09-01"},
-    {"regime":"range",  "start":"2020-09-01", "end_exclusive":"2020-10-08"},
-    {"regime":"up",     "start":"2020-10-08", "end_exclusive":"2021-01-08"},
-    {"regime":"down",   "start":"2021-01-08", "end_exclusive":"2021-01-27"},
-    {"regime":"up",     "start":"2021-01-27", "end_exclusive":"2021-04-14"},
-    {"regime":"down",   "start":"2021-04-14", "end_exclusive":"2021-07-20"},
-    {"regime":"up",     "start":"2021-07-20", "end_exclusive":"2021-09-07"},
-    {"regime":"down",   "start":"2021-09-07", "end_exclusive":"2021-09-29"},
-    {"regime":"up",     "start": "2021-09-29","end_exclusive":"2021-11-10"},
-    {"regime":"down",   "start":"2021-11-10", "end_exclusive":"2022-01-24"},
-    {"regime":"up",     "start":"2022-01-24", "end_exclusive":"2022-03-28"},
-    {"regime":"down",   "start":"2022-03-28", "end_exclusive":"2022-05-12"},
-    {"regime":"down",   "start":"2022-05-12", "end_exclusive":"2022-06-18"},
-    {"regime":"range",  "start":"2022-06-18", "end_exclusive":"2022-08-15"},
-    {"regime":"down",   "start":"2022-08-15", "end_exclusive":"2022-09-21"},
-    {"regime":"range",  "start":"2022-09-21", "end_exclusive":"2022-11-05"},
-    {"regime":"down",   "start":"2022-11-05", "end_exclusive":"2022-11-21"},
-    {"regime":"range",  "start":"2022-11-21", "end_exclusive":"2022-12-31"},
-    {"regime":"up",     "start":"2023-01-01", "end_exclusive":"2023-02-16"},
-    {"regime":"down",   "start":"2023-02-16", "end_exclusive":"2023-03-10"},
-    {"regime":"up",     "start":"2023-03-10", "end_exclusive":"2023-04-14"},
-    {"regime":"range",  "start":"2023-04-14", "end_exclusive":"2023-06-15"},
-    {"regime":"up",     "start":"2023-06-15", "end_exclusive":"2023-07-13"},
-    {"regime":"down",   "start":"2023-07-13", "end_exclusive":"2023-09-11"},
-    {"regime":"range",  "start":"2023-09-11", "end_exclusive":"2023-10-16"},
-    {"regime":"up",     "start":"2023-10-16", "end_exclusive":"2023-12-08"},
-    {"regime":"range",  "start":"2023-12-08", "end_exclusive":"2023-12-31"},
-    {"regime":"down",   "start":"2024-01-01", "end_exclusive":"2024-01-23"},
-    {"regime":"up",     "start":"2024-01-23", "end_exclusive":"2024-03-14"},
-    {"regime":"down",   "start":"2024-03-14", "end_exclusive":"2024-05-01"},
-    {"regime":"up",     "start":"2024-05-01", "end_exclusive":"2024-06-07"},
-    {"regime":"down",   "start":"2024-06-07", "end_exclusive":"2024-08-05"},
-    {"regime":"range",  "start":"2024-08-05", "end_exclusive":"2024-09-06"},
-    {"regime":"up",     "start":"2024-09-06", "end_exclusive":"2024-10-29"},
-    {"regime":"up",     "start":"2024-11-05", "end_exclusive":"2024-12-17"},
-    {"regime":"down",   "start":"2024-12-17", "end_exclusive":"2024-12-31"}
+    {
+      "regime": "up",
+      "start": "2020-01-01",
+      "end_exclusive": "2020-02-13"
+    },
+    {
+      "regime": "down",
+      "start": "2020-02-13",
+      "end_exclusive": "2020-03-13"
+    },
+    {
+      "regime": "up",
+      "start": "2020-03-13",
+      "end_exclusive": "2020-05-11"
+    },
+    {
+      "regime": "range",
+      "start": "2020-05-11",
+      "end_exclusive": "2020-07-20"
+    },
+    {
+      "regime": "up",
+      "start": "2020-07-20",
+      "end_exclusive": "2020-09-01"
+    },
+    {
+      "regime": "range",
+      "start": "2020-09-01",
+      "end_exclusive": "2020-10-08"
+    },
+    {
+      "regime": "up",
+      "start": "2020-10-08",
+      "end_exclusive": "2021-01-08"
+    },
+    {
+      "regime": "down",
+      "start": "2021-01-08",
+      "end_exclusive": "2021-01-27"
+    },
+    {
+      "regime": "up",
+      "start": "2021-01-27",
+      "end_exclusive": "2021-04-14"
+    },
+    {
+      "regime": "down",
+      "start": "2021-04-14",
+      "end_exclusive": "2021-07-20"
+    },
+    {
+      "regime": "up",
+      "start": "2021-07-20",
+      "end_exclusive": "2021-09-07"
+    },
+    {
+      "regime": "down",
+      "start": "2021-09-07",
+      "end_exclusive": "2021-09-29"
+    },
+    {
+      "regime": "up",
+      "start": "2021-09-29",
+      "end_exclusive": "2021-11-10"
+    },
+    {
+      "regime": "down",
+      "start": "2021-11-10",
+      "end_exclusive": "2022-01-24"
+    },
+    {
+      "regime": "up",
+      "start": "2022-01-24",
+      "end_exclusive": "2022-03-28"
+    },
+    {
+      "regime": "down",
+      "start": "2022-03-28",
+      "end_exclusive": "2022-05-12"
+    },
+    {
+      "regime": "down",
+      "start": "2022-05-12",
+      "end_exclusive": "2022-06-18"
+    },
+    {
+      "regime": "range",
+      "start": "2022-06-18",
+      "end_exclusive": "2022-08-15"
+    },
+    {
+      "regime": "down",
+      "start": "2022-08-15",
+      "end_exclusive": "2022-09-21"
+    },
+    {
+      "regime": "range",
+      "start": "2022-09-21",
+      "end_exclusive": "2022-11-05"
+    },
+    {
+      "regime": "down",
+      "start": "2022-11-05",
+      "end_exclusive": "2022-11-21"
+    },
+    {
+      "regime": "range",
+      "start": "2022-11-21",
+      "end_exclusive": "2022-12-31"
+    },
+    {
+      "regime": "up",
+      "start": "2023-01-01",
+      "end_exclusive": "2023-02-16"
+    },
+    {
+      "regime": "down",
+      "start": "2023-02-16",
+      "end_exclusive": "2023-03-10"
+    },
+    {
+      "regime": "up",
+      "start": "2023-03-10",
+      "end_exclusive": "2023-04-14"
+    },
+    {
+      "regime": "range",
+      "start": "2023-04-14",
+      "end_exclusive": "2023-06-15"
+    },
+    {
+      "regime": "up",
+      "start": "2023-06-15",
+      "end_exclusive": "2023-07-13"
+    },
+    {
+      "regime": "down",
+      "start": "2023-07-13",
+      "end_exclusive": "2023-09-11"
+    },
+    {
+      "regime": "range",
+      "start": "2023-09-11",
+      "end_exclusive": "2023-10-16"
+    },
+    {
+      "regime": "up",
+      "start": "2023-10-16",
+      "end_exclusive": "2023-12-08"
+    },
+    {
+      "regime": "range",
+      "start": "2023-12-08",
+      "end_exclusive": "2023-12-31"
+    },
+    {
+      "regime": "down",
+      "start": "2024-01-01",
+      "end_exclusive": "2024-01-23"
+    },
+    {
+      "regime": "up",
+      "start": "2024-01-23",
+      "end_exclusive": "2024-03-14"
+    },
+    {
+      "regime": "down",
+      "start": "2024-03-14",
+      "end_exclusive": "2024-05-01"
+    },
+    {
+      "regime": "up",
+      "start": "2024-05-01",
+      "end_exclusive": "2024-06-07"
+    },
+    {
+      "regime": "down",
+      "start": "2024-06-07",
+      "end_exclusive": "2024-08-05"
+    },
+    {
+      "regime": "range",
+      "start": "2024-08-05",
+      "end_exclusive": "2024-09-06"
+    },
+    {
+      "regime": "up",
+      "start": "2024-09-06",
+      "end_exclusive": "2024-10-29"
+    },
+    {
+      "regime": "up",
+      "start": "2024-11-05",
+      "end_exclusive": "2024-12-17"
+    },
+    {
+      "regime": "down",
+      "start": "2024-12-17",
+      "end_exclusive": "2024-12-31"
+    },
+    {
+      "regime": "up",
+      "start": "2025-01-01",
+      "end_exclusive": "2025-01-21"
+    },
+    {
+      "regime": "down",
+      "start": "2025-01-21",
+      "end_exclusive": "2025-04-09"
+    },
+    {
+      "regime": "up",
+      "start": "2025-04-09",
+      "end_exclusive": "2025-06-11"
+    },
+    {
+      "regime": "range",
+      "start": "2025-06-11",
+      "end_exclusive": "2025-07-09"
+    },
+    {
+      "regime": "up",
+      "start": "2025-07-09",
+      "end_exclusive": "2025-08-15"
+    },
+    {
+      "regime": "range",
+      "start": "2025-08-15",
+      "end_exclusive": "2025-09-05"
+    },
+    {
+      "regime": "down",
+      "start": "2025-09-05",
+      "end_exclusive": "2025-09-25"
+    },
+    {
+      "regime": "up",
+      "start": "2025-09-25",
+      "end_exclusive": "2025-10-07"
+    },
+    {
+      "regime": "down",
+      "start": "2025-10-07",
+      "end_exclusive": "2025-12-31"
+    },
+    {
+      "regime": "range",
+      "start": "2025-12-31",
+      "end_exclusive": "2026-01-01"
+    }
   ]
 }
