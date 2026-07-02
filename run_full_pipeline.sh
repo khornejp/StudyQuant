@@ -143,11 +143,21 @@ echo "  Model:        $MODEL_DIR"
 
 # ----------------------------------------------------------------------------
 # PHASE 4: Backtest on 2025 H2 (out-of-sample)
+#
+# Two backtests for comparison:
+#   (4a) --user-regime-file : uses regimes.json. 2025 regimes are labeled in
+#        hindsight, so this shows model performance WITH perfect regime
+#        routing (look-ahead bias, NOT live).
+#   (4b) --auto-regime      : RegimeDetector classifies up/down/range from the
+#        trend slope in real time, as a live deployment must. Realistic,
+#        deployable estimate. If 4b << 4a, the model relies on perfect regime
+#        foresight.
 # ----------------------------------------------------------------------------
 echo ""
-echo "[Phase 4] Running backtest on $BACKTEST_START -> $BACKTEST_END ..."
+echo "[Phase 4a] Backtest with hand-labeled regimes ($REGIME_FILE) ..."
 
 BACKTEST_DIR="$ARTIFACTS_DIR/backtest_results"
+BACKTEST_AUTO_DIR="$ARTIFACTS_DIR/backtest_results_auto_regime"
 
 python -m btcusdt_quant backtest \
     --input "$FULL_PARQUET" \
@@ -157,9 +167,28 @@ python -m btcusdt_quant backtest \
     --output "$BACKTEST_DIR"
 
 echo ""
+echo "[Phase 4b] Backtest with REAL-TIME regime detection (--auto-regime) ..."
+echo "  Live-deployable path: no hand-labeled regime file."
+
+python -m btcusdt_quant backtest \
+    --input "$FULL_PARQUET" \
+    --model-artifact "$MODEL_DIR" \
+    --auto-regime \
+    --backtest-start "$BACKTEST_START" \
+    --output "$BACKTEST_AUTO_DIR"
+
+echo ""
 echo "=== Pipeline Complete ==="
 echo ""
 echo "Outputs:"
-echo "  Combined data : $FULL_PARQUET"
-echo "  Model         : $MODEL_DIR"
-echo "  Backtest      : $BACKTEST_DIR"
+echo "  Combined data      : $FULL_PARQUET"
+echo "  Model              : $MODEL_DIR"
+echo "  Backtest (labeled) : $BACKTEST_DIR"
+echo "  Backtest (auto)    : $BACKTEST_AUTO_DIR"
+echo ""
+echo "Compare (gross return is the cleaner edge signal):"
+echo "  python -c \"import json; a=json.load(open('$BACKTEST_DIR/backtest_summary.json'))['backtest']; b=json.load(open('$BACKTEST_AUTO_DIR/backtest_summary.json'))['backtest']; print('labeled: gross=%.4f net=%.4f trades=%d'%(a['gross_total_return'],a['net_total_return'],a['trade_count'])); print('auto   : gross=%.4f net=%.4f trades=%d'%(b['gross_total_return'],b['net_total_return'],b['trade_count']))\""
+echo ""
+echo "If 'auto' is much worse than 'labeled', the model depends on perfect"
+echo "regime foresight and will underperform live. If close, the real-time"
+echo "detector reproduces regimes well enough to deploy."

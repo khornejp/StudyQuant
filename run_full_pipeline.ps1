@@ -156,12 +156,22 @@ Write-Host "  Run summary:  $ModelDir\run_summary.json" -ForegroundColor Green
 
 # ============================================================================
 # PHASE 4: Backtest on 2025-07-01 ~ 2025-12-31 (truly unseen)
+#
+# Two backtests are run so you can compare:
+#   (4a) user-regime file  -> uses regimes.json. Because those 2025 regimes are
+#        labeled in hindsight, this shows "how the model does WHEN regime
+#        routing is perfect" (has look-ahead bias, NOT live performance).
+#   (4b) auto-regime        -> RegimeDetector classifies up/down/range from the
+#        trend slope in real time, exactly as a live deployment must. This is
+#        the realistic, deployable estimate. Compare its gross return to 4a:
+#        if 4b is far worse, the model leans on perfect foresight of regimes.
 # ============================================================================
 
 Write-Host ""
-Write-Host "[Phase 4] Running backtest on $BacktestStart -> $BacktestEnd ..." -ForegroundColor Yellow
+Write-Host "[Phase 4a] Backtest with hand-labeled regimes ($RegimeFile) ..." -ForegroundColor Yellow
 
-$BacktestDir = Join-Path $ArtifactsDir "backtest_results"
+$BacktestDir     = Join-Path $ArtifactsDir "backtest_results"
+$BacktestAutoDir = Join-Path $ArtifactsDir "backtest_results_auto_regime"
 
 # Feed the full 2020-2025 series so the backtest can reuse warmup history,
 # and let --backtest-start skip everything before $BacktestStart for the
@@ -175,12 +185,31 @@ python -m btcusdt_quant backtest `
     --output $BacktestDir
 
 Write-Host ""
+Write-Host "[Phase 4b] Backtest with REAL-TIME regime detection (--auto-regime) ..." -ForegroundColor Yellow
+Write-Host "  This is the live-deployable path: no hand-labeled regime file." -ForegroundColor Gray
+
+python -m btcusdt_quant backtest `
+    --input $FullParquet `
+    --model-artifact $ModelDir `
+    --auto-regime `
+    --backtest-start $BacktestStart `
+    --output $BacktestAutoDir
+
+Write-Host ""
 Write-Host "=== Pipeline Complete ===" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Outputs:" -ForegroundColor Green
-Write-Host "  Combined data : $FullParquet" -ForegroundColor Green
-Write-Host "  Model         : $ModelDir" -ForegroundColor Green
-Write-Host "  Backtest      : $BacktestDir" -ForegroundColor Green
+Write-Host "  Combined data      : $FullParquet" -ForegroundColor Green
+Write-Host "  Model              : $ModelDir" -ForegroundColor Green
+Write-Host "  Backtest (labeled) : $BacktestDir" -ForegroundColor Green
+Write-Host "  Backtest (auto)    : $BacktestAutoDir" -ForegroundColor Green
 Write-Host ""
-Write-Host "To inspect the backtest summary:" -ForegroundColor Gray
-Write-Host "  Get-Content $BacktestDir\backtest_summary.json | ConvertFrom-Json | ConvertTo-Json -Depth 10" -ForegroundColor Gray
+Write-Host "Compare the two backtests (gross return is the cleaner edge signal):" -ForegroundColor Gray
+Write-Host "  `$a = (Get-Content $BacktestDir\backtest_summary.json | ConvertFrom-Json).backtest" -ForegroundColor Gray
+Write-Host "  `$b = (Get-Content $BacktestAutoDir\backtest_summary.json | ConvertFrom-Json).backtest" -ForegroundColor Gray
+Write-Host "  Write-Host \"labeled : gross=`$(`$a.gross_total_return) net=`$(`$a.net_total_return) trades=`$(`$a.trade_count)\"" -ForegroundColor Gray
+Write-Host "  Write-Host \"auto    : gross=`$(`$b.gross_total_return) net=`$(`$b.net_total_return) trades=`$(`$b.trade_count)\"" -ForegroundColor Gray
+Write-Host ""
+Write-Host "If 'auto' is much worse than 'labeled', the model depends on perfect" -ForegroundColor Gray
+Write-Host "regime foresight and will underperform live. If they're close, the" -ForegroundColor Gray
+Write-Host "real-time detector reproduces the regime structure well enough to deploy." -ForegroundColor Gray
