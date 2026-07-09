@@ -11,7 +11,7 @@ from typing import cast
 
 from dataclasses import replace
 
-from btcusdt_quant import backtest, data, dataset, features, governance, live, models, monitoring, parity, sources, training
+from btcusdt_quant import backtest, data, dataset, feature_registry, features, governance, live, models, monitoring, parity, sources, training
 
 
 class FeatureRegistryV718Tests(unittest.TestCase):
@@ -20,12 +20,14 @@ class FeatureRegistryV718Tests(unittest.TestCase):
         registry_features = cast(list[dict[str, object]], registry["features"])
         self.assertGreaterEqual(len(registry_features), 70, "v7.18 requires at least 70 features")
 
-    def test_all_categories_f01_through_f15_present(self) -> None:
+    def test_all_categories_f01_through_f18_present(self) -> None:
         registry = dataset.feature_formula_registry()
         registry_features = cast(list[dict[str, object]], registry["features"])
         categories = {str(feature["category"]) for feature in registry_features}
-        expected = {f"F{index:02d}" for index in range(1, 16)}
-        self.assertEqual(categories, expected, "v7.18 requires F01-F15 categories")
+        # F16: derivatives-metrics. F17: multi-timeframe. F18: regime
+        # probabilities (leakage-safe purged-K-fold OOF classifier output).
+        expected = {f"F{index:02d}" for index in range(1, 19)}
+        self.assertEqual(categories, expected, "requires F01-F18 categories")
 
     def test_all_active_features_have_required_fields(self) -> None:
         registry = dataset.feature_formula_registry()
@@ -40,7 +42,14 @@ class FeatureRegistryV718Tests(unittest.TestCase):
     def test_feature_names_matches_active_registry(self) -> None:
         registry = dataset.feature_formula_registry()
         registry_features = cast(list[dict[str, object]], registry["features"])
-        active_names = {str(feature["feature_name"]) for feature in registry_features if feature.get("scaffold_status") != "pending_data_source"}
+        # Active determination must follow the registry's single source of
+        # truth (INACTIVE_SCAFFOLD_STATUSES covers pending_data_source AND
+        # disabled_scale_dependent), not a hardcoded status string.
+        active_names = {
+            str(feature["feature_name"])
+            for feature in registry_features
+            if feature.get("scaffold_status") not in feature_registry.INACTIVE_SCAFFOLD_STATUSES
+        }
         self.assertEqual(active_names, set(dataset.FEATURE_NAMES), "FEATURE_NAMES must match active registry features")
 
     def test_prev_horizon_trend_feature_exists(self) -> None:
@@ -254,6 +263,7 @@ class TestRegimeDetector(unittest.TestCase):
         self.assertEqual(diagnostics["regime_transition_count"], 2)
         self.assertEqual(diagnostics["max_single_run_length"], 4)
 
+    @unittest.skipUnless(models.CatBoostAdapter.available(), "catboost not installed")
     def test_training_persists_detector(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             data_path = Path(tmpdir) / "btcusdt_1m.csv"
@@ -340,26 +350,32 @@ class TestRegimeDetector(unittest.TestCase):
         ]
 
 
+@unittest.skipUnless(models.CatBoostAdapter.available(), "catboost not installed")
 class TestRegimeTraining(unittest.TestCase):
-    REGIMES = ["high_volatility"] * 120 + ["trending"] * 30 + ["ranging"] * 150
+    # Directional regime names: the detector training path now calls
+    # detect_all_directional (up/down/range) so it matches the up/down/range
+    # models _train_single_regime knows how to train (its long/short policy
+    # keys on those names) and the --auto-regime backtest. "down" is
+    # deliberately undersized to exercise the min-rows skip path.
+    REGIMES = ["up"] * 120 + ["down"] * 30 + ["range"] * 150
 
     def test_regime_skipped_insufficient_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = self._run_regime_training(Path(tmpdir), self.REGIMES)
 
         skipped = result.run_summary.get("skipped_regimes", {})
-        self.assertEqual(skipped.get("trending", {}).get("status"), "skipped")
-        self.assertEqual(skipped.get("trending", {}).get("reason"), "insufficient_rows")
-        self.assertEqual(skipped.get("trending", {}).get("row_count"), 30)
+        self.assertEqual(skipped.get("down", {}).get("status"), "skipped")
+        self.assertEqual(skipped.get("down", {}).get("reason"), "insufficient_rows")
+        self.assertEqual(skipped.get("down", {}).get("row_count"), 30)
 
     def test_default_regime_is_largest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = self._run_regime_training(Path(tmpdir), self.REGIMES)
 
-        self.assertEqual(result.run_summary.get("default_regime"), "ranging")
+        self.assertEqual(result.run_summary.get("default_regime"), "range")
         trained = result.run_summary.get("trained_regimes", {})
-        self.assertEqual(trained.get("ranging", {}).get("row_count"), 150)
-        self.assertEqual(trained.get("high_volatility", {}).get("row_count"), 120)
+        self.assertEqual(trained.get("range", {}).get("row_count"), 150)
+        self.assertEqual(trained.get("up", {}).get("row_count"), 120)
 
     def test_live_fallback_to_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -411,13 +427,13 @@ class TestRegimeTraining(unittest.TestCase):
         self.assertTrue(inference.get("model_loaded"))
         self.assertIsNotNone(inference.get("probability"))
 
-    def test_no_failure_when_trending_missing(self) -> None:
+    def test_no_failure_when_down_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = self._run_regime_training(Path(tmpdir), self.REGIMES)
 
-        self.assertNotIn("trending", result.run_summary.get("regime_results", {}))
-        self.assertIn("trending", result.run_summary.get("skipped_regimes", {}))
-        self.assertIn("ranging", result.run_summary.get("trained_regimes", {}))
+        self.assertNotIn("down", result.run_summary.get("regime_results", {}))
+        self.assertIn("down", result.run_summary.get("skipped_regimes", {}))
+        self.assertIn("range", result.run_summary.get("trained_regimes", {}))
 
     def test_regime_run_summary_has_all_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -433,9 +449,11 @@ class TestRegimeTraining(unittest.TestCase):
 
     def _run_regime_training(self, output: Path, regimes: list[str]) -> training.TrainingResult:
         build = self._build_dataset(len(regimes))
-        original_detect_all = features.RegimeDetector.detect_all
+        # The detector training path now calls detect_all_directional
+        # (up/down/range), not the strength-based detect_all, so patch that.
+        original_detect_all_directional = features.RegimeDetector.detect_all_directional
 
-        def patched_detect_all(
+        def patched_detect_all_directional(
             detector: features.RegimeDetector,
             rv_15_values: object,
             trend_slope_30_values: object,
@@ -443,7 +461,7 @@ class TestRegimeTraining(unittest.TestCase):
         ) -> list[str]:
             return list(regimes)
 
-        features.RegimeDetector.detect_all = patched_detect_all
+        features.RegimeDetector.detect_all_directional = patched_detect_all_directional
         try:
             return training.run_training(
                 input_path=None,
@@ -452,7 +470,7 @@ class TestRegimeTraining(unittest.TestCase):
                 prebuilt_dataset=build,
             )
         finally:
-            features.RegimeDetector.detect_all = original_detect_all
+            features.RegimeDetector.detect_all_directional = original_detect_all_directional
 
     def _build_dataset(self, rows: int) -> dataset.DatasetBuild:
         base = data.utc_minute(2026, 1, 1, 0, 0)
@@ -1268,7 +1286,11 @@ class BehavioralV718Tests(unittest.TestCase):
                     clipper = features.FeatureClipper()
                     limit = clipper.LIMITS.get(clipper.classify(name))
                     if limit is not None:
-                        self.assertLessEqual(abs(value), limit, f"feature {name} should be clipped to ±{limit}")
+                        # Features are stored as float32; a value clipped to
+                        # exactly ±limit in float64 can round to ~1 ULP above
+                        # limit as float32 (e.g. float32(0.2) = 0.20000000298).
+                        # Allow that float32 boundary tolerance.
+                        self.assertLessEqual(abs(value), limit * (1.0 + 1e-6) + 1e-6, f"feature {name} should be clipped to ±{limit}")
 
     def test_gap_contamination_blocks_entry_when_gap_ratio_high(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2481,7 +2503,14 @@ class TestBacktest(unittest.TestCase):
             backtest.run_backtest(candles, None, strategy, cooldown_bars=-1)
 
 
-class TestUserRegime(unittest.TestCase):
+class TestUserRegimePeriods(unittest.TestCase):
+    """dataset.resolve_user_regime / load_user_regime_periods still power
+    train-regime-classifier's ground-truth labels (regimes.json), even though
+    the old "hard-route entry models by hand labels" training path
+    (--use-user-regime / _run_user_regime_training) was removed as
+    non-deployable (it depended on hindsight regime labels with no live
+    counterpart)."""
+
     def test_resolve_user_regime_boundary(self) -> None:
         from datetime import datetime, timezone
         periods = [
@@ -2520,79 +2549,6 @@ class TestUserRegime(unittest.TestCase):
             path.write_text(json.dumps(data), encoding="utf-8")
             with self.assertRaises(ValueError):
                 dataset.load_user_regime_periods(path)
-
-    def test_training_config_user_regime_fields(self) -> None:
-        from datetime import datetime, timezone
-        config = training.TrainingConfig(use_user_regime=True, training_start=datetime(2020, 12, 15, tzinfo=timezone.utc))
-        self.assertTrue(config.use_user_regime)
-        self.assertEqual(config.training_start, datetime(2020, 12, 15, tzinfo=timezone.utc))
-
-    def test_user_regime_training_bypasses_detector(self) -> None:
-        import tempfile
-        from datetime import datetime, timezone
-        # Manually construct labeled rows with user_regime to bypass feature warmup
-        base = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
-        feature_names = tuple(dataset.FEATURE_NAMES)
-        labeled_rows: list[dataset.LabeledRow] = []
-        feature_rows: list[dataset.FeatureRow] = []
-        # Create 600 rows: 200 up, 200 down, 200 range (need enough for CV splits)
-        for index in range(600):
-            open_time = base + timedelta(minutes=index)
-            row_features = {name: ((index % 11) - 5) * 0.001 for name in feature_names}
-            row_features["rv_15"] = float(index % 7) * 0.001
-            row_features["trend_slope_30"] = float((index % 5) - 2) * 0.0001
-            label = index % 2
-            regime = "up" if index < 200 else ("down" if index < 400 else "range")
-            feature_rows.append(dataset.FeatureRow(index, open_time, dict(row_features), 0, False, False, user_regime=regime))
-            labeled_rows.append(dataset.LabeledRow(
-                index, open_time, dict(row_features), label, "threshold",
-                0.001 if label else -0.001, 0, False, False,
-                targets={"direction": label, "profitability": label},
-                target_reasons={"direction": "future_positive" if label else "future_negative", "profitability": "threshold"},
-                user_regime=regime,
-            ))
-        gap_report = dataset.GapReport(600, 600, 0, 0.0, 0, base.isoformat(), (base + timedelta(minutes=599)).isoformat())
-        source_report = {
-            "feature_space_parity_passed": True,
-            "train_live_feature_parity_passed": True,
-            "unavailable_sources": [],
-            "fallback_features": [],
-        }
-        build = dataset.DatasetBuild(
-            source="test_user_regime",
-            symbol="BTCUSDT",
-            interval="1m",
-            raw_rows=600,
-            canonical=[],
-            gap_report=gap_report,
-            feature_rows=feature_rows,
-            labeled_rows=labeled_rows,
-            feature_names=feature_names,
-            label_horizon=15,
-            label_threshold=0.0002,
-            source_availability_report=source_report,
-        )
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_dir = Path(tmpdir)
-            config = training.TrainingConfig(
-                regime_aware=True,
-                use_user_regime=True,
-                ensemble_enabled=False,
-                n_groups=2,
-                test_group_count=1,
-                min_regime_rows=10,
-            )
-            # Should succeed without calling RegimeDetector
-            result = training.run_regime_aware_training(build, output_dir, config)
-            self.assertIn("regime_source", result.run_summary)
-            self.assertEqual(result.run_summary["regime_source"], "user_regime")
-            trained = result.run_summary.get("trained_regimes", {})
-            self.assertIn("up", trained)
-            self.assertIn("down", trained)
-            self.assertIn("range", trained)
-            self.assertEqual(trained["up"]["row_count"], 200)
-            self.assertEqual(trained["down"]["row_count"], 200)
-            self.assertEqual(trained["range"]["row_count"], 200)
 
 
 class TestRangeMeanReversionFeatures(unittest.TestCase):
@@ -2634,27 +2590,30 @@ class TestRangeMeanReversionFeatures(unittest.TestCase):
         rows = dataset.build_feature_rows(candles)
         self.assertGreaterEqual(len(rows), 20)
 
-        # After 20 bars, range_high_20 and range_low_20 should be known
+        # range_high_20 / range_low_20 are scaffold_status=
+        # "disabled_scale_dependent" (raw price levels usable as an era
+        # proxy): still computed INTERNALLY as inputs to the relative
+        # features, but excluded from model-facing feature rows.
         row_20 = rows[19]
-        self.assertIn("range_high_20", row_20.features)
-        self.assertIn("range_low_20", row_20.features)
+        self.assertNotIn("range_high_20", row_20.features)
+        self.assertNotIn("range_low_20", row_20.features)
         self.assertIn("range_position_20", row_20.features)
 
-        # range_high_20 should be max of highs in the last 20 bars
+        # The relative features must still reflect the correct underlying
+        # rolling extremes (computed from the disabled series).
         expected_high = max(c.high for c in candles[0:20])
         expected_low = min(c.low for c in candles[0:20])
-        self.assertAlmostEqual(row_20.features["range_high_20"], expected_high, places=5)
-        self.assertAlmostEqual(row_20.features["range_low_20"], expected_low, places=5)
 
         # range_position_20 with close=100, high=110, low=90 -> (100-90)/(110-90) = 0.5
         expected_pos = (100.0 - expected_low) / (expected_high - expected_low)
         self.assertAlmostEqual(row_20.features["range_position_20"], expected_pos, places=5)
+        self.assertAlmostEqual(row_20.features["distance_to_range_high"], 100.0 / expected_high - 1.0, places=5)
+        self.assertAlmostEqual(row_20.features["distance_to_range_low"], 100.0 / expected_low - 1.0, places=5)
 
         # Warmup rows should have 0.0
         row_5 = rows[4]
-        self.assertEqual(row_5.features["range_high_20"], 0.0)
-        self.assertEqual(row_5.features["range_low_20"], 0.0)
         self.assertEqual(row_5.features["range_position_20"], 0.0)
+        self.assertEqual(row_5.features["distance_to_range_high"], 0.0)
 
     def test_range_position_clamped(self) -> None:
         base = data.utc_minute(2026, 1, 1, 0, 0)

@@ -427,11 +427,18 @@ def strategy_for_regime(
     return result
 
 
-def optimized_tp_sl(entry_price: float, side: str, features: Mapping[str, float], strategy: StrategyConfig) -> tuple[float, float, dict[str, object]]:
-    if entry_price <= 0.0:
-        raise ValueError("entry_price must be positive")
-    if side not in {"BUY", "SELL"}:
-        raise ValueError("side must be BUY or SELL")
+def resolve_tp_sl_deltas(features: Mapping[str, float], strategy: StrategyConfig) -> tuple[float, float, str, bool]:
+    """Resolve the TP/SL barrier magnitudes (as fractions of entry price) for a
+    given bar's features and strategy.
+
+    This is the SINGLE SOURCE OF TRUTH for barrier sizing. Both optimized_tp_sl
+    (which places the actual exit prices a backtest/live trade is closed at) and
+    the EV gate (evaluate_entry_signal, which decides whether a trade is worth
+    taking) call this, so the expected-value calculation can never be computed
+    against different TP/SL than the trade will actually experience. Returns
+    (tp_delta, sl_delta, pricing_method, floored). The deltas are side-agnostic
+    -- only price placement depends on BUY/SELL.
+    """
     atr_value = features.get("atr_pct")
     if getattr(strategy, "use_atr_pricing", True) and atr_value is not None and float(atr_value) > 0.0:
         tp_delta = strategy.atr_multiplier_tp * float(atr_value)
@@ -459,6 +466,15 @@ def optimized_tp_sl(entry_price: float, side: str, features: Mapping[str, float]
     if strategy.min_sl_floor_pct > 0.0 and sl_delta < strategy.min_sl_floor_pct:
         sl_delta = strategy.min_sl_floor_pct
         floored = True
+    return tp_delta, sl_delta, pricing_method, floored
+
+
+def optimized_tp_sl(entry_price: float, side: str, features: Mapping[str, float], strategy: StrategyConfig) -> tuple[float, float, dict[str, object]]:
+    if entry_price <= 0.0:
+        raise ValueError("entry_price must be positive")
+    if side not in {"BUY", "SELL"}:
+        raise ValueError("side must be BUY or SELL")
+    tp_delta, sl_delta, pricing_method, floored = resolve_tp_sl_deltas(features, strategy)
     if side == "BUY":
         tp_price = entry_price * (1.0 + tp_delta)
         sl_price = entry_price * (1.0 - sl_delta)
@@ -1498,6 +1514,17 @@ class RegimeModelBundle:
     detector_diagnostics: Mapping[str, object]
     default_regime: str | None = None
     direction_policy: dict[str, set[str]] | None = None  # regime -> {"LONG"}, {"SHORT"}, {"LONG", "SHORT"}, set()
+    # Per-regime, per-side decision thresholds chosen on each regime's
+    # out-of-sample holdout at train time (threshold-objective on the
+    # prefix-trained diagnostic model). regime -> {"long": float, "short": float}.
+    # Previously computed and written to regime_run_summary.json but never read
+    # back, so live/backtest ignored them and used a flat profile/CLI default.
+    regime_thresholds: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Fitted multi-feature rule detector (regime_rules.MultiFeatureRegimeDetector)
+    # when the artifact was trained with --multi-feature-regime. When present,
+    # live routes with it (same detector that assigned the training buckets),
+    # taking priority over the learned classifier and the slope detector.
+    multi_feature_regime_detector: object | None = None
 
 
 def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeModelBundle | None:
@@ -1516,6 +1543,12 @@ def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeM
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     regime_results = summary.get("regime_results", {})
     default_regime = summary.get("default_regime")
+    # Fitted multi-feature rule detector, if this artifact was trained with it.
+    multi_feature_regime_detector = None
+    _rule_payload = summary.get("multi_feature_regime_detector")
+    if _rule_payload:
+        from btcusdt_quant import regime_rules as _rr
+        multi_feature_regime_detector = _rr.MultiFeatureRegimeDetector.from_dict(_rule_payload)
     regime_detector = summary.get("regime_detector", {})
     detector_thresholds = _coerce_float_mapping(regime_detector.get("thresholds", {}) if isinstance(regime_detector, Mapping) else {})
     detector_config = _coerce_regime_detector_config(regime_detector.get("config", {}) if isinstance(regime_detector, Mapping) else {})
@@ -1526,11 +1559,27 @@ def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeM
     long_models: dict[str, models.ModelAdapter] = {}
     short_models: dict[str, models.ModelAdapter] = {}
     direction_policy: dict[str, set[str]] = {}
+    regime_thresholds: dict[str, dict[str, float]] = {}
     
     # Support both old (model.json) and new (long_model.json + short_model.json) structures
     for regime_name in list(regime_results.keys()):
         regime_dir = path / f"regime_{regime_name}"
         regime_directions: set[str] = set()
+
+        # Learned per-side holdout thresholds for this regime (if present).
+        regime_summary = regime_results.get(regime_name, {})
+        if isinstance(regime_summary, Mapping):
+            sel = regime_summary.get("selected_thresholds", {})
+            if isinstance(sel, Mapping):
+                coerced: dict[str, float] = {}
+                for side in ("long", "short"):
+                    if side in sel:
+                        try:
+                            coerced[side] = float(sel[side])
+                        except (TypeError, ValueError):
+                            pass
+                if coerced:
+                    regime_thresholds[regime_name] = coerced
         
         # Try new structure: long_model.json + short_model.json (may have only one)
         long_path = regime_dir / "long_model.json"
@@ -1577,6 +1626,8 @@ def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeM
         detector_diagnostics=diagnostics_mapping,
         default_regime=str(default_regime) if isinstance(default_regime, str) else None,
         direction_policy=direction_policy,
+        regime_thresholds=regime_thresholds,
+        multi_feature_regime_detector=multi_feature_regime_detector,
     )
 
 
@@ -1668,15 +1719,33 @@ def evaluate_entry_signal(
     min_ev: float = 0.0001,
     long_threshold: float = 0.55,
     short_threshold: float = 0.55,
-    gross_tp_pct: float = 0.0015,
-    gross_sl_pct: float = 0.0010,
+    gross_tp_pct: float = 0.003,
+    gross_sl_pct: float = 0.0015,
     cost_config: dict[str, float] | None = None,
+    strategy: "StrategyConfig | None" = None,
+    features: Mapping[str, float] | None = None,
 ) -> tuple[str, float, float]:
     """Evaluate entry signal based on EV calculation.
-    
+
+    TP/SL barrier sourcing (in priority order):
+      1. If ``strategy`` (and optionally ``features``) is given, the EV is
+         computed against the SAME barriers resolve_tp_sl_deltas produces for
+         optimized_tp_sl -- i.e. the exact barriers this trade would exit at.
+         This is the correct call form for backtest/live and eliminates the
+         train/serve skew where EV used fixed 0.15%/0.10% (RR 1.5) while trades
+         actually exited at the strategy's ATR/floor barriers.
+      2. Otherwise the explicit ``gross_tp_pct``/``gross_sl_pct`` are used.
+         Their defaults now match the triple-barrier label defaults
+         (tp=0.30%, sl=0.15%, RR 2.0) rather than the old mismatched 1.5-RR
+         constants, so even a caller that forgets to pass a strategy degrades
+         to label-consistent barriers instead of silently-wrong ones.
+
     Returns:
         (signal, long_ev, short_ev) where signal is "LONG", "SHORT", or "NO_TRADE"
     """
+    if strategy is not None:
+        tp_delta, sl_delta, _, _ = resolve_tp_sl_deltas(features or {}, strategy)
+        gross_tp_pct, gross_sl_pct = tp_delta, sl_delta
     long_ev = calculate_long_ev(long_prob, gross_tp_pct, gross_sl_pct, cost_config)
     short_ev = calculate_short_ev(short_prob, gross_tp_pct, gross_sl_pct, cost_config)
     
@@ -1706,6 +1775,7 @@ class LiveEngine:
         soak_report_interval_minutes: float = 60.0,
         long_threshold_override: float | None = None,
         short_threshold_override: float | None = None,
+        regime_classifier_model: object | None = None,
     ) -> None:
         if strategy_profile not in STRATEGY_PROFILE_CHOICES:
             raise ValueError(f"unsupported strategy profile: {strategy_profile}")
@@ -1722,6 +1792,20 @@ class LiveEngine:
         self.strategy_profile = strategy_profile
         self.long_threshold_override = long_threshold_override
         self.short_threshold_override = short_threshold_override
+        # For the non-EV decision paths (_apply_strategy_decision -> select_signal
+        # in single-model/legacy artifacts), preserve the historical behavior of
+        # forcing 0.55 when the user passed no explicit --long/--short-threshold.
+        # The raw *_override (possibly None) is kept separately so the
+        # regime-aware EV path can distinguish "user set a threshold" (override)
+        # from "use the learned per-regime holdout threshold" (override is None).
+        self._nonev_long_threshold = long_threshold_override if long_threshold_override is not None else 0.55
+        self._nonev_short_threshold = short_threshold_override if short_threshold_override is not None else 0.55
+        # SAVED final regime classifier (train-regime-classifier's
+        # regime_classifier_model.cbm). When present, live routing uses the
+        # SAME classifier that trained the up/down/range buckets and that the
+        # backtest routes with, instead of the trend_slope_30-only detector --
+        # closing the training/backtest-vs-live regime-routing skew.
+        self.regime_classifier_model = regime_classifier_model
         self.soak_duration_hours = soak_duration_hours
         self.soak_report_interval_minutes = soak_report_interval_minutes
         self.bus = EventBus()
@@ -1760,7 +1844,7 @@ class LiveEngine:
         self.source_report: Mapping[str, object] = {}
         self.signal = "HOLD"
         self.model_inference: dict[str, object] = {"probability": None, "signal": "HOLD", "model_loaded": False}
-        self.strategy_config = strategy_for_regime(None, self.strategy_profile, self.long_threshold_override, self.short_threshold_override)
+        self.strategy_config = strategy_for_regime(None, self.strategy_profile, self._nonev_long_threshold, self._nonev_short_threshold)
         self.strategy_decision: dict[str, object] = {"profile": self.strategy_profile, "strategy": self.strategy_config.as_dict(), "signal": "HOLD"}
         self.bracket_pricing: dict[str, object] | None = None
         self.gap_action = "allow"
@@ -1975,7 +2059,7 @@ class LiveEngine:
         self.bus.publish(SignalEvent(self.signal, self.model_inference, latest_row))
 
     def _apply_strategy_decision(self, probability: float | None, active_regime: str | None, fallback_signal: str) -> str:
-        strategy = strategy_for_regime(active_regime, self.strategy_profile, self.long_threshold_override, self.short_threshold_override)
+        strategy = strategy_for_regime(active_regime, self.strategy_profile, self._nonev_long_threshold, self._nonev_short_threshold)
         threshold_signal = select_signal(probability, active_regime or "", strategy) if probability is not None else fallback_signal
         latest_features = self.feature_rows[-1].features if self.feature_rows else {}
         entry_price = self.canonical[-1].close if self.canonical else 0.0
@@ -2007,6 +2091,37 @@ class LiveEngine:
         }
         return selected_signal
 
+    def _route_via_regime_classifier(self, latest_row: "dataset.FeatureRow", latest_features: dict[str, float]) -> str:
+        """Route the current bar with the saved regime classifier and inject
+        its F18 probabilities onto the latest row.
+
+        Runs regime_classifier.route_regime_causal over the F17 feature vectors
+        of the current live buffer (self.feature_rows). The per-bar raw
+        probabilities are stateless (they depend only on that bar's F17
+        features), so the LAST bar's probabilities are exact regardless of
+        buffer length; the smoothed/hysteresis regime label is the best causal
+        estimate available from the buffer (a longer buffer tracks the training
+        smoothing more closely -- an inherent property of streaming, shared
+        with any online hysteresis). The last bar's raw probabilities are
+        written back onto latest_row.features so the entry models consume the
+        SAME regime_prob_up/range/down values they saw at train/backtest time.
+        """
+        from btcusdt_quant import mtf_features as _mtf, regime_classifier as _rc
+
+        f17_rows = [_mtf.extract_feature_vector(r.features) for r in self.feature_rows]
+        if not f17_rows:
+            return "range"
+        raw_probs, detected = _rc.route_regime_causal(f17_rows, self.regime_classifier_model)
+        last = raw_probs[-1]
+        # Mutate the (frozen dataclass's mutable) features dict in place so
+        # every downstream reader of self.feature_rows[-1].features -- the
+        # entry-model probability calls below and latest_features (same dict
+        # object) -- sees the injected F18 values, mirroring backtest.py.
+        latest_row.features["regime_prob_up"] = float(last.get("up", 0.0))
+        latest_row.features["regime_prob_range"] = float(last.get("range", 0.0))
+        latest_row.features["regime_prob_down"] = float(last.get("down", 0.0))
+        return detected[-1]
+
     def _compute_signal(self) -> None:
         strict_artifact = self.model_artifact_path is not None
         active_regime: str | None = None
@@ -2021,8 +2136,31 @@ class LiveEngine:
                 # Priority 1: Use user_regime from feature row if available
                 if hasattr(latest_row, 'user_regime') and latest_row.user_regime is not None:
                     active_regime = latest_row.user_regime
+                elif regime_bundle.multi_feature_regime_detector is not None:
+                    # Priority 2: multi-feature rule detector -- the SAME fitted
+                    # detector that assigned the training buckets (loaded from
+                    # regime_run_summary.json), run causally over the live
+                    # buffer. Deterministic; uses persisted normalization stats
+                    # (no live refit), so per-bar scores match training exactly.
+                    # Takes priority over the learned classifier and the slope
+                    # detector, closing the train/serve routing skew.
+                    active_regime = regime_bundle.multi_feature_regime_detector.detect_one(
+                        [r.features for r in self.feature_rows]
+                    )
+                elif self.regime_classifier_model is not None:
+                    # Priority 3: route with the SAVED regime classifier -- the
+                    # SAME model that assigned training buckets and that the
+                    # backtest routes with (regime_classifier.route_regime_causal
+                    # over F17 multi-timeframe features). This closes the
+                    # train/serve skew where training+backtest used the learned
+                    # classifier but live silently fell back to trend_slope_30.
+                    # It also injects the classifier's regime_prob_up/range/down
+                    # onto the latest row so the entry models see the SAME F18
+                    # inputs they were trained and backtested with (matching
+                    # backtest.py's raw_probs injection) rather than 0/0/0.
+                    active_regime = self._route_via_regime_classifier(latest_row, latest_features)
                 else:
-                    # Priority 2: Fall back to automatic regime detection.
+                    # Priority 4: Fall back to trend_slope_30 detection.
                     # Use DIRECTIONAL detection (up/down/range) so the regime
                     # matches the trained model keys. The base detect() returns
                     # trending/ranging/high_volatility, which never match the
@@ -2033,18 +2171,35 @@ class LiveEngine:
                     if isinstance(detector_config, dict):
                         detector_config = features.RegimeDetectorConfig(**detector_config)
                     detector = features.RegimeDetector(detector_config)
-                    # Calibrate the directional threshold from the trend-slope
-                    # history available so far (all buffered feature rows).
-                    hist_slopes = [
-                        float(r.features.get("trend_slope_30", 0.0))
-                        for r in self.feature_rows
-                    ]
-                    dir_thresholds = detector.fit_directional_threshold(hist_slopes) if hist_slopes else None
-                    active_regime = detector.detect_directional(
-                        trend_slope_30,
-                        thresholds=dir_thresholds,
-                        historical_trend_slope_30_values=hist_slopes if not dir_thresholds else None,
-                    )
+                    # Prefer the dir_threshold SAVED at training time (fit
+                    # once over the full training-period trend-slope
+                    # distribution) over re-fitting from whatever's in the
+                    # live buffer right now. Re-fitting live would calibrate
+                    # the up/down/range cutoff against a small, possibly very
+                    # different recent-volatility sample than what the models
+                    # were actually trained and routed against -- a
+                    # train/serve skew in the threshold itself, separate from
+                    # (but analogous to) the regime-bucket-assignment skew
+                    # this whole regime_classifier design has been careful to
+                    # avoid elsewhere. Only fall back to live-buffer
+                    # calibration when no saved threshold exists (e.g. an
+                    # older artifact trained before dir_threshold was
+                    # persisted).
+                    saved_dir_threshold = regime_bundle.detector_thresholds.get("dir_threshold")
+                    if saved_dir_threshold is not None:
+                        dir_thresholds = {"dir_threshold": float(saved_dir_threshold)}
+                        active_regime = detector.detect_directional(trend_slope_30, thresholds=dir_thresholds)
+                    else:
+                        hist_slopes = [
+                            float(r.features.get("trend_slope_30", 0.0))
+                            for r in self.feature_rows
+                        ]
+                        dir_thresholds = detector.fit_directional_threshold(hist_slopes) if hist_slopes else None
+                        active_regime = detector.detect_directional(
+                            trend_slope_30,
+                            thresholds=dir_thresholds,
+                            historical_trend_slope_30_values=hist_slopes if not dir_thresholds else None,
+                        )
                 
                 # Get direction policy for this regime
                 allowed_directions = regime_bundle.direction_policy.get(active_regime, {"LONG", "SHORT"})
@@ -2083,11 +2238,29 @@ class LiveEngine:
                     long_prob = long_prob if long_prob is not None else 0.0
                     short_prob = short_prob if short_prob is not None else 0.0
                     
+                    # Decision-threshold precedence: explicit CLI override
+                    # (--long-threshold/--short-threshold) > learned per-regime
+                    # holdout threshold (selected_thresholds, chosen
+                    # out-of-sample at train time) > 0.55 default. Wiring the
+                    # learned per-side thresholds here connects a value that was
+                    # previously computed, saved to regime_run_summary.json, and
+                    # then ignored by the live/backtest decision.
+                    _learned = regime_bundle.regime_thresholds.get(active_regime or "", {})
+                    eff_long_threshold = (
+                        self.long_threshold_override if self.long_threshold_override is not None
+                        else float(_learned.get("long", 0.55))
+                    )
+                    eff_short_threshold = (
+                        self.short_threshold_override if self.short_threshold_override is not None
+                        else float(_learned.get("short", 0.55))
+                    )
                     signal, long_ev, short_ev = evaluate_entry_signal(
                         long_prob, short_prob,
                         min_ev=self.strategy_config.min_ev if hasattr(self.strategy_config, 'min_ev') else 0.0001,
-                        long_threshold=self.strategy_config.long_threshold,
-                        short_threshold=self.strategy_config.short_threshold,
+                        long_threshold=eff_long_threshold,
+                        short_threshold=eff_short_threshold,
+                        strategy=self.strategy_config,
+                        features=latest_features,
                     )
                     
                     # Convert to BUY/SELL/HOLD
@@ -2402,6 +2575,7 @@ def run_live(
     soak_report_interval_minutes: float = 60.0,
     long_threshold_override: float | None = None,
     short_threshold_override: float | None = None,
+    regime_classifier_model: object | None = None,
 ) -> LiveRunResult:
     return LiveEngine(
         output,
@@ -2419,6 +2593,7 @@ def run_live(
         soak_report_interval_minutes=soak_report_interval_minutes,
         long_threshold_override=long_threshold_override,
         short_threshold_override=short_threshold_override,
+        regime_classifier_model=regime_classifier_model,
     ).run()
 
 

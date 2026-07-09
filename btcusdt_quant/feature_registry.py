@@ -37,6 +37,9 @@ HIGHER_TIMEFRAME = "higher_timeframe_features"
 TIME_SESSION = "time_session_features"
 MOMENTUM_INDICATORS = "momentum_indicator_features"
 RANGE_MEAN_REVERSION = "range_mean_reversion_features"
+DERIVATIVES_METRICS = "derivatives_metrics_features"
+MULTI_TIMEFRAME = "multi_timeframe_features"
+REGIME_PROBABILITY = "regime_probability_features"
 
 
 def _feature(
@@ -122,7 +125,8 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("trade_count_ratio", "F04", VOLUME_FLOW, "number_of_trades_t / max(SMA(number_of_trades,20), 1e-12) - 1", 20, 20, "klines_1m"),
     _feature("trade_count_zscore_20", "F04", VOLUME_FLOW, "(number_of_trades_t - SMA(number_of_trades,20)) / stddev(number_of_trades,20)", 20, 20, "klines_1m"),
     _feature("volume_per_trade", "F04", VOLUME_FLOW, "volume_t / max(number_of_trades_t, 1)", 1, 1, "klines_1m"),
-    _feature("quote_volume_per_trade", "F04", VOLUME_FLOW, "quote_volume_t / max(number_of_trades_t, 1)", 1, 1, "klines_1m"),
+    # disabled_scale_dependent: quote-USD per trade (hundreds..tens of thousands $) saturates the +-100 ratio clip almost always -> near-constant; volume_per_trade (BTC units) stays active
+    _feature("quote_volume_per_trade", "F04", VOLUME_FLOW, "quote_volume_t / max(number_of_trades_t, 1)", 1, 1, "klines_1m", scaffold_status="disabled_scale_dependent"),
     _feature("volume_shock_20", "F04", VOLUME_FLOW, "(volume_t - SMA(volume,20)) / stddev(volume,20)", 20, 20, "klines_1m", ("volume_zscore_20",)),
     _feature("high_low_range", "F05", CANDLE_STRUCTURE, "(high_t - low_t) / close_t", 1, 1, "klines_1m"),
     _feature("body_pct", "F05", CANDLE_STRUCTURE, "abs(close_t - open_t) / close_t", 1, 1, "klines_1m"),
@@ -165,13 +169,19 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("volume_zscore_20_vol_adj", "F10", VOL_ADJUSTED_FLOW, "volume_zscore_20 / max(rv_60, 1e-12)", 61, 61, "klines_1m", ("volume_zscore_20", "rv_60")),
     _feature("trade_count_zscore_20_vol_adj", "F10", VOL_ADJUSTED_FLOW, "trade_count_zscore_20 / max(rv_60, 1e-12)", 61, 61, "klines_1m", ("trade_count_zscore_20", "rv_60")),
     _feature("taker_imbalance_vol_adj", "F10", VOL_ADJUSTED_FLOW, "taker_imbalance / max(rv_60, 1e-12)", 61, 61, "klines_1m", ("taker_imbalance", "rv_60")),
-    _feature("spread", "F11", MICROSTRUCTURE, "(best_ask_t - best_bid_t) / mid_price_t", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot"),
-    _feature("spread_bps", "F11", MICROSTRUCTURE, "10000 * (best_ask_t - best_bid_t) / mid_price_t", 1, 1, "depth_snapshot", ("spread",), warmup_rule="state", leakage_risk="low_state_snapshot"),
-    _feature("bid_ask_imbalance", "F11", MICROSTRUCTURE, "(best_bid_qty_t - best_ask_qty_t) / max(best_bid_qty_t + best_ask_qty_t, 1e-12)", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot"),
-    _feature("best_bid_qty_ratio", "F11", MICROSTRUCTURE, "best_bid_qty_t / max(best_bid_qty_t + best_ask_qty_t, 1e-12)", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot"),
-    _feature("best_ask_qty_ratio", "F11", MICROSTRUCTURE, "best_ask_qty_t / max(best_bid_qty_t + best_ask_qty_t, 1e-12)", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot"),
-    _feature("microprice_deviation", "F11", MICROSTRUCTURE, "(microprice_t - mid_price_t) / mid_price_t", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot"),
-    _feature("order_book_pressure", "F11", MICROSTRUCTURE, "(bid_qty - ask_qty) / max(bid_qty + ask_qty, 1e-12)", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot"),
+    # F11 order-book depth features are DISABLED (scaffold_status=
+    # pending_data_source). The Binance bookDepth archive is percentage-band
+    # cumulative depth, not top-of-book best_bid/ask, so it can't reproduce
+    # these at training time; training would use mock constants while live gets
+    # real values — a train/live gap. Kept as definitions for provenance but
+    # excluded from active_feature_names until a real top-of-book source exists.
+    _feature("spread", "F11", MICROSTRUCTURE, "(best_ask_t - best_bid_t) / mid_price_t", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot", scaffold_status="pending_data_source"),
+    _feature("spread_bps", "F11", MICROSTRUCTURE, "10000 * (best_ask_t - best_bid_t) / mid_price_t", 1, 1, "depth_snapshot", ("spread",), warmup_rule="state", leakage_risk="low_state_snapshot", scaffold_status="pending_data_source"),
+    _feature("bid_ask_imbalance", "F11", MICROSTRUCTURE, "(best_bid_qty_t - best_ask_qty_t) / max(best_bid_qty_t + best_ask_qty_t, 1e-12)", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot", scaffold_status="pending_data_source"),
+    _feature("best_bid_qty_ratio", "F11", MICROSTRUCTURE, "best_bid_qty_t / max(best_bid_qty_t + best_ask_qty_t, 1e-12)", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot", scaffold_status="pending_data_source"),
+    _feature("best_ask_qty_ratio", "F11", MICROSTRUCTURE, "best_ask_qty_t / max(best_bid_qty_t + best_ask_qty_t, 1e-12)", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot", scaffold_status="pending_data_source"),
+    _feature("microprice_deviation", "F11", MICROSTRUCTURE, "(microprice_t - mid_price_t) / mid_price_t", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot", scaffold_status="pending_data_source"),
+    _feature("order_book_pressure", "F11", MICROSTRUCTURE, "(bid_qty - ask_qty) / max(bid_qty + ask_qty, 1e-12)", 1, 1, "depth_snapshot", warmup_rule="state", leakage_risk="low_state_snapshot", scaffold_status="pending_data_source"),
     _feature("adl_indicator", "F12", EXCHANGE_SAFETY, "exchange ADL quantile indicator observed at t", 1, 1, "adl_quantile", warmup_rule="state", leakage_risk="low_state_snapshot"),
     _feature("funding_rate", "F12", EXCHANGE_SAFETY, "current funding rate observed at t", 1, 1, "funding_rate", warmup_rule="state", leakage_risk="low_state_snapshot"),
     _feature("next_funding_rate", "F12", EXCHANGE_SAFETY, "announced next funding rate snapshot observed at t", 1, 1, "funding_rate", warmup_rule="state", leakage_risk="low_state_snapshot"),
@@ -211,21 +221,29 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     # F15: Momentum Indicators (RSI, MACD, Bollinger, VWAP)
     _feature("rsi_7", "F15", MOMENTUM_INDICATORS, "RSI(close, 7)", 8, 8, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("rsi_14", "F15", MOMENTUM_INDICATORS, "RSI(close, 14)", 15, 15, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("macd_line", "F15", MOMENTUM_INDICATORS, "EMA(close,12) - EMA(close,26)", 26, 26, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("macd_signal", "F15", MOMENTUM_INDICATORS, "EMA(macd_line, 9)", 35, 35, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("macd_hist", "F15", MOMENTUM_INDICATORS, "macd_line - macd_signal", 35, 35, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    # disabled_scale_dependent: dollar-scale EMA spread: same %-move clips (+-100 ratio bound) only at high price levels -> era leak + info loss; scale-free replacement: ema_12_26_spread
+    _feature("macd_line", "F15", MOMENTUM_INDICATORS, "EMA(close,12) - EMA(close,26)", 26, 26, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only", scaffold_status="disabled_scale_dependent"),
+    # disabled_scale_dependent: dollar-scale (EMA of macd_line); same clip-saturation/era-leak issue
+    _feature("macd_signal", "F15", MOMENTUM_INDICATORS, "EMA(macd_line, 9)", 35, 35, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only", scaffold_status="disabled_scale_dependent"),
+    # disabled_scale_dependent: dollar-scale; same clip-saturation/era-leak issue
+    _feature("macd_hist", "F15", MOMENTUM_INDICATORS, "macd_line - macd_signal", 35, 35, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only", scaffold_status="disabled_scale_dependent"),
     _feature("bb_width_20", "F15", MOMENTUM_INDICATORS, "(BB_upper_20 - BB_lower_20) / BB_middle_20", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("bb_percent_b", "F15", MOMENTUM_INDICATORS, "(close - BB_lower_20) / (BB_upper_20 - BB_lower_20)", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("ema_5_slope", "F15", MOMENTUM_INDICATORS, "linear_regression_slope(EMA(close,5), last 5 bars)", 10, 10, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("ema_20_slope", "F15", MOMENTUM_INDICATORS, "linear_regression_slope(EMA(close,20), last 10 bars)", 30, 30, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("ema_60_slope", "F15", MOMENTUM_INDICATORS, "linear_regression_slope(EMA(close,60), last 10 bars)", 70, 70, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("rolling_vwap_20", "F15", MOMENTUM_INDICATORS, "cumulative(close*volume, 20) / cumulative(volume, 20)", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("rolling_vwap_60", "F15", MOMENTUM_INDICATORS, "cumulative(close*volume, 60) / cumulative(volume, 60)", 60, 60, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    # disabled_scale_dependent: raw price level (clipper "price" class); kept computed as input for vwap_deviation_zscore / price_vs_rolling_vwap_20
+    _feature("rolling_vwap_20", "F15", MOMENTUM_INDICATORS, "cumulative(close*volume, 20) / cumulative(volume, 20)", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only", scaffold_status="disabled_scale_dependent"),
+    # disabled_scale_dependent: raw price level; kept computed as input for price_vs_rolling_vwap_60
+    _feature("rolling_vwap_60", "F15", MOMENTUM_INDICATORS, "cumulative(close*volume, 60) / cumulative(volume, 60)", 60, 60, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only", scaffold_status="disabled_scale_dependent"),
     _feature("price_vs_rolling_vwap_20", "F15", MOMENTUM_INDICATORS, "close / rolling_vwap_20 - 1", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("price_vs_rolling_vwap_60", "F15", MOMENTUM_INDICATORS, "close / rolling_vwap_60 - 1", 60, 60, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("range_high_20", "F15", RANGE_MEAN_REVERSION, "rolling max(high,20) ending at t", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("range_low_20", "F15", RANGE_MEAN_REVERSION, "rolling min(low,20) ending at t", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
-    _feature("range_mid_20", "F15", RANGE_MEAN_REVERSION, "(range_high_20 + range_low_20) / 2", 20, 20, "klines_1m", ("range_high_20", "range_low_20"), warmup_rule="strict", leakage_risk="low_past_only"),
+    # disabled_scale_dependent: raw price level; kept computed as input for range_position_20 / distance_to_range_high
+    _feature("range_high_20", "F15", RANGE_MEAN_REVERSION, "rolling max(high,20) ending at t", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only", scaffold_status="disabled_scale_dependent"),
+    # disabled_scale_dependent: raw price level; kept computed as input for range_position_20 / distance_to_range_low
+    _feature("range_low_20", "F15", RANGE_MEAN_REVERSION, "rolling min(low,20) ending at t", 20, 20, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only", scaffold_status="disabled_scale_dependent"),
+    # disabled_scale_dependent: raw price level; no consumer needs it as a model input
+    _feature("range_mid_20", "F15", RANGE_MEAN_REVERSION, "(range_high_20 + range_low_20) / 2", 20, 20, "klines_1m", ("range_high_20", "range_low_20"), warmup_rule="strict", leakage_risk="low_past_only", scaffold_status="disabled_scale_dependent"),
     _feature("range_position_20", "F15", RANGE_MEAN_REVERSION, "clamp((close_t - range_low_20) / (range_high_20 - range_low_20), 0, 1)", 20, 20, "klines_1m", ("range_high_20", "range_low_20"), warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("distance_to_range_high", "F15", RANGE_MEAN_REVERSION, "close_t / range_high_20 - 1", 20, 20, "klines_1m", ("range_high_20",), warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("distance_to_range_low", "F15", RANGE_MEAN_REVERSION, "close_t / range_low_20 - 1", 20, 20, "klines_1m", ("range_low_20",), warmup_rule="strict", leakage_risk="low_past_only"),
@@ -234,6 +252,78 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("close_back_inside_range", "F15", RANGE_MEAN_REVERSION, "1 if previous close was outside previous 20-bar range and current close is inside current 20-bar range else 0", 20, 20, "klines_1m", ("range_high_20", "range_low_20"), warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("vwap_deviation_zscore", "F15", RANGE_MEAN_REVERSION, "(close_t - rolling_vwap_20) / stddev(close - rolling_vwap_20,20)", 39, 39, "klines_1m", ("rolling_vwap_20",), warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("bb_zscore", "F15", RANGE_MEAN_REVERSION, "(close_t - SMA(close,20)) / stddev(close,20)", 20, 20, "klines_1m", ("close_zscore_20",), warmup_rule="strict", leakage_risk="low_past_only"),
+    # F16: Derivatives metrics (Binance futures metrics archive; open interest,
+    # long/short ratios, taker buy/sell). 5m cadence forward-filled to 1m.
+    # source="metrics" is backfillable from the archive for TRAINING; live use
+    # requires the /futures/data/* REST endpoints, which are not wired yet, so
+    # required_for_live=False keeps live-approval gating honest. min_samples are
+    # in 1-minute bars (metrics is 5m: oi_zscore_1d needs ~1 day = 1440 bars).
+    _feature("oi_change_rate_5m", "F16", DERIVATIVES_METRICS, "(sum_open_interest_t - sum_open_interest_t-5m) / |sum_open_interest_t-5m|", 5, 5, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("oi_change_rate_30m", "F16", DERIVATIVES_METRICS, "(sum_open_interest_t - sum_open_interest_t-30m) / |sum_open_interest_t-30m|", 30, 30, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("oi_zscore_1d", "F16", DERIVATIVES_METRICS, "(sum_open_interest_t - mean_1d) / std_1d (trailing 1-day window, causal)", 1440, 1440, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("oi_value_zscore_1d", "F16", DERIVATIVES_METRICS, "(sum_open_interest_value_t - mean_1d) / std_1d (trailing 1-day window, causal)", 1440, 1440, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("toptrader_ls_account", "F16", DERIVATIVES_METRICS, "count_toptrader_long_short_ratio (raw)", 1, 1, "metrics", warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("toptrader_ls_position", "F16", DERIVATIVES_METRICS, "sum_toptrader_long_short_ratio (raw)", 1, 1, "metrics", warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("global_ls_account", "F16", DERIVATIVES_METRICS, "count_long_short_ratio (raw)", 1, 1, "metrics", warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("taker_ls_ratio", "F16", DERIVATIVES_METRICS, "sum_taker_long_short_vol_ratio (raw)", 1, 1, "metrics", warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("toptrader_ls_account_change_5m", "F16", DERIVATIVES_METRICS, "(count_toptrader_long_short_ratio_t - t-5m) / |t-5m|", 5, 5, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("global_ls_account_change_5m", "F16", DERIVATIVES_METRICS, "(count_long_short_ratio_t - t-5m) / |t-5m|", 5, 5, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("taker_ls_ratio_change_5m", "F16", DERIVATIVES_METRICS, "(sum_taker_long_short_vol_ratio_t - t-5m) / |t-5m|", 5, 5, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    # F17: Multi-timeframe trend/volatility/momentum features (15m/1h/4h closed
+    # bars + 24h-rolling group), resampled causally from the same 1m klines
+    # already in hand -- no external source, no network, and (unlike F16
+    # metrics) fully live-computable the same way training computes it, since
+    # it's a pure function of the candle history. Purpose: hand-labeled
+    # regimes span days-to-months, but the only trend signal driving
+    # auto-regime detection (trend_slope_30, a 30-bar/30-minute window) is far
+    # too short to see that scale. min_samples are in 1-minute bars: 4h
+    # indicators need up to 24 closed 4h bars = 96h = 5760 minutes.
+    _feature("trend_slope_15m", "F17", MULTI_TIMEFRAME, "linreg_slope(close, last <=10 closed 15m bars) / close", 150, 150, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("return_15m", "F17", MULTI_TIMEFRAME, "(close_t - close_t-10bars) / close_t-10bars, on 15m closed bars", 150, 150, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("ema_gap_15m", "F17", MULTI_TIMEFRAME, "(close_t - EMA20(15m closed bars)) / close_t", 300, 300, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("ma_slope_15m", "F17", MULTI_TIMEFRAME, "(MA10_t - MA10_t-1) / MA10_t-1, on 15m closed bars", 165, 165, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("rsi_15m", "F17", MULTI_TIMEFRAME, "RSI(14, 15m closed bars)", 225, 225, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("atr_pct_15m", "F17", MULTI_TIMEFRAME, "ATR(14, 15m closed bars) / close", 225, 225, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("bb_width_15m", "F17", MULTI_TIMEFRAME, "4*stddev(close,20)/mean(close,20), on 15m closed bars", 300, 300, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("adx_15m", "F17", MULTI_TIMEFRAME, "Wilder ADX(14, 15m closed bars)", 225, 225, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("volume_z_15m", "F17", MULTI_TIMEFRAME, "(volume_t - mean(volume,20)) / std(volume,20), on 15m closed bars", 300, 300, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("trend_slope_1h", "F17", MULTI_TIMEFRAME, "linreg_slope(close, last <=10 closed 1h bars) / close", 600, 600, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("return_1h", "F17", MULTI_TIMEFRAME, "(close_t - close_t-10bars) / close_t-10bars, on 1h closed bars", 600, 600, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("ema_gap_1h", "F17", MULTI_TIMEFRAME, "(close_t - EMA20(1h closed bars)) / close_t", 1200, 1200, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("ma_slope_1h", "F17", MULTI_TIMEFRAME, "(MA10_t - MA10_t-1) / MA10_t-1, on 1h closed bars", 660, 660, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("rsi_1h", "F17", MULTI_TIMEFRAME, "RSI(14, 1h closed bars)", 900, 900, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("atr_pct_1h", "F17", MULTI_TIMEFRAME, "ATR(14, 1h closed bars) / close", 900, 900, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("bb_width_1h", "F17", MULTI_TIMEFRAME, "4*stddev(close,20)/mean(close,20), on 1h closed bars", 1200, 1200, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("adx_1h", "F17", MULTI_TIMEFRAME, "Wilder ADX(14, 1h closed bars)", 900, 900, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("volume_z_1h", "F17", MULTI_TIMEFRAME, "(volume_t - mean(volume,20)) / std(volume,20), on 1h closed bars", 1200, 1200, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("trend_slope_4h", "F17", MULTI_TIMEFRAME, "linreg_slope(close, last <=10 closed 4h bars) / close", 2400, 2400, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("return_4h", "F17", MULTI_TIMEFRAME, "(close_t - close_t-10bars) / close_t-10bars, on 4h closed bars", 2400, 2400, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("ema_gap_4h", "F17", MULTI_TIMEFRAME, "(close_t - EMA20(4h closed bars)) / close_t", 4800, 4800, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("ma_slope_4h", "F17", MULTI_TIMEFRAME, "(MA10_t - MA10_t-1) / MA10_t-1, on 4h closed bars", 2640, 2640, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("rsi_4h", "F17", MULTI_TIMEFRAME, "RSI(14, 4h closed bars)", 3600, 3600, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("atr_pct_4h", "F17", MULTI_TIMEFRAME, "ATR(14, 4h closed bars) / close", 3600, 3600, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("bb_width_4h", "F17", MULTI_TIMEFRAME, "4*stddev(close,20)/mean(close,20), on 4h closed bars", 4800, 4800, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("adx_4h", "F17", MULTI_TIMEFRAME, "Wilder ADX(14, 4h closed bars)", 3600, 3600, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("volume_z_4h", "F17", MULTI_TIMEFRAME, "(volume_t - mean(volume,20)) / std(volume,20), on 4h closed bars", 4800, 4800, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("trend_slope_24h", "F17", MULTI_TIMEFRAME, "linreg_slope(close, last <=24 closed 1h bars) / close", 1440, 1440, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("return_24h", "F17", MULTI_TIMEFRAME, "(close_t - close_t-24bars) / close_t-24bars, over last 24 closed 1h bars", 1440, 1440, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("drawdown_from_24h_high", "F17", MULTI_TIMEFRAME, "(high_24h - close_t) / high_24h, over last 24 closed 1h bars", 1440, 1440, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("distance_from_24h_high", "F17", MULTI_TIMEFRAME, "(close_t - high_24h) / high_24h, over last 24 closed 1h bars", 1440, 1440, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("distance_from_24h_low", "F17", MULTI_TIMEFRAME, "(close_t - low_24h) / low_24h, over last 24 closed 1h bars", 1440, 1440, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("rolling_high_breakout_24h", "F17", MULTI_TIMEFRAME, "1 if close_t >= high_24h else 0, over last 24 closed 1h bars", 1440, 1440, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("rolling_low_breakdown_24h", "F17", MULTI_TIMEFRAME, "1 if close_t <= low_24h else 0, over last 24 closed 1h bars", 1440, 1440, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    # F18: Regime probability features (soft, not hard-bucketed). Produced by
+    # a separate multiclass classifier trained on F17 multi-timeframe features
+    # via LEAKAGE-SAFE walk-forward out-of-fold prediction (see
+    # regime_classifier.py) -- never the classifier's own training rows.
+    # required_for_live=False: no real-time regime-classifier serving path
+    # exists yet (research-only, like F16 metrics, until that's wired).
+    # source="regime_classifier" is delivered via the same external_sources
+    # channel used for F16 metrics (a per-candle dict merged in by the
+    # training pipeline once OOF probabilities are computed).
+    _feature("regime_prob_up", "F18", REGIME_PROBABILITY, "P(regime=up) from walk-forward OOF multiclass classifier on F17 features", 1, 1, "regime_classifier", warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("regime_prob_range", "F18", REGIME_PROBABILITY, "P(regime=range) from walk-forward OOF multiclass classifier on F17 features", 1, 1, "regime_classifier", warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("regime_prob_down", "F18", REGIME_PROBABILITY, "P(regime=down) from walk-forward OOF multiclass classifier on F17 features", 1, 1, "regime_classifier", warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
 ]
 
 
@@ -258,8 +348,38 @@ def _definition_dict(definition: FeatureDefinition) -> dict[str, object]:
 FEATURE_FORMULAS: tuple[dict[str, object], ...] = tuple(_definition_dict(definition) for definition in FEATURE_DEFINITIONS)
 
 
+# scaffold_status values EXCLUDED from the active feature set:
+# - "pending_data_source": defined but its data source isn't wired yet (F11).
+# - "disabled_scale_dependent": computed and kept as an INPUT for derived
+#   relative features, but not fed to the model. These carry absolute price/
+#   quote-USD levels across 2020-2025 (BTC ~7k -> ~100k), so a tree model can
+#   use them as a year/era proxy instead of market structure ("close level ->
+#   epoch" memorization), which generalizes poorly out-of-sample; the dollar-
+#   scale ones among them also saturate the FeatureClipper's default +-100
+#   "ratio" bound in high-price regimes, destroying information while leaking
+#   the era. Each has a scale-free counterpart that stays active.
+INACTIVE_SCAFFOLD_STATUSES: frozenset[str] = frozenset({
+    "pending_data_source",
+    "disabled_scale_dependent",
+})
+
+
+def _is_active_status(status: object) -> bool:
+    """Single source of truth for whether a scaffold_status is model-active.
+
+    Used by BOTH active_feature_names (dataclass definitions) and
+    registry_from_feature_rows (row dicts / artifact metadata) so the two can
+    never drift apart again -- v11 shipped with the metadata path still
+    filtering only "pending_data_source", making feature_formula_registry()
+    ["active_feature_names"] report 189 names while the model actually
+    trained on 180. Missing/None status defaults to "implemented" (active),
+    matching the FeatureDefinition default.
+    """
+    return str(status if status is not None else "implemented") not in INACTIVE_SCAFFOLD_STATUSES
+
+
 def active_feature_names(definitions: Sequence[FeatureDefinition] = FEATURE_DEFINITIONS) -> tuple[str, ...]:
-    return tuple(definition.feature_name for definition in definitions if definition.scaffold_status != "pending_data_source")
+    return tuple(definition.feature_name for definition in definitions if _is_active_status(definition.scaffold_status))
 
 
 def feature_formula_registry(definitions: Sequence[FeatureDefinition] = FEATURE_DEFINITIONS) -> dict[str, object]:
@@ -294,7 +414,7 @@ def registry_from_feature_rows(rows: Sequence[Mapping[str, object]]) -> dict[str
     feature_rows = [dict(row) for row in rows]
     return {
         "features": feature_rows,
-        "active_feature_names": [str(row["feature_name"]) for row in feature_rows if row.get("scaffold_status") != "pending_data_source"],
+        "active_feature_names": [str(row["feature_name"]) for row in feature_rows if _is_active_status(row.get("scaffold_status", "implemented"))],
         "dependency_graph": dependency_graph_from_feature_rows(feature_rows),
         "features_by_source": _rows_by_key(feature_rows, "source"),
         "features_by_group": _rows_by_key(feature_rows, "feature_group"),

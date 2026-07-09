@@ -4,7 +4,13 @@
     "2020-2024: original template. 2025: added from actual BTC price action (web-sourced).",
     "WARNING: 2025 regimes are labeled in hindsight (look-ahead bias). Backtest results",
     "using these reflect 'how the model does WHEN regime routing works', not live performance.",
-    "For live/forward trading, regimes must be detected in real time (RegimeDetector), not from this file."
+    "For live/forward trading, regimes must be detected in real time (RegimeDetector), not from this file.",
+    "Gap-fill note: 4 date gaps (2022-12-31->2023-01-01, 2023-12-31->2024-01-01,",
+    "2024-10-29->2024-11-05, 2024-12-31->2025-01-01) were closed by extending the",
+    "preceding period's end_exclusive forward to the next period's start. This is",
+    "a conservative choice (treats the gap as a continuation of the prior trend)",
+    "not a researched re-labeling of those specific days -- revisit if precision",
+    "for those exact dates matters."
   ],
   "periods": [
     {
@@ -115,7 +121,7 @@
     {
       "regime": "range",
       "start": "2022-11-21",
-      "end_exclusive": "2022-12-31"
+      "end_exclusive": "2023-01-01"
     },
     {
       "regime": "up",
@@ -160,7 +166,7 @@
     {
       "regime": "range",
       "start": "2023-12-08",
-      "end_exclusive": "2023-12-31"
+      "end_exclusive": "2024-01-01"
     },
     {
       "regime": "down",
@@ -195,7 +201,7 @@
     {
       "regime": "up",
       "start": "2024-09-06",
-      "end_exclusive": "2024-10-29"
+      "end_exclusive": "2024-11-05"
     },
     {
       "regime": "up",
@@ -205,7 +211,7 @@
     {
       "regime": "down",
       "start": "2024-12-17",
-      "end_exclusive": "2024-12-31"
+      "end_exclusive": "2025-01-01"
     },
     {
       "regime": "up",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from math import exp, isfinite, log, sqrt
@@ -34,13 +35,40 @@ class TrainingConfig:
     regime_detector_min_trend_abs: float = 0.00001
     regime_detector_low_vol_trend_multiplier: float = 2.0
     regime_detector_min_regime_run_bars: int = 3
+    # Path to a .cbm file saved by `train-regime-classifier` (a multiclass
+    # up/range/down model over F17 multi-timeframe features). This field is
+    # used only as a GATE/SIGNAL, not loaded here: when set, training bucket
+    # assignment uses the walk-forward OOF F18 regime_prob_up/range/down
+    # values already merged into each row's features (safe -- each row's
+    # value came from a classifier trained only on chronologically earlier
+    # rows), taking their argmax (with the same smoothing as Phase 2.5).
+    # Training deliberately does NOT load and re-predict with this .cbm file:
+    # that "final" classifier was fit on the COMPLETE training span, so
+    # re-predicting on a training row would classify it with a model that
+    # already "saw" chronologically later rows during its own fit -- a subtle
+    # form of look-ahead distinct from (but similar in spirit to) label
+    # leakage. The .cbm file itself is loaded and used for genuinely
+    # out-of-sample backtest/live routing instead (see backtest.py).
+    regime_classifier_model_path: str | None = None
+    # When True, regime bucket assignment uses the multi-feature rule-based
+    # detector (regime_rules.MultiFeatureRegimeDetector) instead of the learned
+    # classifier OOF or the single-slope directional detector. Takes priority
+    # over regime_classifier_model_path. The fitted detector (config +
+    # normalization stats) is persisted to regime_run_summary.json so backtest
+    # and live route with the identical rule -- entry models bucketed this way
+    # MUST be served with the same detector to avoid train/serve skew.
+    multi_feature_regime: bool = False
+    # Optional MultiFeatureRegimeConfig overrides (parsed from a JSON file via
+    # --rule-regime-config). Only used when multi_feature_regime is True. The
+    # fitted detector (with these overrides) is saved to the artifact, so
+    # backtest/live inherit the same rule config automatically.
+    multi_feature_regime_config: dict | None = None
     feature_selection_target_min: int = 0
     feature_selection_target_max: int = 0
     ensemble_enabled: bool = False
     ensemble_direction_family: str = "catboost"
     ensemble_profitability_family: str = "catboost"
     ensemble_meta_family: str = "catboost"
-    use_user_regime: bool = False
     training_start: datetime | None = None
     training_end: datetime | None = None
     test_start: datetime | None = None
@@ -54,13 +82,23 @@ class TrainingConfig:
     label_threshold: float = 0.001
     tp_pct: float = 0.003
     sl_pct: float = 0.0015
+    # Round-trip trading cost (fees + slippage, both sides) used by the
+    # trading_pnl threshold objective and holdout PnL metrics. Must mirror the
+    # backtest cost model (2 x (fee 0.02% + slippage 0.02%) = 0.08% default) or
+    # thresholds get selected for the wrong cost assumption.
+    round_trip_cost: float = 0.0008
     # Decision-threshold selection objective.
     #   "precision_recall" (default, backward-compatible): rank candidates by
     #     precision with a recall>=0.3 floor; fall back to F1 otherwise.
     #   "trading_pnl": rank by (calmar, sharpe, f1, -|t-0.5|) on the trading
     #     PnL simulator. Strongly recommended for trading models where the
     #     classification trade-off does not map cleanly to economic outcomes.
-    threshold_objective: str = "precision_recall"
+    # Default is trading_pnl: precision_recall let selected thresholds drop to
+    # ~0.32 on weak models (flooding backtests with sub-cost entries).
+    # trading_pnl ranks candidates by cost-aware simulated PnL (no-trade below
+    # threshold, asymmetric TP/SL, round-trip cost). precision_recall is kept
+    # as a legacy option.
+    threshold_objective: str = "trading_pnl"
     # Minimum number of "trades" (predicted-positive samples) required for a
     # threshold candidate to be considered under the trading_pnl objective.
     # None lets select_threshold pick a default of max(1, 5% of rows).
@@ -284,6 +322,9 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             validation_labels,
             objective=training_config.threshold_objective,
             min_trades=training_config.threshold_min_trades,
+            tp_pct=training_config.tp_pct,
+            sl_pct=training_config.sl_pct,
+            round_trip_cost=training_config.round_trip_cost,
         )
         # Override with Optuna best threshold if available (decision param, not model param)
         if optuna_threshold is not None:
@@ -424,29 +465,150 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
 
 
 def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, training_config: TrainingConfig, full_labeled_rows: Sequence[dataset.LabeledRow] | None = None) -> TrainingResult:
-    if training_config.use_user_regime:
-        return _run_user_regime_training(build, output_dir, training_config, full_labeled_rows=full_labeled_rows)
-    detector = features.RegimeDetector(
-        config=features.RegimeDetectorConfig(
-            rv_percentile=training_config.regime_detector_rv_percentile,
-            trend_percentile=training_config.regime_detector_trend_percentile,
-            min_trend_abs=training_config.regime_detector_min_trend_abs,
-            high_vol_priority=True,
-            low_vol_trend_multiplier=training_config.regime_detector_low_vol_trend_multiplier,
-            min_regime_run_bars=training_config.regime_detector_min_regime_run_bars,
+    # Regime-aware training assigns each row's regime bucket one of two ways:
+    #
+    #   (a) regime_classifier_model_path set: use the WALK-FORWARD OOF F18
+    #       probabilities (regime_prob_up/range/down) already merged into
+    #       build.labeled_rows[i].features by the --regime-classifier-dir
+    #       pipeline (train-regime-classifier's regime_probabilities.json).
+    #       Argmax (with the same smoothing as Phase 2.5) determines each
+    #       TRAINING row's bucket.
+    #
+    #       IMPORTANT: this deliberately does NOT re-predict bucket
+    #       assignment by loading and calling the SAVED FINAL classifier
+    #       (regime_classifier_model.cbm) here. That classifier was fit on
+    #       the COMPLETE 2020-2024 span in one pass -- so using it to
+    #       classify an early-2021 row would classify that row with a model
+    #       that has already "seen" 2023-2024 data during its own fit. That
+    #       is not label leakage (the row's own long_success/short_success
+    #       outcome is never exposed), but it IS a real form of look-ahead:
+    #       the classifier's decision boundary was calibrated on the whole
+    #       dataset's regime structure, not just data available as of that
+    #       row's time -- making training-time bucket assignment artificially
+    #       "cleaner" than what the SAME classifier will achieve on genuinely
+    #       unseen 2025+ data at backtest/live time (a fresh train/serve
+    #       skew, just one level removed from the entry-model target).
+    #       The walk-forward OOF probabilities avoid this: each row's F18
+    #       values were produced by a classifier trained ONLY on
+    #       chronologically earlier rows (see regime_classifier.py).
+    #
+    #       The FINAL classifier (.cbm) is reserved for backtest/live routing
+    #       (see backtest.py), where classifying 2025+ rows is genuinely
+    #       out-of-sample relative to a classifier fit only on 2020-2024 --
+    #       no leakage there.
+    #   (b) not set (fallback): RegimeDetector.detect_all_directional on
+    #       trend_slope_30 alone (the original, narrower signal).
+    #
+    # The old hand-labeled ("--use-user-regime") path was removed: it
+    # depended on regimes.json, which requires knowing the regime in
+    # hindsight and therefore can never be reproduced live. regimes.json
+    # remains useful as GROUND-TRUTH LABELS for training the classifier used
+    # in (a), which is itself fully causal (both at OOF-generation time and
+    # at backtest/live inference time).
+    regime_source: str
+    detector_thresholds: dict[str, float] = {}
+    detector_diagnostics: dict[str, object] = {}
+    multi_feature_detector_payload: dict[str, object] | None = None
+    if training_config.multi_feature_regime:
+        from btcusdt_quant import regime_rules as rr
+        # Fit the rule detector's normalization stats on the training rows and
+        # assign each row's bucket from the deterministic causal rule. Persist
+        # the fitted detector so backtest/live route identically.
+        _rule_cfg = (
+            rr.MultiFeatureRegimeConfig.from_dict(training_config.multi_feature_regime_config)
+            if training_config.multi_feature_regime_config
+            else rr.MultiFeatureRegimeConfig()
         )
-    )
-    rv_15_values = [float(row.features.get("rv_15", 0.0)) for row in build.labeled_rows]
-    trend_slope_30_values = [float(row.features.get("trend_slope_30", 0.0)) for row in build.labeled_rows]
-    detector_thresholds = detector.fit_thresholds(rv_15_values, trend_slope_30_values)
-    detector_diagnostics = detector.diagnostics(rv_15_values, trend_slope_30_values)
-    regimes = detector.detect_all(rv_15_values, trend_slope_30_values, thresholds=detector_thresholds)
-    regime_counts = {regime: regimes.count(regime) for regime in _REGIME_NAMES}
+        _mf_rows = [row.features for row in build.labeled_rows]
+        rule_detector = rr.MultiFeatureRegimeDetector(_rule_cfg).fit(_mf_rows)
+        regimes = rule_detector.detect_all(_mf_rows)
+        del _mf_rows
+        multi_feature_detector_payload = rule_detector.to_dict()
+        detector_diagnostics = rule_detector.diagnostics(regimes)
+        # Surface the regime distribution / transition stats in the train log.
+        print(f"[TRAIN] rule regime distribution: {detector_diagnostics.get('regime_counts')}")
+        print(f"[TRAIN] rule regime transitions: {detector_diagnostics.get('regime_transition_count')} "
+              f"(direct up<->down: {detector_diagnostics.get('direct_reversal_count')})")
+        regime_source = "multi_feature_rule"
+    elif training_config.regime_classifier_model_path:
+        from btcusdt_quant import regime_classifier as rc
+        raw_probs = [
+            {
+                "up": float(row.features.get("regime_prob_up", 0.0)),
+                "range": float(row.features.get("regime_prob_range", 0.0)),
+                "down": float(row.features.get("regime_prob_down", 0.0)),
+            }
+            for row in build.labeled_rows
+        ]
+        if all(p["up"] == p["range"] == p["down"] == 0.0 for p in raw_probs):
+            raise ValueError(
+                "regime_classifier_model_path is set but no F18 regime_prob_* "
+                "features were found on the training rows (all zero). Pass "
+                "--regime-classifier-dir (not just a bare model path) so the "
+                "walk-forward OOF probabilities get merged in alongside the "
+                "saved model -- training bucket assignment must use those "
+                "OOF-safe values, not a fresh in-sample prediction."
+            )
+        # Coverage guard (insurance): regime_probabilities.json only contains
+        # timestamps that had a resolved hand label (train-regime-classifier
+        # skips unlabeled candles), so any training row OUTSIDE the hand-label
+        # coverage gets regime_prob_up/range/down = 0/0/0. Those rows carry no
+        # real regime signal; letting smoothing assign them a bucket (via
+        # sticky hysteresis or the range bootstrap) would silently pollute a
+        # regime's model with rows the classifier never actually placed. Detect
+        # such rows and EXCLUDE them from bucket assignment rather than guessing.
+        # With full label coverage (label span == training span) this is a
+        # no-op. A non-zero count means the labels do NOT cover the training
+        # window -- extend regimes.json or set --training-start to the first
+        # labeled timestamp.
+        uncovered_mask = [p["up"] == p["range"] == p["down"] == 0.0 for p in raw_probs]
+        n_uncovered = sum(uncovered_mask)
+        if n_uncovered:
+            frac = n_uncovered / len(raw_probs)
+            print(
+                f"[TRAIN] WARNING: {n_uncovered:,} of {len(raw_probs):,} training rows "
+                f"({frac:.1%}) have no F18 regime probability (0/0/0) -- they fall "
+                f"OUTSIDE the hand-labeled regime coverage. Excluding them from "
+                f"regime bucket assignment so they do not pollute any regime model. "
+                f"To include them, extend the regime labels (regimes.json) to cover "
+                f"the full training window or set --training-start to the first "
+                f"labeled timestamp.",
+                file=sys.stderr,
+            )
+        _, regimes = rc.smooth_regime_probabilities(raw_probs)
+        # Drop uncovered rows (post-smoothing) by marking their regime as a
+        # sentinel that matches no USER_REGIME_NAMES bucket below.
+        if n_uncovered:
+            regimes = [None if unc else r for unc, r in zip(uncovered_mask, regimes)]
+        regime_source = "regime_classifier"
+    else:
+        detector = features.RegimeDetector(
+            config=features.RegimeDetectorConfig(
+                rv_percentile=training_config.regime_detector_rv_percentile,
+                trend_percentile=training_config.regime_detector_trend_percentile,
+                min_trend_abs=training_config.regime_detector_min_trend_abs,
+                high_vol_priority=True,
+                low_vol_trend_multiplier=training_config.regime_detector_low_vol_trend_multiplier,
+                min_regime_run_bars=training_config.regime_detector_min_regime_run_bars,
+            )
+        )
+        rv_15_values = [float(row.features.get("rv_15", 0.0)) for row in build.labeled_rows]
+        trend_slope_30_values = [float(row.features.get("trend_slope_30", 0.0)) for row in build.labeled_rows]
+        # Directional detection (up/down/range) so the auto-detected regimes
+        # match (a) the up/down/range models _train_single_regime knows how
+        # to train (its long/short policy keys on "up"/"down"/"range"), and
+        # (b) the --auto-regime backtest without a classifier model, which
+        # also uses detect_all_directional.
+        detector_thresholds = detector.fit_directional_threshold(trend_slope_30_values)
+        detector_diagnostics = detector.diagnostics(rv_15_values, trend_slope_30_values)
+        regimes = detector.detect_all_directional(rv_15_values, trend_slope_30_values, thresholds=detector_thresholds)
+        regime_source = "detector_directional"
+    regime_counts = {regime: regimes.count(regime) for regime in dataset.USER_REGIME_NAMES}
     regime_summaries: dict[str, dict[str, object]] = {}
     trained_regimes: dict[str, dict[str, object]] = {}
     skipped_regimes: dict[str, dict[str, object]] = {}
 
-    for regime_name in _REGIME_NAMES:
+    for regime_name in dataset.USER_REGIME_NAMES:
         regime_indices = [index for index, regime in enumerate(regimes) if regime == regime_name]
         row_count = len(regime_indices)
         if row_count < training_config.min_regime_rows:
@@ -470,147 +632,14 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
     default_regime = _default_regime_by_rows(trained_regimes)
     regime_test_f1_values = [float(summary["mean_test_f1"]) for summary in regime_summaries.values() if "mean_test_f1" in summary]
     aggregated_mean_test_f1 = sum(regime_test_f1_values) / len(regime_test_f1_values) if regime_test_f1_values else 0.0
-    # Optional: evaluate on test period if specified
-    test_period_metrics: dict[str, object] | None = None
-    if training_config.test_start is not None or training_config.test_end is not None:
-        test_rows = [
-            row for row in build.labeled_rows
-            if (training_config.test_start is None or row.open_time >= training_config.test_start)
-            and (training_config.test_end is None or row.open_time <= training_config.test_end)
-        ]
-        if test_rows:
-            print(f"[TRAIN] Evaluating on test period: {len(test_rows):,} rows ({training_config.test_start} to {training_config.test_end})")
-            test_matrix = feature_matrix(test_rows, build.feature_names)
-            test_labels = [row.label for row in test_rows]
-            regime_test_metrics: dict[str, dict[str, float]] = {}
-            for regime_name in trained_regimes:
-                model_path = output_dir / f"regime_{regime_name}" / "model.json"
-                if not model_path.is_file():
-                    continue
-                try:
-                    payload = json.loads(model_path.read_text(encoding="utf-8"))
-                    family = payload.get("model_family", "auto")
-                    if family == "ensemble":
-                        model = models.EnsembleAdapter.from_dict(payload)
-                    elif family == "catboost":
-                        model = models.CatBoostAdapter.from_dict(payload)
-                    elif family == "lightgbm":
-                        model = models.LightGBMAdapter.from_dict(payload)
-                    else:
-                        continue
-                    probs = model.predict_proba(test_matrix)
-                    regime_test_metrics[regime_name] = metrics(probs, test_labels, 0.5)
-                    print(f"[TRAIN]   Test period {regime_name}: F1={regime_test_metrics[regime_name]['f1']:.4f}, Acc={regime_test_metrics[regime_name]['accuracy']:.4f}")
-                except Exception as e:
-                    print(f"[TRAIN]   Test period evaluation for {regime_name} failed: {e}")
-            if regime_test_metrics:
-                avg_f1 = mean([m["f1"] for m in regime_test_metrics.values()])
-                avg_acc = mean([m["accuracy"] for m in regime_test_metrics.values()])
-                test_period_metrics = {
-                    "test_period_start": training_config.test_start.isoformat() if training_config.test_start else None,
-                    "test_period_end": training_config.test_end.isoformat() if training_config.test_end else None,
-                    "test_period_rows": len(test_rows),
-                    "regime_metrics": regime_test_metrics,
-                    "mean_test_f1": avg_f1,
-                    "mean_test_accuracy": avg_acc,
-                }
-                print(f"[TRAIN] Test period overall: F1={avg_f1:.4f}, Acc={avg_acc:.4f}")
-        else:
-            print(f"[TRAIN] Warning: no test period rows found ({training_config.test_start} to {training_config.test_end})")
-    run_summary = {
-        "regime_aware": True,
-        "regime_results": regime_summaries,
-        "regime_counts": regime_counts,
-        "trained_regimes": trained_regimes,
-        "skipped_regimes": skipped_regimes,
-        "default_regime": default_regime,
-        "min_regime_rows": training_config.min_regime_rows,
-        "regime_detector": {
-            "thresholds": detector_thresholds,
-            "diagnostics": detector_diagnostics,
-            "config": detector.config_dict(),
-        },
-        "network_used": False,
-        "orders_enabled": False,
-        "credentials_required": False,
-        "labeled_rows": len(build.labeled_rows),
-        "fold_count": 0,
-        "mean_test_f1": aggregated_mean_test_f1,
-        "mean_test_accuracy": 0.0,
-        "mean_test_ece": 0.0,
-        "mean_test_brier": 0.0,
-        "artifacts": ["regime_run_summary.json"],
-    }
-    if test_period_metrics is not None:
-        run_summary["test_period_evaluation"] = test_period_metrics
-    writer = governance.ArtifactWriter(output_dir)
-    writer.write_json("regime_run_summary.json", run_summary)
-    return TrainingResult(
-        output_dir=output_dir,
-        dataset_build=build,
-        splits=[],
-        fold_results=[],
-        run_summary=run_summary,
-        artifacts=["regime_run_summary.json"],
-    )
-
-
-def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, training_config: TrainingConfig, full_labeled_rows: Sequence[dataset.LabeledRow] | None = None) -> TrainingResult:
-    """Train separate models per user-specified regime (up/down/range)."""
-    user_regime_names = dataset.USER_REGIME_NAMES
-    regimes = [row.user_regime for row in build.labeled_rows]
-    regime_counts = {regime: regimes.count(regime) for regime in user_regime_names}
-    print(f"[TRAIN] Regime-aware training (user-specified): {regime_counts}")
-    regime_summaries: dict[str, dict[str, object]] = {}
-    trained_regimes: dict[str, dict[str, object]] = {}
-    skipped_regimes: dict[str, dict[str, object]] = {}
-
-    for regime_name in user_regime_names:
-        regime_indices = [index for index, regime in enumerate(regimes) if regime == regime_name]
-        row_count = len(regime_indices)
-        print(f"[TRAIN] Regime '{regime_name}': {row_count:,} rows")
-        if row_count < training_config.min_regime_rows:
-            print(f"[TRAIN]   -> SKIP (min {training_config.min_regime_rows} required)")
-            skipped_regimes[regime_name] = {
-                "status": "skipped",
-                "reason": "insufficient_rows",
-                "row_count": row_count,
-                "min_regime_rows": training_config.min_regime_rows,
-            }
-            continue
-        print(f"[TRAIN]   -> Training...")
-        try:
-            regime_result = _train_single_regime(build, output_dir, training_config, regime_name, regime_indices)
-            print(f"[TRAIN]   -> Done. Test F1: {regime_result.run_summary.get('mean_test_f1', 0.0):.4f}")
-            regime_summaries[regime_name] = dict(regime_result.run_summary)
-            trained_regimes[regime_name] = {
-                "status": "trained",
-                "row_count": row_count,
-                "min_regime_rows": training_config.min_regime_rows,
-                "output_dir": f"regime_{regime_name}",
-                "mean_test_f1": float(regime_result.run_summary.get("mean_test_f1", 0.0)),
-            }
-        except Exception as e:
-            print(f"[TRAIN] Regime '{regime_name}' FAILED: {e}")
-            skipped_regimes[regime_name] = {
-                "status": "failed",
-                "reason": str(e),
-                "row_count": row_count,
-                "min_regime_rows": training_config.min_regime_rows,
-            }
-
-    default_regime = _default_regime_by_rows(trained_regimes)
-    regime_test_f1_values = [float(summary["mean_test_f1"]) for summary in regime_summaries.values() if "mean_test_f1" in summary]
-    aggregated_mean_test_f1 = sum(regime_test_f1_values) / len(regime_test_f1_values) if regime_test_f1_values else 0.0
-    unclassified_count = sum(1 for r in regimes if r is None)
-    # Optional: evaluate on test period (e.g., 2025 H1) if specified.
-    #
-    # The test window typically lies AFTER training_end, so those rows were
-    # already stripped from build.labeled_rows. Use full_labeled_rows (the
-    # pre-cutoff snapshot) when available so the test window is actually
-    # populated. Each regime stores separate long_model.json / short_model.json
-    # trained on the long_success / short_success targets, so we evaluate each
-    # against the matching target rather than a single generic model.json.
+    # Optional: evaluate on a genuinely future test period (e.g. 2025 H1),
+    # separate from and complementary to the in-training-span regime holdout
+    # (_train_single_regime's prefix/tail split): this evaluates rows AFTER
+    # training_end, which build.labeled_rows never contains (training_end
+    # already excludes them) -- so full_labeled_rows (the pre-cutoff
+    # snapshot) must be used here, not build.labeled_rows, or every test
+    # row lookup silently finds nothing whenever the test period falls after
+    # training_end (the common case).
     test_period_metrics: dict[str, object] | None = None
     if training_config.test_start is not None or training_config.test_end is not None:
         eval_source_rows = list(full_labeled_rows) if full_labeled_rows is not None else list(build.labeled_rows)
@@ -621,16 +650,51 @@ def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, tra
         ]
         if test_rows:
             print(f"[TRAIN] Evaluating on test period: {len(test_rows):,} rows ({training_config.test_start} to {training_config.test_end})")
-            test_matrix = feature_matrix(test_rows, build.feature_names)
+            # Regime routing for these future rows: use the SAME source that
+            # trained bucket assignment. Computed ONCE here (not per regime x
+            # side) so the multi-feature rule detector's causal hysteresis runs
+            # over the full eval series exactly like backtest/live routing.
+            if regime_source == "regime_classifier":
+                row_probs = [
+                    {
+                        "up": float(row.features.get("regime_prob_up", 0.0)),
+                        "range": float(row.features.get("regime_prob_range", 0.0)),
+                        "down": float(row.features.get("regime_prob_down", 0.0)),
+                    }
+                    for row in test_rows
+                ]
+                if all(p["up"] == p["range"] == p["down"] == 0.0 for p in row_probs):
+                    row_regimes = [None] * len(test_rows)  # F18 not on these rows
+                else:
+                    from btcusdt_quant import regime_classifier as _rc
+                    _, row_regimes = _rc.smooth_regime_probabilities(row_probs)
+            elif regime_source == "multi_feature_rule":
+                # Route with the SAME fitted rule detector used for bucketing,
+                # over the FULL eval series (correct hysteresis/min-hold state),
+                # then look up each test row by time.
+                from btcusdt_quant import regime_rules as _rr
+                _eval_detector = (
+                    _rr.MultiFeatureRegimeDetector.from_dict(multi_feature_detector_payload)
+                    if multi_feature_detector_payload is not None
+                    else rule_detector
+                )
+                _all_regimes = _eval_detector.detect_all([row.features for row in eval_source_rows])
+                _regime_by_time = {
+                    row.open_time: regime
+                    for row, regime in zip(eval_source_rows, _all_regimes)
+                }
+                row_regimes = [_regime_by_time.get(row.open_time) for row in test_rows]
+            else:
+                row_regimes = [row.user_regime for row in test_rows]
             regime_test_metrics: dict[str, dict[str, float]] = {}
             for regime_name in trained_regimes:
                 regime_dir = output_dir / f"regime_{regime_name}"
-                for side, target_key, filename in (
-                    ("long", "long_success", "long_model.json"),
-                    ("short", "short_success", "short_model.json"),
-                ):
+                for side, target_key, filename in (("long", "long_success", "long_model.json"), ("short", "short_success", "short_model.json")):
                     model_path = regime_dir / filename
                     if not model_path.is_file():
+                        continue
+                    regime_rows = [row for row, r in zip(test_rows, row_regimes) if r == regime_name]
+                    if len(regime_rows) < 10:
                         continue
                     try:
                         payload = json.loads(model_path.read_text(encoding="utf-8"))
@@ -641,15 +705,15 @@ def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, tra
                             model = models.LightGBMAdapter.from_dict(payload)
                         else:
                             model = models.CatBoostAdapter.from_dict(payload)
-                        side_labels = [int(row.targets.get(target_key, row.label)) for row in test_rows]
-                        # Skip degenerate single-class targets (metrics would be meaningless)
-                        if len(set(side_labels)) < 2:
-                            print(f"[TRAIN]   Test period {regime_name}/{side}: skipped (single-class target)")
+                        regime_matrix = feature_matrix(regime_rows, build.feature_names)
+                        regime_labels = [int(row.targets.get(target_key, row.label)) for row in regime_rows]
+                        if len(set(regime_labels)) < 2:
+                            print(f"[TRAIN]   Test period {regime_name}/{side}: skipped (single-class)")
                             continue
-                        probs = model.predict_proba(test_matrix)
+                        probs = model.predict_proba(regime_matrix)
                         key = f"{regime_name}_{side}"
-                        regime_test_metrics[key] = metrics(probs, side_labels, 0.5)
-                        print(f"[TRAIN]   Test period {regime_name}/{side}: F1={regime_test_metrics[key]['f1']:.4f}, Acc={regime_test_metrics[key]['accuracy']:.4f}")
+                        regime_test_metrics[key] = metrics(probs, regime_labels, 0.5)
+                        print(f"[TRAIN]   Test period {regime_name}/{side}: n={len(regime_rows)} F1={regime_test_metrics[key]['f1']:.4f}, Acc={regime_test_metrics[key]['accuracy']:.4f}")
                     except Exception as e:
                         print(f"[TRAIN]   Test period evaluation for {regime_name}/{side} failed: {e}")
             if regime_test_metrics:
@@ -664,21 +728,27 @@ def _run_user_regime_training(build: dataset.DatasetBuild, output_dir: Path, tra
                     "mean_test_accuracy": avg_acc,
                 }
                 print(f"[TRAIN] Test period overall: F1={avg_f1:.4f}, Acc={avg_acc:.4f}")
+            else:
+                print("[TRAIN]   Test period: no regime had enough routed rows to evaluate")
         else:
             print(f"[TRAIN] Warning: no test period rows found ({training_config.test_start} to {training_config.test_end})")
-
     run_summary = {
         "regime_aware": True,
-        "regime_source": "user_regime",
-        "user_regime_counts": regime_counts,
-        "unclassified_rows": unclassified_count,
-        "training_start": training_config.training_start.isoformat() if training_config.training_start else None,
-        "training_end": training_config.training_end.isoformat() if training_config.training_end else None,
+        "regime_source": regime_source,
         "regime_results": regime_summaries,
+        "regime_counts": regime_counts,
         "trained_regimes": trained_regimes,
         "skipped_regimes": skipped_regimes,
         "default_regime": default_regime,
         "min_regime_rows": training_config.min_regime_rows,
+        "regime_detector": {
+            "thresholds": detector_thresholds,
+            "diagnostics": detector_diagnostics,
+            "config": detector.config_dict() if regime_source == "detector_directional" else None,
+            "directional": True,
+        } if regime_source == "detector_directional" else None,
+        "regime_classifier_model_path": training_config.regime_classifier_model_path,
+        "multi_feature_regime_detector": multi_feature_detector_payload,
         "network_used": False,
         "orders_enabled": False,
         "credentials_required": False,
@@ -715,6 +785,10 @@ def _train_single_regime_worker(
     return _train_single_regime(build, output_dir, training_config, regime_name, regime_indices)
 
 
+# Legacy strength-based regime names. No longer used for training: the detector
+# path now trains directional up/down/range (dataset.USER_REGIME_NAMES) to match
+# the --auto-regime backtest and the up/down/range long/short policy. Kept only
+# to avoid breaking any external import.
 _REGIME_NAMES = ("high_volatility", "trending", "ranging")
 
 
@@ -803,14 +877,43 @@ def _tune_catboost_with_optuna(
         suggest_int = getattr(trial, "suggest_int")
         suggest_float = getattr(trial, "suggest_float")
         params = {
-            "iterations": int(suggest_int("iterations", 200, 800)),
-            "learning_rate": float(suggest_float("learning_rate", 0.01, 0.1, log=True)),
-            "depth": int(suggest_int("depth", 4, 10)),
-            "l2_leaf_reg": float(suggest_float("l2_leaf_reg", 1.0, 10.0, log=True)),
+            "iterations": int(suggest_int("iterations", 300, 2000)),
+            "learning_rate": float(suggest_float("learning_rate", 0.005, 0.08, log=True)),
+            "depth": int(suggest_int("depth", 3, 8)),
+            "l2_leaf_reg": float(suggest_float("l2_leaf_reg", 1.0, 50.0, log=True)),
+            "random_strength": float(suggest_float("random_strength", 0.1, 10.0, log=True)),
+            "bagging_temperature": float(suggest_float("bagging_temperature", 0.0, 5.0)),
+            "min_data_in_leaf": int(suggest_int("min_data_in_leaf", 20, 500)),
+            "border_count": int(suggest_int("border_count", 64, 254)),
+            "od_type": "Iter",
             "verbose": False,
         }
+        # od_wait scales with this trial's iterations budget so early stopping
+        # isn't needlessly premature on a large-iterations trial nor pointlessly
+        # loose on a small one.
+        params["od_wait"] = max(30, params["iterations"] // 10)
         adapter = models.CatBoostAdapter(feature_names=list(feature_names), model_params=dict(params))
-        adapter.fit(train_x, train_y)
+        # eval_set activates the od_type/od_wait early stopping that was
+        # previously a silent no-op (CatBoost needs an eval set to monitor).
+        # use_best_model rolls back to the best iteration on val_x/val_y
+        # rather than the last one, which also protects against overfitting
+        # deep into a large `iterations` budget.
+        adapter.fit(train_x, train_y, eval_set=(val_x, val_y), use_best_model=True)
+        # Record where early stopping actually landed for THIS trial. The
+        # suggested `iterations` is only a BUDGET; with use_best_model the
+        # trial's effective model is truncated at best_iteration, and the
+        # final full-data refit must be capped to match (see below) or it
+        # silently trains past the validated optimum.
+        trial_best_iteration: int | None = None
+        model_obj = getattr(adapter, "model", None)
+        getter = getattr(model_obj, "get_best_iteration", None)
+        if callable(getter):
+            try:
+                raw_best = getter()
+                if raw_best is not None:
+                    trial_best_iteration = int(raw_best)
+            except Exception:
+                trial_best_iteration = None
         val_probs = adapter.predict_proba(val_x)
         # Binary cross-entropy (lower is better). Clamp to avoid log(0).
         eps = 1e-12
@@ -823,7 +926,12 @@ def _tune_catboost_with_optuna(
                 loss -= log(1.0 - p)
         loss /= max(1, len(val_y))
         trial_number = int(getattr(trial, "number", len(trial_history)))
-        trial_history.append({"number": trial_number, "params": dict(params), "value": loss})
+        trial_history.append({
+            "number": trial_number,
+            "params": dict(params),
+            "value": loss,
+            "best_iteration": trial_best_iteration,
+        })
         return loss
 
     effective_trials = n_trials if n_trials > 0 else 20
@@ -843,17 +951,90 @@ def _tune_catboost_with_optuna(
     best = dict(study.best_params)
     merged = {**default_params, **best}
     merged["verbose"] = False
+    # Final-refit iteration cap: the winning trial trained with an eval_set +
+    # use_best_model, so its VALIDATED model is truncated at best_iteration --
+    # but the merged params still carry the trial's suggested `iterations`
+    # BUDGET (up to 2000). The final model is refit on the full regime slice
+    # WITHOUT an eval_set (od_type/od_wait are silent no-ops there), so
+    # without this cap it would train the whole budget, past the point where
+    # validation loss started degrading -- the tuned logloss would describe a
+    # model we never ship. Cap iterations to best_iteration + 1 (tree count),
+    # never raising it above the suggested budget. best_iteration None/<=0
+    # (getter unavailable, or best model was the very first tree -- a
+    # degenerate signal we don't trust as a cap) keeps the suggested value.
+    best_trial_number = int(getattr(getattr(study, "best_trial", None), "number", -1))
+    best_iteration: int | None = None
+    for entry in trial_history:
+        if entry.get("number") == best_trial_number:
+            raw = entry.get("best_iteration")
+            if isinstance(raw, int):
+                best_iteration = raw
+            break
+    suggested_iterations = int(merged.get("iterations", default_params.get("iterations", 500)))
+    final_iterations = suggested_iterations
+    # best_iteration == 0 means the very FIRST tree was already the best on
+    # validation -- a degenerate signal (near-zero signal in this slice, too
+    # large a learning_rate, heavy label noise, or an unstable split). We do
+    # NOT cap to 1 tree (policy: keep the suggested budget), but we flag it
+    # in the report and logs so repeated occurrences across regimes/sides are
+    # visible in run_summary and can drive a future no-trade policy decision.
+    best_iteration_degenerate = best_iteration == 0
+    if best_iteration is not None and best_iteration > 0:
+        final_iterations = min(suggested_iterations, best_iteration + 1)
+        merged["iterations"] = final_iterations
+    if best_iteration_degenerate:
+        print(
+            "[TRAIN]     WARNING: winning trial's best_iteration == 0 (first tree was "
+            "best on validation) -- degenerate signal for this regime/side slice; "
+            "keeping the suggested iterations budget. If this recurs across runs, "
+            "consider treating this slice as no-trade or revisiting learning_rate/od_wait.",
+        )
+    # Baseline: the logloss of predicting the constant positive-rate for every
+    # row (no model at all). This is the honest floor to compare against --
+    # e.g. with a 30% positive rate, baseline logloss is ~0.611, so a model
+    # logloss of 0.60 is barely better than guessing the base rate.
+    baseline = _baseline_logloss(val_y)
+    improvement = baseline - float(study.best_value)
     report = {
         "optuna_available": True,
         "n_trials_requested": effective_trials,
         "n_trials_completed": len(trial_history),
         "best_params": best,
         "best_value": float(study.best_value),
+        "best_trial_number": best_trial_number,
+        "best_iteration": best_iteration,
+        "best_iteration_degenerate": best_iteration_degenerate,
+        "suggested_iterations": suggested_iterations,
+        "final_iterations": final_iterations,
+        # The EXACT params the final full-data refit receives (defaults +
+        # winning trial + iterations cap). best_params["iterations"] is only
+        # the SUGGESTED budget -- when analyzing a run, read final_params /
+        # final_iterations for what the shipped model actually trained with.
+        "final_params": dict(merged),
+        "baseline_logloss": baseline,
+        "improvement_over_baseline": improvement,
+        "positive_rate": sum(val_y) / len(val_y) if val_y else 0.0,
         "train_rows": len(train_x),
         "validation_rows": len(val_x),
         "trial_history": trial_history,
     }
     return merged, report
+
+
+def _baseline_logloss(labels: Sequence[int]) -> float:
+    """Logloss of predicting the constant positive rate for every sample.
+
+    This is the honest floor: a model that can't beat this has learned
+    nothing beyond the class balance. Comparing model logloss against this
+    (not against 0 or against ln(2)=0.693) is what makes a 0.6x logloss
+    interpretable.
+    """
+    if not labels:
+        return 0.0
+    eps = 1e-12
+    p = sum(labels) / len(labels)
+    p = max(eps, min(1.0 - eps, p))
+    return -sum((log(p) if y == 1 else log(1.0 - p)) for y in labels) / len(labels)
 
 
 def _train_single_regime(
@@ -889,7 +1070,9 @@ def _train_single_regime(
         """Return (catboost_params, optuna_report_or_None) for one target.
 
         When training_config.optuna_enabled is True we run a small Optuna
-        study on a chronological 70/30 holdout of this regime's rows to
+        study on a chronological 80/20 split of this regime's rows (train on
+        the first 80%, validate on the last 20% after a capped purge gap --
+        see _tune_catboost_with_optuna) to
         pick CatBoost hyperparameters; otherwise we use the legacy fixed
         defaults so existing behavior is preserved.
         """
@@ -909,9 +1092,34 @@ def _train_single_regime(
         if report.get("optuna_available"):
             best = report.get("best_params", {})
             best_value = report.get("best_value")
-            print(
-                f"[TRAIN]     -> best logloss={best_value:.4f}  params={best}"
-            )
+            baseline = report.get("baseline_logloss")
+            improvement = report.get("improvement_over_baseline")
+            pos_rate = report.get("positive_rate")
+            if baseline is not None:
+                # Improvement bands (quant-finance rule of thumb): <0.005 no
+                # real signal, 0.005-0.015 weak, 0.015-0.03 meaningful, >0.03 strong.
+                if improvement < 0.005:
+                    verdict = "~no improvement over baseline"
+                elif improvement < 0.015:
+                    verdict = "weak improvement"
+                elif improvement < 0.03:
+                    verdict = "meaningful improvement"
+                else:
+                    verdict = "strong improvement"
+                print(
+                    f"[TRAIN]     -> logloss={best_value:.4f}  baseline={baseline:.4f}  "
+                    f"improvement={improvement:+.4f} ({verdict})  pos_rate={pos_rate:.3f}"
+                )
+            else:
+                print(f"[TRAIN]     -> best logloss={best_value:.4f}  params={best}")
+            best_iter = report.get("best_iteration")
+            final_iters = report.get("final_iterations")
+            suggested_iters = report.get("suggested_iterations")
+            if best_iter is not None and final_iters is not None and final_iters != suggested_iters:
+                print(
+                    f"[TRAIN]     -> final refit capped at iterations={final_iters} "
+                    f"(early stopping best_iteration={best_iter}; suggested budget was {suggested_iters})"
+                )
         else:
             print(
                 f"[TRAIN]     -> Optuna unavailable or unable to tune "
@@ -948,20 +1156,110 @@ def _train_single_regime(
         artifacts.append("short_model.json")
         if short_report is not None:
             optuna_reports["short"] = short_report
-    
+
     print(f"[TRAIN]   Models saved to {regime_output_dir}")
+
+    # Regime-scoped holdout evaluation: evaluate on ITS OWN regime's
+    # chronological holdout tail (last 20%), never on rows mixed from other
+    # regimes. This replaces the old cross-regime "test period" evaluation
+    # (which ran e.g. the up/long model over the ENTIRE 2025 H1 span
+    # including down/range rows -- an apples-to-oranges comparison that made
+    # every regime's F1 look worse and uninterpretable).
+    #
+    # CRITICAL: the model evaluated here must NOT be `long_model`/`short_model`
+    # (the ones just saved above) -- those were fit on f_matrix, which is
+    # ALL of this regime's rows, INCLUDING the holdout tail itself. Evaluating
+    # them on that same tail would be in-sample (the model already memorized
+    # those rows during its own .fit() call), silently inflating F1/accuracy
+    # and picking an overfit decision threshold. Instead, a SEPARATE
+    # "holdout-diagnostic" model is trained here using ONLY the prefix
+    # (everything before the holdout tail, matching the Optuna inner split's
+    # chronological convention) and evaluated on the tail -- genuinely
+    # out-of-sample. The deployed long_model/short_model (fit on the full
+    # regime data above) are what actually ship; this diagnostic model exists
+    # solely to produce an honest holdout metric and threshold selection.
+    regime_holdout_metrics: dict[str, dict[str, float]] = {}
+    selected_thresholds: dict[str, float] = {}
+    n_regime_rows = len(regime_build.labeled_rows)
+    holdout_split = max(1, int(n_regime_rows * 0.8))
+    holdout_gap = min(max(0, int(build.label_horizon)), max(0, (n_regime_rows - holdout_split) // 4))
+    holdout_start = holdout_split + holdout_gap
+    if holdout_start < n_regime_rows - 10 and holdout_split >= 10:
+        prefix_matrix = f_matrix[:holdout_split]
+        holdout_matrix = f_matrix[holdout_start:]
+        for side, target_key, is_trained, resolved_params in (
+            ("long", "long_success", train_long, long_params if train_long else None),
+            ("short", "short_success", train_short, short_params if train_short else None),
+        ):
+            if not is_trained:
+                continue
+            prefix_labels = [int(row.targets.get(target_key, row.label)) for row in regime_build.labeled_rows[:holdout_split]]
+            holdout_labels = [int(row.targets.get(target_key, row.label)) for row in regime_build.labeled_rows[holdout_start:]]
+            if len(set(holdout_labels)) < 2 or len(set(prefix_labels)) < 2:
+                print(f"[TRAIN]   Regime holdout {regime_name}/{side}: skipped (single-class prefix or holdout)")
+                continue
+            # Separate diagnostic model: same hyperparameters as the deployed
+            # model (so the diagnostic reflects the same tuning), but fit ONLY
+            # on the prefix -- never touches the holdout tail during .fit().
+            diagnostic_model = models.CatBoostAdapter(
+                feature_names=regime_build.feature_names,
+                model_params=dict(resolved_params),
+            )
+            diagnostic_model.fit(prefix_matrix, prefix_labels)
+            probs = diagnostic_model.predict_proba(holdout_matrix)
+            # Select the decision threshold on THIS holdout (never on training
+            # rows, to avoid overfitting the cutoff) using the same objective
+            # the non-regime path uses. 0.5 is an arbitrary cut with no reason
+            # to be where probability crosses into "profitable to trade" --
+            # especially for "trading_pnl", which optimizes calmar/sharpe/f1
+            # from simulated PnL rather than classification balance.
+            threshold = select_threshold(
+                probs, holdout_labels,
+                objective=training_config.threshold_objective,
+                min_trades=training_config.threshold_min_trades,
+                tp_pct=training_config.tp_pct,
+                sl_pct=training_config.sl_pct,
+                round_trip_cost=training_config.round_trip_cost,
+            )
+            selected_thresholds[side] = threshold
+            m = metrics(
+                probs, holdout_labels, threshold,
+                tp_pct=training_config.tp_pct,
+                sl_pct=training_config.sl_pct,
+                round_trip_cost=training_config.round_trip_cost,
+            )
+            baseline = _baseline_logloss(holdout_labels)
+            m["baseline_logloss"] = baseline
+            m["n_holdout"] = len(holdout_labels)
+            m["positive_rate"] = sum(holdout_labels) / len(holdout_labels)
+            m["selected_threshold"] = threshold
+            m["threshold_objective"] = training_config.threshold_objective
+            regime_holdout_metrics[side] = m
+            print(
+                f"[TRAIN]   Regime holdout {regime_name}/{side}: n={len(holdout_labels)} "
+                f"pos_rate={m['positive_rate']:.3f} threshold={threshold:.3f} ({training_config.threshold_objective}) "
+                f"F1={m['f1']:.4f} Acc={m['accuracy']:.4f} baseline_logloss={baseline:.4f} "
+                f"(diagnostic model trained on prefix only, n={len(prefix_labels)})"
+            )
+    else:
+        print(f"[TRAIN]   Regime holdout {regime_name}: skipped (too few rows: {n_regime_rows})")
     
     # Create minimal TrainingResult
+    holdout_f1_values = [m["f1"] for m in regime_holdout_metrics.values()]
+    holdout_acc_values = [m["accuracy"] for m in regime_holdout_metrics.values()]
     run_summary: dict[str, object] = {
         "regime_aware": False,
         "regime_source": "user_regime",
         "trained_regimes": {regime_name: {"status": "trained", "row_count": len(regime_indices)}},
         "labeled_rows": len(regime_build.labeled_rows),
         "fold_count": 0,
-        "mean_test_f1": 0.0,
-        "mean_test_accuracy": 0.0,
+        "selected_thresholds": selected_thresholds,
+        "threshold_objective": training_config.threshold_objective,
+        "mean_test_f1": sum(holdout_f1_values) / len(holdout_f1_values) if holdout_f1_values else 0.0,
+        "mean_test_accuracy": sum(holdout_acc_values) / len(holdout_acc_values) if holdout_acc_values else 0.0,
         "mean_test_ece": 0.0,
         "mean_test_brier": 0.0,
+        "regime_holdout_metrics": regime_holdout_metrics,
         "artifacts": artifacts,
     }
     if optuna_reports:
@@ -1082,20 +1380,24 @@ def calibration_offset(probabilities: Sequence[float], labels: Sequence[int]) ->
 def select_threshold(
     probabilities: Sequence[float],
     labels: Sequence[int],
-    objective: str = "precision_recall",
+    objective: str = "trading_pnl",
     min_trades: int | None = None,
+    tp_pct: float = 0.003,
+    sl_pct: float = 0.0015,
+    round_trip_cost: float = 0.0008,
 ) -> float:
     """Choose a decision threshold from a discrete grid of candidates.
 
     `objective` controls the ranking criterion used to pick among candidates:
 
-    - "precision_recall" (default, backward-compatible): precision with a
-      minimum recall constraint of 0.3, falling back to F1 if recall is
-      insufficient. This is the legacy behavior.
-    - "trading_pnl": rank by (calmar, sharpe, f1, -|t-0.5|) using the
+    - "trading_pnl" (default; matches TrainingConfig.threshold_objective and
+      the CLI default): rank by (calmar, sharpe, f1, -|t-0.5|) using the
       `_trading_pnl` simulator. Recommended for trading models, since the
       classification trade-off does not map cleanly to PnL when the label
       base rate is unbalanced.
+    - "precision_recall" (legacy): precision with a minimum recall
+      constraint of 0.3, falling back to F1 if recall is insufficient. Can
+      select sub-cost thresholds (~0.32) on weak models.
 
     `min_trades`: minimum number of predictions != 0 (i.e. actual trades)
     required for a candidate to be considered. Defaults to max(1, 5% of rows)
@@ -1113,7 +1415,10 @@ def select_threshold(
         # Tuple ordering: (calmar, sharpe, f1, -|t-0.5|). All higher is better.
         best_score = (-float("inf"), -float("inf"), -1.0, -float("inf"))
         for threshold in sorted(candidates):
-            current = metrics(probabilities, labels, threshold)
+            # Rank with the SAME barrier geometry the labels were built with --
+            # a TP/SL sweep changes --tp-pct/--sl-pct, and the objective must
+            # follow, or thresholds get picked for the wrong economics.
+            current = metrics(probabilities, labels, threshold, tp_pct=tp_pct, sl_pct=sl_pct, round_trip_cost=round_trip_cost)
             trade_count = int(round(current.get("predicted_positive_rate", 0.0) * len(labels)))
             if trade_count < effective_min_trades:
                 continue
@@ -1145,14 +1450,38 @@ def select_threshold(
     return best_threshold
 
 
-def _trading_pnl(probabilities: Sequence[float], labels: Sequence[int], threshold: float) -> list[float]:
-    """Simulate PnL from predictions: +0.001 on correct, -0.001 on wrong."""
+def _trading_pnl(
+    probabilities: Sequence[float],
+    labels: Sequence[int],
+    threshold: float,
+    tp_pct: float = 0.003,
+    sl_pct: float = 0.0015,
+    round_trip_cost: float = 0.0008,
+) -> list[float]:
+    """Simulate per-row PnL for a SIDE-SPECIFIC success model.
+
+    Semantics match how these models are actually traded:
+    - prob >= threshold  -> ENTER the side. label==1 (TP hit first) earns
+      +tp_pct; label==0 (SL first / timeout) loses -sl_pct. Both pay the
+      round-trip cost (fees + slippage, default 2*(0.02%+0.02%) = 0.08%).
+    - prob <  threshold  -> NO TRADE -> PnL 0. (The old version treated this
+      as an OPPOSITE position, i.e. below-threshold rows scored +/-0.001 as if
+      shorting the signal -- which rewarded thresholds that let the "inverse"
+      of the model trade, dragging selected thresholds down to ~0.32 and
+      flooding the backtest with sub-cost entries.)
+
+    Defaults mirror the triple-barrier label geometry (tp=0.30%, sl=0.15%) and
+    the backtest cost model, so calmar/sharpe rankings in select_threshold
+    reflect cost-aware asymmetric-barrier economics.
+    """
     pnl: list[float] = []
+    win = tp_pct - round_trip_cost
+    loss = -sl_pct - round_trip_cost
     for prob, label in zip(probabilities, labels):
-        pred = 1 if prob >= threshold else 0
-        direction = 1.0 if pred == 1 else -1.0
-        outcome = 1.0 if label == 1 else -1.0
-        pnl.append(direction * outcome * 0.001)
+        if prob < threshold:
+            pnl.append(0.0)
+            continue
+        pnl.append(win if label == 1 else loss)
     return pnl
 
 
@@ -1188,7 +1517,7 @@ def _calmar(pnl: Sequence[float]) -> float:
     return total_return / mdd_value
 
 
-def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: float) -> dict[str, float]:
+def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: float, tp_pct: float = 0.003, sl_pct: float = 0.0015, round_trip_cost: float = 0.0008) -> dict[str, float]:
     if not probabilities or not labels:
         return {"rows": 0.0, "accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "ece": 0.0, "expected_calibration_error": 0.0, "mce": 0.0, "brier": 0.0, "brier_score": 0.0, "brier_skill_score": 0.0, "positive_rate": 0.0, "predicted_positive_rate": 0.0, "mdd": 0.0, "sharpe": 0.0, "calmar": 0.0}
     predictions = [1 if probability >= threshold else 0 for probability in probabilities]
@@ -1203,7 +1532,7 @@ def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: fl
     brier = calibration.brier_score(probabilities, labels)
     ece = calibration.expected_calibration_error(probabilities, labels)
     # Trading-derived metrics for champion-challenger evaluation
-    pnl = _trading_pnl(probabilities, labels, threshold)
+    pnl = _trading_pnl(probabilities, labels, threshold, tp_pct=tp_pct, sl_pct=sl_pct, round_trip_cost=round_trip_cost)
     return {
         "rows": float(len(labels)),
         "accuracy": (tp + tn) / len(labels),

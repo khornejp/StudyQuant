@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -128,6 +128,23 @@ def run_demo(output: Path) -> dict[str, object]:
     return run_summary
 
 
+def _parse_end_date_exclusive(value: str) -> datetime:
+    """Parse an end-of-range date/datetime as an EXCLUSIVE upper bound.
+
+    A bare date like "2024-12-31" (no time component, len==10) means "through
+    the end of Dec 31", but fromisoformat parses it as 2024-12-31 00:00:00 --
+    which then excludes the entire day when used with a `<=` filter (only the
+    00:00 bar survives). Bumping a bare date forward by one day makes the
+    filter behave as intended: `row.open_time <= end` now includes all of
+    Dec 31. Full datetimes ("2024-12-31T12:00:00") are left as-is since the
+    caller explicitly specified a time, not a whole-day boundary.
+    """
+    dt = datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+    if len(value.strip()) == 10:  # bare "YYYY-MM-DD", no time component
+        dt = dt + timedelta(days=1) - timedelta(microseconds=1)
+    return dt
+
+
 def run_train(
     output: Path,
     input_path: Path | None = None,
@@ -151,6 +168,9 @@ def run_train(
     regime_detector_min_trend_abs: float = 0.00001,
     regime_detector_low_vol_trend_multiplier: float = 2.0,
     regime_detector_min_regime_run_bars: int = 3,
+    regime_classifier_model_path: str | None = None,
+    multi_feature_regime: bool = False,
+    multi_feature_regime_config: dict | None = None,
     feature_selection_target_min: int = 0,
     feature_selection_target_max: int = 0,
     ensemble_enabled: bool = False,
@@ -158,19 +178,18 @@ def run_train(
     ensemble_profitability_family: str = "catboost",
     ensemble_meta_family: str = "catboost",
     multitask: bool = False,
-    use_user_regime: bool = False,
-    user_regime_file: str | None = None,
     training_start: str | None = None,
     training_end: str | None = None,
     test_start: str | None = None,
     test_end: str | None = None,
     only_build: bool = False,
-    threshold_objective: str = "precision_recall",
+    threshold_objective: str = "trading_pnl",
     threshold_min_trades: int | None = None,
     tp_pct: float = 0.003,
     sl_pct: float = 0.0015,
     label_horizon: int = 60,
     label_threshold: float = 0.001,
+    round_trip_cost: float = 0.0008,
 ) -> dict[str, object]:
     if multitask:
         model_family = "pytorch_multitask"
@@ -179,13 +198,13 @@ def run_train(
         training_start_dt = datetime.fromisoformat(training_start).replace(tzinfo=timezone.utc)
     training_end_dt: datetime | None = None
     if training_end is not None:
-        training_end_dt = datetime.fromisoformat(training_end).replace(tzinfo=timezone.utc)
+        training_end_dt = _parse_end_date_exclusive(training_end)
     test_start_dt: datetime | None = None
     if test_start is not None:
         test_start_dt = datetime.fromisoformat(test_start).replace(tzinfo=timezone.utc)
     test_end_dt: datetime | None = None
     if test_end is not None:
-        test_end_dt = datetime.fromisoformat(test_end).replace(tzinfo=timezone.utc)
+        test_end_dt = _parse_end_date_exclusive(test_end)
     config = training.TrainingConfig(
         cv_mode=cv_mode,
         embargo_size=embargo_size,
@@ -199,20 +218,22 @@ def run_train(
         optuna_trials=optuna_trials,
         optuna_budget_profile=optuna_budget_profile,
         champion_challenger_enabled=champion_challenger_enabled,
-        regime_aware=regime_aware or use_user_regime,
+        regime_aware=regime_aware,
         min_regime_rows=min_regime_rows,
         regime_detector_rv_percentile=regime_detector_rv_percentile,
         regime_detector_trend_percentile=regime_detector_trend_percentile,
         regime_detector_min_trend_abs=regime_detector_min_trend_abs,
         regime_detector_low_vol_trend_multiplier=regime_detector_low_vol_trend_multiplier,
         regime_detector_min_regime_run_bars=regime_detector_min_regime_run_bars,
+        regime_classifier_model_path=regime_classifier_model_path,
+        multi_feature_regime=multi_feature_regime,
+        multi_feature_regime_config=multi_feature_regime_config,
         feature_selection_target_min=feature_selection_target_min,
         feature_selection_target_max=feature_selection_target_max,
         ensemble_enabled=ensemble_enabled,
         ensemble_direction_family=ensemble_direction_family,
         ensemble_profitability_family=ensemble_profitability_family,
         ensemble_meta_family=ensemble_meta_family,
-        use_user_regime=use_user_regime,
         training_start=training_start_dt,
         training_end=training_end_dt,
         test_start=test_start_dt,
@@ -224,15 +245,13 @@ def run_train(
         sl_pct=sl_pct,
         label_horizon=label_horizon,
         label_threshold=label_threshold,
+        round_trip_cost=round_trip_cost,
     )
-    user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None
-    if user_regime_file is not None:
-        user_regime_periods = dataset.load_user_regime_periods(Path(user_regime_file))
     archive_dir = None
     if input_path is not None and input_path.is_dir():
         archive_dir = input_path
         input_path = None
-    result = training.run_training(input_path, output, config, archive_dir=archive_dir, external_sources=external_sources, user_regime_periods=user_regime_periods)
+    result = training.run_training(input_path, output, config, archive_dir=archive_dir, external_sources=external_sources)
     summary = dict(result.run_summary)
     summary["requested_model_family"] = model_family
     return summary
@@ -248,6 +267,244 @@ def run_collect(output: Path, rows: int, allow_public_network: bool = False, for
         "rows": result.rows,
         "network_used": result.network_used,
     }
+
+
+def run_collect_metrics(start: str, end: str, output: Path, allow_public_network: bool = False, force: bool = False) -> dict[str, object]:
+    """Download the Binance futures metrics archive (open interest, long/short
+    ratios, taker buy/sell) for the given date range.
+
+    Kept separate from training (Phase 1.5): metrics are downloaded once and
+    cached on disk, so re-training reuses them without re-downloading. Already
+    downloaded daily files are reused unless force=True. Mirrors the klines
+    collect-archive workflow.
+    """
+    if not allow_public_network:
+        raise RuntimeError("metrics collection requires --allow-public-network")
+    from btcusdt_quant import metrics_source
+    downloader = metrics_source.BinanceMetricsDownloader()
+    rows = downloader.download_range(start, end, output, force=force)
+    report = {
+        "start_date": start,
+        "end_date": end,
+        "metrics_rows": len(rows),
+        "first_create_time": rows[0].create_time.isoformat() if rows else None,
+        "last_create_time": rows[-1].create_time.isoformat() if rows else None,
+        "output": Path(output).as_posix(),
+    }
+    print("BTCUSDT metrics collection complete")
+    print(f"metrics_rows={len(rows)}")
+    if rows:
+        print(f"coverage={rows[0].create_time.date()} -> {rows[-1].create_time.date()}")
+    print(f"output={output}")
+    return report
+
+
+def _catboost_multiclass_fold_classifier(
+    train_x: Sequence[Sequence[float]],
+    train_y: Sequence[str],
+    train_w: Sequence[float] | None,
+    predict_x: Sequence[Sequence[float]],
+) -> list[dict[str, float]]:
+    """A regime_classifier.FoldClassifierFn backed by CatBoost multiclass.
+
+    Trains fresh for each fold (no leakage between folds) and returns
+    per-row {"up":.., "range":.., "down":..} probability dicts.
+
+    IMPORTANT: predict_proba's column order follows whatever classes the
+    model actually saw during THIS fold's .fit() call (via model.classes_),
+    NOT a fixed assumption about REGIME_CLASSES order. If a fold's training
+    slice happens to be missing one of the 3 regimes entirely (plausible with
+    walk-forward folds -- an early fold might have no "down" rows yet), a
+    fixed-order enumerate(row) would silently misalign columns to the wrong
+    class names. Any class missing from model.classes_ for this fold gets an
+    explicit 0.0 (not a fabricated share of some other class's probability).
+    """
+    catboost = _import_optional_module_for_regime_classifier()
+    from btcusdt_quant.regime_classifier import REGIME_CLASSES
+    label_to_int = {c: i for i, c in enumerate(REGIME_CLASSES)}
+    y_int = [label_to_int[y] for y in train_y]
+    model = catboost.CatBoostClassifier(
+        loss_function="MultiClass",
+        iterations=500,
+        learning_rate=0.05,
+        depth=6,
+        random_seed=42,
+        verbose=False,
+        allow_writing_files=False,
+    )
+    fit_kwargs: dict[str, object] = {}
+    if train_w is not None:
+        fit_kwargs["sample_weight"] = list(train_w)
+    model.fit(list(train_x), y_int, **fit_kwargs)
+    proba = model.predict_proba(list(predict_x))
+    # model.classes_ gives the actual int-label order predict_proba's columns
+    # correspond to (sorted ints of whatever labels were present during fit).
+    seen_classes = list(getattr(model, "classes_", range(len(REGIME_CLASSES))))
+    int_to_label = {i: c for c, i in label_to_int.items()}
+    column_labels = [int_to_label[int(cls)] for cls in seen_classes]
+    results: list[dict[str, float]] = []
+    for row in proba:
+        row_probs = {c: 0.0 for c in REGIME_CLASSES}
+        for col_label, p in zip(column_labels, row):
+            row_probs[col_label] = float(p)
+        results.append(row_probs)
+    return results
+
+
+def _import_optional_module_for_regime_classifier():
+    try:
+        import catboost
+    except ImportError as exc:
+        raise RuntimeError(
+            "train-regime-classifier requires catboost, which is not installed in this environment"
+        ) from exc
+    return catboost
+
+
+def _fit_final_multiclass_classifier(
+    feature_rows: Sequence[Sequence[float]],
+    labels: Sequence[str],
+    weights: Sequence[float] | None,
+    feature_names: Sequence[str],
+) -> "regime_classifier.RegimeClassifierModel":
+    """Fit ONE multiclass classifier on the complete series and wrap it as a
+    persistable RegimeClassifierModel -- this is the model that ACTUALLY gets
+    saved to disk and used for regime ROUTING (training bucket assignment,
+    backtest, live), as opposed to the per-fold classifiers in
+    _catboost_multiclass_fold_classifier which only exist transiently to
+    produce leakage-safe OOF probabilities for F18 entry-model features.
+    """
+    from btcusdt_quant import regime_classifier
+    catboost = _import_optional_module_for_regime_classifier()
+    label_to_int = {c: i for i, c in enumerate(regime_classifier.REGIME_CLASSES)}
+    y_int = [label_to_int[y] for y in labels]
+    model = catboost.CatBoostClassifier(
+        loss_function="MultiClass",
+        iterations=500,
+        learning_rate=0.05,
+        depth=6,
+        random_seed=42,
+        verbose=False,
+        allow_writing_files=False,
+    )
+    fit_kwargs: dict[str, object] = {}
+    if weights is not None:
+        fit_kwargs["sample_weight"] = list(weights)
+    model.fit(list(feature_rows), y_int, **fit_kwargs)
+    return regime_classifier.RegimeClassifierModel(feature_names=feature_names, model=model)
+
+
+def run_train_regime_classifier(
+    input_path: Path,
+    regime_file: Path,
+    output: Path,
+    n_folds: int = 5,
+    purge_gap: int = 60,
+    transition_zone_days: float = 1.0,
+    smoothing_window: int = 30,
+    smoothing_min_duration: int = 60,
+    smoothing_confidence: float = 0.45,
+) -> dict[str, object]:
+    """Stage 2 of the multi-timeframe regime work (Method B): train a
+    multiclass up/range/down probability classifier on F17 features via
+    LEAKAGE-SAFE walk-forward out-of-fold prediction, apply transition-zone
+    downweighting and post-hoc smoothing, evaluate against the hand-labeled
+    regimes, and write per-minute regime probabilities to disk for the
+    training pipeline's --regime-classifier-dir to consume as F18 features.
+
+    This computes OOF probabilities for the training-period rows (each fold
+    trained ONLY on chronologically earlier rows, purged at the boundary --
+    see regime_classifier.py; the earliest fold has no prior data and is
+    left at a neutral 1/3 default rather than fabricated) and ALSO trains one
+    final classifier on the complete series for live/backtest use.
+    """
+    from btcusdt_quant import mtf_features, regime_classifier as rc
+
+    print(f"Loading candles from {input_path} ...")
+    candles = dataset.load_parquet_candles(input_path) if input_path.suffix.lower() == ".parquet" else dataset.load_csv_candles(input_path)
+    print(f"  {len(candles):,} candles loaded")
+
+    print("Computing F17 multi-timeframe features ...")
+    mtf_values = mtf_features.compute_mtf_features_to_minutes(candles)
+    feature_names = list(mtf_features.MTF_FEATURE_NAMES)
+
+    print(f"Loading regime labels from {regime_file} ...")
+    periods = dataset.load_user_regime_periods(regime_file)
+    labels: list[str] = []
+    times: list[object] = []
+    feature_rows: list[list[float]] = []
+    for candle in candles:
+        regime = dataset.resolve_user_regime(candle.open_time, periods)
+        if regime is None:
+            continue
+        row_features = mtf_values.get(candle.open_time, {})
+        feature_rows.append([float(row_features.get(name, 0.0)) for name in feature_names])
+        labels.append(regime)
+        times.append(candle.open_time)
+    print(f"  {len(labels):,} rows have a resolved regime label (others excluded, no default-fallback guessing)")
+    if len(labels) < 1000:
+        raise ValueError("too few labeled rows to train a regime classifier (need >=1000)")
+
+    print(f"Computing sample weights (transition zones downweighted +/-{transition_zone_days}d) ...")
+    from datetime import timedelta
+    weights = rc.transition_zone_sample_weights(labels, times, zone=timedelta(days=transition_zone_days))
+
+    print(f"Generating out-of-fold probabilities (purged {n_folds}-fold, purge_gap={purge_gap}) ...")
+    oof_probs = rc.generate_oof_regime_probabilities(
+        feature_rows, labels, _catboost_multiclass_fold_classifier,
+        n_folds=n_folds, purge_gap=purge_gap, sample_weight=weights,
+    )
+
+    print("Smoothing OOF probabilities ...")
+    smoothing_config = rc.SmoothingConfig(
+        rolling_window=smoothing_window,
+        min_duration_bars=smoothing_min_duration,
+        confidence_threshold=smoothing_confidence,
+    )
+    smoothed_probs, assigned_regimes = rc.smooth_regime_probabilities(oof_probs, smoothing_config)
+
+    print("Evaluating OOF classifier against hand-labeled regimes ...")
+    evaluation = rc.evaluate_regime_classifier(labels, assigned_regimes)
+    print(f"  macro_f1={evaluation.macro_f1:.4f} accuracy={evaluation.accuracy:.4f}")
+    print(f"  up<->down confusion (dangerous): {evaluation.up_down_confusion_count}")
+    print(f"  range<->trend confusion (less dangerous): {evaluation.range_confusion_count}")
+    for c in rc.REGIME_CLASSES:
+        print(f"  {c}: precision={evaluation.per_class_precision[c]:.4f} recall={evaluation.per_class_recall[c]:.4f}")
+
+    print("Training final classifier on the complete series (for live/backtest use) ...")
+    final_model = _fit_final_multiclass_classifier(feature_rows, labels, weights, feature_names)
+
+    output.mkdir(parents=True, exist_ok=True)
+    model_path = output / "regime_classifier_model.cbm"
+    final_model.save(str(model_path))
+    print(f"Saved routing model to {model_path}")
+
+    probs_by_minute = {
+        t.isoformat(): {
+            "regime_prob_up": smoothed_probs[i]["up"],
+            "regime_prob_range": smoothed_probs[i]["range"],
+            "regime_prob_down": smoothed_probs[i]["down"],
+        }
+        for i, t in enumerate(times)
+    }
+    (output / "regime_probabilities.json").write_text(json.dumps(probs_by_minute), encoding="utf-8")
+    report = {
+        "n_labeled_rows": len(labels),
+        "n_folds": n_folds,
+        "purge_gap": purge_gap,
+        "macro_f1": evaluation.macro_f1,
+        "accuracy": evaluation.accuracy,
+        "up_down_confusion_count": evaluation.up_down_confusion_count,
+        "range_confusion_count": evaluation.range_confusion_count,
+        "confusion_matrix": evaluation.confusion_matrix,
+        "per_class_precision": evaluation.per_class_precision,
+        "per_class_recall": evaluation.per_class_recall,
+        "model_path": model_path.as_posix(),
+        "feature_names": feature_names,
+    }
+    (output / "regime_classifier_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"Wrote {output / 'regime_probabilities.json'} and {output / 'regime_classifier_report.json'}")
+    return report
 
 
 def run_collect_archive(start: str, end: str, output: Path, checkpoint: Path | None = None, allow_public_network: bool = False, min_rows: int = 0) -> dict[str, object]:
@@ -336,8 +593,23 @@ def run_live(
     soak_report_interval_minutes: float = 60.0,
     long_threshold_override: float | None = None,
     short_threshold_override: float | None = None,
+    regime_classifier_dir: str | None = None,
 ) -> dict[str, object]:
     exchange_adapter = create_exchange_adapter(exchange_name, allow_signed_network, allow_prod, approval_artifacts, recv_window_ms)
+    # Load the SAVED regime classifier so live routes with the same model that
+    # trained the up/down/range buckets and that backtest routes with. Pass the
+    # SAME --regime-classifier-dir used for training/backtest. Without it, live
+    # falls back to the trend_slope_30 detector (a train/serve routing skew).
+    regime_classifier_model = None
+    if regime_classifier_dir:
+        from btcusdt_quant import mtf_features as _mtf, regime_classifier as _rc
+        model_path = Path(regime_classifier_dir) / "regime_classifier_model.cbm"
+        if not model_path.is_file():
+            raise FileNotFoundError(
+                f"--regime-classifier-dir given but {model_path} not found (run train-regime-classifier first)"
+            )
+        regime_classifier_model = _rc.RegimeClassifierModel.load(str(model_path), _mtf.MTF_FEATURE_NAMES)
+        print(f"[LIVE] regime-classifier: routing via saved model at {model_path}")
     result = live.run_live(
         output,
         dry_run=dry_run,
@@ -351,11 +623,42 @@ def run_live(
         soak_report_interval_minutes=soak_report_interval_minutes,
         long_threshold_override=long_threshold_override,
         short_threshold_override=short_threshold_override,
+        regime_classifier_model=regime_classifier_model,
     )
     summary = dict(result.summary)
     summary["exchange"] = exchange_name
     summary["signed_network_enabled"] = exchange_adapter.network_enabled
     return summary
+
+
+def merge_metrics_external_sources(
+    metrics_dir: Path,
+    candles: "list[data.Candle]",
+    external_sources: dict | None,
+) -> dict:
+    """Merge F16 derivatives-metrics features into per-candle external_sources.
+
+    SINGLE implementation shared by the train and backtest dispatch paths so
+    both sides derive metrics features IDENTICALLY (load zips -> causal 5m
+    features -> forward-fill onto the 1m clock -> pack as
+    external_sources[minute]["metrics"]). Training a model with --metrics-dir
+    and then backtesting without it feeds the model F16=0.0 inputs it never
+    saw in training -- a train/serve feature-distribution skew -- so any
+    caller that trains with metrics MUST backtest with the same directory.
+    """
+    from btcusdt_quant import metrics_source
+    metrics_rows = metrics_source.load_metrics_dir(metrics_dir)
+    minute_times = [c.open_time for c in candles]
+    metrics_by_minute = metrics_source.metrics_features_to_minutes(metrics_rows, minute_times)
+    print(f"Loaded metrics: {len(metrics_rows)} rows -> {len(metrics_by_minute)} aligned minutes")
+    if not metrics_by_minute:
+        print(f"WARNING: no metrics rows aligned to the candle window from {metrics_dir}; F16 features will be 0.", file=sys.stderr)
+    merged = dict(external_sources or {})
+    for minute, feats in metrics_by_minute.items():
+        entry = dict(merged.get(minute, {}))
+        entry["metrics"] = feats
+        merged[minute] = entry
+    return merged
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -375,6 +678,22 @@ def build_parser() -> argparse.ArgumentParser:
     collect_archive.add_argument("--checkpoint", default=None, help="optional checkpoint JSON path; defaults to output/checkpoint.json")
     collect_archive.add_argument("--allow-public-network", action="store_true", help="opt in to public Binance archive download")
     collect_archive.add_argument("--min-rows", type=int, default=0, help="minimum expected raw rows; warns if not met")
+    collect_metrics = subparsers.add_parser("collect-metrics", help="collect Binance futures metrics archive (open interest, long/short ratios, taker buy/sell)")
+    collect_metrics.add_argument("--start", required=True, help="inclusive start date YYYY-MM-DD")
+    collect_metrics.add_argument("--end", required=True, help="inclusive end date YYYY-MM-DD")
+    collect_metrics.add_argument("--output", default="artifacts/metrics", help="metrics archive output directory")
+    collect_metrics.add_argument("--allow-public-network", action="store_true", help="opt in to public Binance metrics download")
+    collect_metrics.add_argument("--force", action="store_true", help="re-download even if the daily zip already exists on disk (default: reuse cached files)")
+    train_regime_classifier = subparsers.add_parser("train-regime-classifier", help="Stage 2 of the multi-timeframe regime work: train a leakage-safe (walk-forward OOF) up/range/down probability classifier on F17 multi-timeframe features, for use as F18 features in the entry (long/short) models.")
+    train_regime_classifier.add_argument("--input", required=True, help="path to candle Parquet or CSV")
+    train_regime_classifier.add_argument("--regime-file", required=True, help="regimes.json with hand-labeled up/down/range periods (the classifier's training target)")
+    train_regime_classifier.add_argument("--output", default="artifacts/regime_classifier", help="output directory for regime_probabilities.json and regime_classifier_report.json")
+    train_regime_classifier.add_argument("--n-folds", type=int, default=5, help="number of walk-forward folds for out-of-fold probability generation")
+    train_regime_classifier.add_argument("--purge-gap", type=int, default=60, help="bars purged from training on each side of a fold boundary (in minutes; default 60 covers the default label_horizon)")
+    train_regime_classifier.add_argument("--transition-zone-days", type=float, default=1.0, help="downweight (not exclude) rows within this many days of a hand-labeled regime boundary")
+    train_regime_classifier.add_argument("--smoothing-window", type=int, default=30, help="rolling-mean window (bars) applied to raw probabilities before hysteresis")
+    train_regime_classifier.add_argument("--smoothing-min-duration", type=int, default=60, help="bars a new regime must persist before a switch is accepted")
+    train_regime_classifier.add_argument("--smoothing-confidence", type=float, default=0.45, help="minimum rolling-mean probability required to accept a regime switch")
     train = subparsers.add_parser("train", help="run deterministic offline CSV/fixture training pipeline")
     train.add_argument("--output", default="artifacts/training", help="training artifact output directory")
     train.add_argument("--input", default=None, help="optional local CSV candles path; defaults to offline fixture")
@@ -390,7 +709,11 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--optuna-budget", default="practical_start", choices=("research_fast", "practical_start", "full_audit_budget"), help="Optuna budget profile")
     train.add_argument("--champion-challenger", action="store_true", help="enable champion-challenger promotion evaluation from fold test metrics")
     train.add_argument("--collect-external-sources", action="store_true", help="collect real F11/F12 external sources (funding rate, mark price) from Binance API for training")
-    train.add_argument("--regime-aware", action="store_true", help="enable 2-Stage regime-aware training: separate models for high_volatility, trending, and ranging regimes")
+    train.add_argument("--metrics-dir", default=None, help="directory of downloaded Binance metrics archive (collect-metrics output). When set, F16 derivatives-metrics features (open interest, long/short, taker) are computed from it and merged into training. Without it those features degrade to 0.")
+    train.add_argument("--regime-classifier-dir", default=None, help="output directory from train-regime-classifier (contains regime_probabilities.json and regime_classifier_model.cbm). When set: (1) F18 regime probability features (regime_prob_up/range/down) are merged into training as inputs, AND (2) training bucket assignment (which regime's model a row's data trains) uses the argmax of those SAME walk-forward-OOF-safe F18 values -- NOT a fresh prediction from the .cbm file (re-predicting on training rows with a classifier fit on the complete span would leak later rows' influence into earlier rows' bucket assignment). The .cbm file itself is used at backtest/live time instead, where classifying genuinely unseen rows is safe -- pass the SAME directory to backtest's --regime-classifier-dir. Without --regime-classifier-dir, training falls back to trend_slope_30-only detection and F18 features degrade to 0. Ignored if --multi-feature-regime is given.")
+    train.add_argument("--multi-feature-regime", action="store_true", help="assign regime buckets with the multi-feature rule-based detector (regime_rules.MultiFeatureRegimeDetector: trend/vol/range/breakout scores over F17, hysteresis + min-hold) instead of the learned classifier or single-slope detector. Takes priority over --regime-classifier-dir. The fitted detector is saved to regime_run_summary.json; pass --multi-feature-regime to backtest/live so routing matches. Entry models MUST be (re)trained with this flag for the buckets to match serving.")
+    train.add_argument("--rule-regime-config", default=None, help="path to a JSON file of MultiFeatureRegimeConfig overrides (trend_enter, fast_exit, min_hold_bars, switch_confirm_bars, allow_direct_reversal, trend_weights, fast_trend_weights, ...). Only used with --multi-feature-regime. The fitted detector embeds these overrides and is saved to the artifact, so backtest/live inherit them automatically. Missing keys fall back to defaults.")
+    train.add_argument("--regime-aware", action="store_true", help="enable regime-aware training with real-time DIRECTIONAL detection: separate up/down/range models (up->long, down->short, range->both) driven by the trend slope. Matches the --auto-regime backtest.")
     train.add_argument("--min-regime-rows", type=int, default=80, help="minimum rows required per regime to train a sub-model")
     train.add_argument("--regime-rv-percentile", type=float, default=0.75, help="realized volatility percentile threshold for high-vol regime detection")
     train.add_argument("--regime-trend-percentile", type=float, default=0.70, help="trend slope percentile threshold for trending regime detection")
@@ -403,8 +726,6 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--ensemble-direction-family", default="catboost", help="base model family for direction prediction")
     train.add_argument("--ensemble-profitability-family", default="catboost", help="base model family for profitability prediction")
     train.add_argument("--ensemble-meta-family", default="catboost", choices=("catboost",), help="meta model family for final probability")
-    train.add_argument("--use-user-regime", action="store_true", help="use user-specified trend periods instead of automatic RegimeDetector for regime-aware training")
-    train.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods")
     train.add_argument("--training-start", default=None, help="start date for training data (ISO format, e.g., 2020-01-01); rows before this date are excluded after feature computation")
     train.add_argument("--training-end", default=None, help="end date for training data (ISO format, e.g., 2024-12-31); rows after this date are excluded from training")
     train.add_argument("--test-start", default=None, help="start date for test/validation period (ISO format, e.g., 2025-01-01); used for out-of-sample evaluation after training")
@@ -420,15 +741,21 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--label-threshold", type=float, default=0.001, help="return threshold for directional labeling (0.10%% = 0.001)")
     train.add_argument(
         "--threshold-objective",
-        default="precision_recall",
+        default="trading_pnl",
         choices=("precision_recall", "trading_pnl"),
-        help="objective used by select_threshold: 'precision_recall' (legacy default; precision with recall>=0.3 floor) or 'trading_pnl' (rank by calmar/sharpe/f1 on the trading PnL simulator — recommended for trading models)",
+        help="objective used by select_threshold: 'trading_pnl' (default; rank by calmar/sharpe/f1 on the cost-aware trading PnL simulator — matches the pipeline) or 'precision_recall' (legacy; precision with recall>=0.3 floor, can select sub-cost thresholds on weak models)",
     )
     train.add_argument(
         "--threshold-min-trades",
         type=int,
         default=None,
         help="minimum number of trades (predicted-positives) for a candidate threshold to be considered under --threshold-objective=trading_pnl. Defaults to max(1, 5%% of rows).",
+    )
+    train.add_argument(
+        "--round-trip-cost",
+        type=float,
+        default=0.0008,
+        help="total round-trip cost fraction (fees + slippage, both sides) used by the trading_pnl threshold objective and holdout metrics. Default 0.0008 = 0.08%% = 2*(0.02%% fee + 0.02%% slippage), matching the backtest's DEFAULT_ROUND_TRIP_COST_PCT. Keep this equal to 2*(--fee-rate-per-side + --slippage-rate-per-side) passed to backtest so threshold selection and execution share one cost basis.",
     )
     live_parser = subparsers.add_parser("live", help="run 1m kline WebSocket collection with gap repair")
     live_parser.add_argument("--output", default="artifacts/live", help="live artifact output directory")
@@ -442,9 +769,10 @@ def build_parser() -> argparse.ArgumentParser:
     live_parser.add_argument("--recv-window-ms", type=int, default=5000, help="Binance signed request recvWindow in milliseconds")
     live_parser.add_argument("--model-artifact", default=None, help="path to trained model artifact JSON (e.g., artifacts/training/model.json) or regime-aware directory (e.g., artifacts/training_regime_50k)")
     live_parser.add_argument("--regime-aware", action="store_true", help="enable regime-aware inference: load multiple regime models and select by detected market regime")
+    live_parser.add_argument("--regime-classifier-dir", default=None, help="output directory from train-regime-classifier (contains regime_classifier_model.cbm). When set with --regime-aware, live routes with this SAME saved classifier over F17 multi-timeframe features and injects regime_prob_up/range/down onto the entry-model inputs -- matching how training assigned buckets and how backtest routes. Pass the identical directory used for training/backtest --regime-classifier-dir. Without it, live falls back to trend_slope_30-only detection (a train/serve routing skew).")
     live_parser.add_argument("--strategy-profile", choices=live.STRATEGY_PROFILE_CHOICES, default="balanced", help="strategy profile for regime-aware signal thresholds and TP/SL pricing")
-    live_parser.add_argument("--long-threshold", type=float, default=0.55, help="minimum probability threshold for LONG entry signals")
-    live_parser.add_argument("--short-threshold", type=float, default=0.55, help="minimum probability threshold for SHORT entry signals")
+    live_parser.add_argument("--long-threshold", type=float, default=None, help="explicit LONG-entry probability threshold. When omitted, live uses the learned per-regime holdout threshold (selected_thresholds) if the artifact has one, else 0.55. Pass a value to override both.")
+    live_parser.add_argument("--short-threshold", type=float, default=None, help="explicit SHORT-entry probability threshold. When omitted, live uses the learned per-regime holdout threshold (selected_thresholds) if the artifact has one, else 0.55. Pass a value to override both.")
     live_parser.add_argument("--min-ev", type=float, default=0.0001, help="minimum expected value for entry signals (0.01%% = 0.0001)")
     live_parser.add_argument("--soak-duration-hours", type=float, default=0.0, help="soak test duration in hours (0 = normal mode, >0 = soak mode)")
     live_parser.add_argument("--soak-report-interval-minutes", type=float, default=60.0, help="soak test periodic report interval in minutes")
@@ -453,11 +781,22 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--output", default="artifacts/backtest", help="backtest output directory")
     backtest_parser.add_argument("--model-artifact", default=None, help="trained model artifact JSON path or regime-aware directory")
     backtest_parser.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods for backtest")
-    backtest_parser.add_argument("--backtest-start", default="2025-07-01", help="start date for backtest (ISO format, e.g., 2025-07-01); candles before this date are used for feature computation only")
+    backtest_parser.add_argument("--backtest-start", default="2025-01-01", help="start date for backtest (ISO format); candles before this date are used for feature computation only. Default 2025-01-01 matches the pipeline's full-year 2025 out-of-sample window (was 2025-07-01 when 2025 H1 was a held-out validation span; that split no longer exists).")
     backtest_parser.add_argument("--tp-floor", type=float, default=None, help="override TP floor (fraction, e.g. 0.003 = 0.30%%) for all strategy profiles. Use to match the tp_pct used at training time for a consistent sweep.")
     backtest_parser.add_argument("--sl-floor", type=float, default=None, help="override SL floor (fraction, e.g. 0.0015 = 0.15%%) for all strategy profiles.")
     backtest_parser.add_argument("--fixed-tp-sl", action="store_true", help="disable ATR-based TP/SL sizing and trade EXACTLY the tp-floor/sl-floor. Use for the TP/SL sweep so backtest barriers match the training labels.")
-    backtest_parser.add_argument("--auto-regime", action="store_true", help="detect regimes in real time with RegimeDetector (directional up/down/range from trend slope) instead of a hand-labeled --user-regime-file. This is what a live deployment does, since future regimes can't be known in advance. Ignored if --user-regime-file is given.")
+    backtest_parser.add_argument("--auto-regime", action="store_true", help="detect regimes in real time with RegimeDetector (directional up/down/range from trend slope) instead of a hand-labeled --user-regime-file. This is what a live deployment does, since future regimes can't be known in advance. Ignored if --user-regime-file is given. Ignored if --regime-classifier-dir is given (the classifier takes priority when both are set).")
+    backtest_parser.add_argument("--long-threshold", type=float, default=None, help="override the LONG-entry probability threshold for all regimes. When omitted, the backtest uses the learned per-regime holdout threshold (selected_thresholds) if the artifact has one, else the strategy profile default -- matching live.")
+    backtest_parser.add_argument("--short-threshold", type=float, default=None, help="override the SHORT-entry probability threshold for all regimes. When omitted, uses the learned per-regime threshold if present, else the strategy default.")
+    backtest_parser.add_argument("--exec-tp-pct", type=float, default=None, help="execute with a FIXED take-profit of this fraction (e.g. 0.003 = 0.30%%) for every trade instead of the strategy's ATR-based barrier. Set equal to the training --tp-pct so the backtest executes the SAME barrier the model was labeled/trained on (avoids the train/execution mismatch where the model predicts a 0.30%% move but the backtest trades a 0.84%% ATR barrier). Requires --exec-sl-pct too.")
+    backtest_parser.add_argument("--exec-sl-pct", type=float, default=None, help="execute with a FIXED stop-loss of this fraction (e.g. 0.0015 = 0.15%%). Set equal to training --sl-pct. Requires --exec-tp-pct too.")
+    backtest_parser.add_argument("--backtest-end", default=None, help="inclusive end date (YYYY-MM-DD) of the trading window. Without it the backtest silently trades from --backtest-start to the END OF FILE, so a parquet extended past 2025 would silently widen the traded span. Routing diagnostics are sliced to the same window.")
+    backtest_parser.add_argument("--metrics-dir", default=None, help="directory of downloaded Binance metrics archive (collect-metrics output) -- pass the SAME directory used for training's --metrics-dir. Training with metrics and backtesting without them feeds the model F16 derivatives-metrics features (open interest change rates/z-scores, long/short ratios, taker ratio) as 0.0 -- inputs it never saw in training (train/serve feature skew). Without this flag those features are 0 in the backtest.")
+    backtest_parser.add_argument("--fee-rate-per-side", type=float, default=None, help="override the per-side fee fraction (default 0.0002 = 0.02%%). Together with --slippage-rate-per-side this sets the backtest's executed round-trip cost; keep 2*(fee+slippage) equal to training's --round-trip-cost so the threshold objective and execution share one cost basis.")
+    backtest_parser.add_argument("--slippage-rate-per-side", type=float, default=None, help="override the per-side slippage fraction (default 0.0002 = 0.02%%). See --fee-rate-per-side.")
+    backtest_parser.add_argument("--horizon", type=int, default=60, help="max holding bars before forced TIMEOUT exit (minutes for 1m data). MUST match the training --horizon so backtest execution and triple-barrier labels share the same time barrier (a train horizon of 120 with a backtest horizon of 60 silently misaligns label vs execution). Default 60 = training default.")
+    backtest_parser.add_argument("--threshold-floor", type=float, default=0.0, help="hard lower bound on the learned/strategy entry thresholds (does NOT clamp an explicit --long/--short-threshold override). Learned selected_thresholds can drop to ~0.32 on weak models; e.g. --threshold-floor 0.45 keeps entries above a minimum confidence so sub-cost signals don't flood the backtest. Default 0 = disabled.")
+    backtest_parser.add_argument("--regime-classifier-dir", default=None, help="output directory from train-regime-classifier (contains regime_classifier_model.cbm). When set, this SAME saved classifier drives regime routing here via F17 multi-timeframe features -- pass the identical directory used for training's --regime-classifier-dir so routing stays consistent with how the up/down/range models were trained. Takes priority over --auto-regime. Ignored if --user-regime-file is given.")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -506,6 +845,31 @@ def main(argv: list[str] | None = None) -> int:
         if not summary["min_rows_passed"]:
             print(f"warning: min_rows not met (raw_rows={summary['coverage_report']['raw_rows']}, min_rows={args.min_rows})")
         return 0
+    if args.command == "collect-metrics":
+        output = Path(args.output)
+        try:
+            run_collect_metrics(args.start, args.end, output, args.allow_public_network, args.force)
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"metrics collection failed: {error}", file=sys.stderr)
+            return 1
+        return 0
+    if args.command == "train-regime-classifier":
+        try:
+            run_train_regime_classifier(
+                Path(args.input),
+                Path(args.regime_file),
+                Path(args.output),
+                n_folds=args.n_folds,
+                purge_gap=args.purge_gap,
+                transition_zone_days=args.transition_zone_days,
+                smoothing_window=args.smoothing_window,
+                smoothing_min_duration=args.smoothing_min_duration,
+                smoothing_confidence=args.smoothing_confidence,
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"regime classifier training failed: {error}", file=sys.stderr)
+            return 1
+        return 0
     if args.command == "train":
         output = Path(args.output)
         input_path = Path(args.input) if args.input else None
@@ -527,14 +891,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"are ignored here: {', '.join(train_noop_flags)}.",
                 file=sys.stderr,
             )
-        if args.use_user_regime:
-            # _run_user_regime_training (the path --use-user-regime takes)
-            # trains one fixed-hyperparameter CatBoost long/short model per
-            # regime directly via .fit() — it does not run the ensemble
-            # stacking pipeline, cross-validation, or threshold search. Warn
-            # loudly if the user also asked for options that silently have
-            # no effect on this path, so they don't believe those options
-            # were applied to the resulting model.
+        if args.regime_aware:
+            # Regime-aware training (real-time directional detection) trains
+            # one fixed-hyperparameter CatBoost long/short model per regime
+            # directly via .fit() — it does not run the ensemble stacking
+            # pipeline or cross-validation. threshold-objective IS applied
+            # (see _train_single_regime's regime-scoped holdout threshold
+            # selection). Warn loudly if the user also asked for options that
+            # still silently have no effect on this path, so they don't
+            # believe those options were applied to the model.
             ignored_flags: list[str] = []
             if args.ensemble:
                 ignored_flags.append("--ensemble")
@@ -544,16 +909,16 @@ def main(argv: list[str] | None = None) -> int:
                 ignored_flags.append(f"--n-groups {args.n_groups}")
             if args.test_group_count != 1:
                 ignored_flags.append(f"--test-group-count {args.test_group_count}")
-            if args.threshold_objective != "precision_recall":
-                ignored_flags.append(f"--threshold-objective {args.threshold_objective}")
             if args.feature_selection:
                 ignored_flags.append("--feature-selection")
             if ignored_flags:
                 print(
-                    "WARNING: --use-user-regime trains one CatBoost model per "
+                    "WARNING: --regime-aware trains one CatBoost model per "
                     "regime via direct .fit() (Optuna tuning IS applied when "
-                    "--optuna is set, but the following flags are NOT applied "
-                    "on this path and are silently ignored: "
+                    "--optuna is set, and --threshold-objective IS applied via "
+                    "regime-scoped holdout threshold selection, but the "
+                    "following flags are NOT applied on this path and are "
+                    "silently ignored: "
                     f"{', '.join(ignored_flags)}. See "
                     "btcusdt_quant/training.py::_train_single_regime.",
                     file=sys.stderr,
@@ -568,6 +933,61 @@ def main(argv: list[str] | None = None) -> int:
             collector = dataset.ExternalSourcesCollector(allow_network=True)
             external_sources = collector.build_external_sources_for_candles(candles)
             print(f"Collected external sources for {len(external_sources)} candles")
+        # Merge derivatives-metrics features (F16) from a downloaded metrics
+        # archive. Computed offline (no network): load rows, derive causal
+        # features on the 5m grid, forward-fill onto each candle's 1m clock,
+        # and pack as external_sources[candle_time]["metrics"] = {feat: value}.
+        if args.metrics_dir:
+            if input_path is None:
+                print("--metrics-dir requires --input to specify candle data", file=sys.stderr)
+                return 1
+            metrics_candles = dataset.load_parquet_candles(input_path) if input_path.suffix.lower() == ".parquet" else dataset.load_csv_candles(input_path)
+            external_sources = merge_metrics_external_sources(Path(args.metrics_dir), metrics_candles, external_sources)
+        # Merge regime probability features (F18) from a train-regime-classifier
+        # run. regime_probabilities.json maps ISO timestamp -> {regime_prob_up,
+        # regime_prob_range, regime_prob_down}, already leakage-safe
+        # (walk-forward OOF) and smoothed. The SAME directory's saved
+        # classifier model (.cbm) also drives regime bucket assignment for
+        # training (see regime_classifier_model_path below) -- keeping F18
+        # features and routing sourced from one directory guarantees they
+        # can never drift out of sync with each other.
+        regime_classifier_model_path: str | None = None
+        if args.multi_feature_regime and args.regime_classifier_dir:
+            print(
+                "WARNING: --regime-classifier-dir ignored because "
+                "--multi-feature-regime takes priority (rule-based bucketing).",
+                file=sys.stderr,
+            )
+        if args.regime_classifier_dir and not args.multi_feature_regime:
+            probs_path = Path(args.regime_classifier_dir) / "regime_probabilities.json"
+            if not probs_path.is_file():
+                print(f"--regime-classifier-dir given but {probs_path} not found (run train-regime-classifier first)", file=sys.stderr)
+                return 1
+            raw_probs = json.loads(probs_path.read_text(encoding="utf-8"))
+            print(f"Loaded regime probabilities: {len(raw_probs)} timestamps")
+            if external_sources is None:
+                external_sources = {}
+            merged = dict(external_sources)
+            for iso_time, feats in raw_probs.items():
+                minute = datetime.fromisoformat(iso_time)
+                entry = dict(merged.get(minute, {}))
+                entry["regime_classifier"] = feats
+                merged[minute] = entry
+            external_sources = merged
+            model_path = Path(args.regime_classifier_dir) / "regime_classifier_model.cbm"
+            if model_path.is_file():
+                # Passed to TrainingConfig only as a signal "the F18 OOF
+                # probabilities just merged above are safe to use for bucket
+                # assignment" -- training bucket assignment reads those
+                # already-merged regime_prob_* feature values directly (see
+                # training.py's run_regime_aware_training) rather than
+                # loading/re-predicting with this .cbm file. The .cbm itself
+                # is only loaded later, for backtest/live routing on
+                # genuinely out-of-sample rows.
+                regime_classifier_model_path = str(model_path)
+                print(f"Found {model_path}; training bucket assignment will use the walk-forward OOF F18 probabilities merged above (not a fresh in-sample prediction from this file -- see training.py for why).")
+            else:
+                print(f"WARNING: {model_path} not found; falling back to trend_slope_30-only regime detection for bucket assignment. Re-run train-regime-classifier with the current code to get a saved model.", file=sys.stderr)
         try:
             summary = run_train(
                 output, input_path, args.model_family, args.cv_mode, args.embargo_size, args.n_groups, args.test_group_count,
@@ -585,6 +1005,12 @@ def main(argv: list[str] | None = None) -> int:
                 regime_detector_min_trend_abs=args.regime_min_trend_abs,
                 regime_detector_low_vol_trend_multiplier=args.regime_low_vol_multiplier,
                 regime_detector_min_regime_run_bars=args.regime_min_run_bars,
+                regime_classifier_model_path=regime_classifier_model_path,
+                multi_feature_regime=args.multi_feature_regime,
+                multi_feature_regime_config=(
+                    json.loads(Path(args.rule_regime_config).read_text(encoding="utf-8"))
+                    if args.rule_regime_config else None
+                ),
                 feature_selection_target_min=args.feature_selection_target_min,
                 feature_selection_target_max=args.feature_selection_target_max,
                 ensemble_enabled=args.ensemble,
@@ -592,8 +1018,6 @@ def main(argv: list[str] | None = None) -> int:
                 ensemble_profitability_family=args.ensemble_profitability_family,
                 ensemble_meta_family=args.ensemble_meta_family,
                 multitask=args.multitask,
-                use_user_regime=args.use_user_regime,
-                user_regime_file=args.user_regime_file,
                 training_start=args.training_start,
                 training_end=args.training_end,
                 test_start=args.test_start,
@@ -605,6 +1029,7 @@ def main(argv: list[str] | None = None) -> int:
                 sl_pct=args.sl_pct,
                 label_horizon=args.horizon,
                 label_threshold=args.label_threshold,
+                round_trip_cost=args.round_trip_cost,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)
@@ -647,6 +1072,7 @@ def main(argv: list[str] | None = None) -> int:
                 soak_report_interval_minutes=args.soak_report_interval_minutes,
                 long_threshold_override=args.long_threshold,
                 short_threshold_override=args.short_threshold,
+                regime_classifier_dir=args.regime_classifier_dir,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"live failed: {error}", file=sys.stderr)
@@ -688,10 +1114,31 @@ def main(argv: list[str] | None = None) -> int:
             user_regime_periods = None
             if args.user_regime_file:
                 user_regime_periods = dataset.load_user_regime_periods(Path(args.user_regime_file))
-            # Real-time regime detection (live-compatible). Only used when no
+            # Real-time regime routing (live-compatible). Only used when no
             # explicit regime file is given — a hand-labeled file always wins.
+            # --regime-classifier-dir (F17-based saved classifier) takes
+            # priority over --auto-regime (trend_slope_30-only detector) when
+            # both are given, since the classifier is the richer signal.
             regime_detector = None
-            if args.auto_regime:
+            regime_classifier_model = None
+            multi_feature_regime_detector = None
+            if args.regime_classifier_dir:
+                if user_regime_periods is not None:
+                    print(
+                        "WARNING: --regime-classifier-dir ignored because --user-regime-file was provided.",
+                        file=sys.stderr,
+                    )
+                else:
+                    from btcusdt_quant import mtf_features as _mtf, regime_classifier as _rc
+                    model_path = Path(args.regime_classifier_dir) / "regime_classifier_model.cbm"
+                    if not model_path.is_file():
+                        print(f"--regime-classifier-dir given but {model_path} not found (run train-regime-classifier first)", file=sys.stderr)
+                        return 1
+                    regime_classifier_model = _rc.RegimeClassifierModel.load(str(model_path), _mtf.MTF_FEATURE_NAMES)
+                    print(f"[BACKTEST] regime-classifier: routing via saved model at {model_path}")
+                    if args.auto_regime:
+                        print("[BACKTEST] --auto-regime ignored because --regime-classifier-dir takes priority", file=sys.stderr)
+            elif args.auto_regime:
                 if user_regime_periods is not None:
                     print(
                         "WARNING: --auto-regime ignored because --user-regime-file was provided.",
@@ -708,6 +1155,23 @@ def main(argv: list[str] | None = None) -> int:
                 elif model_path.is_dir():
                     if (model_path / "regime_run_summary.json").is_file():
                         regime_bundle = live.load_regime_aware_models(model_path)
+                        # If the artifact was trained with --multi-feature-regime,
+                        # load the SAME fitted rule detector and route with it
+                        # (takes priority over classifier/auto-regime so serving
+                        # matches how the entry models were bucketed).
+                        try:
+                            _summary = json.loads((model_path / "regime_run_summary.json").read_text(encoding="utf-8"))
+                            _rule_payload = _summary.get("multi_feature_regime_detector")
+                            if _rule_payload:
+                                from btcusdt_quant import regime_rules as _rr
+                                multi_feature_regime_detector = _rr.MultiFeatureRegimeDetector.from_dict(_rule_payload)
+                                print("[BACKTEST] regime routing: multi-feature rule detector loaded from artifact")
+                                if regime_classifier_model is not None:
+                                    print("[BACKTEST] --regime-classifier-dir ignored because the artifact uses multi-feature rule routing", file=sys.stderr)
+                                    regime_classifier_model = None
+                                regime_detector = None
+                        except (OSError, ValueError, KeyError):
+                            pass
                         # backtest expects models_by_regime[regime] to be the
                         # RegimeModelBundle itself (it reads .direction_policy /
                         # .long_models / .short_models off the value). Passing
@@ -748,29 +1212,92 @@ def main(argv: list[str] | None = None) -> int:
                 strategies = overridden
                 print(f"[BACKTEST] TP/SL floor override: tp={args.tp_floor}, sl={args.sl_floor}, fixed={args.fixed_tp_sl}")
             resolved_default_regime = regime_bundle.default_regime if regime_bundle is not None else None
+            # Build feature rows ONCE and share across compare_strategies and
+            # run_backtest. Both would otherwise call build_feature_rows on the
+            # full candle set independently (minutes of duplicated feature
+            # computation on multi-year 1m data). Safe to share: all routing
+            # paths rebuild rows via dataclasses.replace (non-destructive), so
+            # the original list is never mutated.
+            # F16 metrics parity with training: merge the SAME derivatives-
+            # metrics external sources the train dispatch merges (shared
+            # helper), so a model trained with --metrics-dir sees real F16
+            # values here instead of 0.0 defaults.
+            backtest_external_sources = None
+            if args.metrics_dir:
+                backtest_external_sources = merge_metrics_external_sources(Path(args.metrics_dir), candles, None)
+            shared_feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods, external_sources=backtest_external_sources)
+            # Rule routing runs ONCE here (detect_all over the full series) and
+            # the routed rows + windowed diagnostics are shared by both calls
+            # below -- previously compare_strategies and run_backtest each
+            # re-ran detect_all over ~3.15M rows.
+            shared_routing_diag = None
+            if multi_feature_regime_detector is not None and user_regime_periods is None:
+                shared_feature_rows, shared_routing_diag = backtest.apply_multi_feature_routing(
+                    shared_feature_rows,
+                    multi_feature_regime_detector,
+                    start_date=args.backtest_start,
+                    end_date=args.backtest_end,
+                )
+                print(
+                    "[BACKTEST] regime routing stats (window): "
+                    f"counts={shared_routing_diag.get('regime_counts')} "
+                    f"transitions={shared_routing_diag.get('regime_transition_count')} "
+                    f"direct_up<->down={shared_routing_diag.get('direct_reversal_count')}"
+                )
+                multi_feature_regime_detector = None  # already applied
+            resolved_fee = args.fee_rate_per_side if args.fee_rate_per_side is not None else backtest.DEFAULT_FEE_RATE_PER_SIDE
+            resolved_slippage = args.slippage_rate_per_side if args.slippage_rate_per_side is not None else backtest.DEFAULT_SLIPPAGE_RATE_PER_SIDE
+            if args.fee_rate_per_side is not None or args.slippage_rate_per_side is not None:
+                print(f"[BACKTEST] cost override: fee_per_side={resolved_fee}, slippage_per_side={resolved_slippage}, round_trip={2.0 * (resolved_fee + resolved_slippage)}")
             comparison = backtest.compare_strategies(
                 candles,
                 model,
                 strategies,
+                fee_rate_per_side=resolved_fee,
+                slippage_rate_per_side=resolved_slippage,
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,
                 default_regime=resolved_default_regime,
                 start_date=args.backtest_start,
+                end_date=args.backtest_end,
                 regime_detector=regime_detector,
+                regime_classifier_model=regime_classifier_model,
+                multi_feature_regime_detector=multi_feature_regime_detector,
+                exec_tp_pct=args.exec_tp_pct,
+                exec_sl_pct=args.exec_sl_pct,
+                threshold_floor=args.threshold_floor,
+                label_horizon=args.horizon,
+                feature_rows=shared_feature_rows,
             )
             result = backtest.run_backtest(
                 candles,
                 model,
                 strategies["balanced"],
+                fee_rate_per_side=resolved_fee,
+                slippage_rate_per_side=resolved_slippage,
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,
                 default_regime=resolved_default_regime,
                 start_date=args.backtest_start,
+                end_date=args.backtest_end,
+                long_threshold=args.long_threshold,
+                short_threshold=args.short_threshold,
+                exec_tp_pct=args.exec_tp_pct,
+                exec_sl_pct=args.exec_sl_pct,
+                threshold_floor=args.threshold_floor,
+                label_horizon=args.horizon,
+                precomputed_routing_diagnostics=shared_routing_diag,
                 regime_detector=regime_detector,
+                regime_classifier_model=regime_classifier_model,
+                multi_feature_regime_detector=multi_feature_regime_detector,
+                feature_rows=shared_feature_rows,
             )
             summary = {
                 "backtest": result.as_dict(),
                 "strategy_comparison": comparison,
+                # Recorded so a result can be audited against the training
+                # --horizon (label/execution time-barrier alignment).
+                "label_horizon": args.horizon,
             }
             output.mkdir(parents=True, exist_ok=True)
             (output / "backtest_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")

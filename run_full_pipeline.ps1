@@ -3,45 +3,87 @@
 # Intended flow:
 #   1. Download 2020-01-01 ~ 2025-12-31 Binance archive (full 6-year span)
 #   2. Combine into one Parquet file
-#   3. Train regime-aware models using YOUR user-specified up/down/range
-#      periods (regimes.json), with training data restricted to 2020-2024
-#      (validated on 2025-01-01 ~ 2025-06-30)
-#   4. Backtest the trained models on 2025-07-01 ~ 2025-12-31 (out-of-sample,
-#      never seen during training or validation)
+#   3. Train regime-aware models with multi-feature RULE regime bucketing
+#      (default $RegimeMode="rule"; regimes.json only needed for the legacy
+#      "classifier" mode), training data restricted to 2020-2024.
+#      Model quality is checked via a chronological holdout SPLIT OF THE
+#      TRAINING DATA ITSELF (last 20% of each regime's own rows), not a
+#      separate held-out calendar span -- see "Regime holdout" log lines.
+#   4. Backtest the trained models on the FULL 2025 year (out-of-sample,
+#      never seen during training)
 #
 # Requirements:
 #   - Python with pyarrow, catboost, numpy, pandas installed
 #   - ~16GB RAM (5 years of 1m candles ~ 2.6M rows; features ~3GB in memory)
-#   - regimes.json with your up/down/range period definitions
+#   - regimes.json only if $RegimeMode="classifier" (rule mode needs none)
 #   - Network access to data.binance.vision for archive downloads
 #
 # Usage:
-#   # Edit the variables below to point at your regimes.json, then:
+#   # Review the configuration variables below (rule mode needs no
+#   # regimes.json; set $RegimeMode="classifier" to use one), then:
 #   powershell -ExecutionPolicy Bypass -File run_full_pipeline.ps1
 # ---------------------------------------------------------------------------
 
 $ErrorActionPreference = "Stop"
 
 # ====== Configuration =====================================================
-$RegimeFile      = "regimes.json"           # YOUR up/down/range periods
+$RegimeFile      = "regimes.json"           # only used when $RegimeMode="classifier"
 $DownloadStart   = "2020-01-01"             # earliest training data
 $TrainingEnd     = "2024-12-31"             # last day used for model fitting
-$ValidationStart = "2025-01-01"             # in-sample test window (no fitting)
-$ValidationEnd   = "2025-06-30"
-$BacktestStart   = "2025-07-01"             # final out-of-sample backtest
+$BacktestStart   = "2025-01-01"             # full-year out-of-sample backtest
 $BacktestEnd     = "2025-12-31"
 $ArtifactsDir    = "artifacts"
+# How each regime/side model picks its decision threshold on its own holdout:
+#   precision_recall (default) - precision with recall>=0.3 floor, F1 fallback
+#   trading_pnl                - optimizes simulated calmar/sharpe/f1 from PnL,
+#                                 usually the better fit for a trading model
+#                                 since classification balance != profitability
+# Threshold objective for per-side holdout threshold selection.
+# "trading_pnl" ranks candidates by cost-aware simulated PnL (no-trade below
+# threshold, asymmetric TP/SL, round-trip cost) -- the fixed _trading_pnl.
+# The old "precision_recall" default drove thresholds down to ~0.32 and
+# flooded the backtest with sub-cost entries.
+$ThresholdObjective = "trading_pnl"
+# Regime routing mode:
+#   "rule"       (default) - multi-feature rule-based detector; no learned
+#                            classifier and no regimes.json needed. The fitted
+#                            detector is saved into the model artifact and
+#                            reused by backtest/live (no train/serve skew).
+#   "classifier"           - legacy learned-classifier routing (Phase 2.5 +
+#                            --regime-classifier-dir). Requires regimes.json.
+if (-not $RegimeMode) { $RegimeMode = "rule" }
+# Optional: path to a MultiFeatureRegimeConfig JSON (rule mode only). Defaults to
+# the conservative 1m-scalping preset (switch_confirm_bars=10,
+# allow_direct_reversal=false, ...). Set to "" to use built-in code defaults.
+if (-not $RuleRegimeConfig) { $RuleRegimeConfig = "configs/rule_regime.json" }
+# Triple-barrier label geometry (also used as the FIXED execution barriers in
+# Phase 4 so the backtest trades the SAME barrier the model was trained on).
+# Timeout/horizon is in bars (=minutes for 1m data). Tune these together to
+# reduce the TIMEOUT rate and align cost vs reward.
+if (-not $Horizon)    { $Horizon    = 60 }
+if (-not $LabelTpPct) { $LabelTpPct = "0.003" }   # 0.30%
+if (-not $LabelSlPct) { $LabelSlPct = "0.0015" }  # 0.15%
+# Hard lower bound on learned entry thresholds at backtest time (0 = off).
+if (-not $ThresholdFloor) { $ThresholdFloor = "0.45" }
+# Cost basis SINGLE SOURCE: per-side fee/slippage fractions. The round-trip
+# cost 2*(fee+slippage) is derived below and passed to train (threshold
+# objective + holdout metrics) while the per-side values go to backtest
+# execution -- so threshold selection and execution always share one basis.
+if (-not $FeePerSide)      { $FeePerSide      = "0.0002" }  # 0.02%
+if (-not $SlippagePerSide) { $SlippagePerSide = "0.0002" }  # 0.02%
+$RoundTripCost = [string](2.0 * ([double]$FeePerSide + [double]$SlippagePerSide))
 # ==========================================================================
 
 Write-Host "=== BTCUSDT User-Regime Pipeline ===" -ForegroundColor Cyan
 Write-Host "Training span    : $DownloadStart -> $TrainingEnd"
-Write-Host "Validation span  : $ValidationStart -> $ValidationEnd (held out)"
-Write-Host "Backtest span    : $BacktestStart -> $BacktestEnd (out of sample)"
+Write-Host "Regime holdout   : last 20% of each regime's own training rows (in-training check)"
+Write-Host "Backtest span    : $BacktestStart -> $BacktestEnd (full-year out of sample)"
 Write-Host "Regime file      : $RegimeFile"
+Write-Host "Regime mode      : $RegimeMode"
 Write-Host ""
 
 # Validate regime file exists before doing anything expensive
-if (-not (Test-Path $RegimeFile)) {
+if (($RegimeMode -eq "classifier") -and (-not (Test-Path $RegimeFile))) {
     Write-Host "ERROR: regime file not found: $RegimeFile" -ForegroundColor Red
     Write-Host ""
     Write-Host "Create $RegimeFile with this shape:" -ForegroundColor Yellow
@@ -81,6 +123,26 @@ python -m btcusdt_quant collect-archive `
     --allow-public-network
 
 # ============================================================================
+# PHASE 1.5: Download the futures metrics archive (open interest, long/short
+# ratios, taker buy/sell). Cached on disk so re-training reuses it. Feeds the
+# F16 derivatives-metrics features. NOTE: live use needs the /futures/data/*
+# REST endpoints wired into the live engine (not done yet).
+# ============================================================================
+
+Write-Host ""
+Write-Host "[Phase 1.5] Downloading Binance futures metrics archive ..." -ForegroundColor Yellow
+
+$MetricsDir = Join-Path $ArtifactsDir "metrics"
+if (-not (Test-Path $MetricsDir)) {
+    New-Item -ItemType Directory -Path $MetricsDir | Out-Null
+}
+
+python -m btcusdt_quant collect-metrics `
+    --start $DownloadStart --end $BacktestEnd `
+    --output $MetricsDir `
+    --allow-public-network
+
+# ============================================================================
 # PHASE 2: Combine daily CSVs into a single Parquet
 # ============================================================================
 
@@ -117,99 +179,160 @@ print(f'  -> wrote {len(candles):,} rows to {out_path}')
 }
 
 # ============================================================================
-# PHASE 3: Train regime-aware models on 2020 -> 2024 with validation on 2025 H1
+# PHASE 2.5: Train the regime probability classifier (Method B, stage 2)
+#
+# Leakage-safe (walk-forward out-of-fold) up/range/down probability
+# classifier on F17 multi-timeframe features, trained against the
+# hand-labeled regimes.json. Writes regime_probabilities.json, which Phase 3
+# feeds into --regime-classifier-dir so the entry (long/short) models can use
+# F18 soft regime-probability features. See btcusdt_quant/regime_classifier.py
+# for how leakage is prevented: no fold's classifier ever sees the label of a
+# row it predicts.
+# ============================================================================
+
+Write-Host ""
+$RegimeClassifierDir = Join-Path $ArtifactsDir "regime_classifier"
+
+if ($RegimeMode -eq "classifier") {
+    Write-Host "[Phase 2.5] Training regime probability classifier (leakage-safe OOF) ..." -ForegroundColor Yellow
+    python -m btcusdt_quant train-regime-classifier `
+        --input $FullParquet `
+        --regime-file $RegimeFile `
+        --output $RegimeClassifierDir
+} else {
+    Write-Host "[Phase 2.5] Skipped (RegimeMode=${RegimeMode}: multi-feature rule detector needs no learned classifier)." -ForegroundColor DarkYellow
+}
+
+# ============================================================================
+# PHASE 3: Train regime-aware models on 2020 -> 2024 (real-time directional
+# detection -- the old --use-user-regime hand-labeled path was removed: it
+# depended on regimes.json, which requires knowing the regime in hindsight
+# and therefore can never be reproduced live. regimes.json remains useful as
+# GROUND-TRUTH LABELS for Phase 2.5's regime probability classifier (which
+# IS fully causal at inference time), just not for hard-routing entry models.
 # ============================================================================
 
 Write-Host ""
 Write-Host "[Phase 3] Training regime-aware ensemble..." -ForegroundColor Yellow
 Write-Host "  Features are computed once over the full 2020-2025 series." -ForegroundColor Gray
 Write-Host "  Training rows are restricted to $DownloadStart -> $TrainingEnd via --training-end." -ForegroundColor Gray
-Write-Host "  Validation rows are $ValidationStart -> $ValidationEnd via --test-start/--test-end." -ForegroundColor Gray
-Write-Host "  Regime labels come from $RegimeFile (--use-user-regime)." -ForegroundColor Gray
+if ($RegimeMode -eq "classifier") {
+    Write-Host "  Regimes are detected by the learned classifier (Phase 2.5 .cbm)." -ForegroundColor Gray
+} else {
+    Write-Host "  Regimes are detected by MultiFeatureRegimeDetector (rule-based, 1h/4h/24h)." -ForegroundColor Gray
+}
 Write-Host ""
 Write-Host "  Per-regime Optuna tuning (--optuna) IS applied: each long/short" -ForegroundColor DarkYellow
-Write-Host "  CatBoost model gets its own small Optuna study to pick iterations," -ForegroundColor DarkYellow
-Write-Host "  learning_rate, depth, and l2_leaf_reg on a chronological 80/20" -ForegroundColor DarkYellow
-Write-Host "  holdout of that regime's rows. Other flags (--ensemble, --cv-mode," -ForegroundColor DarkYellow
-Write-Host "  --threshold-objective, --feature-selection) are NOT applied on" -ForegroundColor DarkYellow
+Write-Host "  CatBoost model gets its own Optuna study (100 trials) over 8" -ForegroundColor DarkYellow
+Write-Host "  hyperparameters (iterations, learning_rate, depth, l2_leaf_reg," -ForegroundColor DarkYellow
+Write-Host "  random_strength, bagging_temperature, min_data_in_leaf," -ForegroundColor DarkYellow
+Write-Host "  border_count) on a chronological 80/20 holdout of that regime's" -ForegroundColor DarkYellow
+Write-Host "  rows, with eval_set-based early stopping (use_best_model=True)." -ForegroundColor DarkYellow
+Write-Host "  The FINAL model per regime is then ALSO evaluated on that same" -ForegroundColor DarkYellow
+Write-Host "  regime's own chronological holdout tail (never mixed with other" -ForegroundColor DarkYellow
+Write-Host "  regimes) -- see 'Regime holdout' log lines. Each regime/side model" -ForegroundColor DarkYellow
+Write-Host "  also picks its decision threshold on that same holdout via" -ForegroundColor DarkYellow
+Write-Host "  --threshold-objective ($ThresholdObjective) instead of a fixed 0.5" -ForegroundColor DarkYellow
+Write-Host "  cutoff -- see 'threshold=' in the holdout log lines. Other flags" -ForegroundColor DarkYellow
+Write-Host "  (--ensemble, --cv-mode, --feature-selection) are NOT applied on" -ForegroundColor DarkYellow
 Write-Host "  this path." -ForegroundColor DarkYellow
 Write-Host ""
 
 $ModelDir = Join-Path $ArtifactsDir "regime_stacking_model"
 
+if ($RegimeMode -eq "classifier") {
+    $RegimeTrainFlags = @("--regime-classifier-dir", $RegimeClassifierDir)
+    Write-Host "[Phase 3] Training with LEARNED-CLASSIFIER regime bucketing ..." -ForegroundColor Yellow
+} else {
+    $RegimeTrainFlags = @("--multi-feature-regime")
+    if ($RuleRegimeConfig -ne "" -and (Test-Path $RuleRegimeConfig)) {
+        $RegimeTrainFlags += @("--rule-regime-config", $RuleRegimeConfig)
+        Write-Host "[Phase 3] Training with MULTI-FEATURE RULE regime bucketing (config: $RuleRegimeConfig) ..." -ForegroundColor Yellow
+    } else {
+        Write-Host "[Phase 3] Training with MULTI-FEATURE RULE regime bucketing (default config) ..." -ForegroundColor Yellow
+    }
+}
 python -m btcusdt_quant train `
     --input $FullParquet `
-    --use-user-regime `
-    --user-regime-file $RegimeFile `
+    --regime-aware `
     --training-start $DownloadStart `
     --training-end $TrainingEnd `
-    --test-start $ValidationStart `
-    --test-end $ValidationEnd `
+    --metrics-dir $MetricsDir `
+    --threshold-objective $ThresholdObjective `
+    --round-trip-cost $RoundTripCost `
+    --horizon $Horizon `
+    --tp-pct $LabelTpPct `
+    --sl-pct $LabelSlPct `
+    @RegimeTrainFlags `
     --optuna `
-    --optuna-trials 30 `
+    --optuna-trials 100 `
     --output $ModelDir
 
 Write-Host ""
 Write-Host "  Training complete." -ForegroundColor Green
-Write-Host "  Model:        $ModelDir" -ForegroundColor Green
-Write-Host "  Run summary:  $ModelDir\run_summary.json" -ForegroundColor Green
+Write-Host "  Model: $ModelDir" -ForegroundColor Green
 
 # ============================================================================
-# PHASE 4: Backtest on 2025-07-01 ~ 2025-12-31 (truly unseen)
+# PHASE 4: Backtest on 2025 (out-of-sample)
 #
-# Two backtests are run so you can compare:
-#   (4a) user-regime file  -> uses regimes.json. Because those 2025 regimes are
-#        labeled in hindsight, this shows "how the model does WHEN regime
-#        routing is perfect" (has look-ahead bias, NOT live performance).
-#   (4b) auto-regime        -> RegimeDetector classifies up/down/range from the
-#        trend slope in real time, exactly as a live deployment must. This is
-#        the realistic, deployable estimate. Compare its gross return to 4a:
-#        if 4b is far worse, the model leans on perfect foresight of regimes.
+# --regime-classifier-dir uses the SAME saved classifier (Phase 2.5's
+# regime_classifier_model.cbm) that Phase 3 used to assign each training
+# row's regime bucket -- required for consistency: if backtest routed with a
+# DIFFERENT signal than training used to bucket rows, the up/down/range
+# models would be invoked on regimes they never trained on (train/serve
+# skew). This is fully causal at inference time (F17 multi-timeframe
+# features only), exactly as a live deployment must be -- the old
+# --user-regime-file hard-routed backtest, which depended on hindsight
+# regime labels with no live counterpart, was removed.
 # ============================================================================
 
 Write-Host ""
-Write-Host "[Phase 4a] Backtest with hand-labeled regimes ($RegimeFile) ..." -ForegroundColor Yellow
 
-$BacktestDir     = Join-Path $ArtifactsDir "backtest_results"
-$BacktestAutoDir = Join-Path $ArtifactsDir "backtest_results_auto_regime"
+$BacktestDir = Join-Path $ArtifactsDir "backtest_results"
 
-# Feed the full 2020-2025 series so the backtest can reuse warmup history,
-# and let --backtest-start skip everything before $BacktestStart for the
-# actual trading simulation. Reuse the same regime file so backtest period
-# regime labels align with how the models were trained.
+if ($RegimeMode -eq "classifier") {
+    $RegimeBtFlags = @("--regime-classifier-dir", $RegimeClassifierDir)
+    Write-Host "[Phase 4] Backtest with learned-classifier routing (same model as Phase 3) ..." -ForegroundColor Yellow
+} else {
+    # Rule mode: the fitted detector is saved inside the model artifact and
+    # auto-loaded here, so routing matches training with no extra flag.
+    $RegimeBtFlags = @()
+    Write-Host "[Phase 4] Backtest with multi-feature rule routing (auto-loaded from artifact) ..." -ForegroundColor Yellow
+}
 python -m btcusdt_quant backtest `
     --input $FullParquet `
     --model-artifact $ModelDir `
-    --user-regime-file $RegimeFile `
+    @RegimeBtFlags `
+    --exec-tp-pct $LabelTpPct `
+    --exec-sl-pct $LabelSlPct `
+    --metrics-dir $MetricsDir `
+    --fee-rate-per-side $FeePerSide `
+    --slippage-rate-per-side $SlippagePerSide `
+    --horizon $Horizon `
+    --threshold-floor $ThresholdFloor `
     --backtest-start $BacktestStart `
+    --backtest-end $BacktestEnd `
     --output $BacktestDir
-
-Write-Host ""
-Write-Host "[Phase 4b] Backtest with REAL-TIME regime detection (--auto-regime) ..." -ForegroundColor Yellow
-Write-Host "  This is the live-deployable path: no hand-labeled regime file." -ForegroundColor Gray
-
-python -m btcusdt_quant backtest `
-    --input $FullParquet `
-    --model-artifact $ModelDir `
-    --auto-regime `
-    --backtest-start $BacktestStart `
-    --output $BacktestAutoDir
 
 Write-Host ""
 Write-Host "=== Pipeline Complete ===" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Outputs:" -ForegroundColor Green
-Write-Host "  Combined data      : $FullParquet" -ForegroundColor Green
-Write-Host "  Model              : $ModelDir" -ForegroundColor Green
-Write-Host "  Backtest (labeled) : $BacktestDir" -ForegroundColor Green
-Write-Host "  Backtest (auto)    : $BacktestAutoDir" -ForegroundColor Green
+Write-Host "  Combined data : $FullParquet" -ForegroundColor Green
+Write-Host "  Model         : $ModelDir" -ForegroundColor Green
+Write-Host "  Backtest      : $BacktestDir" -ForegroundColor Green
 Write-Host ""
-Write-Host "Compare the two backtests (gross return is the cleaner edge signal):" -ForegroundColor Gray
-Write-Host "  `$a = (Get-Content $BacktestDir\backtest_summary.json | ConvertFrom-Json).backtest" -ForegroundColor Gray
-Write-Host "  `$b = (Get-Content $BacktestAutoDir\backtest_summary.json | ConvertFrom-Json).backtest" -ForegroundColor Gray
-Write-Host "  Write-Host \"labeled : gross=`$(`$a.gross_total_return) net=`$(`$a.net_total_return) trades=`$(`$a.trade_count)\"" -ForegroundColor Gray
-Write-Host "  Write-Host \"auto    : gross=`$(`$b.gross_total_return) net=`$(`$b.net_total_return) trades=`$(`$b.trade_count)\"" -ForegroundColor Gray
-Write-Host ""
-Write-Host "If 'auto' is much worse than 'labeled', the model depends on perfect" -ForegroundColor Gray
-Write-Host "regime foresight and will underperform live. If they're close, the" -ForegroundColor Gray
-Write-Host "real-time detector reproduces the regime structure well enough to deploy." -ForegroundColor Gray
+
+$summaryPath = Join-Path $BacktestDir "backtest_summary.json"
+if (Test-Path $summaryPath) {
+    $b = (Get-Content $summaryPath -Raw | ConvertFrom-Json).backtest
+    Write-Host ("  gross={0:P3}  net={1:P3}  trades={2}  win={3:P1}" -f `
+        $b.gross_total_return, $b.net_total_return, $b.trade_count, $b.win_rate) -ForegroundColor Green
+    if ($b.regime_coverage) {
+        $cov = $b.regime_coverage
+        Write-Host ("  regime coverage: matched={0} default_fallback={1} no_model={2}" -f `
+            $cov.matched, $cov.default_fallback, $cov.no_model) -ForegroundColor Gray
+    }
+} else {
+    Write-Host "  (backtest summary not found)" -ForegroundColor Yellow
+}

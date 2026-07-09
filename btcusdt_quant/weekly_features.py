@@ -19,7 +19,7 @@ from typing import Sequence
 from . import data
 
 
-def compute_weekly_features(candles: Sequence[data.Candle]) -> dict[str, list[float]]:
+def compute_weekly_features(candles: Sequence[data.Candle]) -> dict[str, "np.ndarray | list[float]"]:
     """Compute weekly timeframe features from 1-minute candles.
     
     Returns a dict mapping feature names to lists of floats with the same
@@ -70,48 +70,58 @@ def compute_weekly_features(candles: Sequence[data.Candle]) -> dict[str, list[fl
     vol50_safe = weekly["vol50"].replace(0.0, np.nan).fillna(1e-8)
     weekly["vol_contraction"] = (weekly["vol20"] / vol50_safe).fillna(1.0).clip(0.0, 10.0)
     
-    # Build result arrays
-    result: dict[str, list[float]] = {
-        "weekly_ma20_slope_closed": [],
-        "weekly_ma50_slope_closed": [],
-        "weekly_ma20_above_ma50": [],
-        "weekly_drawdown": [],
-        "weekly_vol_contraction": [],
-        "close_vs_weekly_ma20": [],
-        "close_vs_weekly_ma50": [],
-    }
+    # Build result arrays (float64 ndarrays; indexed per-row by callers and
+    # sliced/cast to float32 by the parallel feature builder)
+    result: dict[str, np.ndarray] = {}
     
     # For each 1m candle:
     # - weekly_ma20/50/slope/above: use latest COMPLETED week (fixed for the week)
     # - close_vs_weekly_ma20/50: current_close / that_week's_ma - 1 (changes every minute)
+    #
+    # CAUSALITY (Sunday look-ahead fix): pandas resample("W") labels each
+    # weekly bin with the Sunday DATE at midnight, but the bin's "last" close
+    # is the Sunday 23:59 bar. Selecting rows with ``label <= ts`` therefore
+    # exposed the week's FINAL close to every bar of that same Sunday
+    # (00:00-23:58 -- up to ~24h of look-ahead, once a week), and near the
+    # series end it exposed a PARTIAL current-week close for the same reason.
+    # A completed week's close is only knowable from the first bar AFTER the
+    # week ends, so each weekly row becomes AVAILABLE at label + 1 day
+    # (Monday 00:00). Monday-Saturday values are unchanged by this shift;
+    # only Sundays previously leaked.
     weekly_index = pd.DatetimeIndex(weekly.index)
-    
-    for i, ts in enumerate(timestamps):
-        # Find the last completed weekly close (<= current timestamp)
-        mask = weekly_index <= ts
-        if not mask.any():
-            # Before first weekly close
-            for key in result:
-                result[key].append(0.0 if key != "weekly_vol_contraction" else 1.0)
-            continue
-        
-        latest_week_idx = weekly_index[mask][-1]
-        
-        # Fixed per week: based on completed weekly closes only
-        ma20_val = float(weekly["ma20"].get(latest_week_idx, 0.0))
-        ma50_val = float(weekly["ma50"].get(latest_week_idx, 0.0))
-        
-        result["weekly_ma20_slope_closed"].append(float(weekly["ma20_slope"].get(latest_week_idx, 0.0)))
-        result["weekly_ma50_slope_closed"].append(float(weekly["ma50_slope"].get(latest_week_idx, 0.0)))
-        result["weekly_ma20_above_ma50"].append(float(weekly["ma20_above_ma50"].get(latest_week_idx, 0.0)))
-        result["weekly_drawdown"].append(float(weekly["drawdown"].get(latest_week_idx, 0.0)))
-        result["weekly_vol_contraction"].append(float(weekly["vol_contraction"].get(latest_week_idx, 1.0)))
-        
-        # Changes every minute: current close vs fixed weekly MA
-        current_close = closes[i]
-        result["close_vs_weekly_ma20"].append(current_close / ma20_val - 1.0 if ma20_val != 0.0 else 0.0)
-        result["close_vs_weekly_ma50"].append(current_close / ma50_val - 1.0 if ma50_val != 0.0 else 0.0)
-    
+    available_index = weekly_index + pd.Timedelta(days=1)
+
+    # Vectorized minute mapping (replaces the per-minute boolean-mask loop,
+    # which was O(n_minutes * n_weeks) and dominated weekly-feature cost on
+    # multi-year 1m data). pos[i] = number of weekly rows available at or
+    # before timestamps[i]; row pos[i]-1 is the latest available week.
+    pos = np.searchsorted(available_index.asi8, timestamps.asi8, side="right")
+    valid = pos > 0
+    row = np.maximum(pos - 1, 0)
+
+    def _pick(column: str, default: float) -> np.ndarray:
+        col = weekly[column].to_numpy(dtype=float)
+        return np.where(valid, col[row], default)
+
+    ma20_sel = _pick("ma20", 0.0)
+    ma50_sel = _pick("ma50", 0.0)
+    # NaN semantics preserved from the scalar loop: before a full 20/50-week
+    # window, ma20/ma50 are NaN and close_vs_* propagates NaN (these rows are
+    # dropped by the 50-week warmup filter in build_dataset); before the
+    # FIRST available week, everything defaults to 0.0 (vol_contraction 1.0).
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cv20 = closes / ma20_sel - 1.0
+        cv50 = closes / ma50_sel - 1.0
+    cv20 = np.where(ma20_sel != 0.0, cv20, 0.0)
+    cv50 = np.where(ma50_sel != 0.0, cv50, 0.0)
+
+    result["weekly_ma20_slope_closed"] = _pick("ma20_slope", 0.0)
+    result["weekly_ma50_slope_closed"] = _pick("ma50_slope", 0.0)
+    result["weekly_ma20_above_ma50"] = _pick("ma20_above_ma50", 0.0)
+    result["weekly_drawdown"] = _pick("drawdown", 0.0)
+    result["weekly_vol_contraction"] = _pick("vol_contraction", 1.0)
+    result["close_vs_weekly_ma20"] = cv20
+    result["close_vs_weekly_ma50"] = cv50
     return result
 
 

@@ -125,7 +125,10 @@ class MarketSourceBundle:
     def snapshot_for(self, source_name: str) -> object | None:
         if source_name not in SOURCE_DEFINITIONS:
             raise KeyError(f"unknown source: {source_name}")
-        return getattr(self, source_name)
+        # Some sources (e.g. "metrics") are delivered via the external_sources
+        # channel rather than as a bundle attribute; getattr default None keeps
+        # snapshot_for total over all SOURCE_DEFINITIONS.
+        return getattr(self, source_name, None)
 
     def hashes_by_source(self) -> dict[str, str]:
         hashes: dict[str, str] = dict(self.source_hashes or {})
@@ -226,6 +229,33 @@ LEVERAGE_FEATURES: tuple[str, ...] = ("leverage_bracket_utilization", "leverage_
 EXCHANGE_INFO_FEATURES: tuple[str, ...] = ("min_qty_distance", "price_tick_distance", "notional_filter_flag")
 LIQUIDATION_FEATURES: tuple[str, ...] = ("liquidation_event_count_1m", "liquidation_notional_1m", "liquidation_side_imbalance")
 ADL_FEATURES: tuple[str, ...] = ("adl_indicator", "adl_quantile_change", "adl_high_risk_flag")
+# Binance futures metrics archive (open interest, long/short ratios, taker
+# buy/sell). Historical-backfillable from data.binance.vision; 5m cadence
+# forward-filled to the 1m clock. Live parity requires the /futures/data/*
+# REST endpoints (NOT yet wired) — models using these are research-only until
+# that live source exists.
+METRICS_FEATURES: tuple[str, ...] = (
+    "oi_change_rate_5m",
+    "oi_change_rate_30m",
+    "oi_zscore_1d",
+    "oi_value_zscore_1d",
+    "toptrader_ls_account",
+    "toptrader_ls_position",
+    "global_ls_account",
+    "taker_ls_ratio",
+    "toptrader_ls_account_change_5m",
+    "global_ls_account_change_5m",
+    "taker_ls_ratio_change_5m",
+)
+
+# Soft regime probabilities (F18), produced by regime_classifier.py's purged
+# K-fold OOF pipeline from F17 multi-timeframe features. Research-only until
+# a live-serving path for the classifier exists (required_for_live=False).
+REGIME_PROBABILITY_FEATURES: tuple[str, ...] = (
+    "regime_prob_up",
+    "regime_prob_range",
+    "regime_prob_down",
+)
 
 
 SOURCE_DEFINITIONS: dict[str, SourceDefinition] = {
@@ -379,6 +409,42 @@ SOURCE_DEFINITIONS: dict[str, SourceDefinition] = {
         365,
         "reduce_size",
         "cache quantile snapshots and require deterministic fallback when unavailable",
+    ),
+    "metrics": SourceDefinition(
+        "metrics",
+        "MetricsSnapshot",
+        "Binance futures metrics: open interest, long/short ratios, taker buy/sell (5m, forward-filled to 1m).",
+        (
+            "create_time",
+            "sum_open_interest",
+            "sum_open_interest_value",
+            "count_toptrader_long_short_ratio",
+            "sum_toptrader_long_short_ratio",
+            "count_long_short_ratio",
+            "sum_taker_long_short_vol_ratio",
+        ),
+        METRICS_FEATURES,
+        True,   # historical_backfill: data.binance.vision metrics archive
+        True,   # local_archive_supported: daily CSV zips
+        True,   # live_capture_required: needs /futures/data/* REST for live
+        False,  # critical_live: not required to trade (features degrade gracefully)
+        3650,
+        "no_trade_current_bar",
+        "download metrics archive (collect-metrics) for training; wire /futures/data/* REST before live use",
+    ),
+    "regime_classifier": SourceDefinition(
+        "regime_classifier",
+        "RegimeProbabilitySnapshot",
+        "Soft up/range/down probabilities from a multiclass classifier trained on F17 multi-timeframe features via leakage-safe walk-forward OOF prediction.",
+        ("regime_prob_up", "regime_prob_range", "regime_prob_down"),
+        REGIME_PROBABILITY_FEATURES,
+        True,   # historical_backfill: derived entirely from klines already held (OOF pipeline)
+        False,  # local_archive_supported: not an archive, a computed pipeline output
+        True,   # live_capture_required: needs a live-serving classifier, not built yet
+        False,  # critical_live: features degrade gracefully (no probabilities -> 0)
+        0,
+        "no_trade_current_bar",
+        "run the OOF regime-classifier pipeline (regime_classifier.py) for training; a live-serving classifier must be wired before live use",
     ),
 }
 

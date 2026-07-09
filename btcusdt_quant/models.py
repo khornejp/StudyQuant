@@ -170,6 +170,13 @@ class CatBoostAdapter:
         "devices": "0",
         "od_type": "Iter",
         "od_wait": 50,
+        # Class weights auto-balance recall/precision for imbalanced labels,
+        # but this pulls predicted probabilities away from the true base rate
+        # -- which is exactly what Logloss (our loss_function) penalizes.
+        # Default OFF so probabilities stay calibrated to reality; turn on
+        # explicitly (auto_class_weights_enabled=True in model_params) only
+        # if you're optimizing for F1/recall instead of Logloss/EV.
+        "auto_class_weights_enabled": False,
     }
 
     def __init__(self, feature_names: Sequence[str] | None = None, model_params: Mapping[str, object] | None = None) -> None:
@@ -185,7 +192,19 @@ class CatBoostAdapter:
     def available() -> bool:
         return "catboost" not in _OPTIONAL_IMPORT_FAILURES and importlib.util.find_spec("catboost") is not None
 
-    def fit(self, feature_matrix: FeatureMatrix, labels: Sequence[int], sample_weight: Sequence[float] | None = None) -> "CatBoostAdapter":
+    def fit(
+        self,
+        feature_matrix: FeatureMatrix,
+        labels: Sequence[int],
+        sample_weight: Sequence[float] | None = None,
+        eval_set: tuple[FeatureMatrix, Sequence[int]] | None = None,
+        use_best_model: bool = False,
+    ) -> "CatBoostAdapter":
+        """Fit. If eval_set=(val_X, val_y) is given, CatBoost's early stopping
+        (od_type/od_wait, already in DEFAULT_PARAMS) actually activates --
+        without an eval_set those params are silent no-ops. use_best_model=True
+        rolls back to the best iteration on eval_set instead of the last one.
+        """
         catboost = _import_optional_module("catboost")
 
         rows = _matrix_to_float_lists(feature_matrix)
@@ -194,23 +213,40 @@ class CatBoostAdapter:
             raise ValueError("feature_matrix and labels must have the same length")
         if not self.feature_names:
             self.feature_names = _default_feature_names(rows)
-        # Auto class weights for imbalance
+        eval_rows: list[list[float]] | None = None
+        eval_labels: list[int] | None = None
+        if eval_set is not None:
+            eval_rows = _matrix_to_float_lists(eval_set[0])
+            eval_labels = [int(label) for label in eval_set[1]]
+        # Auto class weights for imbalance. OFF by default (see DEFAULT_PARAMS
+        # comment) because it distorts predicted probabilities away from the
+        # true base rate, which directly hurts Logloss. Opt in per-model via
+        # model_params={"auto_class_weights_enabled": True}.
         from collections import Counter
         counts = Counter(label_values)
-        if len(counts) >= 2:
+        model_params = dict(self.model_params)
+        use_auto_class_weights = bool(model_params.pop("auto_class_weights_enabled", False))
+        if use_auto_class_weights and len(counts) >= 2:
             total = len(label_values)
             class_weights = {cls: total / (len(counts) * count) for cls, count in counts.items()}
         else:
             class_weights = None
+
+        def _build_fit_kwargs() -> dict[str, object]:
+            kwargs: dict[str, object] = {}
+            if sample_weight is not None:
+                kwargs["sample_weight"] = [float(weight) for weight in sample_weight]
+            if eval_rows is not None and eval_labels is not None:
+                kwargs["eval_set"] = (eval_rows, eval_labels)
+                if use_best_model:
+                    kwargs["use_best_model"] = True
+            return kwargs
+
         try:
-            model_params = dict(self.model_params)
             if class_weights is not None and "class_weights" not in model_params:
                 model_params["class_weights"] = class_weights
             model = catboost.CatBoostClassifier(**model_params)
-            fit_kwargs: dict[str, object] = {}
-            if sample_weight is not None:
-                fit_kwargs["sample_weight"] = [float(weight) for weight in sample_weight]
-            model.fit(rows, label_values, **fit_kwargs)
+            model.fit(rows, label_values, **_build_fit_kwargs())
             self.model = model
         except Exception as e:
             if self.model_params.get("task_type") == "GPU":
@@ -218,13 +254,11 @@ class CatBoostAdapter:
                 cpu_params = dict(self.model_params)
                 cpu_params.pop("task_type", None)
                 cpu_params.pop("devices", None)
+                cpu_params.pop("auto_class_weights_enabled", None)
                 if class_weights is not None and "class_weights" not in cpu_params:
                     cpu_params["class_weights"] = class_weights
                 model = catboost.CatBoostClassifier(**cpu_params)
-                fit_kwargs: dict[str, object] = {}
-                if sample_weight is not None:
-                    fit_kwargs["sample_weight"] = [float(weight) for weight in sample_weight]
-                model.fit(rows, label_values, **fit_kwargs)
+                model.fit(rows, label_values, **_build_fit_kwargs())
                 self.model = model
             else:
                 raise

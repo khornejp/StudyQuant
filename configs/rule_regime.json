@@ -1,0 +1,30 @@
+{
+  "_comment": "MultiFeatureRegimeConfig overrides for train --rule-regime-config. Conservative 1m-scalping preset (per the fix plan). Missing keys fall back to code defaults. The fitted detector embeds these and is saved to the artifact, so backtest/live inherit them automatically.",
+
+  "trend_enter": 0.70,
+  "trend_exit": 0.40,
+  "range_enter": 0.65,
+  "trend_abs_max_for_range": 0.45,
+  "vol_min_for_trend": 0.20,
+
+  "fast_conflict_max": 0.60,
+  "fast_exit": 0.80,
+  "use_fast_trend_rules": true,
+
+  "min_hold_bars": 60,
+  "switch_confirm_bars": 10,
+  "allow_direct_reversal": false,
+
+  "trend_weights": {
+    "trend_slope_1h": 0.25,
+    "trend_slope_4h": 0.30,
+    "return_4h": 0.15,
+    "ema_gap_4h": 0.15,
+    "trend_slope_24h": 0.15
+  },
+  "fast_trend_weights": {
+    "return_5": 0.20,
+    "trend_slope_15m": 0.35,
+    "trend_slope_30": 0.45
+  }
+}

@@ -16,6 +16,7 @@ from collections import deque
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import date, datetime, timedelta, timezone
+from bisect import bisect_left, bisect_right
 from math import isfinite, log, sqrt, sin
 from pathlib import Path
 from statistics import mean as _statistics_mean
@@ -46,7 +47,8 @@ def mean(values):
     return total / count
 from typing import Callable, Mapping, Sequence
 
-from . import data, feature_registry, features, parity, sources, weekly_features
+from . import data, feature_registry, features, mtf_features, parity, sources, weekly_features
+from .feature_vector import FeatureVector, bind_canonical as _bind_feature_canonical
 
 
 COLLECTED_CSV_FIELDS: tuple[str, ...] = (
@@ -86,6 +88,21 @@ LOGGER = logging.getLogger(__name__)
 
 FEATURE_FORMULAS: tuple[dict[str, object], ...] = feature_registry.FEATURE_FORMULAS
 FEATURE_NAMES: tuple[str, ...] = feature_registry.active_feature_names()
+# NOTE: build_feature_rows still COMPUTES some registry-disabled
+# ("disabled_scale_dependent") values -- rolling_vwap_*, range_high/low_20,
+# macd_line/signal (dollar-scale, absolute-price-level series) -- because
+# active RELATIVE features derive from them (vwap_deviation_zscore,
+# price_vs_rolling_vwap_*, range_position_20, distance_to_range_*). They are
+# dropped at FeatureVector.from_mapping (extra names ignored), so they never
+# reach the model, artifacts, or live parity surfaces.
+
+# Bind the canonical feature order shared by every FeatureVector (columnar
+# float32 storage). Must happen before any FeatureVector is built.
+_bind_feature_canonical(FEATURE_NAMES)
+
+# Shared immutable-by-convention empty dict for MTF lookups that miss (warmup
+# rows). Reused instead of allocating a fresh {} per lookup.
+_EMPTY_MTF_ROW: dict[str, float] = {}
 
 LABEL_REASON_BUCKETS: tuple[str, ...] = (
     "tp_first",
@@ -150,11 +167,11 @@ class DatasetCacheValidation:
     schema_version: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FeatureRow:
     index: int
     open_time: datetime
-    features: dict[str, float]
+    features: Mapping[str, float]
     gap_flag: int
     repaired: bool
     warmup_invalid: bool
@@ -169,7 +186,7 @@ class FeatureRow:
 class LabeledRow:
     index: int
     open_time: datetime
-    features: dict[str, float]
+    features: Mapping[str, float]
     label: int
     label_reason: str
     target_return: float
@@ -1221,7 +1238,7 @@ def _infer_feature_names(column_names: Sequence[str], expected_feature_names: Se
     return tuple(inferred)
 
 
-def _features_from_columns(columns: Mapping[str, Sequence[object]], row_index: int, feature_names: Sequence[str]) -> dict[str, float]:
+def _features_from_columns(columns: Mapping[str, Sequence[object]], row_index: int, feature_names: Sequence[str]) -> FeatureVector:
     output: dict[str, float] = {}
     for name in feature_names:
         if name in columns:
@@ -1229,7 +1246,7 @@ def _features_from_columns(columns: Mapping[str, Sequence[object]], row_index: i
             output[name] = 0.0 if value is None else float(value)
         else:
             output[name] = 0.0
-    return output
+    return FeatureVector.from_mapping(output)
 
 
 def _gap_report_from_metadata(value: object) -> GapReport:
@@ -1519,6 +1536,7 @@ def build_feature_rows(
     external_sources: Mapping[str, object] | None = None,
     user_regime_periods: Sequence[UserRegimePeriod] | None = None,
     _parallel: bool = True,
+    _precomputed_weekly: Mapping[str, Sequence[float]] | None = None,
 ) -> list[FeatureRow]:
     # Parallel processing for large datasets
     if _parallel and len(candles) > 50000:
@@ -1627,8 +1645,24 @@ def build_feature_rows(
     inside_bar_flag_np = _np_inside_bar_flag_series(highs_np, lows_np)
     outside_bar_flag_np = _np_outside_bar_flag_series(highs_np, lows_np)
 
-    # Pre-compute weekly features once for all rows
-    weekly_feature_values = weekly_features.compute_weekly_features(candles)
+    # Pre-compute weekly features once for all rows.
+    #
+    # CRITICAL (parallel correctness): weekly MA20/MA50 features need up to
+    # 50 completed weekly closes (~504,000 1m bars) of history. A parallel
+    # chunk (<=250k + 6k overlap bars, ~25 weeks) can NEVER satisfy
+    # `len(weekly) >= 50` inside weekly_features.compute_weekly_features, so
+    # computing weekly features per-chunk silently zeroes out all seven
+    # weekly_* / close_vs_weekly_* features on every parallel run. The
+    # parallel parent therefore computes them ONCE over the FULL candle
+    # series and hands each worker its aligned slice via
+    # ``_precomputed_weekly``; only the serial path computes them here.
+    if _precomputed_weekly is not None:
+        weekly_feature_values: Mapping[str, Sequence[float]] = _precomputed_weekly
+    else:
+        weekly_feature_values = weekly_features.compute_weekly_features(candles)
+    # Pre-compute F17 multi-timeframe (15m/1h/4h/24h-rolling) features once.
+    # Pure function of candles already in hand -- no external source needed.
+    mtf_feature_values = mtf_features.compute_mtf_features_to_minutes(candles)
     # Pre-compute F15 momentum indicators once for all rows (optimized O(n))
     rsi_7_values = _rsi_series(closes, 7)
     rsi_14_values = _rsi_series(closes, 14)
@@ -1719,6 +1753,14 @@ def build_feature_rows(
         taker_quote_ratio = _divide(candle.taker_buy_quote_volume, candle.quote_volume)
         range_value = ranges[index]
         candle_external_sources = per_candle_external_sources.get(candle.open_time) if per_candle_external_sources else single_external_sources
+        # One dict lookup per candle for the MTF block instead of one per MTF
+        # feature name. pop() (not get()) removes each minute's MTF dict from
+        # the intermediate as it is consumed -- the minute is used exactly once
+        # and mtf_feature_values is not referenced after this loop -- so the
+        # ~2.8M-entry intermediate shrinks as `rows` grows instead of both being
+        # held at full size simultaneously (lower peak build memory). The shared
+        # empty dict avoids allocating a throwaway {} default on warmup misses.
+        mtf_row = mtf_feature_values.pop(candle.open_time, None) or _EMPTY_MTF_ROW
         values = {
             "return_1": return_1,
             "return_3": return_3,
@@ -1829,6 +1871,32 @@ def build_feature_rows(
             "mark_price_basis": _mark_price_basis_value(candle_external_sources, candle.close),
             "premium_index": _premium_index_value(candle_external_sources),
             "leverage_bracket_utilization": _leverage_bracket_utilization_value(candle_external_sources),
+            # F16: Derivatives metrics (values pre-computed and forward-filled
+            # onto the 1m clock, delivered via external_sources["metrics"] as a
+            # flat {feature_name: value} dict; 0.0 when unavailable so training
+            # without --metrics-dir degrades to a constant, exactly like the
+            # other external features).
+            "oi_change_rate_5m": _metrics_feature_value(candle_external_sources, "oi_change_rate_5m"),
+            "oi_change_rate_30m": _metrics_feature_value(candle_external_sources, "oi_change_rate_30m"),
+            "oi_zscore_1d": _metrics_feature_value(candle_external_sources, "oi_zscore_1d"),
+            "oi_value_zscore_1d": _metrics_feature_value(candle_external_sources, "oi_value_zscore_1d"),
+            "toptrader_ls_account": _metrics_feature_value(candle_external_sources, "toptrader_ls_account"),
+            "toptrader_ls_position": _metrics_feature_value(candle_external_sources, "toptrader_ls_position"),
+            "global_ls_account": _metrics_feature_value(candle_external_sources, "global_ls_account"),
+            "taker_ls_ratio": _metrics_feature_value(candle_external_sources, "taker_ls_ratio"),
+            "toptrader_ls_account_change_5m": _metrics_feature_value(candle_external_sources, "toptrader_ls_account_change_5m"),
+            "global_ls_account_change_5m": _metrics_feature_value(candle_external_sources, "global_ls_account_change_5m"),
+            "taker_ls_ratio_change_5m": _metrics_feature_value(candle_external_sources, "taker_ls_ratio_change_5m"),
+            # F17: Multi-timeframe (15m/1h/4h/24h-rolling) trend/vol/momentum
+            # features, pre-computed once for the whole candle series above
+            # (mtf_feature_values) and looked up per-candle here by open_time.
+            **{name: mtf_row.get(name, 0.0) for name in mtf_features.MTF_FEATURE_NAMES},
+            # F18: Regime probabilities (soft up/range/down), delivered via
+            # external_sources["regime_classifier"] when the OOF pipeline has
+            # been run; 0.0 degrade otherwise (same pattern as F16 metrics).
+            "regime_prob_up": _regime_probability_feature_value(candle_external_sources, "regime_prob_up"),
+            "regime_prob_range": _regime_probability_feature_value(candle_external_sources, "regime_prob_range"),
+            "regime_prob_down": _regime_probability_feature_value(candle_external_sources, "regime_prob_down"),
             # F13: Weekly features
             "weekly_ma20_slope_closed": weekly_feature_values["weekly_ma20_slope_closed"][index],
             "weekly_ma50_slope_closed": weekly_feature_values["weekly_ma50_slope_closed"][index],
@@ -1889,7 +1957,7 @@ def build_feature_rows(
             FeatureRow(
                 index,
                 candle.open_time,
-                clipped_values,
+                FeatureVector.from_mapping(clipped_values),
                 candle.gap_flag,
                 candle.repaired,
                 warmup_invalid,
@@ -1911,6 +1979,7 @@ def _build_feature_rows_chunk(
     index_offset: int,
     overlap: int,
     is_first_chunk: bool,
+    precomputed_weekly: Mapping[str, Sequence[float]] | None = None,
 ) -> list[FeatureRow]:
     """Process a chunk of candles and return feature rows with corrected indices."""
     chunk_rows = build_feature_rows(
@@ -1919,6 +1988,7 @@ def _build_feature_rows_chunk(
         external_sources=external_sources,
         user_regime_periods=user_regime_periods,
         _parallel=False,
+        _precomputed_weekly=precomputed_weekly,
     )
     result: list[FeatureRow] = []
     for row in chunk_rows:
@@ -1945,7 +2015,7 @@ def _build_feature_rows_chunk(
 
 
 def _process_feature_chunk(
-    args: tuple[int, int, bool, Sequence[data.Candle], sources.MarketSourceBundle | None, Mapping[str, object] | None, Sequence[UserRegimePeriod] | None, int],
+    args: tuple[int, int, bool, Sequence[data.Candle], sources.MarketSourceBundle | None, Mapping[str, object] | None, Sequence[UserRegimePeriod] | None, int, Mapping[str, Sequence[float]] | None],
 ) -> list[FeatureRow]:
     """Top-level worker for parallel feature computation.
 
@@ -1954,8 +2024,13 @@ def _process_feature_chunk(
     received the ENTIRE candle list and sliced it locally, which pickled the
     full multi-million-candle list once per worker (N-fold blow-up) and
     caused BrokenProcessPool on large multi-year runs.
+
+    ``weekly_slice`` is the [start:end) slice of the GLOBALLY-computed weekly
+    features (see _build_feature_rows_parallel): weekly MA20/MA50 need ~50
+    weeks (~504k bars) of history, far more than any chunk contains, so they
+    must never be recomputed per-chunk.
     """
-    start, end, is_first, chunk_candles, source_bundle, external_sources, user_regime_periods, overlap = args
+    start, end, is_first, chunk_candles, source_bundle, external_sources, user_regime_periods, overlap, weekly_slice = args
     return _build_feature_rows_chunk(
         chunk_candles,
         source_bundle=source_bundle,
@@ -1964,6 +2039,7 @@ def _process_feature_chunk(
         index_offset=start,
         overlap=overlap,
         is_first_chunk=is_first,
+        precomputed_weekly=weekly_slice,
     )
 
 
@@ -1989,7 +2065,17 @@ def _build_feature_rows_parallel(
     # chunk). Lower this if workers are memory-constrained.
     MAX_CHUNK = 250_000
     chunk_size = max(min(n // num_workers if num_workers > 0 else n, MAX_CHUNK), 10000)
-    overlap = 500
+    # Overlap must cover the largest lookback any per-chunk feature needs,
+    # since a chunk boundary's first KEPT row has only seen `overlap` minutes
+    # of history within its own chunk. Weekly features (needing up to 504,000
+    # minutes -- 50 completed weeks -- vastly more than any chunk) are NOT
+    # computed per-chunk at all: they are computed ONCE below over the FULL
+    # series and injected into each worker as an aligned slice, so they are
+    # exact everywhere regardless of chunk size. F17 multi-timeframe
+    # features need up to 4800 minutes (20 closed 4h bars for bb_width_4h/
+    # volume_z_4h), so overlap is sized to 6000 (safe margin) to guarantee
+    # those are exact at every chunk boundary, not just the series start.
+    overlap = 6000
     # Number of chunks now derives from data size, not worker count.
     num_chunks = max(1, (n + chunk_size - 1) // chunk_size)
     print(f"[FEATURE] Parallel feature computation: {n:,} candles, {num_workers} workers, {num_chunks} chunks, chunk_size={chunk_size:,}, overlap={overlap}")
@@ -2008,12 +2094,69 @@ def _build_feature_rows_parallel(
         if end >= n:
             break
 
+    # Weekly MA20/MA50 features require ~50 completed weeks (~504,000 1m
+    # bars) of history. Every chunk (<=256k bars, ~25 weeks) fails the
+    # `len(weekly) >= 50` guard inside compute_weekly_features, so per-chunk
+    # computation would silently zero ALL weekly_* / close_vs_weekly_*
+    # features on parallel runs. Compute them ONCE over the full series here
+    # (cheap: one weekly resample of the whole span) and hand each worker
+    # its [start:end) slice, aligned 1:1 with its candle slice. float32
+    # ndarrays keep the per-task pickle small (~7 MB per 256k-bar chunk).
+    weekly_full = weekly_features.compute_weekly_features(candles)
+    weekly_full_np = {
+        name: np.asarray(values, dtype=np.float32)
+        for name, values in weekly_full.items()
+    }
+    del weekly_full
+
+    # Per-candle external_sources (datetime-keyed, e.g. --metrics-dir merges
+    # external_sources[minute]["metrics"] for EVERY minute -- ~3.15M keys on
+    # a 2020-2025 run) must NOT be pickled whole into every work item: each
+    # of the ~13 chunk tasks would serialize the entire multi-million-entry
+    # nested dict (hundreds of MB per task, duplicated in every worker).
+    # Workers only ever look up their own candles' open_times
+    # (per_candle_external_sources.get(candle.open_time)), so slice by the
+    # chunk's [first, last] candle-time range in the parent. A single small
+    # non-datetime-keyed mapping (the "same sources for all candles" form)
+    # is passed through unchanged.
+    external_is_per_candle = external_sources is not None and any(
+        isinstance(key, datetime) for key in external_sources.keys()
+    )
+    # Defensive: a mapping detected as per-candle could in principle carry
+    # stray non-datetime keys (e.g. a str key merged in by a future caller);
+    # sorting a mixed list raises TypeError, and workers only ever look up
+    # candle open_times anyway, so slice over the datetime keys ONLY.
+    sorted_external_keys: list[datetime] = (
+        sorted(key for key in external_sources.keys() if isinstance(key, datetime))  # type: ignore[union-attr]
+        if external_is_per_candle
+        else []
+    )
+
+    def _external_slice(start: int, end: int) -> Mapping[str, object] | None:
+        if external_sources is None:
+            return None
+        if not external_is_per_candle:
+            return external_sources
+        lo = bisect_left(sorted_external_keys, candles[start].open_time)
+        hi = bisect_right(sorted_external_keys, candles[end - 1].open_time)
+        return {key: external_sources[key] for key in sorted_external_keys[lo:hi]}  # type: ignore[index]
+
     all_rows: list[FeatureRow] = []
     # Slice each chunk's candles HERE (in the parent) so each worker only
     # receives its own sub-range, not the entire candle list. This avoids
     # pickling the full multi-million-candle list once per worker.
     work_items = [
-        (start, end, is_first, candles[start:end], source_bundle, external_sources, user_regime_periods, overlap)
+        (
+            start,
+            end,
+            is_first,
+            candles[start:end],
+            source_bundle,
+            _external_slice(start, end),
+            user_regime_periods,
+            overlap,
+            {name: values[start:end] for name, values in weekly_full_np.items()},
+        )
         for start, end, is_first in chunks
     ]
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -2063,7 +2206,7 @@ def attach_labels(
             LabeledRow(
                 index=row.index,
                 open_time=row.open_time,
-                features=dict(row.features),
+                features=row.features,
                 label=label,
                 label_reason=label_reason,
                 target_return=target_return,
@@ -3292,6 +3435,46 @@ def _funding_rate_value(external_sources: Mapping[str, object] | None) -> float:
     funding = external_sources.get("funding_rate")
     if isinstance(funding, Mapping):
         return float(funding.get("current_rate", 0.0))
+    return 0.0
+
+
+def _regime_probability_feature_value(external_sources: Mapping[str, object] | None, feature_name: str) -> float:
+    """Read a pre-computed regime probability from external_sources["regime_classifier"].
+
+    Callers that ran the OOF regime-classifier pipeline (regime_classifier.py)
+    pack per-candle results as external_sources[candle_time]["regime_classifier"]
+    = {"regime_prob_up": .., "regime_prob_range": .., "regime_prob_down": ..}.
+    Returns 0.0 when absent, so the feature degrades to a constant (like F16
+    metrics) rather than raising.
+    """
+    if external_sources is None:
+        return 0.0
+    snapshot = external_sources.get("regime_classifier")
+    if isinstance(snapshot, Mapping):
+        try:
+            return float(snapshot.get(feature_name, 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+    return 0.0
+
+
+def _metrics_feature_value(external_sources: Mapping[str, object] | None, feature_name: str) -> float:
+    """Read a pre-computed metrics feature from external_sources["metrics"].
+
+    The training pipeline forward-fills the 5m metrics-derived features onto
+    the 1m clock (see metrics_source.metrics_features_to_minutes) and packs
+    them per-candle as external_sources[candle_time]["metrics"] = {feature: v}.
+    Returns 0.0 when metrics are absent (e.g. training run without
+    --metrics-dir), so the feature degrades to a constant rather than raising.
+    """
+    if external_sources is None:
+        return 0.0
+    metrics = external_sources.get("metrics")
+    if isinstance(metrics, Mapping):
+        try:
+            return float(metrics.get(feature_name, 0.0))
+        except (TypeError, ValueError):
+            return 0.0
     return 0.0
 
 

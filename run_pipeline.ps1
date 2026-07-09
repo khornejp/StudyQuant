@@ -262,8 +262,7 @@ if (-not $OnlyBacktest -and -not $SkipBuild) {
     $env:PYTHONUNBUFFERED = 1
     & $VenvPython -u -m btcusdt_quant train `
         --input $fullParquet `
-        --use-user-regime `
-        --user-regime-file $regimeJson `
+        --regime-aware `
         --output $modelDir `
         --training-start $StartDate `
         --only-build
@@ -279,8 +278,7 @@ if (-not $OnlyBacktest -and -not $SkipBuild) {
     $env:PYTHONUNBUFFERED = 1
     & $VenvPython -u -m btcusdt_quant train `
         --input $fullParquet `
-        --use-user-regime `
-        --user-regime-file $regimeJson `
+        --regime-aware `
         --output $modelDir `
         --training-start $StartDate `
         --training-end $TrainEnd `
@@ -296,7 +294,7 @@ Write-Host "  Backtest period: $BacktestStart ~ $EndDate" -ForegroundColor Yello
 & $VenvPython -m btcusdt_quant backtest `
     --input $fullParquet `
     --model-artifact $modelDir `
-    --user-regime-file $regimeJson `
+    --auto-regime `
     --backtest-start $BacktestStart `
     --output $backtestDir
 if ($LASTEXITCODE -ne 0) { throw "Backtest failed" }

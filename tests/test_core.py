@@ -156,18 +156,57 @@ class DataPipelineTests(unittest.TestCase):
         registry = dataset.feature_formula_registry()
         registry_features = cast(list[dict[str, object]], registry["features"])
         categories = {feature["category"] for feature in registry_features}
-        self.assertEqual(categories, {f"F{index:02d}" for index in range(1, 16)})
+        # F01-F15 original groups, F16 derivatives-metrics, F17 multi-timeframe
+        # (15m/1h/4h/24h-rolling), F18 regime probabilities (soft up/range/down
+        # from a leakage-safe purged-K-fold OOF classifier on F17 features).
+        self.assertEqual(categories, {f"F{index:02d}" for index in range(1, 19)})
 
     def test_feature_registry_all_features_active(self) -> None:
         registry = dataset.feature_formula_registry()
         registry_features = cast(list[dict[str, object]], registry["features"])
-        pending_features = [feature for feature in registry_features if feature.get("scaffold_status") == "pending_data_source"]
-        # F11/F12 are now active — no pending features should remain
-        self.assertFalse(pending_features, "all features should be active; no pending_data_source features")
+        pending_features = {
+            feature["feature_name"]
+            for feature in registry_features
+            if feature.get("scaffold_status") == "pending_data_source"
+        }
+        # The 7 order-book depth (F11) features are intentionally deactivated:
+        # the Binance bookDepth archive is percentage-band cumulative depth, not
+        # top-of-book, so it can't reproduce them at training time (train/live
+        # gap). They remain registered for provenance but excluded from active.
+        expected_pending = {
+            "spread", "spread_bps", "bid_ask_imbalance", "best_bid_qty_ratio",
+            "best_ask_qty_ratio", "microprice_deviation", "order_book_pressure",
+        }
+        self.assertEqual(pending_features, expected_pending, "only the F11 depth features should be pending")
+        # Scale-dependent features (raw price-level / quote-USD values that a
+        # tree model can exploit as a year/era proxy across 2020-2025, or that
+        # saturate the +-100 ratio clip at high price levels) are disabled
+        # from the model-facing set but stay registered (and computed as
+        # inputs for their relative counterparts).
+        expected_scale_disabled = {
+            feature["feature_name"]
+            for feature in registry_features
+            if feature.get("scaffold_status") == "disabled_scale_dependent"
+        }
+        self.assertEqual(
+            expected_scale_disabled,
+            {
+                "rolling_vwap_20", "rolling_vwap_60",
+                "range_high_20", "range_low_20", "range_mid_20",
+                "macd_line", "macd_signal", "macd_hist",
+                "quote_volume_per_trade",
+            },
+            "exactly the 9 scale-dependent features should be disabled",
+        )
         active_names = set(dataset.FEATURE_NAMES)
         all_names = {feature["feature_name"] for feature in registry_features}
-        self.assertEqual(active_names, all_names, "FEATURE_NAMES must include all registered features")
-        self.assertTrue({"spread", "bid_ask_imbalance", "adl_indicator", "funding_rate"}.issubset(active_names), "F11/F12 features must be active")
+        # Active set = all registered minus pending depth minus scale-disabled.
+        self.assertEqual(active_names, all_names - expected_pending - expected_scale_disabled, "FEATURE_NAMES must be all registered minus pending depth and scale-disabled features")
+        # Depth + scale-disabled features must NOT be active; metrics (F16),
+        # funding, and the scale-free counterparts must be.
+        self.assertFalse((expected_pending | expected_scale_disabled) & active_names, "inactive features must not be active")
+        self.assertTrue({"oi_change_rate_5m", "taker_ls_ratio", "funding_rate"}.issubset(active_names), "F16 metrics + funding must be active")
+        self.assertTrue({"vwap_deviation_zscore", "range_position_20", "ema_12_26_spread", "volume_per_trade"}.issubset(active_names), "scale-free counterparts must remain active")
 
     def test_warmup_invalid_derived_from_feature_registry(self) -> None:
         original_formulas = dataset.FEATURE_FORMULAS
@@ -559,8 +598,8 @@ class DataQualityEdgeTests(unittest.TestCase):
         external_source_features = {str(f["feature_name"]) for f in registry["features"] if f.get("source") in {"depth_snapshot", "adl_quantile", "funding_rate", "mark_price_1m", "premium_index_1m", "leverage_bracket"}}
         # F14 time/session features are computed from open_time (timestamp), not OHLCV values
         time_features = {"hour", "minute", "day_of_week", "session_asia", "session_europe", "session_us", "session_overlap", "weekend_flag"}
-        # F15 momentum indicators have neutral default values during warmup
-        momentum_defaults = {"rsi_7", "rsi_14"}  # RSI neutral = 50.0 during warmup
+        # F15/F17 momentum indicators have neutral default values during warmup
+        momentum_defaults = {"rsi_7", "rsi_14", "rsi_15m", "rsi_1h", "rsi_4h"}  # RSI neutral = 50.0 during warmup
         for row in rows:
             self.assertEqual(set(row.features), set(dataset.FEATURE_NAMES))
             for name, value in row.features.items():
