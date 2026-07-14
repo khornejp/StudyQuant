@@ -175,6 +175,50 @@ class DecisionBandTests(unittest.TestCase):
             decision_band([0.5], [1], threshold=1.5)
 
 
+class EnteredPopulationTests(unittest.TestCase):
+    """The band must be measured on the bars the strategy can actually enter.
+
+    verify_calibration gates its band stream by the direction policy and the
+    range mean-reversion gate before handing it here; these pin the consequence
+    of getting that population wrong, which is what the reviewer caught.
+    """
+
+    def test_gating_the_population_changes_the_verdict(self) -> None:
+        # 100 bars over the threshold. The 50 the entry policy would BLOCK are
+        # losers; the 50 it allows are winners. Scoring all 100 says the strategy
+        # cannot pay its costs; scoring what it really enters says it can.
+        blocked = ([0.6] * 50, [0] * 50)
+        enterable = ([0.6] * 50, [1] * 25 + [0] * 25)
+        all_bars = (blocked[0] + enterable[0], blocked[1] + enterable[1])
+
+        ungated = decision_band(*all_bars, threshold=0.5, tp_pct=0.010, sl_pct=0.005,
+                                round_trip_cost=0.0008)
+        gated = decision_band(*enterable, threshold=0.5, tp_pct=0.010, sl_pct=0.005,
+                              round_trip_cost=0.0008)
+
+        self.assertAlmostEqual(ungated.observed_rate, 0.25)
+        self.assertFalse(ungated.clears_breakeven)
+        self.assertAlmostEqual(gated.observed_rate, 0.50)
+        self.assertTrue(gated.clears_breakeven)
+        self.assertEqual(gated.count, 50)
+
+    def test_share_is_relative_to_the_population_given(self) -> None:
+        # 20 enterable bars, 5 of them above the threshold: 25% of ENTERABLE, and
+        # the band must not silently divide by some larger universe.
+        band = decision_band([0.6] * 5 + [0.2] * 15, [1] * 5 + [0] * 15, threshold=0.5,
+                             tp_pct=0.010, sl_pct=0.005)
+        self.assertEqual(band.count, 5)
+        self.assertAlmostEqual(band.share_of_bars, 0.25)
+
+    def test_no_enterable_bars_is_not_a_zero_win_rate(self) -> None:
+        # Every bar blocked by the entry gate: the band has nothing to say, and
+        # must not report 0% (which reads as "enters and always loses").
+        band = decision_band([], [], threshold=0.5, tp_pct=0.010, sl_pct=0.005)
+        self.assertEqual(band.count, 0)
+        self.assertTrue(math.isnan(band.observed_rate))
+        self.assertFalse(band.clears_breakeven)
+
+
 class ReportSerializationTests(unittest.TestCase):
     def test_as_dict_is_json_safe_after_json_safe(self) -> None:
         import json

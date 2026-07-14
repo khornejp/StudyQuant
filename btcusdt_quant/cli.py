@@ -416,7 +416,13 @@ def _run_train_multi_horizon_regime_aware(
     # below, so a failed run leaves the previous good artifact in output intact
     # while the partial staging tree remains for diagnosis. Only a fully
     # successful run promotes staging into output (at the end).
-    (staging / "regime_run_summary.json").write_text(json.dumps(run_summary, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+    # json_safe for the same reason the backtest summaries get it: a per-regime
+    # holdout metric can come out NaN, and json.dumps would write a bare NaN
+    # token that RFC 8259 forbids -- into the artifact live.py loads.
+    (staging / "regime_run_summary.json").write_text(
+        json.dumps(backtest.json_safe(run_summary), indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
 
     # A side the policy asks for but that could not be fitted never emits a
     # signal, so no skip counter and no coverage number sees it: the backtest

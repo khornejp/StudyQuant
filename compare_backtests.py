@@ -32,6 +32,11 @@ Usage:
 
     # single run, just the breakdown
     python compare_backtests.py artifacts/backtest_results/backtest_summary.json
+
+Run it from the repo root: the per-trade Sharpe is imported from
+btcusdt_quant.backtest rather than reimplemented here, because this report's
+numbers are meant to reconcile with backtest_summary.json and a second copy of
+the formula was free to drift from it.
 """
 from __future__ import annotations
 
@@ -133,7 +138,10 @@ def _stats(returns: list[float]) -> dict[str, float]:
         "trades": len(returns),
         "sum_trade_returns": sum(returns),
         "compounded_subset_return": _compounded(returns),
-        "win_rate": wins / len(returns) if returns else 0.0,
+        # NaN, not 0.0, on an empty slice: 0% is the win rate of a cell where
+        # every trade lost, and an empty cell has no win rate at all. _sharpe and
+        # _profit_factor already say NaN there.
+        "win_rate": wins / len(returns) if returns else float("nan"),
         "sharpe": _sharpe(returns),
         "profit_factor": _profit_factor(returns),
     }

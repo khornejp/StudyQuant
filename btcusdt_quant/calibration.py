@@ -102,6 +102,12 @@ class DecisionBand:
     (before the backtest's own exit rules), and `breakeven_rate` is what the
     barrier demands of it -- so `clears_breakeven` is the verdict the operator
     is really after.
+
+    The caller decides what population it hands in, and that choice IS the
+    meaning of this band: pass only the bars the entry policy would let the
+    strategy take (direction policy, range mean-reversion gate), or the band
+    reports a win rate for bars nobody trades. share_of_bars is therefore the
+    share of THAT population which cleared the threshold.
     """
 
     threshold: float
@@ -183,6 +189,13 @@ def _validate(probabilities: Sequence[float], outcomes: Sequence[int]) -> None:
 def brier_score(probabilities: Sequence[float], outcomes: Sequence[int]) -> float:
     """Mean squared error of the probabilities. NaN on an empty sample."""
     _validate(probabilities, outcomes)
+    return _brier_unchecked(probabilities, outcomes)
+
+
+def _brier_unchecked(probabilities: Sequence[float], outcomes: Sequence[int]) -> float:
+    # Validation is a full Python-level pass over the sample, and reliability_curve
+    # scores hundreds of thousands of bars; the internal callers validate once and
+    # then use this.
     if not probabilities:
         return float("nan")
     return sum((p - o) ** 2 for p, o in zip(probabilities, outcomes)) / len(probabilities)
@@ -240,7 +253,7 @@ def reliability_curve(
     total = len(probabilities)
     decision = None
     if threshold is not None:
-        decision = decision_band(
+        decision = _decision_band_unchecked(
             probabilities,
             outcomes,
             threshold=threshold,
@@ -252,7 +265,7 @@ def reliability_curve(
         count=total,
         mean_predicted=sum(probabilities) / total if total else float("nan"),
         observed_rate=sum(outcomes) / total if total else float("nan"),
-        brier=brier_score(probabilities, outcomes),
+        brier=_brier_unchecked(probabilities, outcomes),
         ece=expected_calibration_error(bins),
         bins=bins,
         decision=decision,
@@ -291,6 +304,21 @@ def decision_band(
     model against a barrier it never traded.
     """
     _validate(probabilities, outcomes)
+    return _decision_band_unchecked(
+        probabilities, outcomes, threshold=threshold, tp_pct=tp_pct, sl_pct=sl_pct,
+        round_trip_cost=round_trip_cost,
+    )
+
+
+def _decision_band_unchecked(
+    probabilities: Sequence[float],
+    outcomes: Sequence[int],
+    *,
+    threshold: float,
+    tp_pct: float | None,
+    sl_pct: float | None,
+    round_trip_cost: float,
+) -> DecisionBand:
     if not 0.0 <= threshold <= 1.0:
         raise ValueError(f"threshold must be in [0, 1], got {threshold!r}")
 

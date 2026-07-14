@@ -42,6 +42,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from dataclasses import replace
 from pathlib import Path
 
 from btcusdt_quant import backtest, calibration, dataset, live, risk
@@ -55,6 +57,43 @@ DEFAULT_ROUND_TRIP_COST = backtest.DEFAULT_ROUND_TRIP_COST_PCT
 # script reads only long_success / short_success (the targets the side models
 # are trained on), which the triple barrier decides without it.
 _UNUSED_LABEL_THRESHOLD = 0.001
+
+
+def _recorded_horizon(model_dir: Path) -> int | None:
+    """The label horizon the artifact was trained on, or None if it predates the field.
+
+    RegimeModelBundle carries the tp/sl barrier but not the time barrier, so it
+    is read straight from the summary the bundle was loaded from.
+    """
+    try:
+        summary = json.loads((model_dir / "regime_run_summary.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    value = summary.get("threshold_horizon")
+    return None if value is None else int(value)
+
+
+def _entered_sides(bundle: live.RegimeModelBundle, regime: str, features: dict[str, float]) -> list[str]:
+    """The sides this bar could ACTUALLY be entered on, gated exactly as the backtest gates.
+
+    Scoring every bar that has a side model would grade a population the
+    strategy never trades: run_backtest first filters by the bundle's direction
+    policy, then (in the range regime) by the mean-reversion gate, which only
+    permits LONG near the bottom of the range and SHORT near the top and blocks
+    entry entirely in the middle. Range is ~91% of 2025's bars, so ignoring that
+    gate would inflate the decision band with bars that were never entered and
+    measure its win rate on the wrong sample -- while the band is precisely the
+    line the operator reads as the verdict.
+
+    The reliability CURVE still wants every bar the model prices (it grades the
+    model, not the policy); only the decision band is gated. See main().
+    """
+    allowed = (bundle.direction_policy or {}).get(regime, {"LONG", "SHORT"})
+    allowed = backtest.apply_range_mean_reversion_gate(regime, features, set(allowed))
+    return [
+        side for side in ("long", "short")
+        if side.upper() in allowed and bundle.has_side_probability(regime, side)
+    ]
 
 
 def _sides_present(bundle: live.RegimeModelBundle, regime: str) -> list[str]:
@@ -89,13 +128,13 @@ def _format_report(report: calibration.CalibrationReport) -> list[str]:
         if band.count == 0:
             lines.append(
                 f"    DECISION BAND (p >= {band.threshold:.4f}): no bars -- this side never enters. "
-                f"The threshold is above everything the model outputs."
+                f"The threshold is above everything the model outputs on the bars the entry policy allows."
             )
         else:
             verdict = "CLEARS break-even" if band.clears_breakeven else "BELOW break-even"
             lines.append(
                 f"    DECISION BAND (p >= {band.threshold:.4f}): n={band.count:,} "
-                f"({band.share_of_bars:.2%} of bars)  predicted={band.mean_predicted:.4f}  "
+                f"({band.share_of_bars:.2%} of ENTERABLE bars)  predicted={band.mean_predicted:.4f}  "
                 f"observed={band.observed_rate:.4f}"
             )
             lines.append(
@@ -139,6 +178,25 @@ def main() -> int:
         )
         return 1
 
+    # The TIME barrier is the third leg of the same triple barrier, and refusing
+    # a tp/sl mismatch while trusting --horizon would leave the identical hole
+    # open: labels built on 60 bars grade a model that answers about 90.
+    recorded_horizon = _recorded_horizon(Path(args.model_dir))
+    if recorded_horizon is None:
+        print(
+            f"WARNING: this artifact does not record the horizon its labels used; "
+            f"grading against --horizon {args.horizon} on trust.",
+            file=sys.stderr,
+        )
+    elif recorded_horizon != args.horizon:
+        print(
+            f"the models were labeled on a {recorded_horizon}-bar time barrier but --horizon is "
+            f"{args.horizon}. Their probabilities answer a question about a different trade, so the\n"
+            f"reliability curve would grade them on labels nobody trained them for. "
+            f"Re-run with --horizon {recorded_horizon}."
+        )
+        return 1
+
     breakeven = risk.breakeven_probability(tp_pct, sl_pct, args.round_trip_cost)
     print(f"[CALIB] artifact={args.model_dir}")
     print(f"[CALIB] barrier: tp={tp_pct:.4%} sl={sl_pct:.4%}  horizon={args.horizon} bars  "
@@ -166,34 +224,53 @@ def main() -> int:
     )
     print(f"[CALIB] regime routing (artifact's own detector): {routing}")
 
-    # Labels look FORWARD by construction -- that is the target, not a leak.
-    # The features behind each probability are strictly causal (build_feature_rows),
-    # and attach_labels drops the tail whose barrier window runs past the data.
-    labeled = dataset.attach_labels(
-        feature_rows, candles, horizon=args.horizon,
-        label_threshold=_UNUSED_LABEL_THRESHOLD, tp_pct=tp_pct, sl_pct=sl_pct,
-    )
     # The SAME bounds the backtest slices with, so the two reports grade the
     # same bars (an inclusive/exclusive end drift would silently compare
     # different samples).
     start, end = backtest.window_bounds(args.start, args.end)
-    scored = [
-        row for row in labeled
+    # Narrowed BEFORE labeling, not after: the triple barrier scans up to
+    # `horizon` candles per row, and labeling all ~3.15M rows to keep 2025's
+    # ~525k would spend ~6x the work on rows that are then discarded. row.index
+    # still indexes the full candle list, so the labels are identical -- the
+    # barrier can still walk forward out of the window, which is what it must do
+    # for rows near the end.
+    windowed = [
+        row for row in feature_rows
         if (start is None or row.open_time >= start) and (end is None or row.open_time < end)
     ]
+
+    # Labels look FORWARD by construction -- that is the target, not a leak.
+    # The features behind each probability are strictly causal (build_feature_rows),
+    # and attach_labels drops the tail whose barrier window runs past the data.
+    scored = dataset.attach_labels(
+        windowed, candles, horizon=args.horizon,
+        label_threshold=_UNUSED_LABEL_THRESHOLD, tp_pct=tp_pct, sl_pct=sl_pct,
+    )
     print(f"[CALIB] {len(scored):,} labeled rows in the scoring window")
     if not scored:
         print("no rows in the scoring window")
         return 1
 
-    # One (probability, outcome) stream per regime/side, because each is a
-    # SEPARATE model: pooling them would average a well-calibrated regime with a
-    # broken one and report neither.
+    # Two streams per regime/side, and they are NOT the same population:
+    #
+    #   samples  -- every bar the model prices. This grades the MODEL, so it must
+    #               not be filtered by the entry policy: a probability is either
+    #               honest or it is not, whether or not the strategy acts on it.
+    #   entered  -- only the bars run_backtest would actually enter (direction
+    #               policy + range mean-reversion gate). This grades the TRADE,
+    #               and the decision band must be measured here or it reports a
+    #               win rate for bars nobody takes.
+    #
+    # Per regime/side rather than pooled, because each is a separate model:
+    # pooling would average a well-calibrated regime with a broken one and report
+    # neither.
     samples: dict[tuple[str, str], tuple[list[float], list[int]]] = {}
+    entered: dict[tuple[str, str], tuple[list[float], list[int]]] = {}
     for row in scored:
         regime = row.user_regime
         if regime is None:
             continue
+        tradeable = _entered_sides(bundle, regime, row.features)
         for side in _sides_present(bundle, regime):
             probability = bundle.probability_for(regime, side, row.features)
             if probability is None:
@@ -202,6 +279,10 @@ def main() -> int:
             probabilities, outcomes = samples.setdefault((regime, side), ([], []))
             probabilities.append(probability)
             outcomes.append(outcome)
+            if side in tradeable:
+                gated_probabilities, gated_outcomes = entered.setdefault((regime, side), ([], []))
+                gated_probabilities.append(probability)
+                gated_outcomes.append(outcome)
 
     payload: dict[str, object] = {
         "model_dir": str(args.model_dir),
@@ -215,17 +296,28 @@ def main() -> int:
     }
     for (regime, side), (probabilities, outcomes) in sorted(samples.items()):
         threshold = _threshold_for(bundle, regime, side)
-        report = calibration.reliability_curve(
-            probabilities, outcomes, bin_count=args.bins,
-            threshold=threshold, tp_pct=tp_pct, sl_pct=sl_pct,
-            round_trip_cost=args.round_trip_cost,
-        )
+        # The curve over every priced bar; the band over the enterable ones only.
+        report = calibration.reliability_curve(probabilities, outcomes, bin_count=args.bins)
+        band = None
+        if threshold is not None:
+            gated_probabilities, gated_outcomes = entered.get((regime, side), ([], []))
+            band = calibration.decision_band(
+                gated_probabilities, gated_outcomes, threshold=threshold,
+                tp_pct=tp_pct, sl_pct=sl_pct, round_trip_cost=args.round_trip_cost,
+            )
+            report = replace(report, decision=band)
+        gated_count = 0 if band is None else len(entered.get((regime, side), ([], []))[0])
         print(f"\n  {regime}/{side}  (learned threshold: "
               f"{'none saved' if threshold is None else f'{threshold:.4f}'})")
         for line in _format_report(report):
             print(line)
         payload["regimes"].setdefault(regime, {})[side] = {
             "learned_threshold": threshold,
+            # How many of the priced bars the entry policy even allows. When this
+            # is far below `count`, the band speaks for a small corner of the
+            # curve above it -- in range, the mean-reversion gate blocks the
+            # middle of the range entirely.
+            "enterable_bars": gated_count,
             **report.as_dict(),
         }
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timezone
+from datetime import datetime, timezone
 from math import isfinite
 from typing import Mapping, Sequence
 
@@ -23,7 +23,7 @@ def _parse_end_exclusive(value: str):
     return dt
 
 
-def window_bounds(start_date: str | None, end_date: str | None):
+def window_bounds(start_date: str | None, end_date: str | None) -> tuple[datetime | None, datetime | None]:
     """(inclusive start, EXCLUSIVE end) as UTC datetimes, or None where unbounded.
 
     The one place the backtest window is turned into bounds. Any other consumer
@@ -92,7 +92,11 @@ def _resolve_backtest_thresholds(regime_bundle, regime, long_threshold, short_th
     return lt, st
 
 
-def apply_exec_barrier(strategy, exec_tp_pct: float | None, exec_sl_pct: float | None):
+def apply_exec_barrier(
+    strategy: live.StrategyConfig,
+    exec_tp_pct: float | None,
+    exec_sl_pct: float | None,
+) -> live.StrategyConfig:
     """Fold the EXECUTION barrier into a strategy profile, or return it unchanged.
 
     Aligns execution with the model's LABEL barrier: fixed (non-ATR) TP/SL equal
@@ -118,7 +122,7 @@ def apply_exec_barrier(strategy, exec_tp_pct: float | None, exec_sl_pct: float |
 
 
 def _execution_fingerprint(
-    strategy,
+    strategy: live.StrategyConfig,
     models_by_regime: Mapping[str, object] | None,
     default_regime: str | None,
     long_threshold: float | None,
@@ -1284,6 +1288,10 @@ def compare_strategies(
             "conservative": live.strategy_for_regime(None, "conservative"),
             "aggressive": live.strategy_for_regime(None, "aggressive"),
         }
+    if not strategies:
+        # An empty mapping used to surface as a StopIteration/ValueError from the
+        # result aggregation, far from the caller that passed nothing to compare.
+        raise ValueError("strategies must not be empty; there is nothing to compare")
     # Pre-compute feature rows once for all strategies
     if feature_rows is None:
         feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
