@@ -1757,7 +1757,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"trades={result.trade_count}")
             print(f"total_return={result.total_return:.4f}")
             print(f"win_rate={result.win_rate:.4f}")
-            print(f"best_strategy={comparison['best_strategy']}")
+            if comparison.get("indistinguishable_profiles"):
+                # Not a winner, not even a tie: the arms were the same run.
+                print(f"strategy_comparison=SKIPPED ({comparison['indistinguishable_reason']})")
+            else:
+                print(f"best_strategy={comparison['best_strategy']}")
             # Warn if the regime file does not cover the backtest window. When
             # most bars fall back to default_regime, direction routing is
             # effectively single-regime (e.g. a long-only default emits zero

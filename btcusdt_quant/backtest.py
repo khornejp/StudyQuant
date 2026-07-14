@@ -92,6 +92,130 @@ def _resolve_backtest_thresholds(regime_bundle, regime, long_threshold, short_th
     return lt, st
 
 
+def apply_exec_barrier(strategy, exec_tp_pct: float | None, exec_sl_pct: float | None):
+    """Fold the EXECUTION barrier into a strategy profile, or return it unchanged.
+
+    Aligns execution with the model's LABEL barrier: fixed (non-ATR) TP/SL equal
+    to the triple-barrier tp_pct/sl_pct the model was trained on. Without it the
+    backtest executed ATR-derived barriers (~0.84%/0.42%) while the model was
+    predicting a +0.30%/-0.15% outcome.
+
+    Shared with the profile-degeneracy check, which has to fold the barrier
+    EXACTLY as the backtest does -- a second copy that drifted would report two
+    profiles as distinguishable while the backtest executed them identically.
+    """
+    if exec_tp_pct is None or exec_sl_pct is None:
+        return strategy
+    import dataclasses as _dc
+    return _dc.replace(
+        strategy,
+        tp_pct=exec_tp_pct,
+        sl_pct=exec_sl_pct,
+        min_tp_floor_pct=exec_tp_pct,
+        min_sl_floor_pct=exec_sl_pct,
+        use_atr_pricing=False,
+    )
+
+
+def _execution_fingerprint(
+    strategy,
+    models_by_regime: Mapping[str, object] | None,
+    default_regime: str | None,
+    long_threshold: float | None,
+    short_threshold: float | None,
+    threshold_floor: float,
+) -> tuple:
+    """Everything about a profile that can still change a trading decision.
+
+    A StrategyConfig has more fields than the backtest reads. min_reward_risk is
+    never consulted here (it is a live-only gate), and the ATR multipliers stop
+    mattering the moment use_atr_pricing is False. What is left -- the barrier
+    and the entry thresholds -- is exactly what exec_tp/sl_pct and the learned
+    per-regime thresholds override. Two profiles with the same fingerprint will
+    produce byte-identical trades, so comparing them is not a comparison.
+    """
+    barrier = (
+        strategy.tp_pct,
+        strategy.sl_pct,
+        strategy.min_tp_floor_pct,
+        strategy.min_sl_floor_pct,
+        strategy.use_atr_pricing,
+        # Only reachable while ATR pricing is on; folded in so a profile that
+        # differs ONLY in its multipliers is still seen as different when it is.
+        strategy.atr_multiplier_tp if strategy.use_atr_pricing else None,
+        strategy.atr_multiplier_sl if strategy.use_atr_pricing else None,
+    )
+    if not models_by_regime:
+        # Single-model (or no-model) run: the profile's own thresholds are the
+        # gate unless the CLI overrode them.
+        thresholds = (
+            long_threshold if long_threshold is not None else strategy.long_threshold,
+            short_threshold if short_threshold is not None else strategy.short_threshold,
+        )
+        return barrier + thresholds
+    regimes = sorted({*models_by_regime, *(() if default_regime is None else (default_regime,))})
+    resolved = tuple(
+        _resolve_backtest_thresholds(
+            models_by_regime.get(regime), regime, long_threshold, short_threshold, strategy, threshold_floor
+        )
+        for regime in regimes
+    )
+    return barrier + resolved
+
+
+def indistinguishable_profiles(
+    strategies: Mapping[str, object],
+    models_by_regime: Mapping[str, object] | None = None,
+    default_regime: str | None = None,
+    exec_tp_pct: float | None = None,
+    exec_sl_pct: float | None = None,
+    long_threshold: float | None = None,
+    short_threshold: float | None = None,
+    threshold_floor: float = 0.0,
+) -> str | None:
+    """Reason the profiles cannot differ in this run, or None if they can.
+
+    aggressive/balanced/conservative differ in exactly three knobs: the entry
+    thresholds, tp_pct, and min_reward_risk. In a regime-aware run with
+    --exec-tp-pct/--exec-sl-pct, the barrier is overridden by the exec flags and
+    the thresholds by the learned per-regime values, while min_reward_risk was
+    never read here at all -- so all three profiles execute the same trades and
+    the "comparison" reported three identical rows to four decimal places, with
+    a best_strategy picked out of a tie.
+
+    Reported instead of silently running three identical backtests: a comparison
+    that cannot distinguish its arms is not a weak result, it is not a result.
+    """
+    if len(strategies) < 2:
+        return None
+    fingerprints = {
+        name: _execution_fingerprint(
+            apply_exec_barrier(strategy, exec_tp_pct, exec_sl_pct),
+            models_by_regime,
+            default_regime,
+            long_threshold,
+            short_threshold,
+            threshold_floor,
+        )
+        for name, strategy in strategies.items()
+    }
+    if len(set(fingerprints.values())) > 1:
+        return None
+    causes = []
+    if exec_tp_pct is not None and exec_sl_pct is not None:
+        causes.append("the TP/SL barrier is fixed by --exec-tp-pct/--exec-sl-pct")
+    if long_threshold is not None or short_threshold is not None:
+        causes.append("the entry thresholds are fixed by explicit CLI overrides")
+    elif models_by_regime:
+        causes.append("the entry thresholds come from the artifact's learned per-regime values")
+    reason = " and ".join(causes) if causes else "the profiles resolve to the same barrier and thresholds"
+    return (
+        f"strategy profiles {sorted(strategies)} resolve to identical execution: {reason}, "
+        f"and min_reward_risk (their only other difference) is not read by the backtest. "
+        f"Nothing distinguishes them, so no comparison was run."
+    )
+
+
 # Trade-return dispersion at or below this is float noise, not risk (see
 # per_trade_sharpe), and the sample size below which per-trade Sharpe and
 # profit factor are reported as NaN instead of a number. A 2-trade run has no
@@ -504,21 +628,7 @@ def run_backtest(
     """
     if strategy is None:
         strategy = live.strategy_for_regime(None, "balanced")
-    if exec_tp_pct is not None and exec_sl_pct is not None:
-        # Align EXECUTION barriers with the model's LABEL barriers: force fixed
-        # (non-ATR) TP/SL equal to the triple-barrier tp_pct/sl_pct the model was
-        # trained on. Without this the backtest executed ATR-based barriers
-        # (e.g. ~0.84%/0.42%) while the model predicted a +0.30%/-0.15% outcome,
-        # a train/execution mismatch. Pass the SAME tp/sl used for --tp-pct/--sl-pct.
-        import dataclasses as _dc
-        strategy = _dc.replace(
-            strategy,
-            tp_pct=exec_tp_pct,
-            sl_pct=exec_sl_pct,
-            min_tp_floor_pct=exec_tp_pct,
-            min_sl_floor_pct=exec_sl_pct,
-            use_atr_pricing=False,
-        )
+    strategy = apply_exec_barrier(strategy, exec_tp_pct, exec_sl_pct)
     _validate_cost_rates(fee_rate_per_side, slippage_rate_per_side)
     if label_horizon <= 0:
         raise ValueError("label_horizon must be positive")
@@ -1224,8 +1334,33 @@ def compare_strategies(
             _dc.replace(row, user_regime=regime)
             for row, regime in zip(feature_rows, detected)
         ]
+    # Before spending three full passes over the window: can the profiles even
+    # produce different trades? When they cannot, run ONE (its numbers are still
+    # a useful fixed-size baseline next to the Kelly-sized main backtest) and say
+    # why the other arms were dropped, instead of reporting three identical rows
+    # and crowning a winner from a tie.
+    # long/short_threshold are None here on purpose: compare_strategies does not
+    # take the CLI overrides and does not pass them to run_backtest, so the arms
+    # resolve thresholds from the learned values or the profile. The fingerprint
+    # must be computed against the SAME inputs the arms will actually run with.
+    degenerate = indistinguishable_profiles(
+        strategies,
+        models_by_regime=models_by_regime,
+        default_regime=default_regime,
+        exec_tp_pct=exec_tp_pct,
+        exec_sl_pct=exec_sl_pct,
+        threshold_floor=threshold_floor,
+    )
+    evaluated = strategies
+    if degenerate is not None:
+        # Run the arm the main backtest itself uses when it is one of them, so
+        # the surviving row is labeled with the profile the run actually shipped
+        # rather than whichever name sorted first.
+        arm = "balanced" if "balanced" in strategies else sorted(strategies)[0]
+        evaluated = {arm: strategies[arm]}
+
     results: dict[str, BacktestResult] = {}
-    for name, strategy in strategies.items():
+    for name, strategy in evaluated.items():
         results[name] = run_backtest(
             candles,
             model,
@@ -1246,16 +1381,25 @@ def compare_strategies(
             allow_barrier_mismatch=allow_barrier_mismatch,
         )
 
-    best_strategy = max(results, key=lambda k: results[k].total_return)
+    # best_strategy is None when the profiles were indistinguishable: there was
+    # no contest, and naming a winner of one is how a no-op reads as a finding.
+    best_strategy = None if degenerate is not None else max(results, key=lambda k: results[k].total_return)
+    evaluated_name = next(iter(results))
     return {
         # Comparison runs are ALWAYS fixed-size (kelly_config is not plumbed
         # here); labeled so a Kelly-sized main backtest in the same summary
         # JSON is not mistaken for an apples-to-apples row.
         "sizing": "fixed_position_size",
+        "indistinguishable_profiles": degenerate is not None,
+        "indistinguishable_reason": degenerate,
+        # Which profiles were actually backtested. Under degeneracy this is the
+        # single arm that ran; the others would have reproduced it exactly.
+        "profiles_evaluated": sorted(results),
+        "profiles_requested": sorted(strategies),
         "best_strategy": best_strategy,
-        "best_total_return": results[best_strategy].total_return,
-        "best_gross_total_return": results[best_strategy].gross_total_return,
-        "best_win_rate": results[best_strategy].win_rate,
+        "best_total_return": results[best_strategy or evaluated_name].total_return,
+        "best_gross_total_return": results[best_strategy or evaluated_name].gross_total_return,
+        "best_win_rate": results[best_strategy or evaluated_name].win_rate,
         "comparison": {
             name: {
                 "total_return": r.total_return,

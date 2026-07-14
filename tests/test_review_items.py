@@ -12,12 +12,15 @@ import math
 import random
 import unittest
 from typing import Mapping
+from unittest import mock
 
+from btcusdt_quant import backtest as backtest_module
 from btcusdt_quant import features, risk, training
 from btcusdt_quant.backtest import (
     BacktestResult,
     BacktestTrade,
     check_execution_barrier_parity,
+    indistinguishable_profiles,
     json_safe,
     kelly_fraction_for_entry,
     per_trade_sharpe,
@@ -1304,6 +1307,172 @@ class NoisyMetricGuardTests(unittest.TestCase):
         gross = per_trade_sharpe([t.gross_pnl_pct for t in trades])
         # Same dispersion, lower mean: costs must strictly reduce Sharpe
         self.assertLess(net, gross)
+
+
+class _ThresholdBundle:
+    """Regime bundle stand-in carrying learned per-regime thresholds.
+
+    Serves no side probabilities: the degeneracy question is decided entirely by
+    the barrier and the thresholds, so the arms can be compared without any
+    model emitting a signal.
+    """
+
+    def __init__(self, regime_thresholds: dict[str, dict[str, float]]) -> None:
+        self.regime_thresholds = regime_thresholds
+        self.direction_policy = {regime: {"LONG", "SHORT"} for regime in regime_thresholds}
+
+    def has_side_probability(self, regime: str, side: str) -> bool:
+        return False
+
+    def probability_for(self, regime: str, side: str, features) -> float | None:
+        return None
+
+
+def _linear_candles(count: int) -> list:
+    from datetime import timedelta
+
+    from btcusdt_quant import data
+
+    base = data.utc_minute(2026, 1, 2, 0, 0)
+    price = 100000.0
+    candles = []
+    for index in range(count):
+        open_price = price
+        price += 5.0
+        candles.append(
+            data.Candle(
+                open_time=base + timedelta(minutes=index),
+                open=open_price,
+                high=max(open_price, price) + 5.0,
+                low=min(open_price, price) - 5.0,
+                close=price,
+                volume=10.0,
+                quote_volume=10.0 * price,
+                number_of_trades=100,
+                taker_buy_base_volume=5.0,
+                taker_buy_quote_volume=5.0 * price,
+            )
+        )
+    return candles
+
+
+def _profiles() -> dict[str, object]:
+    from btcusdt_quant import live
+
+    return {
+        name: live.strategy_for_regime(None, name)
+        for name in ("balanced", "conservative", "aggressive")
+    }
+
+
+class IndistinguishableProfileTests(unittest.TestCase):
+    """The strategy_comparison block reported three IDENTICAL rows to every
+    decimal and then crowned a 'best' one. The profiles differ only in the entry
+    thresholds, tp_pct and min_reward_risk -- and in a regime-aware run with
+    exec barriers, all three of those are overridden or never read."""
+
+    def test_regime_run_with_exec_barrier_is_degenerate(self) -> None:
+        bundle = _ThresholdBundle({"up": {"long": 0.35, "short": 0.36}, "range": {"long": 0.34, "short": 0.35}})
+        reason = indistinguishable_profiles(
+            _profiles(),
+            models_by_regime={"up": bundle, "range": bundle},
+            exec_tp_pct=0.010,
+            exec_sl_pct=0.005,
+        )
+        self.assertIsNotNone(reason)
+        self.assertIn("exec-tp-pct", reason)
+        self.assertIn("learned per-regime", reason)
+
+    def test_profiles_differ_when_thresholds_are_not_overridden(self) -> None:
+        # No learned thresholds anywhere: each profile's own cutoff survives, so
+        # the arms really do trade differently and the comparison is real.
+        reason = indistinguishable_profiles(
+            _profiles(),
+            models_by_regime={"up": _ThresholdBundle({})},
+            exec_tp_pct=0.010,
+            exec_sl_pct=0.005,
+        )
+        self.assertIsNone(reason)
+
+    def test_profiles_differ_when_the_barrier_is_not_overridden(self) -> None:
+        # Without exec barriers, aggressive's tp_pct * 1.10 reaches execution.
+        bundle = _ThresholdBundle({"up": {"long": 0.35, "short": 0.36}})
+        self.assertIsNone(
+            indistinguishable_profiles(_profiles(), models_by_regime={"up": bundle})
+        )
+
+    def test_partial_learned_thresholds_still_differ(self) -> None:
+        # A regime whose thresholds were never learned falls back to the
+        # profile's own cutoff, so that regime alone keeps the arms apart.
+        bundle_learned = _ThresholdBundle({"up": {"long": 0.35, "short": 0.36}})
+        bundle_bare = _ThresholdBundle({})
+        self.assertIsNone(
+            indistinguishable_profiles(
+                _profiles(),
+                models_by_regime={"up": bundle_learned, "range": bundle_bare},
+                exec_tp_pct=0.010,
+                exec_sl_pct=0.005,
+            )
+        )
+
+    def test_single_profile_is_not_a_degenerate_comparison(self) -> None:
+        self.assertIsNone(indistinguishable_profiles({"balanced": _profiles()["balanced"]}))
+
+    def test_min_reward_risk_alone_does_not_make_profiles_distinguishable(self) -> None:
+        # conservative's only surviving difference under exec barriers + learned
+        # thresholds. The backtest never reads it, so it cannot change a trade --
+        # and a fingerprint that included it would call this a real comparison.
+        from btcusdt_quant import live
+
+        base = live.strategy_for_regime(None, "balanced")
+        strict = copy.copy(base)
+        object.__setattr__(strict, "min_reward_risk", base.min_reward_risk + 5.0)
+        bundle = _ThresholdBundle({"up": {"long": 0.35, "short": 0.36}})
+        self.assertIsNotNone(
+            indistinguishable_profiles(
+                {"balanced": base, "strict": strict},
+                models_by_regime={"up": bundle},
+                exec_tp_pct=0.010,
+                exec_sl_pct=0.005,
+            ),
+            "a knob the backtest never reads cannot make two profiles a comparison",
+        )
+
+
+class DegenerateComparisonRunTests(unittest.TestCase):
+    def test_degenerate_comparison_runs_one_arm_and_says_so(self) -> None:
+        # Three profiles in, one backtest out: the other two would reproduce it
+        # exactly, and 525,600 bars is too expensive to spend proving that.
+        candles = _linear_candles(240)
+        bundle = _ThresholdBundle({"up": {"long": 0.35, "short": 0.36}})
+        with mock.patch.object(backtest_module, "run_backtest", wraps=backtest_module.run_backtest) as spy:
+            comparison = backtest_module.compare_strategies(
+                candles,
+                None,
+                _profiles(),
+                models_by_regime={"up": bundle},
+                default_regime="up",
+                exec_tp_pct=0.010,
+                exec_sl_pct=0.005,
+                allow_barrier_mismatch=True,
+            )
+        self.assertEqual(spy.call_count, 1, "the redundant arms must not be backtested")
+        self.assertTrue(comparison["indistinguishable_profiles"])
+        self.assertIsNone(comparison["best_strategy"], "a tie has no winner")
+        self.assertEqual(comparison["profiles_evaluated"], ["balanced"], "the shipped profile is the one that runs")
+        self.assertEqual(comparison["profiles_requested"], ["aggressive", "balanced", "conservative"])
+        self.assertIn("min_reward_risk", comparison["indistinguishable_reason"])
+
+    def test_real_comparison_still_runs_every_arm(self) -> None:
+        candles = _linear_candles(240)
+        strategies = _profiles()
+        with mock.patch.object(backtest_module, "run_backtest", wraps=backtest_module.run_backtest) as spy:
+            comparison = backtest_module.compare_strategies(candles, None, strategies)
+        self.assertEqual(spy.call_count, 3)
+        self.assertFalse(comparison["indistinguishable_profiles"])
+        self.assertIsNone(comparison["indistinguishable_reason"])
+        self.assertIsNotNone(comparison["best_strategy"])
+        self.assertEqual(sorted(comparison["comparison"]), ["aggressive", "balanced", "conservative"])
 
 
 def _reject_constant(token: str) -> float:
