@@ -7,6 +7,7 @@ leakage heuristics + fold-wise IC (ic_diagnostic.py), OU half-life
 from __future__ import annotations
 
 import copy
+import json
 import math
 import random
 import unittest
@@ -16,9 +17,10 @@ from btcusdt_quant import features, risk, training
 from btcusdt_quant.backtest import (
     BacktestResult,
     BacktestTrade,
-    _per_trade_sharpe,
     check_execution_barrier_parity,
+    json_safe,
     kelly_fraction_for_entry,
+    per_trade_sharpe,
     run_backtest,
 )
 from btcusdt_quant.ensemble import MultiHorizonEnsembleAdapter
@@ -605,8 +607,8 @@ class SizeWeightedMetricsTests(unittest.TestCase):
         # Price returns are symmetric -> price-based Sharpe ~ 0.
         # Equity returns are asymmetric -> the account made money.
         trades = [self._trade(+0.02, 0.5), self._trade(-0.02, 0.1)]
-        price_sharpe = _per_trade_sharpe([t.pnl_pct for t in trades])
-        equity_sharpe = _per_trade_sharpe([t.trade_return_pct for t in trades])
+        price_sharpe = per_trade_sharpe([t.pnl_pct for t in trades])
+        equity_sharpe = per_trade_sharpe([t.trade_return_pct for t in trades])
         self.assertGreater(equity_sharpe, price_sharpe)
         self.assertGreater(sum(t.trade_return_pct for t in trades), 0.0)
 
@@ -617,8 +619,8 @@ class SizeWeightedMetricsTests(unittest.TestCase):
         pnls = [rng.gauss(0.001, 0.01) for _ in range(200)]
         size = 0.1
         self.assertAlmostEqual(
-            _per_trade_sharpe(pnls),
-            _per_trade_sharpe([p * size for p in pnls]),
+            per_trade_sharpe(pnls),
+            per_trade_sharpe([p * size for p in pnls]),
             places=12,
         )
 
@@ -1201,18 +1203,18 @@ class MultiHorizonSliceAlignmentTests(unittest.TestCase):
 class GrossNetSharpeTests(unittest.TestCase):
     def test_per_trade_sharpe_known_value(self) -> None:
         # mean=0.005, population std=0.005 -> sharpe=1.0
-        self.assertAlmostEqual(_per_trade_sharpe([0.0, 0.01]), 1.0)
+        self.assertAlmostEqual(per_trade_sharpe([0.0, 0.01]), 1.0)
 
     def test_per_trade_sharpe_is_nan_when_undefined(self) -> None:
-        self.assertTrue(math.isnan(_per_trade_sharpe([])))
-        self.assertTrue(math.isnan(_per_trade_sharpe([0.01])))
-        self.assertTrue(math.isnan(_per_trade_sharpe([0.01, 0.01])))  # zero std
+        self.assertTrue(math.isnan(per_trade_sharpe([])))
+        self.assertTrue(math.isnan(per_trade_sharpe([0.01])))
+        self.assertTrue(math.isnan(per_trade_sharpe([0.01, 0.01])))  # zero std
 
     def test_per_trade_sharpe_rejects_float_noise_dispersion(self) -> None:
         # The two TP exits of the 2-trade run: identical to ~1e-18. std that
         # small is noise, and the old `std > 0` guard turned it into 1.08e14.
         self.assertTrue(
-            math.isnan(_per_trade_sharpe([0.00021999999999999586, 0.0002199999999999918])),
+            math.isnan(per_trade_sharpe([0.00021999999999999586, 0.0002199999999999918])),
             "float-noise dispersion must not be reported as a Sharpe",
         )
 
@@ -1298,10 +1300,75 @@ class NoisyMetricGuardTests(unittest.TestCase):
                 gross_pnl_pct=gross,
             )
             trades.append(trade)
-        net = _per_trade_sharpe([t.pnl_pct for t in trades])
-        gross = _per_trade_sharpe([t.gross_pnl_pct for t in trades])
+        net = per_trade_sharpe([t.pnl_pct for t in trades])
+        gross = per_trade_sharpe([t.gross_pnl_pct for t in trades])
         # Same dispersion, lower mean: costs must strictly reduce Sharpe
         self.assertLess(net, gross)
+
+
+def _reject_constant(token: str) -> float:
+    raise AssertionError(f"summary carries the non-RFC-8259 literal {token!r}")
+
+
+class SummaryJsonIsValidJsonTests(unittest.TestCase):
+    """backtest_summary.json must parse in a strict JSON reader (jq), not just
+    in Python and PowerShell, which accept NaN/Infinity as an extension."""
+
+    def test_non_finite_metrics_serialize_as_null(self) -> None:
+        # A sub-MIN_TRADES_FOR_RISK_METRICS run: sharpe NaN, profit_factor inf.
+        result = BacktestResult(sharpe=float("nan"), gross_sharpe=float("nan"))
+        result.profit_factor = float("inf")
+        text = json.dumps(json_safe({"backtest": result.as_dict()}))
+        self.assertNotIn("NaN", text)
+        self.assertNotIn("Infinity", text)
+        # parse_constant fires on exactly the tokens a strict parser rejects.
+        payload = json.loads(text, parse_constant=_reject_constant)["backtest"]
+        self.assertIsNone(payload["net_sharpe"])
+        self.assertIsNone(payload["profit_factor"])
+        self.assertIsNone(payload["cost_impact_sharpe"])
+
+    def test_null_means_undefined_not_zero(self) -> None:
+        # The distinction the fix exists for: a metric with no answer must not
+        # come back as a number a reader would take for flat performance.
+        self.assertIsNone(json_safe(float("nan")))
+        self.assertIsNone(json_safe(float("-inf")))
+
+    def test_finite_values_and_structure_survive(self) -> None:
+        payload = {"a": 0.0, "b": [1, 2.5, float("nan")], "c": {"d": True, "e": None}, "f": "x"}
+        self.assertEqual(
+            json_safe(payload),
+            {"a": 0.0, "b": [1, 2.5, None], "c": {"d": True, "e": None}, "f": "x"},
+        )
+
+
+class CompareBacktestsMetricTests(unittest.TestCase):
+    def test_empty_slice_profit_factor_is_nan_not_zero(self) -> None:
+        # 0.0 is the value of the worst possible slice, so an empty grid cell
+        # printing pf=0.00 read as a catastrophe instead of "no trades here".
+        import compare_backtests as cb
+
+        self.assertTrue(math.isnan(cb._profit_factor([])))
+        self.assertTrue(math.isnan(cb._stats([])["profit_factor"]))
+        self.assertTrue(math.isnan(cb._stats([])["sharpe"]), "sharpe already agreed; pf now matches")
+
+    def test_populated_slice_profit_factor_unchanged(self) -> None:
+        import compare_backtests as cb
+
+        self.assertAlmostEqual(cb._profit_factor([0.02, -0.01]), 2.0)
+        self.assertEqual(cb._profit_factor([0.02, 0.01]), float("inf"))  # no losers
+        self.assertEqual(cb._profit_factor([-0.01]), 0.0)  # all losers: genuinely 0
+
+    def test_sharpe_is_the_backtests_own_formula(self) -> None:
+        # Not a copy: the report is supposed to reconcile with the summary, and
+        # the duplicate carried its own noise floor free to drift from this one.
+        import compare_backtests as cb
+
+        returns = [0.01, -0.005, 0.02, -0.01]
+        self.assertEqual(cb._sharpe(returns), per_trade_sharpe(returns))
+        self.assertTrue(
+            math.isnan(cb._sharpe([0.00021999999999999586, 0.0002199999999999918])),
+            "the float-noise floor must apply here too",
+        )
 
 
 if __name__ == "__main__":

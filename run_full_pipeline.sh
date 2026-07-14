@@ -477,18 +477,30 @@ echo ""
 python - "$BACKTEST_DIR/backtest_summary.json" "$MH_BACKTEST_DIR/backtest_summary.json" <<'PY'
 import json, sys, os
 
+def num(value, spec):
+    """Format a metric that may be null.
+
+    A risk metric is null when it is undefined -- fewer trades than
+    risk_metrics_min_trades, or zero return dispersion. Printing 0.000 there
+    would read as "flat performance" instead of "no answer", and formatting
+    None with a numeric spec is a TypeError.
+    """
+    if value is None:
+        return "n/a"
+    return format(value, spec)
+
 def show(label, path):
     if not os.path.exists(path):
         print(f"  {label}: (backtest summary not found)")
         return
     with open(path) as f:
         b = json.load(f)["backtest"]
-    print(f"  {label}: gross={b.get('gross_total_return',0):+.4%} net={b.get('net_total_return',0):+.4%} "
-          f"trades={b.get('trade_count',0)} win={b.get('win_rate',0):.1%}")
+    print(f"  {label}: gross={num(b.get('gross_total_return'),'+.4%')} net={num(b.get('net_total_return'),'+.4%')} "
+          f"trades={b.get('trade_count',0)} win={num(b.get('win_rate'),'.1%')}")
     # Gross vs net Sharpe side by side: the gap is the cost drag. A strategy
     # whose Sharpe is only positive gross must not ship.
-    print(f"    sharpe: net={b.get('net_sharpe',0):.3f} gross={b.get('gross_sharpe',0):.3f} "
-          f"cost_impact={b.get('cost_impact_sharpe',0):.3f}")
+    print(f"    sharpe: net={num(b.get('net_sharpe'),'.3f')} gross={num(b.get('gross_sharpe'),'.3f')} "
+          f"cost_impact={num(b.get('cost_impact_sharpe'),'.3f')}")
     k = b.get("kelly_sizing") or {}
     if k.get("enabled"):
         print(f"    kelly: avg_frac={k.get('avg_fraction',0):.4f} min={k.get('min_fraction',0):.4f} "

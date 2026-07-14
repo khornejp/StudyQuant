@@ -1747,7 +1747,12 @@ def main(argv: list[str] | None = None) -> int:
                 "label_horizon": args.horizon,
             }
             output.mkdir(parents=True, exist_ok=True)
-            (output / "backtest_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            # json_safe: an undefined metric (too few trades, no losing trade)
+            # is NaN/inf, and json.dumps would write those as bare NaN/Infinity
+            # tokens that RFC 8259 forbids. They go out as null instead.
+            (output / "backtest_summary.json").write_text(
+                json.dumps(backtest.json_safe(summary), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
             print("BTCUSDT backtest complete")
             print(f"trades={result.trade_count}")
             print(f"total_return={result.total_return:.4f}")
@@ -1920,7 +1925,9 @@ def main(argv: list[str] | None = None) -> int:
                 # and a max(horizons) purge gap.
                 **provenance,
             }
-            (output / "multi_horizon_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            (output / "multi_horizon_summary.json").write_text(
+                json.dumps(backtest.json_safe(summary), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
             print("BTCUSDT multi-horizon training complete")
             print(f"horizons={list(adapter.horizons)}")
             print(f"weights={[round(w, 4) for w in adapter.weights]}")

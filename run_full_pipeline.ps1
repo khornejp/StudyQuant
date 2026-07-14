@@ -535,6 +535,16 @@ if ($MultiHorizonPilot) {
 }
 Write-Host ""
 
+# A risk metric is null in the summary when it is UNDEFINED: fewer trades than
+# risk_metrics_min_trades, or zero return dispersion. PowerShell formats $null
+# as an empty string, which reads as a rendering glitch rather than a verdict,
+# so say so explicitly.
+function Format-Metric {
+    param($Value, [string]$Format = "N3")
+    if ($null -eq $Value) { return "n/a" }
+    return ("{0:$Format}" -f $Value)
+}
+
 function Show-BacktestSummary {
     param([string]$Label, [string]$SummaryPath)
     if (-not (Test-Path $SummaryPath)) {
@@ -542,12 +552,13 @@ function Show-BacktestSummary {
         return
     }
     $b = (Get-Content $SummaryPath -Raw | ConvertFrom-Json).backtest
-    Write-Host ("  {0}: gross={1:P3}  net={2:P3}  trades={3}  win={4:P1}" -f `
-        $Label, $b.gross_total_return, $b.net_total_return, $b.trade_count, $b.win_rate) -ForegroundColor Green
+    Write-Host ("  {0}: gross={1}  net={2}  trades={3}  win={4}" -f `
+        $Label, (Format-Metric $b.gross_total_return "P3"), (Format-Metric $b.net_total_return "P3"), `
+        $b.trade_count, (Format-Metric $b.win_rate "P1")) -ForegroundColor Green
     # Gross vs net Sharpe side by side: the gap is the cost drag. A strategy
     # whose Sharpe is only positive gross must not ship (Chan ch.3).
-    Write-Host ("    sharpe: net={0:N3}  gross={1:N3}  cost_impact={2:N3}" -f `
-        $b.net_sharpe, $b.gross_sharpe, $b.cost_impact_sharpe) -ForegroundColor Green
+    Write-Host ("    sharpe: net={0}  gross={1}  cost_impact={2}" -f `
+        (Format-Metric $b.net_sharpe), (Format-Metric $b.gross_sharpe), (Format-Metric $b.cost_impact_sharpe)) -ForegroundColor Green
     if ($b.kelly_sizing -and $b.kelly_sizing.enabled) {
         $k = $b.kelly_sizing
         Write-Host ("    kelly: avg_frac={0:N4}  min={1:N4}  max={2:N4}  (cap={3})  skipped_no_edge={4}" -f `

@@ -76,10 +76,10 @@ def _resolve_backtest_thresholds(regime_bundle, regime, long_threshold, short_th
 
 
 # Trade-return dispersion at or below this is float noise, not risk (see
-# _per_trade_sharpe), and the sample size below which per-trade Sharpe and
+# per_trade_sharpe), and the sample size below which per-trade Sharpe and
 # profit factor are reported as NaN instead of a number. A 2-trade run has no
 # risk metric worth printing; the pipeline was printing one anyway.
-_MIN_RETURN_STD = 1e-12
+MIN_RETURN_STD = 1e-12
 MIN_TRADES_FOR_RISK_METRICS = 20
 
 # Executed vs labeled barrier are equal within this; they come from the same
@@ -1061,8 +1061,8 @@ def run_backtest(
         result.profit_factor = float("nan")
     result.max_drawdown = max_drawdown_pct
     if enough_trades:
-        result.sharpe = _per_trade_sharpe([t.trade_return_pct for t in result.trades])
-        result.gross_sharpe = _per_trade_sharpe([t.gross_trade_return_pct for t in result.trades])
+        result.sharpe = per_trade_sharpe([t.trade_return_pct for t in result.trades])
+        result.gross_sharpe = per_trade_sharpe([t.gross_trade_return_pct for t in result.trades])
     else:
         result.sharpe = float("nan")
         result.gross_sharpe = float("nan")
@@ -1091,23 +1091,50 @@ def run_backtest(
     return result
 
 
-def _per_trade_sharpe(returns: Sequence[float]) -> float:
+def per_trade_sharpe(returns: Sequence[float]) -> float:
     """Per-trade Sharpe (mean/std of trade returns, no annualization).
 
     NaN when the ratio is undefined rather than a number that reads as a
     result. `std > 0` was not a sufficient guard: two trades that both closed
     at TP differ only in float noise, so std came out ~1e-18 and the run
-    reported a Sharpe of 1.08e14. Dispersion at or below _MIN_RETURN_STD is
+    reported a Sharpe of 1.08e14. Dispersion at or below MIN_RETURN_STD is
     noise, not risk, and dividing by it means nothing.
+
+    Public because compare_backtests.py reports the same statistic on slices of
+    the same trades: a second copy of the formula there would be free to drift
+    from this one, and the two numbers are meant to reconcile.
     """
     if len(returns) < 2:
         return float("nan")
     avg_return = sum(returns) / len(returns)
     variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)
     std = variance ** 0.5
-    if std <= _MIN_RETURN_STD:
+    if std <= MIN_RETURN_STD:
         return float("nan")
     return avg_return / std
+
+
+def json_safe(payload: object) -> object:
+    """Recursively replace non-finite floats with None so json.dumps is valid JSON.
+
+    Python's json.dumps writes bare `NaN` / `Infinity` tokens, which RFC 8259
+    does not allow. PowerShell and Python happen to parse them, so the breakage
+    is invisible here and shows up in any other consumer (jq rejects the file
+    outright).
+
+    The non-finite values are not corruption to be scrubbed: NaN is how this
+    module reports a metric that is genuinely undefined (fewer than
+    MIN_TRADES_FOR_RISK_METRICS trades, zero return dispersion, an infinite
+    profit factor with no losing trade). `null` preserves exactly that -- "no
+    value" -- whereas coercing to 0.0 would read as a result.
+    """
+    if isinstance(payload, float):
+        return payload if isfinite(payload) else None
+    if isinstance(payload, Mapping):
+        return {key: json_safe(value) for key, value in payload.items()}
+    if isinstance(payload, (list, tuple)):
+        return [json_safe(item) for item in payload]
+    return payload
 
 
 def compare_strategies(

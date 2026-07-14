@@ -41,6 +41,8 @@ import math
 from collections import defaultdict
 from pathlib import Path
 
+from btcusdt_quant.backtest import per_trade_sharpe
+
 # run_config fields that must match for two runs to be comparable at all.
 # A difference here means the runs traded different windows, barriers, or
 # sizing, so no metric below is a like-for-like comparison.
@@ -73,34 +75,48 @@ COMPARABILITY_TOP_KEYS: tuple[str, ...] = (
 )
 
 
-# Mirrors backtest._MIN_RETURN_STD: dispersion this small is float noise, and
-# dividing by it produced a Sharpe of 1e14 from two trades that both hit TP.
-_MIN_RETURN_STD = 1e-12
-
-
 def _sharpe(returns: list[float]) -> float:
-    """Per-trade Sharpe: mean/std, no annualization (matches backtest.py).
+    """Per-trade Sharpe of a slice, using the backtest's own formula.
 
-    NaN when undefined. Unlike backtest.py this applies no minimum trade count,
-    because the breakdown cells are deliberately narrow slices (regime x side x
-    month) and the n= column next to each one already shows the sample size.
+    Imported rather than reimplemented: this report's numbers are meant to
+    reconcile with backtest_summary.json, and a second copy of the formula was
+    free to drift from it (it already carried its own copy of the noise floor).
+
+    backtest.py's MIN_TRADES_FOR_RISK_METRICS floor is deliberately NOT applied
+    here: the breakdown cells are narrow by construction (regime x side x
+    month), and the n= column next to each one already shows the sample size.
     """
-    if len(returns) < 2:
-        return float("nan")
-    mean = sum(returns) / len(returns)
-    variance = sum((r - mean) ** 2 for r in returns) / len(returns)
-    std = math.sqrt(variance)
-    if std <= _MIN_RETURN_STD:
-        return float("nan")
-    return mean / std
+    return per_trade_sharpe(returns)
 
 
 def _profit_factor(returns: list[float]) -> float:
+    """NaN for an empty slice -- undefined, not 0.0.
+
+    0.0 is the value of the WORST possible slice (every trade a loser), so a
+    grid cell that simply had no trades used to print `pf 0.00` and read as a
+    catastrophe. _sharpe already returns NaN there; this now matches.
+    """
+    if not returns:
+        return float("nan")
     gains = sum(r for r in returns if r > 0)
     losses = abs(sum(r for r in returns if r < 0))
     if losses == 0:
         return float("inf") if gains > 0 else 0.0
     return gains / losses
+
+
+def _reported(backtest: dict, key: str, spec: str) -> str:
+    """Format a metric READ FROM the summary, which may legitimately be null.
+
+    backtest.py reports an undefined risk metric (fewer trades than
+    risk_metrics_min_trades, zero return dispersion, no losing trade) as
+    NaN/inf, and those serialize to `null`. Defaulting a missing key to 0.0
+    would print a metric that was never computed as if it were flat.
+    """
+    value = backtest.get(key)
+    if value is None:
+        return "n/a"
+    return format(float(value), spec)
 
 
 def _compounded(returns: list[float]) -> float:
@@ -262,10 +278,10 @@ def summarize(name: str, backtest: dict) -> None:
 
     overall = [_returns(t) for t in trades]
     print(f"  OVERALL       {_fmt(_stats(overall))}")
-    print(f"  reported      net_total_return={backtest.get('net_total_return', 0.0):+.4%}  "
-          f"net_sharpe={backtest.get('net_sharpe', 0.0):+.4f}  "
-          f"gross_sharpe={backtest.get('gross_sharpe', 0.0):+.4f}  "
-          f"max_drawdown={backtest.get('max_drawdown', 0.0):.4%}")
+    print(f"  reported      net_total_return={_reported(backtest, 'net_total_return', '+.4%')}  "
+          f"net_sharpe={_reported(backtest, 'net_sharpe', '+.4f')}  "
+          f"gross_sharpe={_reported(backtest, 'gross_sharpe', '+.4f')}  "
+          f"max_drawdown={_reported(backtest, 'max_drawdown', '.4%')}")
     print("  (net_total_return is the real compounded account result; per-bucket sum_ret/comp_ret")
     print("   below are contribution and standalone-subset views, and will not equal it)")
     _reconcile(trades, backtest)
@@ -352,12 +368,21 @@ def head_to_head(path_a: Path, a: dict, path_b: Path, b: dict) -> None:
         ("win_rate", True),
     )
     for key, higher_is_better in scored:
-        va, vb = a.get(key, 0.0), b.get(key, 0.0)
-        if isinstance(va, (int, float)) and isinstance(vb, (int, float)) and va != vb and not (math.isnan(va) or math.isnan(vb)):
+        # A metric can be null (undefined: too few trades, zero dispersion) or
+        # NaN on a legacy artifact. Either way there is nothing to score, and
+        # neither can be fed to a numeric format.
+        va, vb = a.get(key), b.get(key)
+        comparable = (
+            isinstance(va, (int, float)) and isinstance(vb, (int, float))
+            and not (math.isnan(va) or math.isnan(vb))
+        )
+        if comparable and va != vb:
             winner = "A" if ((va > vb) == higher_is_better) else "B"
         else:
             winner = "-"
-        print(f"  {key:<20} {va:>14.4f} {vb:>14.4f}   {winner}")
+        ta_text = "n/a" if va is None else f"{float(va):.4f}"
+        tb_text = "n/a" if vb is None else f"{float(vb):.4f}"
+        print(f"  {key:<20} {ta_text:>14} {tb_text:>14}   {winner}")
 
     ta, tb = int(a.get("trade_count", 0)), int(b.get("trade_count", 0))
     print(f"  {'trade_count':<20} {ta:>14,} {tb:>14,}   {'(context, not scored)'}")
