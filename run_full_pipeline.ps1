@@ -495,6 +495,31 @@ python -m btcusdt_quant backtest `
 Assert-PhaseSucceeded "Phase 4 (backtest)"
 
 # ============================================================================
+# PHASE 4.3: Is the model's probability actually a probability?
+# ============================================================================
+# The backtest reports what the model EARNED; this reports whether the number
+# it earned it with means anything. Everything downstream -- Kelly sizing,
+# expected_edge, the learned entry threshold -- reads the model output as
+# P(TP before SL), and the 2025 run entered at a mean probability of 0.522 and
+# realized a 32.3% win rate. A backtest cannot distinguish "bad luck" from
+# "the probabilities are wrong"; this can.
+#
+# The verdict is the decision band: on the bars the learned threshold would
+# enter, does the realized rate clear the barrier's break-even win rate? Below
+# it, no threshold tuning saves the strategy at this barrier.
+Write-Host ""
+Write-Host "[Phase 4.3] Calibration: do the probabilities mean what they say?" -ForegroundColor Yellow
+python verify_calibration.py `
+    --input $FullParquet `
+    --model-dir $ModelDir `
+    --start $BacktestStart `
+    --end $BacktestEnd `
+    --horizon $Horizon `
+    --round-trip-cost $RoundTripCost `
+    --output (Join-Path $BacktestDir "calibration_report.json")
+Warn-IfPhaseFailed "Phase 4.3 (verify_calibration)"
+
+# ============================================================================
 # PHASE 4.5: Backtest the multi-horizon pilot on the same window/costs
 # ============================================================================
 

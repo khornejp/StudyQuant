@@ -149,6 +149,34 @@ def expected_edge(
     return probability * net_win - (1.0 - probability) * net_loss
 
 
+def breakeven_probability(
+    tp_pct: float,
+    sl_pct: float,
+    round_trip_cost: float = 0.0,
+) -> float:
+    """Win rate at which expected_edge is exactly zero, NET of costs.
+
+    The barrier's own hurdle: a model whose realized win rate on entered
+    trades sits below this cannot make money at that barrier no matter how the
+    entry threshold is tuned. It is the single number to check a calibration or
+    a backtest win rate against, so it lives next to expected_edge rather than
+    being recomputed by hand at each call site (tp 0.30 / sl 0.15 / cost 0.08
+    needs 51.1%; tp 1.00 / sl 0.50 / cost 0.08 needs 38.7%).
+
+    NaN when the TP cannot even cover the round trip: no win rate makes such a
+    trade profitable, so there is no break-even to report.
+    """
+    if tp_pct < 0.0 or sl_pct < 0.0:
+        raise ValueError("tp_pct and sl_pct must be non-negative")
+    if round_trip_cost < 0.0:
+        raise ValueError("round_trip_cost must be non-negative")
+    net_win = tp_pct - round_trip_cost
+    net_loss = sl_pct + round_trip_cost
+    if net_win <= 0.0:
+        return float("nan")
+    return net_loss / (net_win + net_loss)
+
+
 def return_variance(returns: Sequence[float], lookback: int | None = None) -> float:
     """Population variance of the trailing `lookback` BARS of returns.
 

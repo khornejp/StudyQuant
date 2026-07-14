@@ -23,6 +23,25 @@ def _parse_end_exclusive(value: str):
     return dt
 
 
+def window_bounds(start_date: str | None, end_date: str | None):
+    """(inclusive start, EXCLUSIVE end) as UTC datetimes, or None where unbounded.
+
+    The one place the backtest window is turned into bounds. Any other consumer
+    that needs "the same rows this backtest evaluated" -- verify_calibration.py
+    grading the model on the backtest window, for one -- must slice identically,
+    and an off-by-one-day copy of this would put the two reports on different
+    samples while both claimed the same window.
+    """
+    start = None
+    end = None
+    if start_date is not None:
+        from datetime import datetime as _dt
+        start = _dt.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+    if end_date is not None:
+        end = _parse_end_exclusive(end_date)
+    return start, end
+
+
 def apply_multi_feature_routing(
     feature_rows: "Sequence[dataset.FeatureRow]",
     detector,
@@ -37,9 +56,7 @@ def apply_multi_feature_routing(
     import dataclasses as _dc
     detected = detector.detect_all([r.features for r in feature_rows])
     if start_date is not None or end_date is not None:
-        from datetime import datetime as _dt
-        _s = _dt.fromisoformat(start_date).replace(tzinfo=timezone.utc) if start_date else None
-        _e = _parse_end_exclusive(end_date) if end_date else None
+        _s, _e = window_bounds(start_date, end_date)
         window = [
             regime for row, regime in zip(feature_rows, detected)
             if (_s is None or row.open_time >= _s) and (_e is None or row.open_time < _e)
@@ -612,9 +629,7 @@ def run_backtest(
         # useless for interpreting the 2025 result (previously counts summed to
         # the full 3.15M candles instead of 2025's 525,600).
         if start_date is not None or end_date is not None:
-            from datetime import datetime as _dt
-            _diag_start = _dt.fromisoformat(start_date).replace(tzinfo=timezone.utc) if start_date else None
-            _diag_end = _parse_end_exclusive(end_date) if end_date else None
+            _diag_start, _diag_end = window_bounds(start_date, end_date)
             detected_window = [
                 regime for row, regime in zip(feature_rows, detected)
                 if (_diag_start is None or row.open_time >= _diag_start)
@@ -673,17 +688,10 @@ def run_backtest(
             for row, regime in zip(feature_rows, detected)
         ]
 
-    start_dt = None
-    end_dt = None
-    if start_date is not None or end_date is not None:
-        from datetime import datetime
-        if start_date is not None:
-            start_dt = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
-        if end_date is not None:
-            # Without an explicit end the backtest silently runs to END OF FILE.
-            # end_date closes the window explicitly. Date-only values include
-            # the whole final day (exclusive next-midnight bound).
-            end_dt = _parse_end_exclusive(end_date)
+    # Without an explicit end the backtest silently runs to END OF FILE.
+    # end_date closes the window explicitly; date-only values include the whole
+    # final day (exclusive next-midnight bound).
+    start_dt, end_dt = window_bounds(start_date, end_date)
 
     # Trailing per-bar returns for Kelly variance estimation. Bar 0 has no
     # previous close, and a zero previous close cannot produce a return;
