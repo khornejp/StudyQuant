@@ -14,3 +14,9 @@ artifacts/demo_review/
 artifacts/
 
 venv_btcusdt/
+
+# Build/run byproducts, not source
+*.zip
+catboost_info/
+.omo/
+test_results*.txt

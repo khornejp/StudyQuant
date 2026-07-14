@@ -68,7 +68,6 @@ def main() -> int:
     sun_last = sun_first + 24 * 60 - 1            # Sunday 23:59
     mon_first = sun_last + 1                      # Monday 00:00
     dd = np.asarray(full["weekly_drawdown"], dtype=float)
-    ma_above = np.asarray(full["weekly_ma20_above_ma50"], dtype=float)
     sat_ref = dd[sun_first - 1]                   # Saturday 23:59 value (prev week's row)
     if not (dd[sun_first] == sat_ref and dd[sun_last] == sat_ref):
         print(f"FAIL: Sunday drawdown changed intraweek (leak): sat={sat_ref} sun00={dd[sun_first]} sun2359={dd[sun_last]}")
@@ -76,7 +75,13 @@ def main() -> int:
     if dd[mon_first] == dd[sun_last]:
         # extremely unlikely to be equal with a moving sine price; treat as suspicious
         print(f"WARN: Monday 00:00 drawdown identical to Sunday value ({dd[mon_first]}); check test signal")
-    print("OK  2) Sunday holds previous week's values; new weekly row appears Monday 00:00")
+
+    ma_above = np.asarray(full["weekly_ma20_above_ma50"], dtype=float)
+    ma_sat_ref = ma_above[sun_first - 1]           # Saturday 23:59 value (prev week's row)
+    if not (ma_above[sun_first] == ma_sat_ref and ma_above[sun_last] == ma_sat_ref):
+        print(f"FAIL: Sunday weekly_ma20_above_ma50 changed intraweek (leak): sat={ma_sat_ref} sun00={ma_above[sun_first]} sun2359={ma_above[sun_last]}")
+        return 1
+    print("OK  2) Sunday holds previous week's values (drawdown & ma20-above-ma50); new weekly row appears Monday 00:00")
 
     # --- 3. Mon-Sat unchanged vs old (label <= ts) selection -----------
     # Old selection index = searchsorted(label, ts); new = searchsorted(label+1d, ts).

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import numpy as np
 from pathlib import Path
 from btcusdt_quant import dataset
 from fast_features import compute_features_fast

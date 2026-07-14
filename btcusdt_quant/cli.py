@@ -5,9 +5,12 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import TYPE_CHECKING, Mapping, Sequence
 
 from . import backtest, data, dataset, exchange, features, governance, live, secrets, training
+
+if TYPE_CHECKING:
+    from btcusdt_quant import regime_classifier
 
 
 def run_demo(output: Path) -> dict[str, object]:
@@ -128,6 +131,356 @@ def run_demo(output: Path) -> dict[str, object]:
     return run_summary
 
 
+# Which sides each regime is allowed to trade. NOT a copy: this is the same
+# object training.py's single-horizon path reads, so the multi-horizon pilot
+# can never train a different side set and silently make Phase 4 vs Phase 4.5
+# incomparable. Change the policy in training.REGIME_SIDES and both follow.
+MH_REGIME_SIDES: Mapping[str, tuple[tuple[str, str], ...]] = training.REGIME_SIDES
+
+
+def _run_train_multi_horizon_regime_aware(
+    args,
+    train_rows: Sequence["dataset.FeatureRow"],
+    candles: Sequence["data.Candle"],
+    horizons: list[int],
+    output: Path,
+    provenance: Mapping[str, object],
+) -> int:
+    """Fit one multi-horizon ensemble per (regime, allowed side).
+
+    Emits `train --regime-aware`'s artifact layout so backtest/live load it
+    through load_regime_aware_models: the fitted rule detector rides in
+    regime_run_summary.json (routing matches how rows were bucketed -- no
+    train/serve skew), each regime dir holds long_model.json/short_model.json,
+    and each side model is trained on its OWN triple-barrier target so a SELL
+    probability really is P(short_success). That is what lets Kelly size both
+    sides instead of refusing shorts.
+    """
+    from btcusdt_quant import ensemble as ensemble_mod, regime_rules as rr
+
+    rule_config = rr.MultiFeatureRegimeConfig()
+    if args.rule_regime_config:
+        rule_config = rr.MultiFeatureRegimeConfig.from_dict(
+            json.loads(Path(args.rule_regime_config).read_text(encoding="utf-8"))
+        )
+
+    feature_maps = [row.features for row in train_rows]
+    detector = rr.MultiFeatureRegimeDetector(rule_config).fit(feature_maps)
+    regimes = detector.detect_all(feature_maps)
+    diagnostics = detector.diagnostics(regimes)
+    regime_counts = {name: regimes.count(name) for name in MH_REGIME_SIDES}
+    print(f"[MH] rule regime distribution: {regime_counts}")
+
+    feature_names = list(dataset.FEATURE_NAMES)
+    max_horizon = max(horizons)
+    # Thresholds are scored on labels of THIS horizon -- set it to the
+    # backtest's --horizon so the cutoff is picked against the same time
+    # barrier execution enforces. The caller already trimmed the training
+    # window by max(max_horizon, threshold_horizon), so these labels never
+    # reach past --training-end.
+    threshold_horizon = args.threshold_horizon or max_horizon
+    label_reach = max(max_horizon, threshold_horizon)
+    print(f"[MH] threshold-selection horizon: {threshold_horizon} bars (models blend {horizons})")
+    output.mkdir(parents=True, exist_ok=True)
+
+    # Row-count gate BEFORE the destructive cleanup below. A regime short of
+    # --min-regime-rows can be known from regime_counts without training, so
+    # failing here (rather than after rmtree) preserves the previous artifact:
+    # a "not enough data" run leaves the last good model intact instead of
+    # wiping it and exiting 1. Only fit-level failures (found after training)
+    # leave a partial artifact.
+    if not args.allow_partial_sides:
+        too_small = {
+            name: count for name, count in regime_counts.items()
+            if count < args.min_regime_rows
+        }
+        if too_small:
+            detail = ", ".join(f"{name}({count})" for name, count in sorted(too_small.items()))
+            print(
+                f"multi-horizon training aborted: regime(s) below --min-regime-rows "
+                f"{args.min_regime_rows}: {detail}. Every side of those regimes would be "
+                f"missing, making the run one-directional. Lower --min-regime-rows, widen "
+                f"the training window, or pass --allow-partial-sides. (Previous artifact left intact.)",
+                file=sys.stderr,
+            )
+            return 1
+
+    # Train into a staging dir and only swap it into `output` once every gate
+    # has passed. Writing directly into `output` and deleting stale dirs
+    # up-front means any later gate failure (missing side, failed refit) leaves
+    # the previous GOOD artifact destroyed and only a partial one behind -- a
+    # rerun that trips a gate would be strictly worse than not running. With
+    # staging, a failed run leaves `output` untouched.
+    import shutil as _shutil
+    staging = output / ".mh_staging"
+    if staging.exists():
+        _shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+
+    regime_results: dict[str, dict[str, object]] = {}
+    trained_regimes: dict[str, dict[str, object]] = {}
+    skipped_regimes: dict[str, str] = {}
+    # regime -> sides REGIME_SIDES asks for that could not be fitted.
+    missing_sides: dict[str, list[str]] = {}
+
+    for regime_name, sides in MH_REGIME_SIDES.items():
+        regime_rows = [row for row, regime in zip(train_rows, regimes) if regime == regime_name]
+        if len(regime_rows) < args.min_regime_rows:
+            skipped_regimes[regime_name] = f"only {len(regime_rows)} rows (< --min-regime-rows {args.min_regime_rows})"
+            print(f"[MH] regime {regime_name}: SKIPPED ({skipped_regimes[regime_name]})")
+            # A regime with too few rows trains NOTHING, so every side the
+            # policy asks for is missing. Feed the gate, or a fully-absent
+            # required regime slips through as exit 0.
+            missing_sides[regime_name] = [side for side, _ in sides]
+            continue
+
+        # Carve a chronological threshold holdout that NO horizon model and no
+        # blend weight ever sees; the purge gap keeps the last fitted row's
+        # label window from reaching into it. The gap spans the longest label
+        # reach of either side (fit labels at max_horizon, holdout labels at
+        # threshold_horizon). (Counted in rows, not bars, because a regime's
+        # rows are non-contiguous -- same convention as training.py's
+        # per-regime holdout.)
+        holdout_split = int(len(regime_rows) * 0.8)
+        holdout_start = min(len(regime_rows), holdout_split + label_reach)
+        fit_rows = regime_rows[:holdout_split]
+        holdout_rows = regime_rows[holdout_start:]
+
+        regime_dir = staging / f"regime_{regime_name}"
+        regime_dir.mkdir(parents=True, exist_ok=True)
+        selected_thresholds: dict[str, float] = {}
+        side_summaries: dict[str, object] = {}
+        trained_sides: list[str] = []
+
+        # attach_labels builds every target (long_success, short_success,
+        # profitability) regardless of which one a side reads, and none of its
+        # arguments depend on the side -- so labeling once per regime instead of
+        # once per side saves a full triple-barrier pass over the holdout for
+        # every two-sided regime (`range`).
+        holdout_labeled = dataset.attach_labels(
+            holdout_rows, candles, horizon=threshold_horizon,
+            label_threshold=args.label_threshold, tp_pct=args.tp_pct, sl_pct=args.sl_pct,
+        )
+        holdout_matrix = training.feature_matrix(holdout_labeled, feature_names) if holdout_labeled else []
+
+        def _fit(rows, target_key: str, weights=None):
+            return ensemble_mod.fit_multi_horizon_ensemble(
+                rows,
+                candles,
+                feature_names,
+                horizons=horizons,
+                model_family=args.model_family,
+                label_threshold=args.label_threshold,
+                tp_pct=args.tp_pct,
+                sl_pct=args.sl_pct,
+                weighting=args.weighting,
+                target_key=target_key,
+                weights=weights,
+            )
+
+        for side, target_key in sides:
+            # DIAGNOSTIC ensemble: fit on the prefix only, so the threshold can
+            # be chosen on a holdout it has never seen. Mirrors training.py's
+            # per-regime diagnostic model.
+            print(f"[MH] regime {regime_name}/{side}: fitting {len(horizons)} horizon models on {target_key} ({len(fit_rows):,} prefix rows) ...")
+            try:
+                diagnostic = _fit(fit_rows, target_key)
+            except ValueError as error:
+                print(f"[MH] regime {regime_name}/{side}: SKIPPED ({error})", file=sys.stderr)
+                continue
+
+            threshold = 0.5
+            # Same labeled holdout for every side; only the target column differs.
+            holdout_labels = [int(row.targets.get(target_key, row.label)) for row in holdout_labeled]
+            if len(set(holdout_labels)) >= 2:
+                probs = diagnostic.predict_proba(holdout_matrix)
+                threshold = training.select_threshold(
+                    probs, holdout_labels,
+                    objective=args.threshold_objective,
+                    tp_pct=args.tp_pct, sl_pct=args.sl_pct,
+                    round_trip_cost=args.round_trip_cost,
+                )
+                print(f"[MH] regime {regime_name}/{side}: holdout n={len(holdout_labels):,} threshold={threshold:.4f}")
+            else:
+                print(f"[MH] regime {regime_name}/{side}: holdout single-class; keeping threshold 0.5", file=sys.stderr)
+
+            # DEPLOYED ensemble: refit on ALL of this regime's rows. Without
+            # this the shipped model would see only the prefix minus the
+            # ensemble's own validation tail (~64% of the regime's data) while
+            # Phase 3's shipped model is fit on 100% -- a data handicap that
+            # would be mistaken for a horizon-blend effect when the two are
+            # compared. The blend WEIGHTS are carried over from the prefix-only
+            # diagnostic rather than relearned, so the refit needs no validation
+            # tail and every row trains the horizon models; both the weights and
+            # the threshold stay out-of-sample, exactly as training.py does it.
+            adapter = diagnostic
+            refit_rows = len(fit_rows)
+            refit_done = False
+            if not args.skip_final_refit:
+                print(f"[MH] regime {regime_name}/{side}: refitting on all {len(regime_rows):,} regime rows for deployment ...")
+                try:
+                    adapter = _fit(regime_rows, target_key, weights=dict(zip(diagnostic.horizons, diagnostic.weights)))
+                    refit_rows = len(regime_rows)
+                    refit_done = True
+                except ValueError as error:
+                    print(f"[MH] regime {regime_name}/{side}: final refit failed ({error}); shipping the prefix model", file=sys.stderr)
+
+            (regime_dir / f"{side}_model.json").write_text(json.dumps(adapter.as_dict()), encoding="utf-8")
+            trained_sides.append(side)
+            selected_thresholds[side] = threshold
+            side_summaries[side] = {
+                "target": target_key,
+                "horizons": list(adapter.horizons),
+                "weights": list(adapter.weights),
+                "holdout_rows": len(holdout_labels),
+                # Feature rows handed to each fit (labeling drops warmup rows,
+                # so the models see somewhat fewer than these counts).
+                "threshold_fit_input_rows": len(fit_rows),
+                "deployed_fit_input_rows": refit_rows,
+                # What ACTUALLY happened, not what was requested: a refit can
+                # fail (single-class slice) and ship the prefix model, and an
+                # artifact that claims data parity it does not have would make
+                # a Phase 4 vs 4.5 comparison wrong in the model's favour.
+                "final_refit": refit_done,
+            }
+
+        wanted_sides = [side for side, _ in sides]
+        if not trained_sides:
+            skipped_regimes[regime_name] = "no side could be fitted"
+            # A regime that fit NOTHING is the worst case (its whole direction
+            # is missing), so it belongs in missing_sides too -- not only in
+            # skipped_regimes, which the gate does not consult.
+            missing_sides[regime_name] = wanted_sides
+            continue
+
+        missing = [side for side in wanted_sides if side not in trained_sides]
+        if missing:
+            missing_sides[regime_name] = missing
+
+        regime_results[regime_name] = {
+            "selected_thresholds": selected_thresholds,
+            "sides": side_summaries,
+            "row_count": len(regime_rows),
+        }
+        trained_regimes[regime_name] = {
+            "status": "trained",
+            "row_count": len(regime_rows),
+            "output_dir": f"regime_{regime_name}",
+            "sides": trained_sides,
+            "missing_sides": missing,
+        }
+
+    if not regime_results:
+        print("multi-horizon training failed: no regime had enough rows to train", file=sys.stderr)
+        print(f"  previous artifact in {output} left intact (partial run staged at {staging})", file=sys.stderr)
+        return 1
+
+    default_regime = max(trained_regimes, key=lambda name: int(trained_regimes[name]["row_count"]))
+    run_summary = {
+        "regime_aware": True,
+        "regime_source": "multi_feature_rule",
+        "model_kind": "multi_horizon_ensemble",
+        "horizons": list(horizons),
+        # The barrier the thresholds were chosen against. backtest compares it
+        # to its own --horizon and warns on a mismatch, so a blended model is
+        # never silently judged on one barrier and traded on another.
+        "threshold_horizon": threshold_horizon,
+        "label_reach": label_reach,
+        "regime_results": regime_results,
+        "regime_counts": regime_counts,
+        "trained_regimes": trained_regimes,
+        "skipped_regimes": skipped_regimes,
+        "default_regime": default_regime,
+        "min_regime_rows": args.min_regime_rows,
+        "regime_detector": None,
+        "multi_feature_regime_detector": detector.to_dict(),
+        "regime_diagnostics": diagnostics,
+        "threshold_objective": args.threshold_objective,
+        "round_trip_cost": args.round_trip_cost,
+        # Requested vs achieved. Deployed models are meant to be refit on the
+        # full regime data (Phase 3 parity) with thresholds still coming from
+        # the prefix-only diagnostic; a refit can fail on a single-class slice
+        # and ship the prefix model instead, so the artifact must not claim a
+        # data parity it does not have.
+        "final_refit_requested": not args.skip_final_refit,
+        "final_refit_all_sides": all(
+            bool(side_info["final_refit"])
+            for regime_info in regime_results.values()
+            for side_info in regime_info["sides"].values()
+        ),
+        "missing_sides": missing_sides,
+        "artifacts": ["regime_run_summary.json"],
+        **provenance,
+    }
+    # Summary is written into STAGING (not output) even on the failure paths
+    # below, so a failed run leaves the previous good artifact in output intact
+    # while the partial staging tree remains for diagnosis. Only a fully
+    # successful run promotes staging into output (at the end).
+    (staging / "regime_run_summary.json").write_text(json.dumps(run_summary, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+
+    # A side the policy asks for but that could not be fitted never emits a
+    # signal, so no skip counter and no coverage number sees it: the backtest
+    # trades that regime one-directionally while every published check still
+    # reads as passing. `train --regime-aware` raises in the same situation,
+    # so accepting it here would make Phase 4.5 asymmetric with Phase 4.
+    if missing_sides:
+        detail = ", ".join(f"{regime}/{'+'.join(sides)}" for regime, sides in sorted(missing_sides.items()))
+        message = f"could not fit required side(s): {detail}"
+        if not args.allow_partial_sides:
+            print(f"multi-horizon training failed: {message}", file=sys.stderr)
+            print(f"  previous artifact in {output} left intact; partial run staged at {staging} for diagnosis", file=sys.stderr)
+            print("  fix the data for those sides, or pass --allow-partial-sides to accept a one-directional regime", file=sys.stderr)
+            return 1
+        print(f"WARNING: {message} (--allow-partial-sides)", file=sys.stderr)
+        print("WARNING: those regimes trade one direction only; do not compare this artifact to Phase 4", file=sys.stderr)
+
+    # A refit that was asked for and did not happen leaves some sides trained
+    # on ~64% of their regime's rows. Nothing downstream can see that, so a
+    # Phase 4 vs 4.5 comparison would silently favour Phase 4. Fail loudly
+    # unless the operator opted into a partial artifact. (--skip-final-refit
+    # is a deliberate choice and never lands here.) Checked BEFORE the success
+    # banner so the output never says "complete" and then fails.
+    partial = [
+        f"{regime}/{side}"
+        for regime, regime_info in regime_results.items()
+        for side, side_info in regime_info["sides"].items()
+        if not side_info["final_refit"]
+    ]
+    if run_summary["final_refit_requested"] and partial:
+        message = f"final refit failed for {', '.join(partial)}; those sides ship the prefix model"
+        if not args.allow_partial_final_refit:
+            print(f"multi-horizon training failed: {message}", file=sys.stderr)
+            print(f"  previous artifact in {output} left intact; partial run staged at {staging} for diagnosis", file=sys.stderr)
+            print("  rerun after fixing the data, or pass --allow-partial-final-refit to accept it", file=sys.stderr)
+            return 1
+        print(f"WARNING: {message} (--allow-partial-final-refit)", file=sys.stderr)
+        print("WARNING: this artifact does NOT have Phase 3 data parity; do not compare it to Phase 4", file=sys.stderr)
+
+    # Every gate passed: promote staging into output. Replace only the regime
+    # dirs this policy owns plus the summary, so an unrelated regime dir a
+    # shared output holds for another purpose is left alone (the loader keys
+    # off the summary, so a leftover dir it does not list is inert anyway).
+    for _rn in list(MH_REGIME_SIDES) + [None]:
+        name = "regime_run_summary.json" if _rn is None else f"regime_{_rn}"
+        src = staging / name
+        dst = output / name
+        if dst.exists():
+            _shutil.rmtree(dst) if dst.is_dir() and not dst.is_symlink() else dst.unlink()
+        if src.exists():
+            _shutil.move(str(src), str(dst))
+    _shutil.rmtree(staging, ignore_errors=True)
+
+    print("BTCUSDT multi-horizon regime-aware training complete")
+    for regime_name, info in trained_regimes.items():
+        thresholds = regime_results[regime_name]["selected_thresholds"]
+        print(f"  {regime_name}: sides={info['sides']} rows={info['row_count']:,} thresholds={ {k: round(v, 4) for k, v in thresholds.items()} }")
+    if skipped_regimes:
+        print(f"  skipped: {skipped_regimes}")
+    print(f"  default_regime={default_regime}")
+    print(f"artifacts={output}")
+    return 0
+
+
 def _parse_end_date_exclusive(value: str) -> datetime:
     """Parse an end-of-range date/datetime as an EXCLUSIVE upper bound.
 
@@ -185,8 +538,8 @@ def run_train(
     only_build: bool = False,
     threshold_objective: str = "trading_pnl",
     threshold_min_trades: int | None = None,
-    tp_pct: float = 0.003,
-    sl_pct: float = 0.0015,
+    tp_pct: float = dataset.DEFAULT_LABEL_TP_PCT,
+    sl_pct: float = dataset.DEFAULT_LABEL_SL_PCT,
     label_horizon: int = 60,
     label_threshold: float = 0.001,
     round_trip_cost: float = 0.0008,
@@ -735,8 +1088,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--long-threshold", type=float, default=0.55, help="minimum probability threshold for LONG entry signals")
     train.add_argument("--short-threshold", type=float, default=0.55, help="minimum probability threshold for SHORT entry signals")
     train.add_argument("--min-ev", type=float, default=0.0001, help="minimum expected value for entry signals (0.01%% = 0.0001)")
-    train.add_argument("--tp-pct", type=float, default=0.003, help="take profit %% for triple-barrier labeling. MUST match backtest TP floor. (0.30%% = 0.003)")
-    train.add_argument("--sl-pct", type=float, default=0.0015, help="stop loss %% for triple-barrier labeling. MUST match backtest SL floor. (0.15%% = 0.0015)")
+    train.add_argument("--tp-pct", type=float, default=dataset.DEFAULT_LABEL_TP_PCT, help=f"take profit %% for triple-barrier labeling. The backtest MUST execute this same barrier (--exec-tp-pct) or the model is answering about a trade you did not take. (default {dataset.DEFAULT_LABEL_TP_PCT} = 1.00%%)")
+    train.add_argument("--sl-pct", type=float, default=dataset.DEFAULT_LABEL_SL_PCT, help=f"stop loss %% for triple-barrier labeling. The backtest MUST execute this same barrier (--exec-sl-pct). (default {dataset.DEFAULT_LABEL_SL_PCT} = 0.50%%)")
     train.add_argument("--horizon", type=int, default=60, help="triple-barrier horizon in bars (minutes for 1m data); default 60")
     train.add_argument("--label-threshold", type=float, default=0.001, help="return threshold for directional labeling (0.10%% = 0.001)")
     train.add_argument(
@@ -790,13 +1143,41 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--short-threshold", type=float, default=None, help="override the SHORT-entry probability threshold for all regimes. When omitted, uses the learned per-regime threshold if present, else the strategy default.")
     backtest_parser.add_argument("--exec-tp-pct", type=float, default=None, help="execute with a FIXED take-profit of this fraction (e.g. 0.003 = 0.30%%) for every trade instead of the strategy's ATR-based barrier. Set equal to the training --tp-pct so the backtest executes the SAME barrier the model was labeled/trained on (avoids the train/execution mismatch where the model predicts a 0.30%% move but the backtest trades a 0.84%% ATR barrier). Requires --exec-sl-pct too.")
     backtest_parser.add_argument("--exec-sl-pct", type=float, default=None, help="execute with a FIXED stop-loss of this fraction (e.g. 0.0015 = 0.15%%). Set equal to training --sl-pct. Requires --exec-tp-pct too.")
+    backtest_parser.add_argument("--allow-barrier-mismatch", action="store_true", help="permit --exec-tp-pct/--exec-sl-pct to differ from the tp_pct/sl_pct the loaded models were LABELED on (recorded in regime_run_summary.json). Off by default: the model predicts P(TP before SL) for the barrier it was trained on, so executing a different one denominates every probability, threshold and win rate in a barrier nobody trained on, and the run reports a meaningless number without erroring. No pipeline needs this -- tp_sl_sweep.sh RETRAINS each cell at its own tp/sl, so its barriers match. Pass it only for a deliberate one-off probe of how a fixed model behaves under a barrier it was not trained for, and read the result as a sensitivity check, not as performance.")
     backtest_parser.add_argument("--backtest-end", default=None, help="inclusive end date (YYYY-MM-DD) of the trading window. Without it the backtest silently trades from --backtest-start to the END OF FILE, so a parquet extended past 2025 would silently widen the traded span. Routing diagnostics are sliced to the same window.")
     backtest_parser.add_argument("--metrics-dir", default=None, help="directory of downloaded Binance metrics archive (collect-metrics output) -- pass the SAME directory used for training's --metrics-dir. Training with metrics and backtesting without them feeds the model F16 derivatives-metrics features (open interest change rates/z-scores, long/short ratios, taker ratio) as 0.0 -- inputs it never saw in training (train/serve feature skew). Without this flag those features are 0 in the backtest.")
     backtest_parser.add_argument("--fee-rate-per-side", type=float, default=None, help="override the per-side fee fraction (default 0.0002 = 0.02%%). Together with --slippage-rate-per-side this sets the backtest's executed round-trip cost; keep 2*(fee+slippage) equal to training's --round-trip-cost so the threshold objective and execution share one cost basis.")
     backtest_parser.add_argument("--slippage-rate-per-side", type=float, default=None, help="override the per-side slippage fraction (default 0.0002 = 0.02%%). See --fee-rate-per-side.")
     backtest_parser.add_argument("--horizon", type=int, default=60, help="max holding bars before forced TIMEOUT exit (minutes for 1m data). MUST match the training --horizon so backtest execution and triple-barrier labels share the same time barrier (a train horizon of 120 with a backtest horizon of 60 silently misaligns label vs execution). Default 60 = training default.")
     backtest_parser.add_argument("--threshold-floor", type=float, default=0.0, help="hard lower bound on the learned/strategy entry thresholds (does NOT clamp an explicit --long/--short-threshold override). Learned selected_thresholds can drop to ~0.32 on weak models; e.g. --threshold-floor 0.45 keeps entries above a minimum confidence so sub-cost signals don't flood the backtest. Default 0 = disabled.")
+    backtest_parser.add_argument("--kelly-sizing", action="store_true", help="size each trade with fractional Kelly (f* = edge/variance, Half-Kelly by default) from the entry probability, executed TP/SL distances, and trailing bar-return variance scaled to --horizon. The fixed position_size becomes the CAP; entries with non-positive Kelly edge are skipped (kelly_sizing.entries_skipped_no_edge in the summary). Applies to the main backtest only; the strategy_comparison block stays fixed-size (marked sizing=fixed_position_size).")
+    backtest_parser.add_argument("--kelly-multiplier", type=float, default=0.5, help="fraction of full Kelly to bet (default 0.5 = Half-Kelly: ~18.5%% less growth for ~43%% less max drawdown). Only used with --kelly-sizing.")
+    backtest_parser.add_argument("--kelly-lookback-bars", type=int, default=1440, help="trailing bars for the Kelly variance estimate (default 1440 = 1 day of 1m bars). Only used with --kelly-sizing.")
     backtest_parser.add_argument("--regime-classifier-dir", default=None, help="output directory from train-regime-classifier (contains regime_classifier_model.cbm). When set, this SAME saved classifier drives regime routing here via F17 multi-timeframe features -- pass the identical directory used for training's --regime-classifier-dir so routing stays consistent with how the up/down/range models were trained. Takes priority over --auto-regime. Ignored if --user-regime-file is given.")
+    mh_parser = subparsers.add_parser(
+        "train-multi-horizon",
+        help="pilot: train one entry model per label horizon (e.g. 30/60/90m) and blend their probabilities (G-Research 7th-place pattern). Saves a single model.json loadable by `backtest --model-artifact <dir>/model.json`.",
+    )
+    mh_parser.add_argument("--input", required=True, help="candle Parquet or CSV")
+    mh_parser.add_argument("--output", required=True, help="output directory for model.json + multi_horizon_summary.json")
+    mh_parser.add_argument("--horizons", default="30,60,90", help="comma-separated label horizons in bars (default 30,60,90)")
+    mh_parser.add_argument("--model-family", default="catboost", help="base model family per horizon (default catboost)")
+    mh_parser.add_argument("--weighting", default="validation", choices=["equal", "validation"], help="blend weights: equal average or validation-accuracy-edge weighted (default validation)")
+    mh_parser.add_argument("--training-start", default=None, help="ISO date; rows before this are excluded from training")
+    mh_parser.add_argument("--training-end", default=None, help="ISO date; final training day (inclusive)")
+    mh_parser.add_argument("--tp-pct", type=float, default=dataset.DEFAULT_LABEL_TP_PCT, help=f"triple-barrier TP fraction for labeling (default {dataset.DEFAULT_LABEL_TP_PCT})")
+    mh_parser.add_argument("--sl-pct", type=float, default=dataset.DEFAULT_LABEL_SL_PCT, help=f"triple-barrier SL fraction for labeling (default {dataset.DEFAULT_LABEL_SL_PCT})")
+    mh_parser.add_argument("--label-threshold", type=float, default=0.001, help="direction label threshold (default 0.001)")
+    mh_parser.add_argument("--metrics-dir", default=None, help="optional futures metrics archive dir (collect-metrics output) so training features match a backtest run with the same --metrics-dir")
+    mh_parser.add_argument("--regime-aware", action="store_true", help="bucket rows with the multi-feature rule detector and fit one multi-horizon ensemble per regime AND side (up->long, down->short, range->both), each on its own long_success/short_success target. Emits the same artifact layout as `train --regime-aware`, so `backtest --model-artifact <dir>` routes and sizes it exactly like the regime model (including two-sided Kelly). Without this flag a single flat model is trained on the long-side profitability target, which cannot price shorts.")
+    mh_parser.add_argument("--rule-regime-config", default=None, help="path to a MultiFeatureRegimeConfig JSON (regime-aware mode only); defaults to the built-in config")
+    mh_parser.add_argument("--min-regime-rows", type=int, default=2000, help="skip a regime with fewer labeled rows than this (regime-aware mode; default 2000)")
+    mh_parser.add_argument("--threshold-objective", default="trading_pnl", choices=["trading_pnl", "precision_recall"], help="objective used to select each regime/side decision threshold on its own holdout (regime-aware mode; default trading_pnl)")
+    mh_parser.add_argument("--allow-partial-sides", action="store_true", help="do not fail when a regime cannot fit every side the direction policy asks for (e.g. range/short is single-class). Without this the command exits non-zero, because a missing side model never emits a signal: the backtest silently trades that regime one-directionally while `shorts_skipped_no_short_model` and `default_fallback` both still read 0. Note `train --regime-aware` raises in the same situation, so allowing it here makes Phase 4.5 asymmetric with Phase 4.")
+    mh_parser.add_argument("--allow-partial-final-refit", action="store_true", help="do not fail when a requested final refit fails on some regime/side and the prefix model is shipped instead. Without this the command exits non-zero, because a partially-refit artifact trains some sides on ~64%% of the data and would make a Phase 4 vs 4.5 comparison unfair in a way nothing downstream can see. Distinct from --skip-final-refit, which is a deliberate opt-out.")
+    mh_parser.add_argument("--skip-final-refit", action="store_true", help="ship the prefix-fitted diagnostic ensemble instead of refitting on the full regime data (regime-aware mode). Halves training time but leaves the deployed model trained on ~64%% of the rows the Phase 3 model sees, so a Phase 4 vs 4.5 comparison would confound the horizon blend with a data handicap. Use only for quick pilots.")
+    mh_parser.add_argument("--threshold-horizon", type=int, default=None, help="label horizon (bars) used to score the threshold-selection holdout. Set it to the backtest's --horizon so the threshold is chosen against the SAME time barrier execution enforces; otherwise the blended model is judged on one horizon and traded on another. Default: max(--horizons), which reproduces the pre-flag behaviour. The training window is trimmed by max(this, max(--horizons)) so a longer threshold horizon can never label from candles past --training-end.")
+    mh_parser.add_argument("--round-trip-cost", type=float, default=0.0008, help="2*(fee+slippage) used by the trading_pnl threshold objective (default 0.0008); keep equal to the backtest's cost basis")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -1111,6 +1492,7 @@ def main(argv: list[str] | None = None) -> int:
             model = None
             models_by_regime: dict[str, object] | None = None
             regime_bundle = None
+            missing_side_models: dict[str, list[str]] = {}
             user_regime_periods = None
             if args.user_regime_file:
                 user_regime_periods = dataset.load_user_regime_periods(Path(args.user_regime_file))
@@ -1161,6 +1543,33 @@ def main(argv: list[str] | None = None) -> int:
                         # matches how the entry models were bucketed).
                         try:
                             _summary = json.loads((model_path / "regime_run_summary.json").read_text(encoding="utf-8"))
+                            # A model whose entry thresholds were chosen against
+                            # one time barrier and executed against another is
+                            # not the model that was validated: the threshold's
+                            # PnL objective assumed a different holding period.
+                            _thr_h = _summary.get("threshold_horizon")
+                            if _thr_h is not None and int(_thr_h) != int(args.horizon):
+                                print(
+                                    f"WARNING: artifact thresholds were selected on {int(_thr_h)}-bar labels but "
+                                    f"--horizon is {int(args.horizon)}. Entry cutoffs were optimized for a different "
+                                    f"time barrier than the one this backtest enforces; retrain with "
+                                    f"--threshold-horizon {int(args.horizon)} for a like-for-like result.",
+                                    file=sys.stderr,
+                                )
+                            _mh_horizons = _summary.get("horizons")
+                            if _summary.get("model_kind") == "multi_horizon_ensemble" and _mh_horizons:
+                                print(f"[BACKTEST] multi-horizon artifact: blend={_mh_horizons}, threshold_horizon={_thr_h}")
+                            # A partially-refit artifact trains some sides on a
+                            # fraction of their regime's rows; comparing it to a
+                            # fully-refit model attributes the data handicap to
+                            # the model. The training run already warns, but the
+                            # artifact can outlive that terminal.
+                            if _summary.get("final_refit_requested") and _summary.get("final_refit_all_sides") is False:
+                                print(
+                                    "WARNING: this artifact has partial final-refit (some regime/side models were "
+                                    "trained on the prefix only). Its results are not comparable to a fully-refit model.",
+                                    file=sys.stderr,
+                                )
                             _rule_payload = _summary.get("multi_feature_regime_detector")
                             if _rule_payload:
                                 from btcusdt_quant import regime_rules as _rr
@@ -1186,6 +1595,20 @@ def main(argv: list[str] | None = None) -> int:
                                 regime_name: regime_bundle
                                 for regime_name in regime_bundle.models.keys()
                             }
+                            # A side the policy asks for but the artifact lacks
+                            # never emits a signal, so no skip counter and no
+                            # coverage number can see it: the run is quietly
+                            # one-directional in that regime while every check
+                            # ("shorts_skipped == 0", "default_fallback == 0")
+                            # still reads as passing. Compare against the policy.
+                            missing_side_models = regime_bundle.missing_side_models(training.REGIME_SIDES)
+                            for _regime, _sides in missing_side_models.items():
+                                print(
+                                    f"WARNING: regime '{_regime}' has no model for side(s) {_sides} that the "
+                                    f"direction policy requires. Those entries can never fire, so this run is "
+                                    f"one-directional in '{_regime}' -- retrain that side before comparing results.",
+                                    file=sys.stderr,
+                                )
                         else:
                             models_by_regime = None
                     elif (model_path / "model.json").is_file():
@@ -1268,7 +1691,23 @@ def main(argv: list[str] | None = None) -> int:
                 threshold_floor=args.threshold_floor,
                 label_horizon=args.horizon,
                 feature_rows=shared_feature_rows,
+                allow_barrier_mismatch=args.allow_barrier_mismatch,
             )
+            kelly_config = None
+            if args.kelly_sizing:
+                from . import risk as _risk
+                # holding_period_bars follows --horizon so the Kelly variance
+                # is scaled to the same time barrier the backtest exits on.
+                kelly_config = _risk.KellySizingConfig(
+                    kelly_multiplier=args.kelly_multiplier,
+                    variance_lookback_bars=args.kelly_lookback_bars,
+                    holding_period_bars=args.horizon,
+                )
+                print(
+                    "[BACKTEST] kelly sizing: "
+                    f"multiplier={args.kelly_multiplier}, lookback={args.kelly_lookback_bars} bars, "
+                    f"holding={args.horizon} bars, cap=position_size"
+                )
             result = backtest.run_backtest(
                 candles,
                 model,
@@ -1291,7 +1730,15 @@ def main(argv: list[str] | None = None) -> int:
                 regime_classifier_model=regime_classifier_model,
                 multi_feature_regime_detector=multi_feature_regime_detector,
                 feature_rows=shared_feature_rows,
+                kelly_config=kelly_config,
+                allow_barrier_mismatch=args.allow_barrier_mismatch,
             )
+            for _warning in result.barrier_warnings:
+                print(f"[BACKTEST] WARNING: {_warning}")
+            # Carried in the artifact, not just the terminal: an operator
+            # auditing backtest_summary.json later must be able to see that a
+            # side was never tradeable.
+            result.missing_side_models = missing_side_models
             summary = {
                 "backtest": result.as_dict(),
                 "strategy_comparison": comparison,
@@ -1327,18 +1774,160 @@ def main(argv: list[str] | None = None) -> int:
                             f"Direction routing is effectively single-regime.",
                             file=sys.stderr,
                         )
-                    elif fb_share > 0.20:
+                    elif fallback > 0:
+                        # With a hand-labeled --user-regime-file, gaps are the
+                        # operator's choice, so only warn past the old 20% line.
+                        # With auto/rule routing every bar gets a regime, so ANY
+                        # fallback means a whole regime has no model -- the exact
+                        # silent-one-directional case, worth flagging at once.
+                        auto_routed = user_regime_periods is None
+                        if auto_routed or fb_share > 0.20:
+                            print(
+                                f"WARNING: {fallback:,} of {total_eval:,} backtest bars ({fb_share*100:.1f}%) fell back "
+                                f"to default_regime='{resolved_default_regime}' because their own regime has no model. "
+                                f"Regime-aware routing applied to {matched:,} bars."
+                                + (" Train the missing regime(s): `default_fallback` should be 0." if auto_routed else ""),
+                                file=sys.stderr,
+                            )
+                    if no_model > 0:
                         print(
-                            f"WARNING: {fb_share*100:.0f}% of backtest bars fell back to "
-                            f"default_regime='{resolved_default_regime}' (regime file coverage "
-                            f"gap). Regime-aware routing only applied to {matched:,} of "
-                            f"{total_eval:,} bars.",
+                            f"WARNING: {no_model:,} bars had neither their own regime model nor a usable "
+                            f"default_regime; those bars could never trade.",
                             file=sys.stderr,
                         )
             print(f"artifacts={output}")
             return 0
         except (OSError, RuntimeError, ValueError) as error:
             print(f"backtest failed: {error}", file=sys.stderr)
+            return 1
+    if args.command == "train-multi-horizon":
+        try:
+            from btcusdt_quant import ensemble as ensemble_mod
+
+            # Validate before the expensive candle load + feature pass, so a
+            # typo fails in milliseconds rather than after a full feature build.
+            horizons = [int(h) for h in args.horizons.split(",") if h.strip()]
+            if not horizons or any(h <= 0 for h in horizons):
+                raise ValueError("--horizons must be a comma-separated list of positive bar counts")
+            if args.threshold_horizon is not None and args.threshold_horizon <= 0:
+                raise ValueError("--threshold-horizon must be a positive number of bars")
+            input_path = Path(args.input)
+            output = Path(args.output)
+
+            print(f"[MH] loading candles from {input_path} ...")
+            candles = dataset.load_parquet_candles(input_path) if input_path.suffix.lower() == ".parquet" else dataset.load_csv_candles(input_path)
+            print(f"[MH]   {len(candles):,} candles")
+
+            external_sources = None
+            if args.metrics_dir:
+                from btcusdt_quant import metrics_source
+                metrics_rows = metrics_source.load_metrics_dir(Path(args.metrics_dir))
+                minute_times = [c.open_time for c in candles]
+                metrics_by_minute = metrics_source.metrics_features_to_minutes(metrics_rows, minute_times)
+                external_sources = {t: {"metrics": feats} for t, feats in metrics_by_minute.items()}
+                print(f"[MH]   metrics: {len(metrics_rows):,} rows aligned")
+
+            # Features are computed over the FULL series (so long-lookback
+            # features keep their warmup context), then the training window is
+            # taken as one contiguous candle/feature slice -- the two lists
+            # must stay index-aligned for per-horizon labeling.
+            print("[MH] computing features (single pass) ...")
+            feature_rows = dataset.build_feature_rows(candles, external_sources=external_sources)
+
+            start_dt = datetime.fromisoformat(args.training_start).replace(tzinfo=timezone.utc) if args.training_start else None
+            end_dt = _parse_end_date_exclusive(args.training_end) if args.training_end else None
+            i0 = 0
+            i1 = len(candles)
+            if start_dt is not None:
+                while i0 < i1 and candles[i0].open_time < start_dt:
+                    i0 += 1
+            if end_dt is not None:
+                while i1 > i0 and candles[i1 - 1].open_time >= end_dt:
+                    i1 -= 1
+            # FeatureRow.index is an index into the FULL candle list, and
+            # attach_labels dereferences candles[row.index]. Passing a SLICED
+            # candle list alongside sliced rows would silently read prices i0
+            # bars in the future -- label corruption, not an error. So the
+            # rows are sliced but the candle list is passed whole, and the
+            # slice's tail is trimmed so no label's forward window reaches
+            # past --training-end into the backtest span.
+            #
+            # The trim must cover the LONGEST forward reach of any label the
+            # run will build: the horizon models label at max(horizons), and
+            # the regime-aware threshold holdout labels at --threshold-horizon.
+            # Trimming by max(horizons) alone would let a longer threshold
+            # horizon score its holdout against out-of-sample candles.
+            max_horizon = max(horizons)
+            threshold_horizon = args.threshold_horizon or max_horizon
+            label_reach = max(max_horizon, threshold_horizon)
+            train_end = i1 - label_reach
+            if train_end <= i0:
+                raise ValueError(
+                    f"training window [{i0}, {i1}) is shorter than the longest label reach ({label_reach} bars); widen --training-start/--training-end"
+                )
+            train_rows = feature_rows[i0:train_end]
+            labelable = sum(1 for r in train_rows if not r.warmup_invalid)
+            print(f"[MH] training slice: {i1 - i0:,} candles ({i0}..{i1}); {len(train_rows):,} rows after {label_reach}-bar label trim; {labelable:,} past warmup")
+            if args.regime_aware and args.threshold_horizon is None:
+                print(
+                    f"[MH] WARNING: --threshold-horizon not set; thresholds will be selected on {max_horizon}-bar labels. "
+                    f"Pass --threshold-horizon <backtest --horizon> so the threshold is chosen against the barrier execution enforces.",
+                    file=sys.stderr,
+                )
+
+            provenance = {
+                "window_candles": i1 - i0,
+                "rows_after_label_trim": len(train_rows),
+                "rows_past_warmup": labelable,
+                "tp_pct": args.tp_pct,
+                "sl_pct": args.sl_pct,
+                "label_threshold": args.label_threshold,
+                "weighting": args.weighting,
+                "base_model_family": args.model_family,
+            }
+
+            if args.regime_aware:
+                return _run_train_multi_horizon_regime_aware(args, train_rows, candles, horizons, output, provenance)
+
+            print(f"[MH] training {len(horizons)} horizon models ({args.model_family}, weighting={args.weighting}) ...")
+            print("[MH] NOTE: flat mode trains on the long-side profitability target; the model")
+            print("[MH]       cannot price shorts, so Kelly will refuse SELL entries. Use")
+            print("[MH]       --regime-aware for a two-sided, regime-routed pilot.")
+            adapter = ensemble_mod.fit_multi_horizon_ensemble(
+                train_rows,
+                candles,
+                list(dataset.FEATURE_NAMES),
+                horizons=horizons,
+                model_family=args.model_family,
+                label_threshold=args.label_threshold,
+                tp_pct=args.tp_pct,
+                sl_pct=args.sl_pct,
+                weighting=args.weighting,
+            )
+
+            output.mkdir(parents=True, exist_ok=True)
+            (output / "model.json").write_text(json.dumps(adapter.as_dict()), encoding="utf-8")
+            summary = {
+                "model_family": adapter.model_family,
+                "regime_aware": False,
+                "horizons": list(adapter.horizons),
+                "weights": list(adapter.weights),
+                "target": "profitability",
+                # Provenance: the raw window, the rows left after trimming the
+                # label lookahead, and how many of those clear feature warmup.
+                # The last number is the ceiling on what actually trained --
+                # fit_multi_horizon_ensemble further reserves a validation tail
+                # and a max(horizons) purge gap.
+                **provenance,
+            }
+            (output / "multi_horizon_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            print("BTCUSDT multi-horizon training complete")
+            print(f"horizons={list(adapter.horizons)}")
+            print(f"weights={[round(w, 4) for w in adapter.weights]}")
+            print(f"artifacts={output}")
+            return 0
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"multi-horizon training failed: {error}", file=sys.stderr)
             return 1
     if args.command == "artifacts":
         ok, errors = governance.verify_manifest(Path(args.path))

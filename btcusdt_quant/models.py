@@ -5,7 +5,7 @@ import contextlib
 import importlib
 import importlib.util
 import io
-import json
+import math
 from dataclasses import dataclass
 from typing import Mapping, Protocol, Sequence, runtime_checkable
 
@@ -372,6 +372,134 @@ class EnsembleAdapter:
                     models.append(LightGBMAdapter.from_dict(m_payload))
         weights = [float(w) for w in payload.get("weights", [])]
         return cls(models, weights)
+
+
+class CentroidLinearClassifier:
+    """Nearest-centroid linear classifier: no gradient boosting, no optional deps.
+
+    Standardizes each feature, takes the difference of the two class centroids
+    as the weight vector, and puts the decision boundary at their midpoint. The
+    signed distance to that boundary, normalized by ||diff||, is squashed with a
+    logistic so `probability()` returns a usable score rather than a saturated
+    0/1.
+
+    It exists for the fast smoke scripts (backtest_100usd_unified.py,
+    test_backtest_fast_features.py), which need a deterministic model in
+    milliseconds instead of a CatBoost fit. Those scripts previously imported
+    `Standardizer`/`LinearClassifier` from training.py -- symbols that do not
+    exist there, so the inline-training branch raised ImportError the moment it
+    was reached.
+    """
+
+    model_family_name = "deterministic_centroid_linear"
+
+    def __init__(self, feature_names: Sequence[str] | None = None, model_params: Mapping[str, object] | None = None) -> None:
+        self.feature_names = tuple(feature_names or ())
+        self._means: dict[str, float] = {}
+        self._stds: dict[str, float] = {}
+        self._weights: dict[str, float] = {}
+        self._scale: float = 1.0
+        self._bias: float = 0.0
+
+    @property
+    def model_family(self) -> str:
+        return self.model_family_name
+
+    def fit(self, feature_matrix: FeatureMatrix, labels: Sequence[int], sample_weight: Sequence[float] | None = None) -> "CentroidLinearClassifier":
+        rows = [list(map(float, row)) for row in feature_matrix]
+        if not rows:
+            raise ValueError("cannot fit CentroidLinearClassifier on an empty matrix")
+        if len(rows) != len(labels):
+            raise ValueError("feature_matrix and labels must have equal length")
+        n_features = len(rows[0])
+        if not self.feature_names:
+            self.feature_names = tuple(f"f{i}" for i in range(n_features))
+        if len(self.feature_names) != n_features:
+            raise ValueError("feature_names length does not match the matrix width")
+        # Loud at fit time beats a silent near-zero probability at serve time.
+        if any(not math.isfinite(v) for row in rows for v in row):
+            raise ValueError("feature_matrix contains NaN or inf")
+
+        columns = list(zip(*rows))
+        means = [sum(col) / len(col) for col in columns]
+        # Floor the std RELATIVE to the feature's own scale. A flat absolute
+        # epsilon lets a near-constant large-scale column (volume ~1e9, whose
+        # residual float error is ~1e-7) standardize to ~10 instead of ~0, so
+        # pure rounding noise gets a real weight in the centroid difference.
+        stds = []
+        for col, m in zip(columns, means):
+            raw = (sum((v - m) ** 2 for v in col) / len(col)) ** 0.5
+            stds.append(max(raw, 1e-9 * (abs(m) + 1.0)))
+        self._means = dict(zip(self.feature_names, means))
+        self._stds = dict(zip(self.feature_names, stds))
+
+        standardized = [[(v - m) / s for v, m, s in zip(row, means, stds)] for row in rows]
+        pos = [row for row, label in zip(standardized, labels) if int(label) == 1]
+        neg = [row for row, label in zip(standardized, labels) if int(label) != 1]
+        if not pos or not neg:
+            raise ValueError("CentroidLinearClassifier needs both classes present")
+
+        pos_centroid = [sum(col) / len(col) for col in zip(*pos)]
+        neg_centroid = [sum(col) / len(col) for col in zip(*neg)]
+        diff = [p - n for p, n in zip(pos_centroid, neg_centroid)]
+        midpoint = [(p + n) / 2.0 for p, n in zip(pos_centroid, neg_centroid)]
+
+        norm = sum(d * d for d in diff) ** 0.5
+        if norm <= 0.0:
+            # Coincident centroids: every probability would be exactly 0.5. Ship
+            # a constant model and the operator sees a "trained" model that never
+            # fires, with nothing to explain why.
+            raise ValueError(
+                "class centroids coincide in standardized space; no separating direction exists"
+            )
+        self._scale = 1.0 / norm
+        self._weights = dict(zip(self.feature_names, diff))
+        self._bias = sum(m * d for m, d in zip(midpoint, diff))
+        return self
+
+    def _score(self, values: Mapping[str, float]) -> float:
+        total = 0.0
+        for name in self.feature_names:
+            mean = self._means.get(name, 0.0)
+            std = self._stds.get(name, 1.0)
+            weight = self._weights.get(name, 0.0)
+            total += weight * ((float(values.get(name, mean)) - mean) / std)
+        return (total - self._bias) * self._scale
+
+    def probability(self, values: Mapping[str, float]) -> float:
+        z = self._score(values)
+        if not math.isfinite(z):
+            # A NaN feature must not become a confident call. `min(60, max(-60,
+            # nan))` silently yields -60 in CPython -> probability ~0, which for
+            # a directional model reads as "certain short". 0.5 = no opinion.
+            return 0.5
+        # Clamp before exp so a far-from-boundary point cannot overflow.
+        z = min(60.0, max(-60.0, z))
+        return 1.0 / (1.0 + math.exp(-z))
+
+    def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
+        return [self.probability(dict(zip(self.feature_names, row))) for row in feature_matrix]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "model_family": self.model_family,
+            "feature_names": list(self.feature_names),
+            "means": self._means,
+            "stds": self._stds,
+            "weights": self._weights,
+            "scale": self._scale,
+            "bias": self._bias,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "CentroidLinearClassifier":
+        model = cls(feature_names=[str(name) for name in payload.get("feature_names", ())])
+        model._means = {str(k): float(v) for k, v in dict(payload.get("means", {})).items()}
+        model._stds = {str(k): float(v) for k, v in dict(payload.get("stds", {})).items()}
+        model._weights = {str(k): float(v) for k, v in dict(payload.get("weights", {})).items()}
+        model._scale = float(payload.get("scale", 1.0))
+        model._bias = float(payload.get("bias", 0.0))
+        return model
 
 
 class ModelFactory:

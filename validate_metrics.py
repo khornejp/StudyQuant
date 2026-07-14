@@ -11,7 +11,7 @@ Usage:
     python validate_metrics.py 2024-01-01 2024-01-02
 """
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -62,7 +62,7 @@ def main() -> int:
     from collections import Counter as C
     ct_counts = C(r.create_time for r in raw)
     dups = {t: c for t, c in ct_counts.items() if c > 1}
-    print(f"\n=== Duplicate create_time (raw, pre-dedup) ===")
+    print("\n=== Duplicate create_time (raw, pre-dedup) ===")
     print(f"  raw rows: {len(raw):,}, unique create_time: {len(ct_counts):,}, duplicated timestamps: {len(dups):,}")
     for t, c in list(dups.items())[:3]:
         same = [r.values for r in raw if r.create_time == t]

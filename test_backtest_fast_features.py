@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from btcusdt_quant import backtest, dataset, live, training
+from btcusdt_quant import backtest, dataset, live
 from fast_features import compute_features_fast
 
 
@@ -57,43 +57,15 @@ def main():
         labels.append(1 if future_return > 0 else 0)
     labels.extend([0] * 15)  # Pad last 15
     
-    # Train model
-    config = training.TrainingConfig(model_family="stdlib", n_groups=3, test_group_count=1)
-    
-    # Use training module's fit function
-    from btcusdt_quant.models import ModelFactory
-    from btcusdt_quant.training import Standardizer, LinearClassifier
-    
-    # Simple centroid model
+    # Deterministic nearest-centroid model: milliseconds, no CatBoost, which is
+    # the whole point of this "fast" script.
+    from btcusdt_quant.models import CentroidLinearClassifier
+
     train_size = int(len(candles) * 0.8)
-    train_X = feature_matrix[:train_size]
-    train_y = np.array(labels[:train_size])
-    
-    # Compute standardizer
-    means = {name: float(np.mean(train_X[:, i])) for i, name in enumerate(feature_names)}
-    stds = {name: float(np.std(train_X[:, i])) + 1e-8 for i, name in enumerate(feature_names)}
-    standardizer = Standardizer(means, stds)
-    
-    # Standardize
-    X_std = np.array([standardizer.transform(dict(zip(feature_names, row)), feature_names) for row in train_X])
-    
-    # Centroid classifier
-    pos_mask = train_y == 1
-    neg_mask = train_y == 0
-    pos_centroid = np.mean(X_std[pos_mask], axis=0) if np.any(pos_mask) else np.zeros(len(feature_names))
-    neg_centroid = np.mean(X_std[neg_mask], axis=0) if np.any(neg_mask) else np.zeros(len(feature_names))
-    diff = pos_centroid - neg_centroid
-    
-    weights = {name: float(diff[i]) for i, name in enumerate(feature_names)}
-    intercept = float(np.dot(neg_centroid, diff))
-    
-    model = LinearClassifier(
-        feature_names=tuple(feature_names),
-        standardizer=standardizer,
-        weights=weights,
-        intercept=intercept,
+    model = CentroidLinearClassifier(feature_names=feature_names).fit(
+        feature_matrix[:train_size], labels[:train_size]
     )
-    
+
     train_time = time.time() - start
     print(f"Model trained in {train_time:.2f}s")
     

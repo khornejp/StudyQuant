@@ -17,7 +17,7 @@ import warnings
 
 import btcusdt_quant.dataset as dataset
 from btcusdt_quant import data, features, governance, live, training
-from btcusdt_quant.cli import main, run_collect, run_demo, run_live, run_train
+from btcusdt_quant.cli import main, run_collect, run_demo, run_train
 
 
 def make_stream_candles(rows: int) -> list[data.Candle]:

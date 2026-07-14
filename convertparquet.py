@@ -41,4 +41,4 @@ print(f"Final columns: {combined.column_names}")
 
 # 6. Write parquet
 pq.write_table(combined, 'artifacts/btcusdt_2months.parquet')
-print(f"Saved to artifacts/btcusdt_2months.parquet")
+print("Saved to artifacts/btcusdt_2months.parquet")

@@ -20,7 +20,7 @@ import json
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -315,11 +315,11 @@ def main():
             ExperimentConfig("fs_rv75_trend65", 0.75, 0.65, 2.0, 3, True, 20, 30),
         ])
     
-    print(f"BTCUSDT Quant v7.18 실험 자동화")
+    print("BTCUSDT Quant v7.18 실험 자동화")
     print(f"입력 데이터: {input_path}")
     print(f"출력 폴더: {output_base}")
     print(f"총 실험 수: {len(experiments)}")
-    print(f"평가 지표: F1, Accuracy, Sharpe, MDD, Calmar")
+    print("평가 지표: F1, Accuracy, Sharpe, MDD, Calmar")
     
     results: list[ExperimentResult] = []
     for i, config in enumerate(experiments, 1):

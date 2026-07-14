@@ -24,6 +24,21 @@ from statistics import mean as _statistics_mean
 import numpy as np
 
 
+# Canonical triple-barrier geometry. The SINGLE source for the labeling barrier,
+# so training, the backtest's execution barrier and the threshold objective
+# cannot drift apart into a train/serve mismatch.
+#
+# The barrier must clear the round-trip cost (2*(fee+slippage) = 0.0008) by a
+# wide margin or the reward:risk the labels advertise is not the one the account
+# earns. The previous 0.003/0.0015 lost that argument outright: net of cost a TP
+# pays +0.22% and an SL costs -0.23%, so a nominal 2.0:1 executes as 0.96:1 and
+# break-even win rate is 51.1% -- above what the model delivers, which is why
+# every backtest at that geometry lost money. At 0.010/0.005 the net is
+# +0.92%/-0.58% (1.59:1) and break-even falls to 38.7%.
+DEFAULT_LABEL_TP_PCT = 0.010
+DEFAULT_LABEL_SL_PCT = 0.005
+
+
 def mean(values):
     """Fast arithmetic mean for sequences of floats.
 
@@ -1434,8 +1449,8 @@ def build_dataset(
     stream_buffer: Sequence[data.Candle] | None = None,
     horizon: int = 60,
     label_threshold: float = 0.001,
-    tp_pct: float = 0.003,
-    sl_pct: float = 0.0015,
+    tp_pct: float = DEFAULT_LABEL_TP_PCT,
+    sl_pct: float = DEFAULT_LABEL_SL_PCT,
     external_events: Mapping[object, object] | None = None,
     archive_dir: Path | None = None,
     source_bundle: sources.MarketSourceBundle | None = None,
@@ -2279,11 +2294,8 @@ def triple_barrier_label_long(
     entry_price = candles[entry_index].close
     tp_level = entry_price * (1.0 + tp_pct)
     sl_level = entry_price * (1.0 - sl_pct)
-    gap_seen = False
     for future_index in range(entry_index + 1, entry_index + horizon + 1):
         candle = candles[future_index]
-        if candle.gap_flag == 1:
-            gap_seen = True
         tp_touched = candle.high >= tp_level
         sl_touched = candle.low <= sl_level
         if tp_touched and sl_touched:
@@ -2308,11 +2320,8 @@ def triple_barrier_label_short(
     entry_price = candles[entry_index].close
     tp_level = entry_price * (1.0 - tp_pct)  # TP: 가격 하락
     sl_level = entry_price * (1.0 + sl_pct)  # SL: 가격 상승
-    gap_seen = False
     for future_index in range(entry_index + 1, entry_index + horizon + 1):
         candle = candles[future_index]
-        if candle.gap_flag == 1:
-            gap_seen = True
         tp_touched = candle.low <= tp_level  # 하락 TP 체크
         sl_touched = candle.high >= sl_level  # 상승 SL 체크
         if tp_touched and sl_touched:

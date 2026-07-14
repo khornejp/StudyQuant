@@ -186,7 +186,6 @@ class MultiFeatureRegimeDetectorTests(unittest.TestCase):
         conf1 = MultiFeatureRegimeDetector(MultiFeatureRegimeConfig(switch_confirm_bars=1, **cfg)).fit(fit_rows)
         conf5 = MultiFeatureRegimeDetector(MultiFeatureRegimeConfig(switch_confirm_bars=5, **cfg)).fit(fit_rows)
         def trans(seq_):
-            r = MultiFeatureRegimeDetector(MultiFeatureRegimeConfig(**cfg)).detect_all  # unused
             return sum(1 for a, b in zip(seq_, seq_[1:]) if a != b)
         r1 = conf1.detect_all(seq)
         r5 = conf5.detect_all(seq)

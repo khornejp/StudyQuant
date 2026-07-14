@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import timezone
 from math import isfinite
 from typing import Mapping, Sequence
 
-from . import data, dataset, features, live
+from . import data, dataset, live, risk
 
 
 def _parse_end_exclusive(value: str):
@@ -75,6 +75,18 @@ def _resolve_backtest_thresholds(regime_bundle, regime, long_threshold, short_th
     return lt, st
 
 
+# Trade-return dispersion at or below this is float noise, not risk (see
+# _per_trade_sharpe), and the sample size below which per-trade Sharpe and
+# profit factor are reported as NaN instead of a number. A 2-trade run has no
+# risk metric worth printing; the pipeline was printing one anyway.
+_MIN_RETURN_STD = 1e-12
+MIN_TRADES_FOR_RISK_METRICS = 20
+
+# Executed vs labeled barrier are equal within this; they come from the same
+# CLI fractions round-tripped through JSON, so only float repr noise separates
+# a true match from an exact one.
+_BARRIER_MATCH_TOL = 1e-9
+
 DEFAULT_FEE_RATE_PER_SIDE = 0.0002
 DEFAULT_SLIPPAGE_RATE_PER_SIDE = 0.0002
 DEFAULT_ROUND_TRIP_COST_PCT = 2.0 * (DEFAULT_FEE_RATE_PER_SIDE + DEFAULT_SLIPPAGE_RATE_PER_SIDE)
@@ -121,6 +133,15 @@ class BacktestTrade:
     used_threshold: float | None = None
     model_side: str | None = None          # "long" | "short"
     entry_probability: float | None = None  # probability of the ENTERED side
+    # Equity fraction this trade was actually sized at. None means the
+    # backtest's constant position_size was used (Kelly sizing off).
+    position_size_used: float | None = None
+    # Return ON EQUITY: pnl_pct scaled by the fraction actually bet. With a
+    # constant size these are pnl_pct * position_size and the constant
+    # cancels in Sharpe; with Kelly they are what the account actually
+    # earned, and are what the risk metrics must be computed on.
+    trade_return_pct: float = 0.0
+    gross_trade_return_pct: float = 0.0
 
 
 @dataclass
@@ -132,6 +153,16 @@ class BacktestResult:
     profit_factor: float = 0.0
     max_drawdown: float = 0.0
     sharpe: float = 0.0
+    # Cost-free counterpart of `sharpe`, computed on gross equity returns. Reported
+    # side by side with the net value because per-side costs can flip the
+    # sign of a high-turnover strategy's Sharpe (Chan ch.3: 5bps per side
+    # turned a 0.42 Sharpe into -3.38) -- the gap between the two is the
+    # cost drag, and a strategy that only works gross must not ship.
+    gross_sharpe: float = 0.0
+    # Sample-size floor under which sharpe/gross_sharpe/profit_factor above are
+    # NaN. Reported so a consumer reading a NaN knows it is a sample-size veto
+    # and not a failed run.
+    risk_metrics_min_trades: int = MIN_TRADES_FOR_RISK_METRICS
     trade_count: int = 0
     signal_counts: dict[str, int] = field(default_factory=dict)
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE
@@ -156,6 +187,24 @@ class BacktestResult:
     # summary disambiguates artifact selected_thresholds from what traded.
     threshold_floor: float = 0.0
     effective_thresholds: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Kelly sizing diagnostics (empty dict when Kelly sizing is off): the
+    # config used, how many entries were skipped for lack of edge, and the
+    # distribution of per-trade fractions actually bet.
+    kelly_sizing: dict[str, object] = field(default_factory=dict)
+    # Run provenance: everything a second run must match for its numbers to be
+    # comparable to this one. Without these in the artifact, a head-to-head
+    # tool can only diff the metrics and cannot tell whether the two runs even
+    # traded the same window with the same barriers and sizing.
+    run_config: dict[str, object] = field(default_factory=dict)
+    # regime -> sides the direction policy asks for but the loaded artifact
+    # cannot serve. A missing side never emits a signal, so no skip counter
+    # sees it: without this the run is silently one-directional in that regime.
+    missing_side_models: dict[str, list[str]] = field(default_factory=dict)
+    # Non-fatal findings from check_execution_barrier_parity: a legacy artifact
+    # that cannot prove its barrier, or an allow_barrier_mismatch sweep. Empty
+    # on a clean run; a genuine unapproved mismatch raises instead of landing
+    # here.
+    barrier_warnings: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -167,6 +216,10 @@ class BacktestResult:
             "profit_factor": self.profit_factor,
             "max_drawdown": self.max_drawdown,
             "sharpe": self.sharpe,
+            "net_sharpe": self.sharpe,
+            "gross_sharpe": self.gross_sharpe,
+            "cost_impact_sharpe": self.gross_sharpe - self.sharpe,
+            "risk_metrics_min_trades": self.risk_metrics_min_trades,
             "trade_count": len(self.trades),
             "signal_counts": self.signal_counts,
             "fee_rate_per_side": self.fee_rate_per_side,
@@ -181,6 +234,10 @@ class BacktestResult:
             "regime_routing_diagnostics": self.regime_routing_diagnostics,
             "threshold_floor": self.threshold_floor,
             "effective_thresholds": self.effective_thresholds,
+            "kelly_sizing": self.kelly_sizing,
+            "run_config": self.run_config,
+            "missing_side_models": self.missing_side_models,
+            "barrier_warnings": self.barrier_warnings,
             "trades": [
                 {
                     "entry_time": t.entry_time,
@@ -207,6 +264,9 @@ class BacktestResult:
                     "used_threshold": t.used_threshold,
                     "model_side": t.model_side,
                     "entry_probability": t.entry_probability,
+                    "position_size_used": t.position_size_used,
+                    "trade_return_pct": t.trade_return_pct,
+                    "gross_trade_return_pct": t.gross_trade_return_pct,
                 }
                 for t in self.trades
             ],
@@ -222,6 +282,108 @@ def _validate_cost_rates(fee_rate_per_side: float, slippage_rate_per_side: float
         raise ValueError("fee_rate_per_side must be non-negative")
     if slippage_rate_per_side < 0.0:
         raise ValueError("slippage_rate_per_side must be non-negative")
+
+
+def kelly_fraction_for_entry(
+    config: risk.KellySizingConfig,
+    entry_probability: float | None,
+    entry_price: float,
+    tp_price: float,
+    sl_price: float,
+    bar_returns_window: Sequence[float],
+    cap: float,
+    round_trip_cost: float = 0.0,
+) -> float:
+    """Per-trade Kelly fraction of equity from the entry's ACTUAL barriers.
+
+    Uses the entered side's model probability and the executed TP/SL
+    distances (so ATR-based barriers size correctly too), with the per-bar
+    variance of the trailing window scaled to the holding period, and the
+    edge taken NET of `round_trip_cost` -- the same 2*(fee+slippage) the
+    trade will be charged at close. `cap` is the backtest's fixed
+    position_size, reinterpreted as the maximum bet.
+
+    Returns `cap` unchanged when there is no model probability (random-signal
+    mode has nothing for Kelly to size on), and 0.0 -- skip the entry -- when
+    the Kelly edge is non-positive or the variance window is unusable: a
+    signal that clears the entry threshold but has no positive expectancy at
+    the executed barriers is exactly the trade Kelly says not to take.
+    """
+    if entry_probability is None:
+        return cap
+    if entry_price <= 0.0:
+        return 0.0
+    tp_pct = abs(tp_price - entry_price) / entry_price
+    sl_pct = abs(entry_price - sl_price) / entry_price
+    probability = min(1.0, max(0.0, float(entry_probability)))
+    return risk.kelly_leverage_for_signal(
+        probability,
+        tp_pct,
+        sl_pct,
+        bar_returns_window,
+        config=config,
+        cap=cap,
+        round_trip_cost=round_trip_cost,
+    )
+
+
+def check_execution_barrier_parity(
+    regime_bundle: object,
+    exec_tp_pct: float | None,
+    exec_sl_pct: float | None,
+    allow_mismatch: bool = False,
+) -> list[str]:
+    """Refuse to execute a barrier the loaded models were not labeled on.
+
+    Every side model answers one question: does price reach +tp before -sl
+    inside the horizon. Execute 1.00%/0.50% against models labeled on
+    0.30%/0.15% and their probabilities are about a trade that was never taken
+    -- the entry thresholds, the Kelly edge and the reported win rate are all
+    denominated in the wrong barrier. Nothing crashes; the run just reports a
+    number that means nothing, which is the failure mode this repo guards
+    against hardest.
+
+    Raises ValueError on a genuine mismatch. Returns warnings (never raises) for
+    a legacy artifact that does not record its barrier, because there the
+    geometry is unknown, not known-wrong.
+
+    allow_mismatch downgrades the error to a warning. No pipeline sets it:
+    tp_sl_sweep.sh retrains every cell at its own tp/sl before backtesting it,
+    so the sweep's barriers match by construction. It exists for a deliberate
+    one-off probe of how a fixed model degrades under a barrier it was not
+    trained for -- a sensitivity check, whose output is not performance.
+    """
+    if exec_tp_pct is None and exec_sl_pct is None:
+        return []
+    label_tp = getattr(regime_bundle, "label_tp_pct", None)
+    label_sl = getattr(regime_bundle, "label_sl_pct", None)
+    if label_tp is None or label_sl is None:
+        return [
+            "artifact does not record the tp_pct/sl_pct its models were labeled on "
+            "(pre-parity-check artifact): cannot verify the executed barrier matches "
+            "training. Retrain to get the check."
+        ]
+    mismatched = [
+        f"{name}: labeled {labeled:.6g}, executing {executing:.6g}"
+        for name, labeled, executing in (
+            ("tp_pct", label_tp, exec_tp_pct),
+            ("sl_pct", label_sl, exec_sl_pct),
+        )
+        if executing is not None and abs(float(executing) - float(labeled)) > _BARRIER_MATCH_TOL
+    ]
+    if not mismatched:
+        return []
+    detail = "; ".join(mismatched)
+    message = (
+        f"execution barrier does not match the barrier the models were trained on ({detail}). "
+        "The model predicts P(TP before SL) for the LABELED barrier, so every probability, "
+        "threshold and win rate in this run would be denominated in a barrier nobody trained "
+        "on. Retrain with the new tp/sl, or pass allow_mismatch/--allow-barrier-mismatch if "
+        "this is a deliberate TP/SL sweep."
+    )
+    if allow_mismatch:
+        return [f"BARRIER MISMATCH (allowed): {detail}"]
+    raise ValueError(message)
 
 
 def _trade_gross_pnl_pct(trade: BacktestTrade, exit_price: float) -> float:
@@ -263,6 +425,8 @@ def _close_trade(
     trade.fee_paid = fee_paid
     trade.slippage_paid = slippage_paid
     trade.cost_paid = fee_paid + slippage_paid
+    trade.trade_return_pct = net_pnl_pct * position_size
+    trade.gross_trade_return_pct = gross_pnl_pct * position_size
     trade.outcome = outcome
 
     return equity + net_trade_pnl, gross_equity + gross_trade_pnl, net_pnl_pct
@@ -295,6 +459,8 @@ def run_backtest(
     regime_detector: object | None = None,
     regime_classifier_model: object | None = None,
     multi_feature_regime_detector: object | None = None,
+    kelly_config: risk.KellySizingConfig | None = None,
+    allow_barrier_mismatch: bool = False,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -304,7 +470,14 @@ def run_backtest(
     model: trained model (optional; if None, uses random signals)
     strategy: strategy config for thresholds and TP/SL (defaults to balanced)
     initial_equity: starting equity
-    position_size: fraction of equity per trade
+    position_size: fraction of equity per trade; with kelly_config set it is
+        reinterpreted as the CAP on the per-trade Kelly fraction
+    kelly_config: opt-in fractional-Kelly position sizing (see
+        risk.KellySizingConfig and kelly_fraction_for_entry); entries whose
+        Kelly edge is non-positive are skipped and reported under
+        kelly_sizing["entries_skipped_no_edge"] (kept out of signal_counts,
+        whose BUY/SELL/HOLD keys tally per-bar signal decisions, not sizing
+        outcomes)
     tp_sl_method: 'fixed_pct' or 'atr_pct'
     label_horizon: bars to hold before forced exit
     min_hold_bars: minimum bars to hold before allowing TP/SL exit
@@ -338,13 +511,42 @@ def run_backtest(
         raise ValueError("min_hold_bars must not exceed label_horizon")
     if cooldown_bars < 0:
         raise ValueError("cooldown_bars must be non-negative")
+    # Before anything else: the models must have been labeled on the barrier we
+    # are about to execute. A mismatch cannot be detected from the results (they
+    # look like ordinary bad numbers), so it has to be refused up front.
+    barrier_warnings = check_execution_barrier_parity(
+        models_by_regime, exec_tp_pct, exec_sl_pct, allow_mismatch=allow_barrier_mismatch
+    )
     result = BacktestResult()
+    result.barrier_warnings = barrier_warnings
     result.fee_rate_per_side = fee_rate_per_side
     result.slippage_rate_per_side = slippage_rate_per_side
     result.round_trip_cost_pct = 2.0 * (fee_rate_per_side + slippage_rate_per_side)
     result.min_hold_bars = min_hold_bars
     result.cooldown_bars = cooldown_bars
     result.threshold_floor = threshold_floor
+    # Everything a second run must match to be comparable to this one. The full
+    # strategy config is recorded (after the exec_* overrides are folded in),
+    # because atr_multiplier_*, the TP/SL floors and use_atr_pricing all change
+    # the barrier actually executed -- recording only name/tp/sl would let two
+    # runs with different execution look identical in the artifact.
+    result.run_config = {
+        "backtest_start": start_date,
+        "backtest_end": end_date,
+        "execution_horizon": label_horizon,
+        "exec_tp_pct": exec_tp_pct,
+        "exec_sl_pct": exec_sl_pct,
+        "strategy_config": strategy.as_dict(),
+        "position_size": position_size,
+        "initial_equity": initial_equity,
+        "tp_sl_method": tp_sl_method,
+        "long_threshold_override": long_threshold,
+        "short_threshold_override": short_threshold,
+        "kelly_enabled": kelly_config is not None,
+        "kelly_multiplier": kelly_config.kelly_multiplier if kelly_config else None,
+        "kelly_lookback_bars": kelly_config.variance_lookback_bars if kelly_config else None,
+        "kelly_holding_period_bars": kelly_config.holding_period_bars if kelly_config else None,
+    }
     if precomputed_routing_diagnostics is not None:
         result.regime_routing_diagnostics = precomputed_routing_diagnostics
     # Record learned vs effective thresholds per regime (effective = what this
@@ -369,7 +571,6 @@ def run_backtest(
     active_trade: BacktestTrade | None = None
     bar_count = 0
     next_entry_index = 0
-    returns: list[float] = []
 
     if feature_rows is None:
         feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
@@ -484,6 +685,21 @@ def run_backtest(
             # the whole final day (exclusive next-midnight bound).
             end_dt = _parse_end_exclusive(end_date)
 
+    # Trailing per-bar returns for Kelly variance estimation. Bar 0 has no
+    # previous close, and a zero previous close cannot produce a return;
+    # both are NaN so return_variance skips them instead of guessing.
+    bar_returns: list[float] = []
+    kelly_skipped_entries = 0
+    kelly_skipped_shorts = 0
+    kelly_skipped_longs = 0
+    round_trip_cost = 2.0 * (fee_rate_per_side + slippage_rate_per_side)
+    if kelly_config is not None:
+        bar_returns = [float("nan")] * len(candles)
+        for j in range(1, len(candles)):
+            prev_close = candles[j - 1].close
+            if prev_close > 0.0:
+                bar_returns[j] = (candles[j].close - prev_close) / prev_close
+
     last_in_window_candle = None
     for i, candle in enumerate(candles):
         # Trade only inside [start_date, end_date) (features still use full history)
@@ -507,6 +723,17 @@ def run_backtest(
         _ctx_short_prob: float | None = None
         _ctx_lt: float | None = None
         _ctx_st: float | None = None
+        # Probability semantics of the path that produced this bar's signal:
+        # True on the bundle paths where _ctx_short_prob is a dedicated short
+        # model's P(short wins); False on the single-model paths where BOTH
+        # ctx slots hold the same P(long/up) and a SELL fires because that
+        # value is SMALL -- there the short's win probability is 1 - prob.
+        # Which sides carry a GENUINE per-side probability on this bar. The
+        # bundle answers for itself (`has_side_probability`); the single-model
+        # paths below can only produce P(long_success)-like scores, so they
+        # never claim "short". Empty set => the Kelly guard refuses the entry
+        # (fail-closed): a signal with no declared side is a routing bug.
+        _ctx_genuine_sides: set[str] = set()
 
         # Model inference (regime-aware if models_by_regime provided)
         signal = "HOLD"
@@ -526,26 +753,30 @@ def run_backtest(
                     allowed_directions = regime_bundle.direction_policy.get(regime, {"LONG", "SHORT"})
                     features_dict = feature_rows[i].features
                     allowed_directions = apply_range_mean_reversion_gate(regime, features_dict, allowed_directions)
-                    
-                    long_prob = None
-                    short_prob = None
-                    
-                    if "LONG" in allowed_directions and hasattr(regime_bundle, 'long_models') and regime in regime_bundle.long_models:
-                        long_prob = regime_bundle.long_models[regime].probability(features_dict)
-                    
-                    if "SHORT" in allowed_directions and hasattr(regime_bundle, 'short_models') and regime in regime_bundle.short_models:
-                        short_prob = regime_bundle.short_models[regime].probability(features_dict)
-                    
+
+                    # Ask the bundle whether it can price each side, instead of
+                    # reaching into its dicts and then inventing 0.0 for the
+                    # side it cannot. `None` means "cannot price", which is not
+                    # the same claim as "zero chance".
+                    long_prob = short_prob = None
+                    if "LONG" in allowed_directions and regime_bundle.has_side_probability(regime, "long"):
+                        long_prob = regime_bundle.probability_for(regime, "long", features_dict)
+                    if "SHORT" in allowed_directions and regime_bundle.has_side_probability(regime, "short"):
+                        short_prob = regime_bundle.probability_for(regime, "short", features_dict)
+
                     if long_prob is not None or short_prob is not None:
                         from btcusdt_quant.live import evaluate_entry_signal
-                        long_prob = long_prob if long_prob is not None else 0.0
-                        short_prob = short_prob if short_prob is not None else 0.0
-                        
+
                         lt, st = _resolve_backtest_thresholds(regime_bundle, regime, long_threshold, short_threshold, strategy, threshold_floor)
                         _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = regime, long_prob, short_prob, lt, st
-                        
+                        if long_prob is not None:
+                            _ctx_genuine_sides.add("long")
+                        if short_prob is not None:
+                            _ctx_genuine_sides.add("short")
+
                         entry_signal, _, _ = evaluate_entry_signal(
-                            long_prob, short_prob,
+                            long_prob if long_prob is not None else 0.0,
+                            short_prob if short_prob is not None else 0.0,
                             long_threshold=lt,
                             short_threshold=st,
                             strategy=strategy,
@@ -567,6 +798,10 @@ def run_backtest(
                     prob = active_model.probability(features_dict)
                     lt, st = _resolve_backtest_thresholds(regime_bundle, regime, long_threshold, short_threshold, strategy, threshold_floor)
                     _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = regime, prob, prob, lt, st
+                    # One model, one score: P(long_success)-like. A SELL here
+                    # fires because that value is LOW, which is not a short
+                    # win probability, so "short" is never genuine.
+                    _ctx_genuine_sides.add("long")
                     # Resolved lt/st (override > learned > strategy, floored) are
                     # the ONLY gate now; the old extra hard gate (prob>=0.55 /
                     # prob<=0.45) silently overrode threshold experiments on the
@@ -587,20 +822,23 @@ def run_backtest(
                     # default regime's direction policy, mirroring the main path.
                     allowed_directions = regime_bundle.direction_policy.get(default_regime, {"LONG", "SHORT"})
                     allowed_directions = apply_range_mean_reversion_gate(default_regime, features_dict, allowed_directions)
-                    long_prob = None
-                    short_prob = None
-                    if "LONG" in allowed_directions and hasattr(regime_bundle, 'long_models') and default_regime in regime_bundle.long_models:
-                        long_prob = regime_bundle.long_models[default_regime].probability(features_dict)
-                    if "SHORT" in allowed_directions and hasattr(regime_bundle, 'short_models') and default_regime in regime_bundle.short_models:
-                        short_prob = regime_bundle.short_models[default_regime].probability(features_dict)
+                    long_prob = short_prob = None
+                    if "LONG" in allowed_directions and regime_bundle.has_side_probability(default_regime, "long"):
+                        long_prob = regime_bundle.probability_for(default_regime, "long", features_dict)
+                    if "SHORT" in allowed_directions and regime_bundle.has_side_probability(default_regime, "short"):
+                        short_prob = regime_bundle.probability_for(default_regime, "short", features_dict)
                     if long_prob is not None or short_prob is not None:
                         from btcusdt_quant.live import evaluate_entry_signal
-                        long_prob = long_prob if long_prob is not None else 0.0
-                        short_prob = short_prob if short_prob is not None else 0.0
                         lt, st = _resolve_backtest_thresholds(regime_bundle, default_regime, long_threshold, short_threshold, strategy, threshold_floor)
                         _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = default_regime, long_prob, short_prob, lt, st
+                        if long_prob is not None:
+                            _ctx_genuine_sides.add("long")
+                        if short_prob is not None:
+                            _ctx_genuine_sides.add("short")
                         entry_signal, _, _ = evaluate_entry_signal(
-                            long_prob, short_prob, long_threshold=lt, short_threshold=st,
+                            long_prob if long_prob is not None else 0.0,
+                            short_prob if short_prob is not None else 0.0,
+                            long_threshold=lt, short_threshold=st,
                             strategy=strategy,
                             features=feature_rows[i].features if i < len(feature_rows) else {},
                         )
@@ -613,6 +851,7 @@ def run_backtest(
                     prob = active_model.probability(features_dict)
                     lt, st = _resolve_backtest_thresholds(regime_bundle, default_regime, long_threshold, short_threshold, strategy, threshold_floor)
                     _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = default_regime, prob, prob, lt, st
+                    _ctx_genuine_sides.add("long")
                     if prob > lt:
                         signal = "BUY"
                     elif prob < st:
@@ -625,6 +864,7 @@ def run_backtest(
             lt = long_threshold if long_threshold is not None else strategy.long_threshold
             st = short_threshold if short_threshold is not None else strategy.short_threshold
             _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = None, prob, prob, lt, st
+            _ctx_genuine_sides.add("long")
             if prob > lt:
                 signal = "BUY"
             elif prob < st:
@@ -680,14 +920,14 @@ def run_backtest(
                 else:
                     outcome = "TIMEOUT"
 
-                equity, gross_equity, pnl_pct = _close_trade(
+                equity, gross_equity, _ = _close_trade(
                     active_trade,
                     candle.open_time.isoformat(),
                     exit_price,
                     outcome,
                     equity,
                     gross_equity,
-                    position_size,
+                    active_trade.position_size_used if active_trade.position_size_used is not None else position_size,
                     fee_rate_per_side,
                     slippage_rate_per_side,
                 )
@@ -697,7 +937,6 @@ def run_backtest(
                 peak_equity = max(peak_equity, equity)
                 max_drawdown_pct = max(max_drawdown_pct, 1.0 - equity / peak_equity if peak_equity > 0 else 0.0)
                 result.trades.append(active_trade)
-                returns.append(pnl_pct)
                 active_trade = None
                 bar_count = 0
                 if cooldown_bars > 0:
@@ -709,6 +948,48 @@ def run_backtest(
             tp_price, sl_price, decision = live.optimized_tp_sl(
                 entry_price, signal, feature_rows[i].features if i < len(feature_rows) else {}, strategy
             )
+            trade_size: float | None = None
+            if kelly_config is not None:
+                entered_side = "long" if signal == "BUY" else "short"
+                if entered_side not in _ctx_genuine_sides:
+                    # No `and _ctx_genuine_sides` guard: an empty set must also
+                    # refuse. A BUY/SELL with no declared genuine side is a bug
+                    # (a routing path that forgot to declare its side), and
+                    # sizing it on a None probability would bet the cap. Every
+                    # current path declares "long" before emitting a signal, so
+                    # this only fires on the real one-sided cases below -- but
+                    # it now fails CLOSED for a future path that forgets.
+                    #
+                    # Kelly cannot size a bet whose win probability it does not
+                    # have. Two ways to get here, both reported by side:
+                    #  - single-model routing: one score, P(long_success)-like.
+                    #    A SELL fires because it is LOW, and 1-P(long) is not a
+                    #    short win probability (measured: P(long)=0.49,
+                    #    P(short)=0.00 -- they do not sum to 1).
+                    #  - a regime bundle that simply has no model for this side,
+                    #    e.g. range/short failed to fit at train time.
+                    # Either way the fix is a per-side model; the counters say
+                    # which side went untraded rather than blaming "no edge".
+                    if entered_side == "short":
+                        kelly_skipped_shorts += 1
+                    else:
+                        kelly_skipped_longs += 1
+                    continue
+                entry_prob = _ctx_long_prob if signal == "BUY" else _ctx_short_prob
+                window_start = max(0, i + 1 - kelly_config.variance_lookback_bars)
+                trade_size = kelly_fraction_for_entry(
+                    kelly_config,
+                    entry_prob,
+                    entry_price,
+                    tp_price,
+                    sl_price,
+                    bar_returns[window_start:i + 1],
+                    position_size,
+                    round_trip_cost=round_trip_cost,
+                )
+                if trade_size <= 0.0:
+                    kelly_skipped_entries += 1
+                    continue
             active_trade = BacktestTrade(
                 entry_time=candle.open_time.isoformat(),
                 exit_time="",
@@ -726,6 +1007,7 @@ def run_backtest(
                 used_threshold=_ctx_lt if signal == "BUY" else _ctx_st,
                 model_side="long" if signal == "BUY" else "short",
                 entry_probability=_ctx_long_prob if signal == "BUY" else _ctx_short_prob,
+                position_size_used=trade_size,
             )
 
     # Close any remaining open trade at the last IN-WINDOW candle (not the
@@ -733,14 +1015,14 @@ def run_backtest(
     if active_trade is not None and last_in_window_candle is not None:
         last_candle = last_in_window_candle
         exit_price = last_candle.close
-        equity, gross_equity, pnl_pct = _close_trade(
+        equity, gross_equity, _ = _close_trade(
             active_trade,
             last_candle.open_time.isoformat(),
             exit_price,
             "OPEN_AT_END",
             equity,
             gross_equity,
-            position_size,
+            active_trade.position_size_used if active_trade.position_size_used is not None else position_size,
             fee_rate_per_side,
             slippage_rate_per_side,
         )
@@ -750,25 +1032,82 @@ def run_backtest(
         peak_equity = max(peak_equity, equity)
         max_drawdown_pct = max(max_drawdown_pct, 1.0 - equity / peak_equity if peak_equity > 0 else 0.0)
         result.trades.append(active_trade)
-        returns.append(pnl_pct)
 
     # Compute metrics
     result.total_return = (equity - initial_equity) / initial_equity
     result.gross_total_return = (gross_equity - initial_equity) / initial_equity
     result.trade_count = len(result.trades)
+    # Risk metrics are computed on EQUITY returns (pnl scaled by the fraction
+    # actually bet), not on price returns. Under a constant position_size the
+    # multiplier cancels in Sharpe and merely rescales profit_factor's ratio,
+    # so fixed-size results are unchanged; under Kelly, where each trade bets
+    # a different fraction, price-return metrics would weight a 1%-of-equity
+    # trade the same as a 10% one and hide exactly what the sizing did.
+    # Risk metrics need a sample. Below MIN_TRADES_FOR_RISK_METRICS the Sharpe
+    # and profit factor are NaN, not zero and not a lucky number: a 2-trade run
+    # that happened to close both at TP reported win_rate 1.0, profit_factor
+    # inf, max_drawdown 0 and Sharpe 1.08e14. win_rate and max_drawdown stay
+    # populated -- they are descriptive, and their small-sample weakness is
+    # legible from trade_count next to them.
+    enough_trades = len(result.trades) >= MIN_TRADES_FOR_RISK_METRICS
     if result.trades:
         wins = sum(1 for t in result.trades if t.pnl_pct > 0)
         result.win_rate = wins / len(result.trades)
-        gross_profit = sum(t.pnl_pct for t in result.trades if t.pnl_pct > 0)
-        gross_loss = abs(sum(t.pnl_pct for t in result.trades if t.pnl_pct < 0))
+    if enough_trades:
+        gross_profit = sum(t.trade_return_pct for t in result.trades if t.trade_return_pct > 0)
+        gross_loss = abs(sum(t.trade_return_pct for t in result.trades if t.trade_return_pct < 0))
         result.profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
+    else:
+        result.profit_factor = float("nan")
     result.max_drawdown = max_drawdown_pct
-    if returns:
-        avg_return = sum(returns) / len(returns)
-        variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)
-        std = variance ** 0.5
-        result.sharpe = avg_return / std if std > 0 else 0.0
+    if enough_trades:
+        result.sharpe = _per_trade_sharpe([t.trade_return_pct for t in result.trades])
+        result.gross_sharpe = _per_trade_sharpe([t.gross_trade_return_pct for t in result.trades])
+    else:
+        result.sharpe = float("nan")
+        result.gross_sharpe = float("nan")
+    result.risk_metrics_min_trades = MIN_TRADES_FOR_RISK_METRICS
+    if kelly_config is not None:
+        sizes = [t.position_size_used for t in result.trades if t.position_size_used is not None]
+        result.kelly_sizing = {
+            "enabled": True,
+            "cap": position_size,
+            "kelly_multiplier": kelly_config.kelly_multiplier,
+            "holding_period_bars": kelly_config.holding_period_bars,
+            "variance_lookback_bars": kelly_config.variance_lookback_bars,
+            "round_trip_cost": round_trip_cost,
+            "trades_sized": len(sizes),
+            "entries_skipped_no_edge": kelly_skipped_entries,
+            # Entries refused because no genuine per-side probability existed:
+            # single-model routing (no P(short_success) anywhere) or a regime
+            # bundle missing that side's model. Non-zero on one side means the
+            # run was effectively one-directional in those regimes.
+            "shorts_skipped_no_short_model": kelly_skipped_shorts,
+            "longs_skipped_no_long_model": kelly_skipped_longs,
+            "avg_fraction": sum(sizes) / len(sizes) if sizes else 0.0,
+            "min_fraction": min(sizes) if sizes else 0.0,
+            "max_fraction": max(sizes) if sizes else 0.0,
+        }
     return result
+
+
+def _per_trade_sharpe(returns: Sequence[float]) -> float:
+    """Per-trade Sharpe (mean/std of trade returns, no annualization).
+
+    NaN when the ratio is undefined rather than a number that reads as a
+    result. `std > 0` was not a sufficient guard: two trades that both closed
+    at TP differ only in float noise, so std came out ~1e-18 and the run
+    reported a Sharpe of 1.08e14. Dispersion at or below _MIN_RETURN_STD is
+    noise, not risk, and dividing by it means nothing.
+    """
+    if len(returns) < 2:
+        return float("nan")
+    avg_return = sum(returns) / len(returns)
+    variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)
+    std = variance ** 0.5
+    if std <= _MIN_RETURN_STD:
+        return float("nan")
+    return avg_return / std
 
 
 def compare_strategies(
@@ -791,6 +1130,7 @@ def compare_strategies(
     exec_sl_pct: float | None = None,
     threshold_floor: float = 0.0,
     label_horizon: int = 60,
+    allow_barrier_mismatch: bool = False,
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison."""
     if strategies is None:
@@ -868,10 +1208,15 @@ def compare_strategies(
             exec_sl_pct=exec_sl_pct,
             threshold_floor=threshold_floor,
             label_horizon=label_horizon,
+            allow_barrier_mismatch=allow_barrier_mismatch,
         )
 
     best_strategy = max(results, key=lambda k: results[k].total_return)
     return {
+        # Comparison runs are ALWAYS fixed-size (kelly_config is not plumbed
+        # here); labeled so a Kelly-sized main backtest in the same summary
+        # JSON is not mistaken for an apples-to-apples row.
+        "sizing": "fixed_position_size",
         "best_strategy": best_strategy,
         "best_total_return": results[best_strategy].total_return,
         "best_gross_total_return": results[best_strategy].gross_total_return,
@@ -886,6 +1231,9 @@ def compare_strategies(
                 "profit_factor": r.profit_factor,
                 "max_drawdown": r.max_drawdown,
                 "sharpe": r.sharpe,
+                "net_sharpe": r.sharpe,
+                "gross_sharpe": r.gross_sharpe,
+                "cost_impact_sharpe": r.gross_sharpe - r.sharpe,
                 "trade_count": r.trade_count,
                 "total_fees": r.total_fees,
                 "total_slippage": r.total_slippage,

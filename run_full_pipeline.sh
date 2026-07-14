@@ -1,14 +1,29 @@
 #!/usr/bin/env bash
 # BTCUSDT User-Regime Pipeline (Linux/macOS shell)
 # ---------------------------------------------------------------------------
-# Intended flow (same as run_full_pipeline.ps1):
-#   1. Download 2020-01-01 ~ 2025-12-31 Binance archive (full 6-year span)
-#   2. Combine into one Parquet file
-#   3. Train regime-aware models with multi-feature RULE regime bucketing
-#      (default REGIME_MODE=rule; no regimes.json needed), training
-#      restricted to 2020-2024. Model quality is checked on a chronological
-#      holdout split INSIDE training (last 20% of each regime's rows).
-#   4. Backtest on 2025-01-01 ~ 2025-12-31 (the full year, out-of-sample)
+# Intended flow (kept in sync with run_full_pipeline.ps1):
+#   1.   Download 2020-01-01 ~ 2025-12-31 Binance archive (full 6-year span)
+#   2.   Combine into one Parquet file
+#   2.3  Data diagnostics: feature IC with fold stability + look-ahead-leakage
+#        heuristics, and the OU half-life of range regimes vs the fixed 20-bar
+#        mean-reversion window. Informational: a failure here does not stop
+#        the run (the `|| true` guards below opt out of `set -e`).
+#   3.   Train regime-aware models with multi-feature RULE regime bucketing
+#        (default REGIME_MODE=rule; no regimes.json needed), training
+#        restricted to 2020-2024. Model quality is checked on a chronological
+#        holdout split INSIDE training (last 20% of each regime's rows).
+#   3.5  Multi-horizon ensemble pilot (one entry model per label horizon,
+#        blended by validation accuracy). Regime-aware, mirroring Phase 3's
+#        bucketing and direction policy (up->long, down->short, range->both)
+#        with per-side long_success/short_success targets, so Phase 4.5 is a
+#        regime-aligned challenger to Phase 4.
+#   4.   Backtest on 2025-01-01 ~ 2025-12-31 (the full year, out-of-sample),
+#        with fractional-Kelly sizing (KELLY_SIZING=1 by default).
+#   4.5  Backtest the multi-horizon pilot on the same window/costs/kelly.
+#
+# `set -euo pipefail` already aborts the pipeline on any nonzero exit, so the
+# artifact-producing phases are gated implicitly (the PowerShell twin needs
+# explicit $LASTEXITCODE checks because native exits do not throw there).
 #
 # Requirements:
 #   - Python with pyarrow, catboost, numpy, pandas installed
@@ -65,17 +80,41 @@ RULE_REGIME_CONFIG="${RULE_REGIME_CONFIG:-configs/rule_regime.json}"
 # Triple-barrier label geometry (also used as FIXED execution barriers in
 # Phase 4 so backtest trades the SAME barrier the model was trained on).
 # HORIZON is in bars (=minutes for 1m data). Tune together.
+# The barriers must clear the round-trip cost by a wide margin or the reward:risk
+# the labels advertise is not the one the account earns. At TP 0.30%/SL 0.15% the
+# 0.08% round trip turns a nominal 2.0:1 into a net 0.96:1 (+0.22% vs -0.23%) and
+# lifts break-even win rate from 33.3% to 51.1% -- unreachable, so every run lost.
+# At 1.00%/0.50% the net is +0.92% vs -0.58% (1.59:1) and break-even is 38.7%.
 HORIZON="${HORIZON:-60}"
-LABEL_TP_PCT="${LABEL_TP_PCT:-0.003}"
-LABEL_SL_PCT="${LABEL_SL_PCT:-0.0015}"
+LABEL_TP_PCT="${LABEL_TP_PCT:-0.010}"
+LABEL_SL_PCT="${LABEL_SL_PCT:-0.005}"
 # Hard lower bound on learned entry thresholds at backtest time (0 = off).
-THRESHOLD_FLOOR="${THRESHOLD_FLOOR:-0.45}"
+# Off by default: threshold selection already maximizes trading PnL net of
+# ROUND_TRIP_COST, so a floor above the learned value only vetoes it. The 0.45
+# floor silently disabled the range regime (learned 0.348/0.358), which is ~91%
+# of 2025 bars -- the backtest traded 9% of the data and reported it as a result.
+THRESHOLD_FLOOR="${THRESHOLD_FLOOR:-0.0}"
 # Cost basis SINGLE SOURCE: per-side fee/slippage fractions. Round-trip
 # cost 2*(fee+slippage) is derived and passed to train (threshold objective
 # + holdout metrics); per-side values go to backtest execution.
 FEE_PER_SIDE="${FEE_PER_SIDE:-0.0002}"            # 0.02%
 SLIPPAGE_PER_SIDE="${SLIPPAGE_PER_SIDE:-0.0002}"  # 0.02%
 ROUND_TRIP_COST=$(python -c "print(2.0 * (${FEE_PER_SIDE} + ${SLIPPAGE_PER_SIDE}))")
+# Fractional-Kelly position sizing for the backtests (Phase 4 / 4.5). Half-Kelly
+# (0.5) trades ~18.5% of growth for ~43% smaller max drawdown. The backtest's
+# fixed position_size becomes the CAP on the per-trade fraction; entries whose
+# cost-adjusted Kelly edge is non-positive are skipped. Set KELLY_SIZING=0 off.
+KELLY_SIZING="${KELLY_SIZING:-1}"
+KELLY_MULTIPLIER="${KELLY_MULTIPLIER:-0.5}"
+KELLY_LOOKBACK_BARS="${KELLY_LOOKBACK_BARS:-1440}"   # 1 day of 1m bars
+# Phase 2.3 data diagnostics (IC/leakage report + range half-life). Adds a few
+# minutes on the full 6-year parquet; set RUN_DIAGNOSTICS=0 to skip.
+RUN_DIAGNOSTICS="${RUN_DIAGNOSTICS:-1}"
+# Phase 3.5/4.5 multi-horizon ensemble pilot. Regime-aware: mirrors Phase 3's
+# bucketing and direction policy, so it costs ~1 ensemble per regime/side.
+# Set MULTI_HORIZON_PILOT=0 to skip.
+MULTI_HORIZON_PILOT="${MULTI_HORIZON_PILOT:-1}"
+MH_HORIZONS="${MH_HORIZONS:-30,60,90}"
 # ==========================================================================
 
 echo "=== BTCUSDT User-Regime Pipeline ==="
@@ -170,6 +209,39 @@ else
 fi
 
 # ----------------------------------------------------------------------------
+# PHASE 2.3: Data diagnostics (informational; `|| true` opts out of `set -e`)
+#   - ic_diagnostic.py: per-feature Spearman IC with chronological fold
+#     mean/std (IC drift) plus look-ahead-leakage heuristics. Leak flags are
+#     triage only -- confirm with a truncation-invariance test before acting.
+#   - verify_range_halflife.py: OU half-life of range regimes. Fitted to the
+#     drift-removed log z-score, not raw close: BTC's trend and changing
+#     volatility make a raw-price OU fit measure the trend, not the reversion.
+# ----------------------------------------------------------------------------
+if [[ "$RUN_DIAGNOSTICS" != "0" ]]; then
+    echo ""
+    echo "[Phase 2.3] Data diagnostics (feature IC / leakage / range half-life) ..."
+
+    IC_REPORT_DIR="$ARTIFACTS_DIR/ic_report"
+    IC_ARGS=(--input "$FULL_PARQUET" --metrics-dir "$METRICS_DIR" --output "$IC_REPORT_DIR")
+    if [[ -f "$REGIME_FILE" ]]; then
+        IC_ARGS+=(--regime-file "$REGIME_FILE")
+    fi
+    python ic_diagnostic.py "${IC_ARGS[@]}" || echo "  WARNING: ic_diagnostic failed; continuing (informational phase)."
+    echo "  IC/leakage report: $IC_REPORT_DIR/ic_report.csv"
+
+    HL_ARGS=(--input "$FULL_PARQUET" --series log_zscore)
+    if [[ -f "$REGIME_FILE" ]]; then
+        HL_ARGS+=(--regime-file "$REGIME_FILE")
+    else
+        echo "  ($REGIME_FILE not found: half-life runs without per-regime breakdown)"
+    fi
+    python verify_range_halflife.py "${HL_ARGS[@]}" || echo "  WARNING: verify_range_halflife failed; continuing (informational phase)."
+else
+    echo ""
+    echo "[Phase 2.3] Skipped (RUN_DIAGNOSTICS=$RUN_DIAGNOSTICS)."
+fi
+
+# ----------------------------------------------------------------------------
 # PHASE 2.5: Train the regime probability classifier (Method B, stage 2)
 #
 # Leakage-safe (walk-forward out-of-fold) up/range/down probability
@@ -252,6 +324,65 @@ echo "  Training complete."
 echo "  Model: $MODEL_DIR"
 
 # ----------------------------------------------------------------------------
+# PHASE 3.5: Multi-horizon ensemble pilot (challenger to the regime model)
+#
+# One entry model per label horizon on the SAME features, blended by
+# validation-accuracy weights. Trained regime-aware, sharing Phase 3's rule
+# bucketing, direction policy, per-side triple-barrier targets, threshold
+# horizon, and (via the final refit) the full per-regime training set.
+#
+# This is a CHALLENGER comparison, not a clean horizon-blend A/B: Phase 3 tunes
+# with Optuna (100 trials) while the horizon models use default parameters, so
+# a Phase 4.5 win or loss reflects the blend AND the tuning difference.
+#
+# A short model must learn short_success -- 1-P(long_success) is not a short
+# probability (a long that times out is not a short win).
+# ----------------------------------------------------------------------------
+echo ""
+MH_MODEL_DIR="$ARTIFACTS_DIR/multi_horizon_model"
+
+if [[ "$MULTI_HORIZON_PILOT" != "0" ]]; then
+    echo "[Phase 3.5] Training multi-horizon ensemble pilot (horizons: $MH_HORIZONS) ..."
+    echo "  Regime-aware: one horizon-blended ensemble per regime AND side (up->long,"
+    echo "  down->short, range->both), each on its own long_success/short_success target,"
+    echo "  with a per-regime/side holdout threshold. Same artifact layout and direction"
+    echo "  policy as Phase 3. Phase 4.5 is a regime-aligned multi-horizon challenger:"
+    echo "  it shares execution and routing with Phase 4, but still differs in horizon"
+    echo "  blending, base-model tuning (Optuna vs defaults) and probability calibration."
+    # --threshold-horizon "$HORIZON": pick each regime/side cutoff against the
+    # SAME time barrier Phase 4.5 executes on. Without it the thresholds would
+    # be scored on max(horizons)=90-bar labels while the backtest times out at
+    # $HORIZON, adding a second axis of difference vs Phase 4.
+    MH_TRAIN_FLAGS=(--regime-aware --threshold-horizon "$HORIZON" --threshold-objective "$THRESHOLD_OBJECTIVE" --round-trip-cost "$ROUND_TRIP_COST")
+    if [[ -n "$RULE_REGIME_CONFIG" && -f "$RULE_REGIME_CONFIG" ]]; then
+        MH_TRAIN_FLAGS+=(--rule-regime-config "$RULE_REGIME_CONFIG")
+    fi
+    # NON-FATAL (|| ...): the multi-horizon pilot is a challenger, not the
+    # deliverable. Its regime-aware training fails closed (exit 1) on a
+    # one-sided data quirk -- correct for the pilot, but under `set -e` it would
+    # abort the primary Phase 4 backtest that follows. On failure, skip Phase
+    # 4.5 rather than shipping/comparing a partial pilot artifact.
+    if python -m btcusdt_quant train-multi-horizon \
+        --input "$FULL_PARQUET" \
+        --training-start "$DOWNLOAD_START" \
+        --training-end "$TRAINING_END" \
+        --horizons "$MH_HORIZONS" \
+        --tp-pct "$LABEL_TP_PCT" \
+        --sl-pct "$LABEL_SL_PCT" \
+        --weighting validation \
+        --metrics-dir "$METRICS_DIR" \
+        "${MH_TRAIN_FLAGS[@]}" \
+        --output "$MH_MODEL_DIR"; then
+        echo "  Multi-horizon model: $MH_MODEL_DIR"
+    else
+        echo "  WARNING: Phase 3.5 (multi-horizon pilot) failed; skipping Phase 4.5. Phase 4 continues."
+        MULTI_HORIZON_PILOT=0
+    fi
+else
+    echo "[Phase 3.5] Skipped (MULTI_HORIZON_PILOT=$MULTI_HORIZON_PILOT)."
+fi
+
+# ----------------------------------------------------------------------------
 # PHASE 4: Backtest on 2025 (out-of-sample)
 #
 # --regime-classifier-dir uses the SAME saved classifier (Phase 2.5's
@@ -278,10 +409,19 @@ else
     REGIME_BT_FLAGS=()
     echo "[Phase 4] Backtest with multi-feature rule routing (auto-loaded from artifact) ..."
 fi
+# Kelly sizing flags shared by Phase 4 and 4.5. The main backtest is
+# Kelly-sized; the strategy_comparison block inside the summary stays
+# fixed-size (marked "sizing": "fixed_position_size") -- not comparable.
+KELLY_FLAGS=()
+if [[ "$KELLY_SIZING" != "0" ]]; then
+    KELLY_FLAGS=(--kelly-sizing --kelly-multiplier "$KELLY_MULTIPLIER" --kelly-lookback-bars "$KELLY_LOOKBACK_BARS")
+    echo "  Kelly sizing ON: Half-Kelly=$KELLY_MULTIPLIER, variance lookback=$KELLY_LOOKBACK_BARS bars, holding=$HORIZON bars, cap=position_size"
+fi
 python -m btcusdt_quant backtest \
     --input "$FULL_PARQUET" \
     --model-artifact "$MODEL_DIR" \
     ${REGIME_BT_FLAGS[@]+"${REGIME_BT_FLAGS[@]}"} \
+    ${KELLY_FLAGS[@]+"${KELLY_FLAGS[@]}"} \
     --exec-tp-pct "$LABEL_TP_PCT" \
     --exec-sl-pct "$LABEL_SL_PCT" \
     --metrics-dir "$METRICS_DIR" \
@@ -293,6 +433,32 @@ python -m btcusdt_quant backtest \
     --backtest-end "$BACKTEST_END" \
     --output "$BACKTEST_DIR"
 
+# ----------------------------------------------------------------------------
+# PHASE 4.5: Backtest the multi-horizon pilot on the same window/costs
+# ----------------------------------------------------------------------------
+MH_BACKTEST_DIR="$ARTIFACTS_DIR/backtest_results_multi_horizon"
+
+if [[ "$MULTI_HORIZON_PILOT" != "0" ]]; then
+    echo ""
+    echo "[Phase 4.5] Backtest multi-horizon pilot (same window, costs and kelly settings) ..."
+    # Directory artifact (not model.json): regime_run_summary.json rides the
+    # fitted rule detector, so routing and the direction policy match Phase 4.
+    python -m btcusdt_quant backtest \
+        --input "$FULL_PARQUET" \
+        --model-artifact "$MH_MODEL_DIR" \
+        ${KELLY_FLAGS[@]+"${KELLY_FLAGS[@]}"} \
+        --exec-tp-pct "$LABEL_TP_PCT" \
+        --exec-sl-pct "$LABEL_SL_PCT" \
+        --metrics-dir "$METRICS_DIR" \
+        --threshold-floor "$THRESHOLD_FLOOR" \
+        --fee-rate-per-side "$FEE_PER_SIDE" \
+        --slippage-rate-per-side "$SLIPPAGE_PER_SIDE" \
+        --horizon "$HORIZON" \
+        --backtest-start "$BACKTEST_START" \
+        --backtest-end "$BACKTEST_END" \
+        --output "$MH_BACKTEST_DIR"
+fi
+
 echo ""
 echo "=== Pipeline Complete ==="
 echo ""
@@ -300,19 +466,54 @@ echo "Outputs:"
 echo "  Combined data : $FULL_PARQUET"
 echo "  Model         : $MODEL_DIR"
 echo "  Backtest      : $BACKTEST_DIR"
+if [[ "$MULTI_HORIZON_PILOT" != "0" ]]; then
+    echo "  MH model      : $MH_MODEL_DIR"
+    echo "  MH backtest   : $MH_BACKTEST_DIR"
+fi
 echo ""
-python3 - "$BACKTEST_DIR/backtest_summary.json" <<'PY'
+# `python`, not `python3`: every other phase in this script invokes `python`,
+# and on a venv/conda host where only `python` resolves, a `python3` here would
+# fail the whole run at the last step after every artifact was already written.
+python - "$BACKTEST_DIR/backtest_summary.json" "$MH_BACKTEST_DIR/backtest_summary.json" <<'PY'
 import json, sys, os
-path = sys.argv[1]
-if os.path.exists(path):
+
+def show(label, path):
+    if not os.path.exists(path):
+        print(f"  {label}: (backtest summary not found)")
+        return
     with open(path) as f:
         b = json.load(f)["backtest"]
-    print(f"gross={b.get('gross_total_return',0):+.4%} net={b.get('net_total_return',0):+.4%} "
+    print(f"  {label}: gross={b.get('gross_total_return',0):+.4%} net={b.get('net_total_return',0):+.4%} "
           f"trades={b.get('trade_count',0)} win={b.get('win_rate',0):.1%}")
+    # Gross vs net Sharpe side by side: the gap is the cost drag. A strategy
+    # whose Sharpe is only positive gross must not ship.
+    print(f"    sharpe: net={b.get('net_sharpe',0):.3f} gross={b.get('gross_sharpe',0):.3f} "
+          f"cost_impact={b.get('cost_impact_sharpe',0):.3f}")
+    k = b.get("kelly_sizing") or {}
+    if k.get("enabled"):
+        print(f"    kelly: avg_frac={k.get('avg_fraction',0):.4f} min={k.get('min_fraction',0):.4f} "
+              f"max={k.get('max_fraction',0):.4f} (cap={k.get('cap')}) "
+              f"skipped_no_edge={k.get('entries_skipped_no_edge',0)}")
+        shorts = k.get("shorts_skipped_no_short_model", 0)
+        if shorts:
+            print(f"    kelly: {shorts} SELL signals refused (no short-success model) -- this run was LONG-ONLY")
     cov = b.get("regime_coverage")
     if cov:
-        print(f"regime coverage: matched={cov.get('matched',0)} "
+        print(f"    regime coverage: matched={cov.get('matched',0)} "
               f"default_fallback={cov.get('default_fallback',0)} no_model={cov.get('no_model',0)}")
-else:
-    print("(backtest summary not found)")
+
+show("regime model ", sys.argv[1])
+if len(sys.argv) > 2 and os.path.exists(sys.argv[2]):
+    show("multi-horizon", sys.argv[2])
+    print("  (multi-horizon pilot shares Phase 4's regimes/sides -- judge it on net sharpe/MDD, not raw return)")
 PY
+
+# Regime x side x month breakdown -- the axes that actually explain a
+# difference between the two models. Informational; never gates the run.
+if [[ "$MULTI_HORIZON_PILOT" != "0" && -f "$BACKTEST_DIR/backtest_summary.json" && -f "$MH_BACKTEST_DIR/backtest_summary.json" ]]; then
+    echo ""
+    python compare_backtests.py \
+        "$BACKTEST_DIR/backtest_summary.json" \
+        "$MH_BACKTEST_DIR/backtest_summary.json" \
+        || echo "  WARNING: compare_backtests failed; continuing (informational)."
+fi

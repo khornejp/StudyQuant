@@ -31,7 +31,7 @@ def main():
     
     # Check data exists
     if not INPUT_PATH.exists() and not CSV_FALLBACK.exists():
-        print(f"Error: Data file not found!")
+        print("Error: Data file not found!")
         print(f"Expected: {INPUT_PATH} or {CSV_FALLBACK}")
         return
     

@@ -1068,12 +1068,27 @@ class ChampionChallengerManager:
         return []
 
     def _optional_float(self, metrics: Mapping[str, object], *names: str) -> float | None:
+        """A promotion metric, or None when it is absent OR not a real number.
+
+        Non-finite must map to None, i.e. to "missing", because every caller
+        vetoes with `elif value < limit` -- and NaN makes every comparison
+        False, so a NaN sails through the veto instead of tripping it. The gates
+        fail OPEN on exactly the input that means "we could not measure this".
+        The backtest now reports NaN for Sharpe and profit factor below its
+        minimum trade count, so this is reachable, not theoretical: a challenger
+        with two trades would otherwise clear Sharpe, MDD, Calmar and flip-rate
+        in one pass. Rejecting here fixes all six gates at once.
+        """
         for name in names:
             value = metrics.get(name)
             if value is None:
                 continue
             if isinstance(value, (float, int, str)):
-                return float(value)
+                try:
+                    parsed = float(value)
+                except ValueError:
+                    return None
+                return parsed if isfinite(parsed) else None
         return None
 
     def _ci_bounds(self, score_bin_ci: object) -> list[tuple[float, float]]:

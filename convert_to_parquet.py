@@ -28,7 +28,7 @@ def main():
     csv_size = input_path.stat().st_size / (1024 * 1024)
     pq_size = output_path.stat().st_size / (1024 * 1024)
     
-    print(f"Done!")
+    print("Done!")
     print(f"CSV size:  {csv_size:.2f} MB")
     print(f"Parquet size: {pq_size:.2f} MB ({pq_size/csv_size*100:.1f}% of CSV)")
     

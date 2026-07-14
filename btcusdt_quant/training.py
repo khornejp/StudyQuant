@@ -8,9 +8,49 @@ from math import exp, isfinite, log, sqrt
 from pathlib import Path
 from statistics import mean
 from time import perf_counter, time
+from types import MappingProxyType
 from typing import Mapping, Sequence
 
 from . import cv, dataset, features, governance, lineage, models, monitoring
+
+
+# THE direction policy: which sides each regime is allowed to trade, and the
+# triple-barrier target each side must learn. A short model has to learn
+# short_success -- the complement of P(long_success) is not a short probability
+# (a long that times out is not a short win).
+#
+#   up    -> long only  (follow the uptrend)
+#   down  -> short only (follow the downtrend)
+#   range -> both       (mean-revert off either edge)
+#
+# Both the single-horizon path (_train_single_regime) and the multi-horizon
+# pilot (cli._run_train_multi_horizon_regime_aware) read this, so the two model
+# families always train the same side set. Change it here and both follow;
+# a second hand-kept copy would silently make Phase 4 vs 4.5 incomparable.
+# Read-only: cli.MH_REGIME_SIDES aliases this object, so a plain dict would let
+# any consumer mutate the policy for every other consumer.
+REGIME_SIDES: Mapping[str, tuple[tuple[str, str], ...]] = MappingProxyType({
+    "up": (("long", "long_success"),),
+    "down": (("short", "short_success"),),
+    "range": (("long", "long_success"), ("short", "short_success")),
+})
+
+
+def sides_for_regime(regime_name: str) -> tuple[tuple[str, str], ...]:
+    """(side, target_key) pairs this regime may train.
+
+    Raises on an unknown regime rather than guessing. Defaulting to both sides
+    would ship long AND short models for a bucket nobody defined a policy for;
+    defaulting to neither would train nothing and leave a silently missing
+    model. Every caller today passes a name from dataset.USER_REGIME_NAMES, so
+    an unknown name is a programming error and should say so.
+    """
+    try:
+        return REGIME_SIDES[regime_name]
+    except KeyError:
+        raise ValueError(
+            f"no direction policy for regime {regime_name!r}; known regimes: {sorted(REGIME_SIDES)}"
+        ) from None
 
 
 @dataclass(frozen=True)
@@ -608,6 +648,17 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
     trained_regimes: dict[str, dict[str, object]] = {}
     skipped_regimes: dict[str, dict[str, object]] = {}
 
+    # Remove the regime_* directories THIS policy will (re)write, so a stale
+    # side model under a now-forbidden policy cannot be loaded later. Only the
+    # policy's own regimes are touched (a shared output's unrelated regime dir
+    # is left alone -- the loader keys off the summary, so a leftover it does
+    # not list is inert), and symlinks are skipped rather than followed.
+    import shutil as _shutil
+    for _regime in dataset.USER_REGIME_NAMES:
+        _stale = output_dir / f"regime_{_regime}"
+        if _stale.is_dir() and not _stale.is_symlink():
+            _shutil.rmtree(_stale)
+
     for regime_name in dataset.USER_REGIME_NAMES:
         regime_indices = [index for index, regime in enumerate(regimes) if regime == regime_name]
         row_count = len(regime_indices)
@@ -618,6 +669,15 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
                 "row_count": row_count,
                 "min_regime_rows": training_config.min_regime_rows,
             }
+            # A skipped regime has no model, so at backtest time its bars fall
+            # back to another regime's direction policy. That is a silent change
+            # of what the strategy does -- say it here, where the cause is known.
+            print(
+                f"[TRAIN] WARNING: regime '{regime_name}' skipped ({row_count:,} rows < "
+                f"--min-regime-rows {training_config.min_regime_rows}). Its bars will fall back to "
+                f"another regime's models at backtest/live time; expect default_fallback > 0.",
+                file=sys.stderr,
+            )
             continue
         regime_result = _train_single_regime(build, output_dir, training_config, regime_name, regime_indices)
         regime_summaries[regime_name] = dict(regime_result.run_summary)
@@ -628,6 +688,9 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
             "output_dir": f"regime_{regime_name}",
             "mean_test_f1": float(regime_result.run_summary.get("mean_test_f1", 0.0)),
         }
+        # Sides this run trained, so the loader can ignore any stale side model
+        # file left by an earlier run under a different policy.
+        regime_summaries[regime_name]["sides"] = {side: True for side, _ in sides_for_regime(regime_name)}
 
     default_regime = _default_regime_by_rows(trained_regimes)
     regime_test_f1_values = [float(summary["mean_test_f1"]) for summary in regime_summaries.values() if "mean_test_f1" in summary]
@@ -1056,13 +1119,13 @@ def _train_single_regime(
     
     f_matrix = feature_matrix(regime_build.labeled_rows, regime_build.feature_names)
     
-    # Determine which models to train based on regime direction policy
-    # up → Long만 학습 (상승장 추세追随)
-    # down → Short만 학습 (하락장 추세追随)
-    # range → Long + Short 모두 학습 (횡보장 평균회귀)
-    train_long = regime_name in ("up", "range")
-    train_short = regime_name in ("down", "range")
-    
+    # Direction policy comes from the single shared mapping (REGIME_SIDES), so
+    # the multi-horizon pilot cannot drift to a different side set and quietly
+    # break the Phase 4 vs Phase 4.5 comparison.
+    _sides = dict(sides_for_regime(regime_name))
+    train_long = "long" in _sides
+    train_short = "short" in _sides
+
     artifacts = []
     optuna_reports: dict[str, dict[str, object]] = {}
 
@@ -1187,11 +1250,14 @@ def _train_single_regime(
     if holdout_start < n_regime_rows - 10 and holdout_split >= 10:
         prefix_matrix = f_matrix[:holdout_split]
         holdout_matrix = f_matrix[holdout_start:]
-        for side, target_key, is_trained, resolved_params in (
-            ("long", "long_success", train_long, long_params if train_long else None),
-            ("short", "short_success", train_short, short_params if train_short else None),
-        ):
-            if not is_trained:
+        # Sides and their targets come from the shared policy; params follow.
+        _params_by_side = {
+            "long": long_params if train_long else None,
+            "short": short_params if train_short else None,
+        }
+        for side, target_key in sides_for_regime(regime_name):
+            resolved_params = _params_by_side[side]
+            if resolved_params is None:
                 continue
             prefix_labels = [int(row.targets.get(target_key, row.label)) for row in regime_build.labeled_rows[:holdout_split]]
             holdout_labels = [int(row.targets.get(target_key, row.label)) for row in regime_build.labeled_rows[holdout_start:]]
@@ -1496,28 +1562,49 @@ def _mdd(pnl: Sequence[float]) -> float:
     return max_dd
 
 
+# PnL dispersion / drawdown at or below this is float noise, not risk (see
+# _sharpe and _calmar). Both quantities are sums of per-signal PnL floats, so
+# neither reliably lands on exactly 0.0 and an `== 0` guard leaks.
+_MIN_PNL_STD = 1e-12
+_MIN_PNL_MDD = 1e-12
+
+
 def _sharpe(pnl: Sequence[float]) -> float:
+    # `std == 0` is not a sufficient guard: a candidate threshold that fires a
+    # couple of signals which all resolve the same way has std at float-noise
+    # scale (~1e-17), and mean/std*sqrt(n) then returns ~1e14 -- which would win
+    # the (calmar, sharpe, f1) ranking outright on a two-signal sample. Fold
+    # noise-level dispersion to 0.0 rather than NaN: this value is a max() sort
+    # key, and a NaN there silently corrupts the ordering instead of losing it.
     if not pnl:
         return 0.0
     mean_pnl = mean(pnl)
     variance = sum((x - mean_pnl) ** 2 for x in pnl) / len(pnl)
     std = sqrt(variance) if variance > 0 else 0.0
-    if std == 0:
+    if std <= _MIN_PNL_STD:
         return 0.0
     return mean_pnl / std * sqrt(len(pnl))
 
 
 def _calmar(pnl: Sequence[float]) -> float:
+    # `mdd_value == 0` leaks for the same reason `std == 0` did in _sharpe, and
+    # it matters more here: calmar is the FIRST key of select_threshold's
+    # (calmar, sharpe, f1, -|t-0.5|) sort tuple, so it outranks everything. A
+    # PnL series that never really draws down leaves mdd at float noise (~1e-18)
+    # rather than exactly 0.0, and total_return/1e-18 hands that candidate a
+    # calmar of ~1e18 -- winning the threshold outright on an artifact of
+    # floating-point summation. Fold to 0.0, not NaN: this is a max() sort key,
+    # and a NaN there corrupts the ordering silently instead of losing.
     if not pnl:
         return 0.0
     total_return = sum(pnl)
     mdd_value = _mdd(pnl)
-    if mdd_value == 0:
+    if mdd_value <= _MIN_PNL_MDD:
         return 0.0
     return total_return / mdd_value
 
 
-def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: float, tp_pct: float = 0.003, sl_pct: float = 0.0015, round_trip_cost: float = 0.0008) -> dict[str, float]:
+def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: float, tp_pct: float = dataset.DEFAULT_LABEL_TP_PCT, sl_pct: float = dataset.DEFAULT_LABEL_SL_PCT, round_trip_cost: float = 0.0008) -> dict[str, float]:
     if not probabilities or not labels:
         return {"rows": 0.0, "accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "ece": 0.0, "expected_calibration_error": 0.0, "mce": 0.0, "brier": 0.0, "brier_score": 0.0, "brier_skill_score": 0.0, "positive_rate": 0.0, "predicted_positive_rate": 0.0, "mdd": 0.0, "sharpe": 0.0, "calmar": 0.0}
     predictions = [1 if probability >= threshold else 0 for probability in probabilities]

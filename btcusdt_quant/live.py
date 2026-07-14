@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import json
 import queue
+import sys
 import threading
 import urllib.parse
 import urllib.request
 from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from math import floor
+from math import floor, isfinite
 from pathlib import Path
 from time import monotonic
 from typing import Any, Callable, Mapping, Sequence
 
-from . import data, dataset, features, governance, models, monitoring, sources
+from . import data, dataset, features, governance, models, monitoring, risk, sources
 from .exchange import MARKET, STOP_MARKET, TAKE_PROFIT_MARKET, ExchangeAdapter, ExchangeOrder, MockExchangeAdapter
 from .risk import DrawdownProtocol, DrawdownState, RiskDecision, RiskPolicy, strategy_reward_risk_decision
 
@@ -148,6 +149,59 @@ class PositionSizer:
         if quantity < min_qty:
             return SizingResult(quantity, notional, notional / leverage, False, "below_min_qty")
         return SizingResult(quantity, notional, notional / leverage, True, "accepted")
+
+    def kelly_notional(
+        self,
+        entry_price: float,
+        account_balance_usdt: float,
+        probability: float,
+        tp_pct: float,
+        sl_pct: float,
+        recent_returns: Sequence[float],
+        max_trade_notional_ratio: float,
+        leverage: float,
+        min_qty: float,
+        qty_step: float,
+        max_notional_fraction: float,
+        kelly_config: "risk.KellySizingConfig | None" = None,
+        round_trip_cost: float = 0.0,
+    ) -> SizingResult:
+        """Fractional-Kelly entry sizing; the static ratio becomes the CAP.
+
+        Delegates the fraction computation to risk.kelly_leverage_for_signal
+        (the single Kelly pipeline shared with the backtest) with the static
+        trade_notional_ratio as the cap -- it now caps the bet instead of
+        fixing it. The fraction is ALSO capped at max_notional_fraction:
+        fixed_notional hard-rejects (rather than clamps) above that guard,
+        which is the right response to a misconfigured static ratio but wrong
+        for a dynamic Kelly value, where "bet as much as allowed" is the
+        intent. Rejects the entry outright (reason
+        "kelly_no_edge_or_variance") when the edge is non-positive or the
+        variance window is unusable -- Kelly's answer there is "don't bet",
+        not "bet the cap".
+        """
+        config = kelly_config or risk.KellySizingConfig()
+        fraction_cap = min(max_trade_notional_ratio, max_notional_fraction)
+        fraction = risk.kelly_leverage_for_signal(
+            probability,
+            tp_pct,
+            sl_pct,
+            recent_returns,
+            config=config,
+            cap=fraction_cap,
+            round_trip_cost=round_trip_cost,
+        )
+        if fraction <= 0.0:
+            return SizingResult(0.0, 0.0, 0.0, False, "kelly_no_edge_or_variance")
+        return self.fixed_notional(
+            entry_price,
+            account_balance_usdt,
+            fraction,
+            leverage,
+            min_qty,
+            qty_step,
+            max_notional_fraction,
+        )
 
 
 @dataclass(frozen=True)
@@ -346,6 +400,9 @@ class StrategyConfig:
             "min_reward_risk": self.min_reward_risk,
             "min_tp_floor_pct": self.min_tp_floor_pct,
             "min_sl_floor_pct": self.min_sl_floor_pct,
+            # Omitting this made two configs that execute entirely different
+            # barriers (ATR-derived vs the fixed floors) serialize identically.
+            "use_atr_pricing": self.use_atr_pricing,
         }
 
 
@@ -1487,11 +1544,16 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> models.Model
             return models.LightGBMAdapter.from_dict(payload)
         if model_family == "catboost":
             return models.CatBoostAdapter.from_dict(payload)
+        if model_family == models.CentroidLinearClassifier.model_family_name:
+            return models.CentroidLinearClassifier.from_dict(payload)
         if model_family == "ensemble":
             return models.EnsembleAdapter.from_dict(payload)
         if model_family == "stacking_ensemble":
             from . import ensemble
             return ensemble.StackingEnsembleAdapter.from_dict(payload)
+        if model_family == "multi_horizon_ensemble":
+            from . import ensemble
+            return ensemble.MultiHorizonEnsembleAdapter.from_dict(payload)
         if model_family == "pytorch_multitask":
             from . import multitask_nn
             return multitask_nn.MultitaskNNAdapter.from_dict(payload)
@@ -1525,6 +1587,68 @@ class RegimeModelBundle:
     # live routes with it (same detector that assigned the training buckets),
     # taking priority over the learned classifier and the slope detector.
     multi_feature_regime_detector: object | None = None
+    # Triple-barrier geometry these models were LABELED on, read back from
+    # regime_run_summary.json. Every side model here answers exactly one
+    # question -- "does price reach +label_tp_pct before -label_sl_pct within the
+    # horizon" -- so executing a different barrier asks it about a trade nobody
+    # trained it on, and its probabilities stop meaning what the thresholds
+    # assume. backtest.check_execution_barrier_parity enforces the match.
+    # None on artifacts written before this was recorded.
+    label_tp_pct: float | None = None
+    label_sl_pct: float | None = None
+
+    def has_side_probability(self, regime: str, side: str) -> bool:
+        """Does a model exist that outputs a GENUINE P(<side>_success) here?
+
+        The answer lives where the probabilities are produced, not at the call
+        site: a caller that has to remember to set a flag will eventually
+        forget, and the failure is silent (every entry on that side quietly
+        disappears). `probability_for` returns None for exactly the cases this
+        returns False, so the two can never disagree.
+        """
+        registry = self._side_registry(side)
+        return regime in registry
+
+    def probability_for(self, regime: str, side: str, features: Mapping[str, float]) -> float | None:
+        """P(<side>_success) for this regime, or None when no such model exists.
+
+        None is not 0.0. A missing short model means "this bundle cannot price
+        a short here", which is a different statement from "the short has zero
+        chance" -- and sizing a bet on the latter when you mean the former is
+        how a run silently becomes one-sided.
+        """
+        model = self._side_registry(side).get(regime)
+        if model is None:
+            return None
+        return float(model.probability(features))
+
+    def _side_registry(self, side: str) -> dict[str, "models.ModelAdapter"]:
+        # Reject an unknown side rather than defaulting to short_models, so a
+        # typo ("SHORT", "up") fails loudly instead of returning the wrong
+        # side's probability. (training.sides_for_regime raises for the same
+        # reason on an unknown regime.)
+        if side == "long":
+            return self.long_models
+        if side == "short":
+            return self.short_models
+        raise ValueError(f"side must be 'long' or 'short', got {side!r}")
+
+    def missing_side_models(self, policy: Mapping[str, tuple[tuple[str, str], ...]]) -> dict[str, list[str]]:
+        """Sides the direction policy asks for that this bundle cannot serve.
+
+        Iterates the POLICY, not self.models: a regime with NO models at all
+        (e.g. `down` was never trained, so its short is missing) is absent from
+        self.models and would be invisible if we looped over what loaded. That
+        fully-untrained case is the worst one -- the whole backtest goes
+        one-directional -- so it must be reported, not skipped.
+        """
+        missing: dict[str, list[str]] = {}
+        for regime in sorted(policy):
+            wanted = [side for side, _ in policy[regime]]
+            absent = [side for side in wanted if not self.has_side_probability(regime, side)]
+            if absent:
+                missing[regime] = absent
+        return missing
 
 
 def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeModelBundle | None:
@@ -1568,6 +1692,7 @@ def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeM
 
         # Learned per-side holdout thresholds for this regime (if present).
         regime_summary = regime_results.get(regime_name, {})
+        declared_sides: set[str] | None = None
         if isinstance(regime_summary, Mapping):
             sel = regime_summary.get("selected_thresholds", {})
             if isinstance(sel, Mapping):
@@ -1580,19 +1705,43 @@ def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeM
                             pass
                 if coerced:
                     regime_thresholds[regime_name] = coerced
-        
+            # Sides this run actually trained, as declared in the summary. A
+            # side model file present on disk but NOT declared here is stale
+            # (left by an earlier run under a different policy); loading it
+            # would trade a direction the current policy forbids. Only trust a
+            # declared set when the summary carries one -- older artifacts have
+            # none, and fall back to file existence.
+            sides_decl = regime_summary.get("sides")
+            if isinstance(sides_decl, Mapping):
+                declared_sides = {str(s) for s in sides_decl}
+
+        def _declared(side: str) -> bool:
+            if declared_sides is None:
+                return True
+            if side in declared_sides:
+                return True
+            model_file = regime_dir / f"{side}_model.json"
+            if model_file.exists():
+                print(
+                    f"WARNING: ignoring stale {model_file.name} in {regime_dir.name}: the summary does not "
+                    f"declare a '{side}' side for this regime (left by an earlier run?). Delete the output "
+                    f"directory before retraining to avoid mixing policies.",
+                    file=sys.stderr,
+                )
+            return False
+
         # Try new structure: long_model.json + short_model.json (may have only one)
         long_path = regime_dir / "long_model.json"
         short_path = regime_dir / "short_model.json"
-        
-        if long_path.exists():
+
+        if long_path.exists() and _declared("long"):
             long_model = load_model_artifact(long_path, strict=strict)
             if long_model is not None:
                 long_models[regime_name] = long_model
                 loaded_models[regime_name] = long_model
                 regime_directions.add("LONG")
-        
-        if short_path.exists():
+
+        if short_path.exists() and _declared("short"):
             short_model = load_model_artifact(short_path, strict=strict)
             if short_model is not None:
                 short_models[regime_name] = short_model
@@ -1628,7 +1777,24 @@ def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeM
         direction_policy=direction_policy,
         regime_thresholds=regime_thresholds,
         multi_feature_regime_detector=multi_feature_regime_detector,
+        label_tp_pct=_coerce_optional_float(summary.get("tp_pct")),
+        label_sl_pct=_coerce_optional_float(summary.get("sl_pct")),
     )
+
+
+def _coerce_optional_float(value: object) -> float | None:
+    """A finite float from an artifact field, or None when it is absent/unusable.
+
+    None means "this artifact does not record the value", which the barrier
+    parity check treats as a legacy artifact to warn about -- never as a match.
+    """
+    if not isinstance(value, (float, int, str)):
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    return parsed if isfinite(parsed) and parsed > 0.0 else None
 
 
 def _coerce_float_mapping(payload: object) -> dict[str, float]:
@@ -2165,7 +2331,6 @@ class LiveEngine:
                     # matches the trained model keys. The base detect() returns
                     # trending/ranging/high_volatility, which never match the
                     # up/down/range models and would silently disable routing.
-                    rv_15 = float(latest_features.get("rv_15", 0.0))
                     trend_slope_30 = float(latest_features.get("trend_slope_30", 0.0))
                     detector_config = regime_bundle.detector_config
                     if isinstance(detector_config, dict):

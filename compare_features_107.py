@@ -10,8 +10,6 @@ Usage:
 import sys
 from pathlib import Path
 
-import numpy as np
-
 from btcusdt_quant import dataset
 from btcusdt_quant.dataset import FEATURE_NAMES
 from fast_features import compute_features_fast
@@ -45,10 +43,8 @@ def compare_all_features():
     print(f"  Fast has: {fast_df.shape[1]}")
     if fast_df.shape[1] != len(FEATURE_NAMES):
         print(f"  FAIL: Fast features has {fast_df.shape[1]} columns, expected {len(FEATURE_NAMES)}")
-        count_match = False
     else:
         print("  PASS")
-        count_match = True
     print()
     
     # Check 2: All expected features must be present

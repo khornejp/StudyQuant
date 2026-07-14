@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from btcusdt_quant import backtest, dataset, live, training
+from btcusdt_quant import backtest, dataset, live
 from fast_features import compute_features_fast
 
 
@@ -92,7 +92,7 @@ def main():
     features_df = compute_features_fast(candles)
     feature_time = time.time() - start
     print(f"Computed {features_df.shape[1]} features in {feature_time:.2f}s")
-    print(f"Speedup vs original: ~25x faster")
+    print("Speedup vs original: ~25x faster")
     
     # Step 4: Load or Train Model
     print("\n[Step 4] Loading Model")
@@ -116,35 +116,15 @@ def main():
             labels.append(1 if future_return > 0 else 0)
         labels.extend([0] * 15)
         
-        # Train centroid model
-        from btcusdt_quant.training import Standardizer, LinearClassifier
-        
+        # Deterministic nearest-centroid fallback when no trained artifact
+        # exists: milliseconds, no optional dependencies.
+        from btcusdt_quant.models import CentroidLinearClassifier
+
         train_size = int(len(candles) * 0.8)
-        train_X = feature_matrix[:train_size]
-        train_y = np.array(labels[:train_size])
-        
-        means = {name: float(np.mean(train_X[:, i])) for i, name in enumerate(feature_names)}
-        stds = {name: float(np.std(train_X[:, i])) + 1e-8 for i, name in enumerate(feature_names)}
-        standardizer = Standardizer(means, stds)
-        
-        X_std = np.array([standardizer.transform(dict(zip(feature_names, row)), feature_names) for row in train_X])
-        
-        pos_mask = train_y == 1
-        neg_mask = train_y == 0
-        pos_centroid = np.mean(X_std[pos_mask], axis=0) if np.any(pos_mask) else np.zeros(len(feature_names))
-        neg_centroid = np.mean(X_std[neg_mask], axis=0) if np.any(neg_mask) else np.zeros(len(feature_names))
-        diff = pos_centroid - neg_centroid
-        
-        weights = {name: float(diff[i]) for i, name in enumerate(feature_names)}
-        intercept = float(np.dot(neg_centroid, diff))
-        
-        model = LinearClassifier(
-            feature_names=tuple(feature_names),
-            standardizer=standardizer,
-            weights=weights,
-            intercept=intercept,
+        model = CentroidLinearClassifier(feature_names=feature_names).fit(
+            feature_matrix[:train_size], labels[:train_size]
         )
-    
+
     train_time = time.time() - start
     print(f"Model ready in {train_time:.2f}s")
     
@@ -168,7 +148,6 @@ def main():
     training_threshold = None
     threshold_path = Path("artifacts/training_lightgbm/threshold_report.json")
     if threshold_path.exists():
-        import json
         threshold_report = json.loads(threshold_path.read_text(encoding="utf-8"))
         fold_thresholds = threshold_report.get("fold_thresholds", [])
         if fold_thresholds:

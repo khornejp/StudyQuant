@@ -4,7 +4,7 @@ from btcusdt_quant import dataset
 
 candles = dataset.load_csv_candles(Path('artifacts/real_btcusdt_1m.csv'))
 c = candles[50]
-print(f'Candle 50:')
+print('Candle 50:')
 print(f'  volume: {c.volume}')
 print(f'  taker_buy_base_volume: {c.taker_buy_base_volume}')
 print(f'  taker_buy_quote_volume: {c.taker_buy_quote_volume}')

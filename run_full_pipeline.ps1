@@ -1,16 +1,32 @@
 # BTCUSDT User-Regime Pipeline (Windows PowerShell)
 # ---------------------------------------------------------------------------
 # Intended flow:
-#   1. Download 2020-01-01 ~ 2025-12-31 Binance archive (full 6-year span)
-#   2. Combine into one Parquet file
-#   3. Train regime-aware models with multi-feature RULE regime bucketing
-#      (default $RegimeMode="rule"; regimes.json only needed for the legacy
-#      "classifier" mode), training data restricted to 2020-2024.
-#      Model quality is checked via a chronological holdout SPLIT OF THE
-#      TRAINING DATA ITSELF (last 20% of each regime's own rows), not a
-#      separate held-out calendar span -- see "Regime holdout" log lines.
-#   4. Backtest the trained models on the FULL 2025 year (out-of-sample,
-#      never seen during training)
+#   1.   Download 2020-01-01 ~ 2025-12-31 Binance archive (full 6-year span)
+#   2.   Combine into one Parquet file
+#   2.3  Data diagnostics: feature IC report with fold-stability and
+#        look-ahead-leakage heuristics (ic_diagnostic.py) + OU half-life of
+#        range regimes vs the fixed 20-bar mean-reversion window
+#        (verify_range_halflife.py). Informational -- does not gate the run.
+#   3.   Train regime-aware models with multi-feature RULE regime bucketing
+#        (default $RegimeMode="rule"; regimes.json only needed for the legacy
+#        "classifier" mode), training data restricted to 2020-2024.
+#        Model quality is checked via a chronological holdout SPLIT OF THE
+#        TRAINING DATA ITSELF (last 20% of each regime's own rows), not a
+#        separate held-out calendar span -- see "Regime holdout" log lines.
+#   3.5  Multi-horizon ensemble pilot: one entry model per label horizon
+#        (default 30/60/90m), probabilities blended by validation accuracy
+#        (G-Research 7th-place pattern). Regime-aware, mirroring Phase 3's
+#        bucketing and direction policy (up->long, down->short, range->both)
+#        with per-side long_success/short_success targets, so it is a
+#        regime-aligned challenger. Saved to artifacts/multi_horizon_model.
+#   4.   Backtest the regime models on the FULL 2025 year (out-of-sample),
+#        with fractional-Kelly position sizing ($KellySizing, default on:
+#        Half-Kelly from entry probability + executed TP/SL barriers +
+#        trailing bar variance; position_size acts as the cap and
+#        no-edge entries are skipped).
+#   4.5  Backtest the multi-horizon pilot model on the same window with the
+#        same cost/kelly settings, so the two model families can be compared
+#        in artifacts/backtest_results vs artifacts/backtest_results_multi_horizon.
 #
 # Requirements:
 #   - Python with pyarrow, catboost, numpy, pandas installed
@@ -25,6 +41,29 @@
 # ---------------------------------------------------------------------------
 
 $ErrorActionPreference = "Stop"
+
+# $ErrorActionPreference="Stop" does NOT trap a native command's nonzero exit
+# in Windows PowerShell 5.1 -- python failing here would otherwise fall
+# through to the next phase and backtest a stale or missing model artifact,
+# reporting the previous run's numbers as if they were current. Every phase
+# that produces an artifact the next phase consumes must be gated explicitly.
+function Assert-PhaseSucceeded {
+    param([Parameter(Mandatory)][string]$Phase)
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        Write-Host "ERROR: $Phase failed (exit code $LASTEXITCODE). Pipeline stopped." -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
+}
+
+# Informational phases: report the failure, keep going. Used only where the
+# phase's output is not consumed downstream (diagnostics).
+function Warn-IfPhaseFailed {
+    param([Parameter(Mandatory)][string]$Phase)
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  WARNING: $Phase failed (exit code $LASTEXITCODE); continuing (informational phase)." -ForegroundColor Yellow
+    }
+}
 
 # ====== Configuration =====================================================
 $RegimeFile      = "regimes.json"           # only used when $RegimeMode="classifier"
@@ -60,11 +99,20 @@ if (-not $RuleRegimeConfig) { $RuleRegimeConfig = "configs/rule_regime.json" }
 # Phase 4 so the backtest trades the SAME barrier the model was trained on).
 # Timeout/horizon is in bars (=minutes for 1m data). Tune these together to
 # reduce the TIMEOUT rate and align cost vs reward.
+# The barriers must clear the round-trip cost by a wide margin or the reward:risk
+# the labels advertise is not the one the account earns. At TP 0.30%/SL 0.15% the
+# 0.08% round trip turns a nominal 2.0:1 into a net 0.96:1 (+0.22% vs -0.23%) and
+# lifts break-even win rate from 33.3% to 51.1% -- unreachable, so every run lost.
+# At 1.00%/0.50% the net is +0.92% vs -0.58% (1.59:1) and break-even is 38.7%.
 if (-not $Horizon)    { $Horizon    = 60 }
-if (-not $LabelTpPct) { $LabelTpPct = "0.003" }   # 0.30%
-if (-not $LabelSlPct) { $LabelSlPct = "0.0015" }  # 0.15%
+if (-not $LabelTpPct) { $LabelTpPct = "0.010" }   # 1.00%
+if (-not $LabelSlPct) { $LabelSlPct = "0.005" }   # 0.50%
 # Hard lower bound on learned entry thresholds at backtest time (0 = off).
-if (-not $ThresholdFloor) { $ThresholdFloor = "0.45" }
+# Off by default: threshold selection already maximizes trading PnL net of
+# RoundTripCost, so a floor above the learned value only vetoes it. The 0.45
+# floor silently disabled the range regime (learned 0.348/0.358), which is ~91%
+# of 2025 bars -- the backtest traded 9% of the data and reported it as a result.
+if (-not $ThresholdFloor) { $ThresholdFloor = "0.0" }
 # Cost basis SINGLE SOURCE: per-side fee/slippage fractions. The round-trip
 # cost 2*(fee+slippage) is derived below and passed to train (threshold
 # objective + holdout metrics) while the per-side values go to backtest
@@ -72,6 +120,23 @@ if (-not $ThresholdFloor) { $ThresholdFloor = "0.45" }
 if (-not $FeePerSide)      { $FeePerSide      = "0.0002" }  # 0.02%
 if (-not $SlippagePerSide) { $SlippagePerSide = "0.0002" }  # 0.02%
 $RoundTripCost = [string](2.0 * ([double]$FeePerSide + [double]$SlippagePerSide))
+# Fractional-Kelly position sizing for the backtests (Phase 4 / 4.5).
+# Half-Kelly (0.5) trades ~18.5% of growth for ~43% smaller max drawdown.
+# The backtest's fixed position_size becomes the CAP on the per-trade
+# fraction; entries whose Kelly edge is non-positive are skipped (see
+# kelly_sizing.entries_skipped_no_edge in backtest_summary.json).
+# NOTE: $null -eq checks (not -not) so a preset $KellySizing=$false survives.
+if ($null -eq $KellySizing)  { $KellySizing = $true }
+if (-not $KellyMultiplier)   { $KellyMultiplier = "0.5" }
+if (-not $KellyLookbackBars) { $KellyLookbackBars = "1440" }   # 1 day of 1m bars
+# Phase 2.3 data diagnostics (IC/leakage report + range half-life). Adds a
+# few minutes on the full 6-year parquet; set $false to skip.
+if ($null -eq $RunDiagnostics) { $RunDiagnostics = $true }
+# Phase 3.5/4.5 multi-horizon ensemble pilot. Regime-aware: mirrors Phase 3's
+# bucketing and direction policy, so it costs one CatBoost per regime x side x
+# horizon (no Optuna). Set $false to skip.
+if ($null -eq $MultiHorizonPilot) { $MultiHorizonPilot = $true }
+if (-not $MhHorizons) { $MhHorizons = "30,60,90" }
 # ==========================================================================
 
 Write-Host "=== BTCUSDT User-Regime Pipeline ===" -ForegroundColor Cyan
@@ -121,6 +186,7 @@ python -m btcusdt_quant collect-archive `
     --start $DownloadStart --end $BacktestEnd `
     --output $ArchiveDir `
     --allow-public-network
+Assert-PhaseSucceeded "Phase 1 (collect-archive)"
 
 # ============================================================================
 # PHASE 1.5: Download the futures metrics archive (open interest, long/short
@@ -141,6 +207,7 @@ python -m btcusdt_quant collect-metrics `
     --start $DownloadStart --end $BacktestEnd `
     --output $MetricsDir `
     --allow-public-network
+Assert-PhaseSucceeded "Phase 1.5 (collect-metrics)"
 
 # ============================================================================
 # PHASE 2: Combine daily CSVs into a single Parquet
@@ -174,8 +241,44 @@ print('writing Parquet...')
 dataset.write_candles_parquet(out_path, candles)
 print(f'  -> wrote {len(candles):,} rows to {out_path}')
 "@
+    Assert-PhaseSucceeded "Phase 2 (parquet build)"
 } else {
     Write-Host "  (using cached $FullParquet)"
+}
+
+# ============================================================================
+# PHASE 2.3: Data diagnostics (informational; failures do not stop the run)
+#   - ic_diagnostic.py: Spearman IC per feature/horizon with chronological
+#     fold mean/std (IC drift) and look-ahead-leakage heuristics (a feature
+#     that predicts the future better than it remembers the past, or whose
+#     IC collapses when used one bar late, is flagged for triage).
+#   - verify_range_halflife.py: measures the OU half-life of mean reversion
+#     inside range regimes and compares it against the fixed 20-bar window
+#     used by range_position_20 / the mean-reversion gate.
+# ============================================================================
+
+if ($RunDiagnostics) {
+    Write-Host ""
+    Write-Host "[Phase 2.3] Data diagnostics (feature IC / leakage / range half-life) ..." -ForegroundColor Yellow
+
+    $IcReportDir = Join-Path $ArtifactsDir "ic_report"
+    $IcArgs = @("--input", $FullParquet, "--metrics-dir", $MetricsDir, "--output", $IcReportDir)
+    if (Test-Path $RegimeFile) { $IcArgs += @("--regime-file", $RegimeFile) }
+    python ic_diagnostic.py @IcArgs
+    Warn-IfPhaseFailed "Phase 2.3 (ic_diagnostic)"
+    Write-Host "  IC/leakage report: $IcReportDir\ic_report.csv (leak flags are heuristics -- confirm with a truncation-invariance test before deleting a feature)" -ForegroundColor Gray
+
+    if (Test-Path $RegimeFile) {
+        python verify_range_halflife.py --input $FullParquet --regime-file $RegimeFile --series log_zscore
+        Warn-IfPhaseFailed "Phase 2.3 (verify_range_halflife)"
+    } else {
+        Write-Host "  ($RegimeFile not found: half-life runs without per-regime breakdown)" -ForegroundColor DarkYellow
+        python verify_range_halflife.py --input $FullParquet --series log_zscore
+        Warn-IfPhaseFailed "Phase 2.3 (verify_range_halflife)"
+    }
+} else {
+    Write-Host ""
+    Write-Host "[Phase 2.3] Skipped (RunDiagnostics=$RunDiagnostics)." -ForegroundColor DarkYellow
 }
 
 # ============================================================================
@@ -199,6 +302,7 @@ if ($RegimeMode -eq "classifier") {
         --input $FullParquet `
         --regime-file $RegimeFile `
         --output $RegimeClassifierDir
+    Assert-PhaseSucceeded "Phase 2.5 (train-regime-classifier)"
 } else {
     Write-Host "[Phase 2.5] Skipped (RegimeMode=${RegimeMode}: multi-feature rule detector needs no learned classifier)." -ForegroundColor DarkYellow
 }
@@ -267,10 +371,75 @@ python -m btcusdt_quant train `
     --optuna `
     --optuna-trials 100 `
     --output $ModelDir
+Assert-PhaseSucceeded "Phase 3 (train)"
 
 Write-Host ""
 Write-Host "  Training complete." -ForegroundColor Green
 Write-Host "  Model: $ModelDir" -ForegroundColor Green
+
+# ============================================================================
+# PHASE 3.5: Multi-horizon ensemble pilot (challenger to the regime model)
+#
+# One entry model per label horizon on the SAME features, probabilities blended
+# by validation-accuracy weights (chronological tail split with a max(horizons)
+# purge gap). Trained regime-aware, so it shares Phase 3's rule bucketing,
+# direction policy, per-side triple-barrier targets, threshold objective,
+# threshold horizon, and (via the final refit) the full per-regime training set.
+#
+# This is a CHALLENGER comparison, not a clean horizon-blend A/B: Phase 3 tunes
+# each model with Optuna (100 trials) while the horizon models here use default
+# parameters. A Phase 4.5 win or loss therefore reflects the horizon blend AND
+# the tuning difference. Read the two together.
+#
+# A short model must learn short_success -- 1-P(long_success) is not a short
+# probability (a long that times out is not a short win), and a model that
+# cannot price shorts would be silently long-only under Kelly.
+# ============================================================================
+
+Write-Host ""
+$MhModelDir = Join-Path $ArtifactsDir "multi_horizon_model"
+
+if ($MultiHorizonPilot) {
+    Write-Host "[Phase 3.5] Training multi-horizon ensemble pilot (horizons: $MhHorizons) ..." -ForegroundColor Yellow
+    Write-Host "  Regime-aware: one horizon-blended ensemble per regime AND side (up->long," -ForegroundColor Gray
+    Write-Host "  down->short, range->both), each on its own long_success/short_success target," -ForegroundColor Gray
+    Write-Host "  with a per-regime/side holdout threshold. Same artifact layout and direction" -ForegroundColor Gray
+    Write-Host "  policy as Phase 3. Phase 4.5 is a regime-aligned multi-horizon challenger:" -ForegroundColor Gray
+    Write-Host "  it shares execution and routing with Phase 4, but still differs in horizon" -ForegroundColor Gray
+    Write-Host "  blending, base-model tuning (Optuna vs defaults) and probability calibration." -ForegroundColor Gray
+    # --threshold-horizon $Horizon: pick each regime/side cutoff against the
+    # SAME time barrier Phase 4.5 executes on. Without it the thresholds would
+    # be scored on max(horizons)=90-bar labels while the backtest times out at
+    # $Horizon, adding a second axis of difference vs Phase 4.
+    $MhTrainFlags = @("--regime-aware", "--threshold-horizon", $Horizon, "--threshold-objective", $ThresholdObjective, "--round-trip-cost", $RoundTripCost)
+    if ($RuleRegimeConfig -ne "" -and (Test-Path $RuleRegimeConfig)) {
+        $MhTrainFlags += @("--rule-regime-config", $RuleRegimeConfig)
+    }
+    python -m btcusdt_quant train-multi-horizon `
+        --input $FullParquet `
+        --training-start $DownloadStart `
+        --training-end $TrainingEnd `
+        --horizons $MhHorizons `
+        --tp-pct $LabelTpPct `
+        --sl-pct $LabelSlPct `
+        --weighting validation `
+        --metrics-dir $MetricsDir `
+        @MhTrainFlags `
+        --output $MhModelDir
+    # NON-FATAL: the multi-horizon pilot is a challenger, not the deliverable.
+    # Its regime-aware training fails closed (exit 1) on a one-sided data quirk
+    # -- correct for the pilot, but it must not abort the primary Phase 4
+    # regime-model backtest that follows. On failure, skip Phase 4.5 rather
+    # than shipping/comparing a partial pilot artifact.
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  WARNING: Phase 3.5 (multi-horizon pilot) failed (exit $LASTEXITCODE); skipping Phase 4.5. Phase 4 continues." -ForegroundColor Yellow
+        $MultiHorizonPilot = $false
+    } else {
+        Write-Host "  Multi-horizon model: $MhModelDir" -ForegroundColor Green
+    }
+} else {
+    Write-Host "[Phase 3.5] Skipped (MultiHorizonPilot=$MultiHorizonPilot)." -ForegroundColor DarkYellow
+}
 
 # ============================================================================
 # PHASE 4: Backtest on 2025 (out-of-sample)
@@ -299,10 +468,20 @@ if ($RegimeMode -eq "classifier") {
     $RegimeBtFlags = @()
     Write-Host "[Phase 4] Backtest with multi-feature rule routing (auto-loaded from artifact) ..." -ForegroundColor Yellow
 }
+# Fractional-Kelly sizing flags shared by Phase 4 and Phase 4.5. The main
+# backtest is Kelly-sized while the strategy_comparison block inside the
+# summary stays fixed-size (marked "sizing": "fixed_position_size") -- do
+# not compare the two directly.
+$KellyFlags = @()
+if ($KellySizing) {
+    $KellyFlags = @("--kelly-sizing", "--kelly-multiplier", $KellyMultiplier, "--kelly-lookback-bars", $KellyLookbackBars)
+    Write-Host "  Kelly sizing ON: Half-Kelly=$KellyMultiplier, variance lookback=$KellyLookbackBars bars, holding=--horizon ($Horizon bars), cap=position_size" -ForegroundColor Gray
+}
 python -m btcusdt_quant backtest `
     --input $FullParquet `
     --model-artifact $ModelDir `
     @RegimeBtFlags `
+    @KellyFlags `
     --exec-tp-pct $LabelTpPct `
     --exec-sl-pct $LabelSlPct `
     --metrics-dir $MetricsDir `
@@ -313,6 +492,35 @@ python -m btcusdt_quant backtest `
     --backtest-start $BacktestStart `
     --backtest-end $BacktestEnd `
     --output $BacktestDir
+Assert-PhaseSucceeded "Phase 4 (backtest)"
+
+# ============================================================================
+# PHASE 4.5: Backtest the multi-horizon pilot on the same window/costs
+# ============================================================================
+
+$MhBacktestDir = Join-Path $ArtifactsDir "backtest_results_multi_horizon"
+
+if ($MultiHorizonPilot) {
+    Write-Host ""
+    Write-Host "[Phase 4.5] Backtest multi-horizon pilot (same window, costs and kelly settings) ..." -ForegroundColor Yellow
+    # Directory artifact (not model.json): regime_run_summary.json rides the
+    # fitted rule detector, so routing and the direction policy match Phase 4.
+    python -m btcusdt_quant backtest `
+        --input $FullParquet `
+        --model-artifact $MhModelDir `
+        @KellyFlags `
+        --exec-tp-pct $LabelTpPct `
+        --exec-sl-pct $LabelSlPct `
+        --metrics-dir $MetricsDir `
+        --fee-rate-per-side $FeePerSide `
+        --slippage-rate-per-side $SlippagePerSide `
+        --horizon $Horizon `
+        --threshold-floor $ThresholdFloor `
+        --backtest-start $BacktestStart `
+        --backtest-end $BacktestEnd `
+        --output $MhBacktestDir
+    Assert-PhaseSucceeded "Phase 4.5 (multi-horizon backtest)"
+}
 
 Write-Host ""
 Write-Host "=== Pipeline Complete ===" -ForegroundColor Cyan
@@ -321,18 +529,55 @@ Write-Host "Outputs:" -ForegroundColor Green
 Write-Host "  Combined data : $FullParquet" -ForegroundColor Green
 Write-Host "  Model         : $ModelDir" -ForegroundColor Green
 Write-Host "  Backtest      : $BacktestDir" -ForegroundColor Green
+if ($MultiHorizonPilot) {
+    Write-Host "  MH model      : $MhModelDir" -ForegroundColor Green
+    Write-Host "  MH backtest   : $MhBacktestDir" -ForegroundColor Green
+}
 Write-Host ""
 
-$summaryPath = Join-Path $BacktestDir "backtest_summary.json"
-if (Test-Path $summaryPath) {
-    $b = (Get-Content $summaryPath -Raw | ConvertFrom-Json).backtest
-    Write-Host ("  gross={0:P3}  net={1:P3}  trades={2}  win={3:P1}" -f `
-        $b.gross_total_return, $b.net_total_return, $b.trade_count, $b.win_rate) -ForegroundColor Green
+function Show-BacktestSummary {
+    param([string]$Label, [string]$SummaryPath)
+    if (-not (Test-Path $SummaryPath)) {
+        Write-Host "  ${Label}: (backtest summary not found)" -ForegroundColor Yellow
+        return
+    }
+    $b = (Get-Content $SummaryPath -Raw | ConvertFrom-Json).backtest
+    Write-Host ("  {0}: gross={1:P3}  net={2:P3}  trades={3}  win={4:P1}" -f `
+        $Label, $b.gross_total_return, $b.net_total_return, $b.trade_count, $b.win_rate) -ForegroundColor Green
+    # Gross vs net Sharpe side by side: the gap is the cost drag. A strategy
+    # whose Sharpe is only positive gross must not ship (Chan ch.3).
+    Write-Host ("    sharpe: net={0:N3}  gross={1:N3}  cost_impact={2:N3}" -f `
+        $b.net_sharpe, $b.gross_sharpe, $b.cost_impact_sharpe) -ForegroundColor Green
+    if ($b.kelly_sizing -and $b.kelly_sizing.enabled) {
+        $k = $b.kelly_sizing
+        Write-Host ("    kelly: avg_frac={0:N4}  min={1:N4}  max={2:N4}  (cap={3})  skipped_no_edge={4}" -f `
+            $k.avg_fraction, $k.min_fraction, $k.max_fraction, $k.cap, $k.entries_skipped_no_edge) -ForegroundColor Gray
+        if ($k.shorts_skipped_no_short_model -gt 0) {
+            Write-Host ("    kelly: {0} SELL signals refused (no short-success model) -- this run was LONG-ONLY" -f `
+                $k.shorts_skipped_no_short_model) -ForegroundColor Yellow
+        }
+    }
     if ($b.regime_coverage) {
         $cov = $b.regime_coverage
-        Write-Host ("  regime coverage: matched={0} default_fallback={1} no_model={2}" -f `
+        Write-Host ("    regime coverage: matched={0} default_fallback={1} no_model={2}" -f `
             $cov.matched, $cov.default_fallback, $cov.no_model) -ForegroundColor Gray
     }
-} else {
-    Write-Host "  (backtest summary not found)" -ForegroundColor Yellow
+}
+
+Show-BacktestSummary -Label "regime model " -SummaryPath (Join-Path $BacktestDir "backtest_summary.json")
+if ($MultiHorizonPilot) {
+    Show-BacktestSummary -Label "multi-horizon" -SummaryPath (Join-Path $MhBacktestDir "backtest_summary.json")
+    # Regime x side x month breakdown -- the axes that actually explain a
+    # difference between the two models. Informational; never gates the run.
+    $BtA = Join-Path $BacktestDir "backtest_summary.json"
+    $BtB = Join-Path $MhBacktestDir "backtest_summary.json"
+    if ((Test-Path $BtA) -and (Test-Path $BtB)) {
+        Write-Host ""
+        python compare_backtests.py $BtA $BtB
+        Warn-IfPhaseFailed "compare_backtests"
+    }
+    Write-Host "  (multi-horizon pilot shares Phase 4's regimes and direction policy -- judge it on net sharpe/MDD, not raw return)" -ForegroundColor Gray
+}
+if ($RunDiagnostics) {
+    Write-Host "  IC/leakage report: $(Join-Path $ArtifactsDir 'ic_report')\ic_report.csv" -ForegroundColor Gray
 }

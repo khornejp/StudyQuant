@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import tempfile
 import unittest
@@ -171,7 +170,7 @@ class FeatureRegistryV718Tests(unittest.TestCase):
         rows = dataset.build_feature_rows(candles)
         self.assertGreater(len(rows), 0)
         for row in rows:
-            self.assertEqual(set(row.features), set(dataset.FEATURE_NAMES), f"row features must match all active feature names")
+            self.assertEqual(set(row.features), set(dataset.FEATURE_NAMES), "row features must match all active feature names")
 
     def test_feature_clipper_recognizes_all_v718_types(self) -> None:
         clipper = features.FeatureClipper()
@@ -1140,7 +1139,7 @@ class TestMonitoring(unittest.TestCase):
     def test_live_soak_mode_writes_periodic_reports(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "live"
-            result = live.run_live(
+            live.run_live(
                 output,
                 dry_run=True,
                 max_candles=1000,
@@ -1201,7 +1200,7 @@ class CLIV718Tests(unittest.TestCase):
         self.assertTrue(args.allow_signed_network, "testnet must require --allow-signed-network")
 
     def test_cli_rejects_prod_without_approval(self) -> None:
-        from btcusdt_quant.cli import build_parser, main
+        from btcusdt_quant.cli import main
         with tempfile.TemporaryDirectory() as tmp:
             code = main(["live", "--exchange", "binance-prod", "--output", tmp])
             self.assertNotEqual(code, 0, "prod must require approval artifacts")
@@ -1749,7 +1748,6 @@ class EndToEndPipelineV718Tests(unittest.TestCase):
 
 class E2ECLIV718Tests(unittest.TestCase):
     def test_cli_collect_train_live_pipeline(self) -> None:
-        from btcusdt_quant import data
         import os
         import subprocess
         import sys
@@ -2018,7 +2016,6 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
 
     def test_public_downloader_418_not_retried(self) -> None:
         """418 hard-ban must not be retried."""
-        import json
         from btcusdt_quant import dataset
         call_count = 0
         def flaky_urlopen(req, *args, **kwargs):
@@ -2037,7 +2034,7 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
 
     def test_optuna_model_factory_uses_params(self) -> None:
         """Optuna model factory must merge params into model_params."""
-        from btcusdt_quant import training, models
+        from btcusdt_quant import training
         with tempfile.TemporaryDirectory() as tmpdir:
             data_path = Path(tmpdir) / "btcusdt_1m.csv"
             dataset.collect_candles(data_path, rows=500)
@@ -2247,7 +2244,7 @@ class TestDataExpansion(unittest.TestCase):
                 )
             dataset.BinanceArchiveDownloader.download_range = _patched_download_range
             try:
-                summary = run_collect_archive("2024-01-01", "2024-01-01", archive_dir, allow_public_network=True, min_rows=5)
+                run_collect_archive("2024-01-01", "2024-01-01", archive_dir, allow_public_network=True, min_rows=5)
                 report_path = archive_dir / "data_expansion_report.json"
                 self.assertTrue(report_path.exists(), "data_expansion_report.json should be written")
                 report = json.loads(report_path.read_text(encoding="utf-8"))

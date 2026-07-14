@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from btcusdt_quant import backtest, data, dataset, live, training
+from btcusdt_quant import backtest, dataset, live, training
 
 # Config
 INPUT_PATH = Path("artifacts/real_btcusdt_1m.csv")
