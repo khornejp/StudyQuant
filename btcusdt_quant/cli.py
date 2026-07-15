@@ -1026,6 +1026,138 @@ def merge_metrics_external_sources(
     return merged
 
 
+def run_edge_validate(
+    input_path: str | None,
+    output: Path,
+    model_artifact: str,
+    unified_artifact: str | None = None,
+    user_regime_file: str | None = None,
+    auto_regime: bool = False,
+    regime_classifier_dir: str | None = None,
+    horizon: int = 60,
+    exec_tp_pct: float | None = None,
+    exec_sl_pct: float | None = None,
+    long_threshold: float | None = None,
+    short_threshold: float | None = None,
+    fee_rate_per_side: float | None = None,
+    slippage_rate_per_side: float | None = None,
+    cost_multipliers: tuple[float, ...] = (1.0, 1.5, 2.0),
+    allow_barrier_mismatch: bool = False,
+) -> dict[str, object]:
+    """Run the OOS edge-validation harnesses over a trained backtest artifact.
+
+    cost_stress always runs (on the loaded model or regime bundle). The 4-way
+    routing_comparison additionally runs when the artifact is a regime bundle,
+    --unified-artifact supplies the no-regime model, and exactly one predicted
+    routing source is available (the artifact's own multi-feature rule detector,
+    --regime-classifier-dir, or --auto-regime). --user-regime-file adds the
+    hindsight oracle arm. Reuses the same loaders the backtest command uses, so
+    routing matches how the entry models were trained (edge_validation.py).
+    """
+    from btcusdt_quant import edge_validation
+
+    output.mkdir(parents=True, exist_ok=True)
+    if input_path:
+        path = Path(input_path)
+        candles = dataset.load_parquet_candles(path) if path.suffix.lower() == ".parquet" else dataset.load_csv_candles(path)
+    else:
+        candles = data.local_fixture()
+
+    model = None
+    regime_bundle = None
+    models_by_regime: dict[str, object] | None = None
+    multi_feature_regime_detector = None
+    regime_detector = None
+    regime_classifier_model = None
+
+    artifact = Path(model_artifact)
+    if artifact.is_file():
+        model = live.load_model_artifact(artifact)
+    elif artifact.is_dir() and (artifact / "regime_run_summary.json").is_file():
+        regime_bundle = live.load_regime_aware_models(artifact)
+        if regime_bundle is not None:
+            models_by_regime = {regime: regime_bundle for regime in regime_bundle.models}
+            summary = json.loads((artifact / "regime_run_summary.json").read_text(encoding="utf-8"))
+            rule_payload = summary.get("multi_feature_regime_detector")
+            if rule_payload:
+                from btcusdt_quant import regime_rules as _rr
+                multi_feature_regime_detector = _rr.MultiFeatureRegimeDetector.from_dict(rule_payload)
+    elif artifact.is_dir() and (artifact / "model.json").is_file():
+        model = live.load_model_artifact(artifact / "model.json")
+
+    # Predicted routing source (skip if the artifact already carries the rule
+    # detector, which the training bucketing used and therefore takes priority).
+    if multi_feature_regime_detector is None:
+        if regime_classifier_dir:
+            from btcusdt_quant import mtf_features as _mtf, regime_classifier as _rc
+            classifier_path = Path(regime_classifier_dir) / "regime_classifier_model.cbm"
+            if classifier_path.is_file():
+                regime_classifier_model = _rc.RegimeClassifierModel.load(str(classifier_path), _mtf.MTF_FEATURE_NAMES)
+        elif auto_regime:
+            from btcusdt_quant.features import RegimeDetector, RegimeDetectorConfig
+            regime_detector = RegimeDetector(RegimeDetectorConfig())
+
+    user_regime_periods = dataset.load_user_regime_periods(Path(user_regime_file)) if user_regime_file else None
+
+    fee = fee_rate_per_side if fee_rate_per_side is not None else backtest.DEFAULT_FEE_RATE_PER_SIDE
+    slippage = slippage_rate_per_side if slippage_rate_per_side is not None else backtest.DEFAULT_SLIPPAGE_RATE_PER_SIDE
+    bt_common: dict[str, object] = {
+        "label_horizon": horizon,
+        "exec_tp_pct": exec_tp_pct,
+        "exec_sl_pct": exec_sl_pct,
+        "long_threshold": long_threshold,
+        "short_threshold": short_threshold,
+        "default_regime": regime_bundle.default_regime if regime_bundle is not None else None,
+        "allow_barrier_mismatch": allow_barrier_mismatch,
+    }
+
+    report: dict[str, object] = {"artifact": str(artifact), "backtest_horizon": horizon}
+    # cost_stress routes with the PREDICTED source (not the oracle periods).
+    report["cost_stress"] = edge_validation.cost_stress(
+        candles,
+        model=model,
+        models_by_regime=models_by_regime,
+        base_fee_rate_per_side=fee,
+        base_slippage_rate_per_side=slippage,
+        multipliers=cost_multipliers,
+        regime_detector=regime_detector,
+        regime_classifier_model=regime_classifier_model,
+        multi_feature_regime_detector=multi_feature_regime_detector,
+        **bt_common,
+    )
+
+    predicted_sources = [s for s in (regime_detector, regime_classifier_model, multi_feature_regime_detector) if s is not None]
+    if regime_bundle is not None and unified_artifact and len(predicted_sources) == 1:
+        unified_model = live.load_model_artifact(Path(unified_artifact))
+        report["routing_comparison"] = edge_validation.routing_comparison(
+            candles,
+            models_by_regime=models_by_regime,
+            unified_model=unified_model,
+            user_regime_periods=user_regime_periods,
+            regime_detector=regime_detector,
+            regime_classifier_model=regime_classifier_model,
+            multi_feature_regime_detector=multi_feature_regime_detector,
+            **bt_common,
+        )
+    else:
+        report["routing_comparison_skipped"] = (
+            "needs a regime-bundle artifact, --unified-artifact, and exactly one predicted "
+            f"routing source (have bundle={regime_bundle is not None}, unified={bool(unified_artifact)}, "
+            f"predicted_sources={len(predicted_sources)})"
+        )
+
+    safe_report = backtest.json_safe(report)
+    (output / "edge_validation_report.json").write_text(json.dumps(safe_report, indent=2), encoding="utf-8")
+    print(f"[EDGE-VALIDATE] wrote {output / 'edge_validation_report.json'}")
+    cs = safe_report.get("cost_stress", {})
+    if isinstance(cs, dict):
+        print(f"[EDGE-VALIDATE] cost survival: 1.5x={cs.get('survives_1_5x')}, 2x={cs.get('survives_2x')}")
+    rc = safe_report.get("routing_comparison")
+    if isinstance(rc, dict):
+        print(f"[EDGE-VALIDATE] routing: {rc.get('interpretation')}")
+    return safe_report
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Safe local BTCUSDT v7.18 scaffold")
     subparsers = parser.add_subparsers(dest="command")
@@ -1190,6 +1322,26 @@ def build_parser() -> argparse.ArgumentParser:
     mh_parser.add_argument("--skip-final-refit", action="store_true", help="ship the prefix-fitted diagnostic ensemble instead of refitting on the full regime data (regime-aware mode). Halves training time but leaves the deployed model trained on ~64%% of the rows the Phase 3 model sees, so a Phase 4 vs 4.5 comparison would confound the horizon blend with a data handicap. Use only for quick pilots.")
     mh_parser.add_argument("--threshold-horizon", type=int, default=None, help="label horizon (bars) used to score the threshold-selection holdout. Set it to the backtest's --horizon so the threshold is chosen against the SAME time barrier execution enforces; otherwise the blended model is judged on one horizon and traded on another. Default: max(--horizons), which reproduces the pre-flag behaviour. The training window is trimmed by max(this, max(--horizons)) so a longer threshold horizon can never label from candles past --training-end.")
     mh_parser.add_argument("--round-trip-cost", type=float, default=0.0008, help="2*(fee+slippage) used by the trading_pnl threshold objective (default 0.0008); keep equal to the backtest's cost basis")
+    ev_parser = subparsers.add_parser(
+        "edge-validate",
+        help="run OOS edge-validation harnesses (cost stress + 4-way regime routing) over a trained backtest artifact",
+    )
+    ev_parser.add_argument("--input", default=None, help="candle CSV or Parquet; defaults to the local fixture")
+    ev_parser.add_argument("--output", default="artifacts/edge_validation", help="output directory for edge_validation_report.json")
+    ev_parser.add_argument("--model-artifact", required=True, help="trained model.json path OR a regime-aware directory (containing regime_run_summary.json)")
+    ev_parser.add_argument("--unified-artifact", default=None, help="a no-regime single model.json for the routing_comparison 'unified' arm (only used when --model-artifact is a regime bundle)")
+    ev_parser.add_argument("--user-regime-file", default=None, help="hindsight regime periods JSON (e.g. regimes.json) for the oracle routing arm; diagnostic upper bound only, not forward performance")
+    ev_parser.add_argument("--auto-regime", action="store_true", help="use the trend_slope_30 directional detector as the predicted routing source (ignored if the artifact carries a multi-feature rule detector, which takes priority)")
+    ev_parser.add_argument("--regime-classifier-dir", default=None, help="train-regime-classifier output dir; its saved .cbm is the predicted routing source. Pass the SAME dir used for training so routing matches the trained bucketing")
+    ev_parser.add_argument("--horizon", type=int, default=60, help="max holding bars; MUST match training --horizon (default 60)")
+    ev_parser.add_argument("--exec-tp-pct", type=float, default=None, help="fixed take-profit fraction to execute (set equal to training --tp-pct so the executed barrier matches the labels)")
+    ev_parser.add_argument("--exec-sl-pct", type=float, default=None, help="fixed stop-loss fraction to execute (set equal to training --sl-pct)")
+    ev_parser.add_argument("--long-threshold", type=float, default=None, help="override LONG-entry probability threshold (default: learned per-regime threshold)")
+    ev_parser.add_argument("--short-threshold", type=float, default=None, help="override SHORT-entry probability threshold")
+    ev_parser.add_argument("--fee-rate-per-side", type=float, default=None, help="base per-side fee fraction (default 0.0002); stress runs multiply it")
+    ev_parser.add_argument("--slippage-rate-per-side", type=float, default=None, help="base per-side slippage fraction (default 0.0002); stress runs multiply it")
+    ev_parser.add_argument("--cost-multipliers", default="1.0,1.5,2.0", help="comma-separated cost multipliers for the stress sweep (default 1.0,1.5,2.0)")
+    ev_parser.add_argument("--allow-barrier-mismatch", action="store_true", help="permit --exec-tp/sl-pct to differ from the barrier the models were labeled on (sensitivity probe only, not performance)")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -1489,6 +1641,31 @@ def main(argv: list[str] | None = None) -> int:
             if model_inference.get("error"):
                 print(f"model_error={model_inference.get('error')}")
         print(f"artifacts={output}")
+        return 0
+    if args.command == "edge-validate":
+        try:
+            multipliers = tuple(float(x) for x in str(args.cost_multipliers).split(",") if x.strip())
+        except ValueError:
+            print(f"invalid --cost-multipliers: {args.cost_multipliers!r}", file=sys.stderr)
+            return 1
+        run_edge_validate(
+            input_path=args.input,
+            output=Path(args.output),
+            model_artifact=args.model_artifact,
+            unified_artifact=args.unified_artifact,
+            user_regime_file=args.user_regime_file,
+            auto_regime=args.auto_regime,
+            regime_classifier_dir=args.regime_classifier_dir,
+            horizon=args.horizon,
+            exec_tp_pct=args.exec_tp_pct,
+            exec_sl_pct=args.exec_sl_pct,
+            long_threshold=args.long_threshold,
+            short_threshold=args.short_threshold,
+            fee_rate_per_side=args.fee_rate_per_side,
+            slippage_rate_per_side=args.slippage_rate_per_side,
+            cost_multipliers=multipliers,
+            allow_barrier_mismatch=args.allow_barrier_mismatch,
+        )
         return 0
     if args.command == "backtest":
         output = Path(args.output)

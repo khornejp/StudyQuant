@@ -7,11 +7,15 @@ not that any particular model has an edge.
 """
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from datetime import timedelta
+from pathlib import Path
 from typing import Mapping, Sequence
 
-from btcusdt_quant import data, edge_validation, live
+from btcusdt_quant import cli, data, dataset, edge_validation, features, live
+from btcusdt_quant.models import CentroidLinearClassifier
 
 
 def _rising_candles(rows: int) -> list[data.Candle]:
@@ -264,6 +268,45 @@ class RoutingComparisonTests(unittest.TestCase):
                 candles, models_by_regime={"range": _LongBundle("range")}, unified_model=None,
                 regime_detector=_RangeDetector(),
             )
+
+
+class CliEdgeValidateSmokeTests(unittest.TestCase):
+    def test_edge_validate_writes_report(self) -> None:
+        # Regime-bundle artifact + unified model + --auto-regime predicted source
+        # -> both cost_stress and routing_comparison run; exit 0; report written.
+        candles = _rising_candles(150)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            csv_path = root / "candles.csv"
+            dataset.write_candles_csv(csv_path, candles)
+
+            artifact = root / "bundle"
+            (artifact / "regime_range").mkdir(parents=True)
+            model = CentroidLinearClassifier(feature_names=["return_1"]).fit([[0.0], [0.1]], [1, 0])
+            (artifact / "regime_range" / "model.json").write_text(json.dumps(model.as_dict()), encoding="utf-8")
+            (artifact / "regime_run_summary.json").write_text(json.dumps({
+                "regime_results": {"range": {"mean_test_f1": 0.1}},
+                "default_regime": "range",
+                "tp_pct": 0.005, "sl_pct": 0.005, "threshold_horizon": 5,
+                "regime_detector": {"thresholds": {"dir_threshold": 0.0}, "diagnostics": {}, "config": features.RegimeDetector().config_dict()},
+            }), encoding="utf-8")
+
+            unified = root / "unified.json"
+            unified.write_text(json.dumps(CentroidLinearClassifier(feature_names=["return_1"]).fit([[0.0], [0.1]], [1, 0]).as_dict()), encoding="utf-8")
+
+            out = root / "out"
+            code = cli.main([
+                "edge-validate", "--input", str(csv_path), "--output", str(out),
+                "--model-artifact", str(artifact), "--unified-artifact", str(unified),
+                "--auto-regime", "--horizon", "5", "--exec-tp-pct", "0.005", "--exec-sl-pct", "0.005",
+                "--cost-multipliers", "1.0,2.0",
+            ])
+            self.assertEqual(code, 0)
+            report = json.loads((out / "edge_validation_report.json").read_text(encoding="utf-8"))
+        self.assertIn("cost_stress", report)
+        self.assertEqual(set(report["cost_stress"]["levels"]), {"1x", "2x"})
+        self.assertIn("routing_comparison", report)
+        self.assertEqual(set(report["routing_comparison"]["arms"]), {"unified", "predicted"})
 
 
 if __name__ == "__main__":

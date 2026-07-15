@@ -377,37 +377,43 @@ class TestRegimeTraining(unittest.TestCase):
         self.assertEqual(trained.get("up", {}).get("row_count"), 120)
 
     def test_live_fallback_to_default(self) -> None:
+        # Live routes with detect_directional (up/down/range), not the legacy
+        # detect(); when the detected regime has no trained model, it falls back
+        # to default_regime. Detected 'up' has no model here, default 'range'
+        # does -> regime='up', fallback_regime='range', still a real prediction.
+        from btcusdt_quant.models import CentroidLinearClassifier
+
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact_dir = Path(tmpdir) / "regime_artifacts"
-            model_dir = artifact_dir / "regime_ranging"
+            model_dir = artifact_dir / "regime_range"
             model_dir.mkdir(parents=True)
             summary = {
-                "regime_results": {"ranging": {"mean_test_f1": 0.2}},
-                "trained_regimes": {"ranging": {"status": "trained", "row_count": 150}},
-                "skipped_regimes": {"trending": {"status": "skipped", "reason": "insufficient_rows", "row_count": 30}},
-                "default_regime": "ranging",
+                "regime_results": {"range": {"mean_test_f1": 0.2}},
+                "trained_regimes": {"range": {"status": "trained", "row_count": 150}},
+                "skipped_regimes": {"up": {"status": "skipped", "reason": "insufficient_rows", "row_count": 30}},
+                "default_regime": "range",
                 "regime_detector": {
-                    "thresholds": {"rv_threshold": 1.0, "trend_threshold": 1.0, "trend_min": 0.0},
+                    "thresholds": {"dir_threshold": 0.0},
                     "diagnostics": {},
                     "config": features.RegimeDetector().config_dict(),
+                    "directional": True,
                 },
             }
             (artifact_dir / "regime_run_summary.json").write_text(json.dumps(summary), encoding="utf-8")
-            model = models.CatBoostAdapter(feature_names=["return_1"])
-            model.fit([[0.0], [0.1]], [1, 0])
+            # Stdlib model (no GPU): deterministic, loads via load_model_artifact.
+            model = CentroidLinearClassifier(feature_names=["return_1"]).fit([[0.0], [0.1]], [1, 0])
             (model_dir / "model.json").write_text(json.dumps(model.as_dict()), encoding="utf-8")
-            original_detect = features.RegimeDetector.detect
+            original_detect_directional = features.RegimeDetector.detect_directional
 
-            def patched_detect(
+            def patched_detect_directional(
                 detector: features.RegimeDetector,
-                rv_15: float,
                 trend_slope_30: float,
-                historical_rv_15_values: object = None,
                 thresholds: dict[str, float] | None = None,
+                historical_trend_slope_30_values: object = None,
             ) -> str:
-                return "trending"
+                return "up"
 
-            features.RegimeDetector.detect = patched_detect
+            features.RegimeDetector.detect_directional = patched_detect_directional
             try:
                 result = live.run_live(
                     Path(tmpdir) / "live",
@@ -418,11 +424,11 @@ class TestRegimeTraining(unittest.TestCase):
                     regime_aware=True,
                 )
             finally:
-                features.RegimeDetector.detect = original_detect
+                features.RegimeDetector.detect_directional = original_detect_directional
 
         inference = result.summary.get("model_inference", {})
-        self.assertEqual(inference.get("regime"), "trending")
-        self.assertEqual(inference.get("fallback_regime"), "ranging")
+        self.assertEqual(inference.get("regime"), "up")
+        self.assertEqual(inference.get("fallback_regime"), "range")
         self.assertTrue(inference.get("model_loaded"))
         self.assertIsNotNone(inference.get("probability"))
 
