@@ -385,6 +385,12 @@ def _run_train_multi_horizon_regime_aware(
         # to its own --horizon and warns on a mismatch, so a blended model is
         # never silently judged on one barrier and traded on another.
         "threshold_horizon": threshold_horizon,
+        # The TP/SL legs of that same triple barrier. Without them
+        # load_regime_aware_models reads label_tp_pct=None and the parity check
+        # can only warn instead of verify -- the single-horizon path records
+        # these for the identical reason (see run_regime_aware_training).
+        "tp_pct": args.tp_pct,
+        "sl_pct": args.sl_pct,
         "label_reach": label_reach,
         "regime_results": regime_results,
         "regime_counts": regime_counts,
