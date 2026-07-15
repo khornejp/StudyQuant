@@ -693,8 +693,19 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
         regime_summaries[regime_name]["sides"] = {side: True for side, _ in sides_for_regime(regime_name)}
 
     default_regime = _default_regime_by_rows(trained_regimes)
-    regime_test_f1_values = [float(summary["mean_test_f1"]) for summary in regime_summaries.values() if "mean_test_f1" in summary]
-    aggregated_mean_test_f1 = sum(regime_test_f1_values) / len(regime_test_f1_values) if regime_test_f1_values else 0.0
+    def _aggregate_regime_metric(key: str) -> float:
+        # Each regime summary carries the REAL per-regime holdout value (see
+        # _train_single_regime); average across trained regimes the same way
+        # mean_test_f1 is aggregated. Prior code hardcoded accuracy/ece/brier to
+        # 0.0 here, so every retrained regime model reported zero validation
+        # accuracy and perfect calibration -- a silent lie in the headline summary.
+        values = [float(summary[key]) for summary in regime_summaries.values() if key in summary]
+        return sum(values) / len(values) if values else 0.0
+
+    aggregated_mean_test_f1 = _aggregate_regime_metric("mean_test_f1")
+    aggregated_mean_test_accuracy = _aggregate_regime_metric("mean_test_accuracy")
+    aggregated_mean_test_ece = _aggregate_regime_metric("mean_test_ece")
+    aggregated_mean_test_brier = _aggregate_regime_metric("mean_test_brier")
     # Optional: evaluate on a genuinely future test period (e.g. 2025 H1),
     # separate from and complementary to the in-training-span regime holdout
     # (_train_single_regime's prefix/tail split): this evaluates rows AFTER
@@ -832,9 +843,9 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
         "labeled_rows": len(build.labeled_rows),
         "fold_count": 0,
         "mean_test_f1": aggregated_mean_test_f1,
-        "mean_test_accuracy": 0.0,
-        "mean_test_ece": 0.0,
-        "mean_test_brier": 0.0,
+        "mean_test_accuracy": aggregated_mean_test_accuracy,
+        "mean_test_ece": aggregated_mean_test_ece,
+        "mean_test_brier": aggregated_mean_test_brier,
         "artifacts": ["regime_run_summary.json"],
     }
     if test_period_metrics is not None:
@@ -1335,10 +1346,14 @@ def _train_single_regime(
         "fold_count": 0,
         "selected_thresholds": selected_thresholds,
         "threshold_objective": training_config.threshold_objective,
+        # ece/brier are REAL per-side holdout values (metrics() computes them via
+        # CalibrationDriftMonitor); averaging them here instead of the old 0.0
+        # literals, which read as perfect calibration / zero error on a model
+        # that was never measured.
         "mean_test_f1": sum(holdout_f1_values) / len(holdout_f1_values) if holdout_f1_values else 0.0,
         "mean_test_accuracy": sum(holdout_acc_values) / len(holdout_acc_values) if holdout_acc_values else 0.0,
-        "mean_test_ece": 0.0,
-        "mean_test_brier": 0.0,
+        "mean_test_ece": sum(m.get("ece", 0.0) for m in regime_holdout_metrics.values()) / len(regime_holdout_metrics) if regime_holdout_metrics else 0.0,
+        "mean_test_brier": sum(m.get("brier", 0.0) for m in regime_holdout_metrics.values()) / len(regime_holdout_metrics) if regime_holdout_metrics else 0.0,
         "regime_holdout_metrics": regime_holdout_metrics,
         "artifacts": artifacts,
     }
