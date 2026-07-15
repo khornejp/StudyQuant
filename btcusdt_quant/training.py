@@ -798,6 +798,20 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
     run_summary = {
         "regime_aware": True,
         "regime_source": regime_source,
+        # The triple barrier every side model here was LABELED on. Each model
+        # answers exactly one question -- "does price reach +tp_pct before
+        # -sl_pct within threshold_horizon bars" -- so backtest/live MUST execute
+        # this same barrier or the probabilities and thresholds mean nothing.
+        # Omitting them made load_regime_aware_models read label_tp_pct=None, so
+        # backtest.check_execution_barrier_parity could only warn ("pre-parity
+        # artifact") instead of verifying, and verify_calibration.py refused to
+        # grade the model at all. Sourced from the config that drove attach_labels
+        # (single-horizon path), so it is the barrier the labels actually used.
+        # threshold_horizon == label_horizon: selected_thresholds are chosen on
+        # each regime's holdout at exactly this barrier (see _select_threshold).
+        "tp_pct": training_config.tp_pct,
+        "sl_pct": training_config.sl_pct,
+        "threshold_horizon": build.label_horizon,
         "regime_results": regime_summaries,
         "regime_counts": regime_counts,
         "trained_regimes": trained_regimes,

@@ -446,8 +446,43 @@ class TestRegimeTraining(unittest.TestCase):
             self.assertIn(key, summary)
             self.assertEqual(summary.get(key), result.run_summary.get(key))
 
-    def _run_regime_training(self, output: Path, regimes: list[str]) -> training.TrainingResult:
+    def test_regime_run_summary_records_the_labeled_barrier(self) -> None:
+        # Every side model answers "does price reach +tp before -sl within
+        # threshold_horizon". Without these fields load_regime_aware_models reads
+        # label_tp_pct=None, and backtest can only WARN that it cannot verify the
+        # executed barrier matches training -- a silent-mismatch hole. Round-trip
+        # through the loader and confirm the parity check now passes on a match.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir)
+            self._run_regime_training(output, self.REGIMES, tp_pct=0.010, sl_pct=0.005, label_horizon=60)
+            summary = json.loads((output / "regime_run_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary.get("tp_pct"), 0.010)
+            self.assertEqual(summary.get("sl_pct"), 0.005)
+            self.assertEqual(summary.get("threshold_horizon"), 60)
+
+            bundle = live.load_regime_aware_models(output, strict=True)
+            self.assertEqual(bundle.label_tp_pct, 0.010)
+            self.assertEqual(bundle.label_sl_pct, 0.005)
+            # Executing the SAME barrier the models were labeled on: no warning.
+            self.assertEqual(
+                backtest.check_execution_barrier_parity(bundle, 0.010, 0.005), []
+            )
+            # A DIFFERENT barrier is now detectable instead of slipping through.
+            with self.assertRaises(ValueError):
+                backtest.check_execution_barrier_parity(bundle, 0.003, 0.0015)
+
+    def _run_regime_training(
+        self,
+        output: Path,
+        regimes: list[str],
+        tp_pct: float | None = None,
+        sl_pct: float | None = None,
+        label_horizon: int | None = None,
+    ) -> training.TrainingResult:
         build = self._build_dataset(len(regimes))
+        if label_horizon is not None:
+            import dataclasses as _dc
+            build = _dc.replace(build, label_horizon=label_horizon)
         # The detector training path now calls detect_all_directional
         # (up/down/range), not the strength-based detect_all, so patch that.
         original_detect_all_directional = features.RegimeDetector.detect_all_directional
@@ -461,11 +496,18 @@ class TestRegimeTraining(unittest.TestCase):
             return list(regimes)
 
         features.RegimeDetector.detect_all_directional = patched_detect_all_directional
+        config_kwargs: dict[str, object] = {"regime_aware": True, "lineage_enabled": False}
+        if tp_pct is not None:
+            config_kwargs["tp_pct"] = tp_pct
+        if sl_pct is not None:
+            config_kwargs["sl_pct"] = sl_pct
+        if label_horizon is not None:
+            config_kwargs["label_horizon"] = label_horizon
         try:
             return training.run_training(
                 input_path=None,
                 output_dir=output,
-                config=training.TrainingConfig(regime_aware=True, lineage_enabled=False),
+                config=training.TrainingConfig(**config_kwargs),
                 prebuilt_dataset=build,
             )
         finally:
