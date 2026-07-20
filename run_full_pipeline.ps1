@@ -520,6 +520,33 @@ python verify_calibration.py `
 Warn-IfPhaseFailed "Phase 4.3 (verify_calibration)"
 
 # ============================================================================
+# PHASE 4.6: Cost-stress the edge -- does net survive 1.5x / 2x costs?
+# ============================================================================
+# House rule 원칙 5: a positive backtest is not an edge until it survives higher
+# costs. Re-runs the SAME model, multi-feature routing (auto-loaded from the
+# artifact) and executed barrier as Phase 4 at 1x/1.5x/2x fee+slippage over the
+# SAME 2025 OOS window, with the SAME --metrics-dir so F16 features match
+# training (no train/serve skew). survives_1_5x / survives_2x in the report are
+# the verdict. The 4-way routing_comparison (unified vs oracle vs predicted)
+# needs a non-regime unified model the pipeline does not train, so it is skipped
+# here -- run `edge-validate` manually with --unified-artifact for that.
+Write-Host ""
+Write-Host "[Phase 4.6] Edge validation: cost stress on the 2025 OOS window..." -ForegroundColor Yellow
+python -m btcusdt_quant edge-validate `
+    --input $FullParquet `
+    --model-artifact $ModelDir `
+    --metrics-dir $MetricsDir `
+    --exec-tp-pct $LabelTpPct `
+    --exec-sl-pct $LabelSlPct `
+    --fee-rate-per-side $FeePerSide `
+    --slippage-rate-per-side $SlippagePerSide `
+    --horizon $Horizon `
+    --backtest-start $BacktestStart `
+    --backtest-end $BacktestEnd `
+    --output (Join-Path $BacktestDir "edge_validation")
+Warn-IfPhaseFailed "Phase 4.6 (edge-validate)"
+
+# ============================================================================
 # PHASE 4.5: Backtest the multi-horizon pilot on the same window/costs
 # ============================================================================
 

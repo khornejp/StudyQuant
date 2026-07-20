@@ -1043,6 +1043,9 @@ def run_edge_validate(
     slippage_rate_per_side: float | None = None,
     cost_multipliers: tuple[float, ...] = (1.0, 1.5, 2.0),
     allow_barrier_mismatch: bool = False,
+    metrics_dir: str | None = None,
+    backtest_start: str | None = None,
+    backtest_end: str | None = None,
 ) -> dict[str, object]:
     """Run the OOS edge-validation harnesses over a trained backtest artifact.
 
@@ -1101,6 +1104,21 @@ def run_edge_validate(
 
     fee = fee_rate_per_side if fee_rate_per_side is not None else backtest.DEFAULT_FEE_RATE_PER_SIDE
     slippage = slippage_rate_per_side if slippage_rate_per_side is not None else backtest.DEFAULT_SLIPPAGE_RATE_PER_SIDE
+    # Metrics parity: the pipeline trains WITH --metrics-dir (F16 features), so
+    # the validation backtests must merge the SAME metrics or every F16 input is
+    # 0.0 here -- a train/serve skew that would make the numbers meaningless.
+    # Build the feature matrix once (with metrics if given) and hand it to the
+    # harnesses; the oracle arm needs its own rows carrying the hindsight regime.
+    external_sources = None
+    plain_feature_rows = None
+    oracle_feature_rows = None
+    if metrics_dir:
+        external_sources = merge_metrics_external_sources(Path(metrics_dir), candles, None)
+        plain_feature_rows = dataset.build_feature_rows(candles, external_sources=external_sources)
+        if user_regime_periods is not None:
+            oracle_feature_rows = dataset.build_feature_rows(
+                candles, user_regime_periods=user_regime_periods, external_sources=external_sources
+            )
     bt_common: dict[str, object] = {
         "label_horizon": horizon,
         "exec_tp_pct": exec_tp_pct,
@@ -1109,7 +1127,12 @@ def run_edge_validate(
         "short_threshold": short_threshold,
         "default_regime": regime_bundle.default_regime if regime_bundle is not None else None,
         "allow_barrier_mismatch": allow_barrier_mismatch,
+        "start_date": backtest_start,
+        "end_date": backtest_end,
     }
+    cost_kwargs = dict(bt_common)
+    if plain_feature_rows is not None:
+        cost_kwargs["feature_rows"] = plain_feature_rows
 
     report: dict[str, object] = {"artifact": str(artifact), "backtest_horizon": horizon}
     # cost_stress routes with the PREDICTED source (not the oracle periods).
@@ -1123,7 +1146,7 @@ def run_edge_validate(
         regime_detector=regime_detector,
         regime_classifier_model=regime_classifier_model,
         multi_feature_regime_detector=multi_feature_regime_detector,
-        **bt_common,
+        **cost_kwargs,
     )
 
     predicted_sources = [s for s in (regime_detector, regime_classifier_model, multi_feature_regime_detector) if s is not None]
@@ -1137,6 +1160,8 @@ def run_edge_validate(
             regime_detector=regime_detector,
             regime_classifier_model=regime_classifier_model,
             multi_feature_regime_detector=multi_feature_regime_detector,
+            feature_rows=plain_feature_rows,
+            oracle_feature_rows=oracle_feature_rows,
             **bt_common,
         )
     else:
@@ -1342,6 +1367,9 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser.add_argument("--slippage-rate-per-side", type=float, default=None, help="base per-side slippage fraction (default 0.0002); stress runs multiply it")
     ev_parser.add_argument("--cost-multipliers", default="1.0,1.5,2.0", help="comma-separated cost multipliers for the stress sweep (default 1.0,1.5,2.0)")
     ev_parser.add_argument("--allow-barrier-mismatch", action="store_true", help="permit --exec-tp/sl-pct to differ from the barrier the models were labeled on (sensitivity probe only, not performance)")
+    ev_parser.add_argument("--metrics-dir", default=None, help="Binance metrics archive dir (collect-metrics output) -- pass the SAME dir used for training so the validation backtests see real F16 features instead of 0.0 (train/serve parity)")
+    ev_parser.add_argument("--backtest-start", default=None, help="ISO date; trade only from here (earlier candles feed feature computation only). Match the backtest's --backtest-start so the OOS window is the same")
+    ev_parser.add_argument("--backtest-end", default=None, help="inclusive ISO end date of the trading window; match the backtest's --backtest-end")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -1665,6 +1693,9 @@ def main(argv: list[str] | None = None) -> int:
             slippage_rate_per_side=args.slippage_rate_per_side,
             cost_multipliers=multipliers,
             allow_barrier_mismatch=args.allow_barrier_mismatch,
+            metrics_dir=args.metrics_dir,
+            backtest_start=args.backtest_start,
+            backtest_end=args.backtest_end,
         )
         return 0
     if args.command == "backtest":

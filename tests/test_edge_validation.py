@@ -269,6 +269,25 @@ class RoutingComparisonTests(unittest.TestCase):
                 regime_detector=_RangeDetector(),
             )
 
+    def test_accepts_prebuilt_feature_rows_for_metrics_parity(self) -> None:
+        # The CLI passes prebuilt rows (with F16 metrics merged) for the
+        # unified/predicted arms and a separate periods-built set for oracle.
+        candles = _rising_candles(80)
+        rows = dataset.build_feature_rows(candles)
+        periods = [dataset.UserRegimePeriod("range", candles[0].open_time, candles[-1].open_time + timedelta(minutes=1))]
+        oracle_rows = dataset.build_feature_rows(candles, user_regime_periods=periods)
+        report = edge_validation.routing_comparison(
+            candles,
+            models_by_regime={"range": _LongBundle("range")},
+            unified_model=_FixedModel(0.9),
+            regime_detector=_RangeDetector("range"),
+            feature_rows=rows,
+            oracle_feature_rows=oracle_rows,
+            default_regime="range",
+            long_threshold=0.6, short_threshold=0.99, **_BT_KW,
+        )
+        self.assertEqual(set(report["arms"]), {"unified", "predicted", "oracle"})
+
 
 class CliEdgeValidateSmokeTests(unittest.TestCase):
     def test_edge_validate_writes_report(self) -> None:
@@ -300,6 +319,7 @@ class CliEdgeValidateSmokeTests(unittest.TestCase):
                 "--model-artifact", str(artifact), "--unified-artifact", str(unified),
                 "--auto-regime", "--horizon", "5", "--exec-tp-pct", "0.005", "--exec-sl-pct", "0.005",
                 "--cost-multipliers", "1.0,2.0",
+                "--backtest-start", "2026-01-02", "--backtest-end", "2026-01-02",
             ])
             self.assertEqual(code, 0)
             report = json.loads((out / "edge_validation_report.json").read_text(encoding="utf-8"))

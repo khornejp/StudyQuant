@@ -157,9 +157,18 @@ def routing_comparison(
     regime_classifier_model: object | None = None,
     multi_feature_regime_detector: object | None = None,
     strategy: "_live.StrategyConfig | None" = None,
+    feature_rows: "Sequence[_dataset.FeatureRow] | None" = None,
+    oracle_feature_rows: "Sequence[_dataset.FeatureRow] | None" = None,
     **backtest_kwargs: object,
 ) -> dict[str, object]:
     """The mandatory 4-way regime comparison (house rule 원칙 6 / regime.md).
+
+    ``feature_rows`` (unified/predicted) and ``oracle_feature_rows`` (oracle,
+    carrying the hindsight user_regime) let the caller supply a prebuilt feature
+    matrix — e.g. one that merged F16 metrics external_sources so the arms match
+    a model trained with ``--metrics-dir``. When omitted the arms build their
+    own (predicted/unified plain; oracle from ``user_regime_periods``).
+
 
     Same candles, barrier, cost and window for every arm:
 
@@ -196,14 +205,14 @@ def routing_comparison(
     _reject_controlled(
         backtest_kwargs,
         ("model", "models_by_regime", "regime_detector", "regime_classifier_model",
-         "multi_feature_regime_detector", "user_regime_periods"),
+         "multi_feature_regime_detector", "user_regime_periods", "feature_rows"),
         "routing_comparison",
     )
 
     # unified (no routing) and predicted (detector overwrites user_regime on a
     # COPY) can share one plain feature build; the oracle arm needs rows carrying
     # the hindsight regimes, so it builds its own via user_regime_periods.
-    shared_rows = _shared_feature_rows(candles, backtest_kwargs)
+    shared_rows = feature_rows if feature_rows is not None else _shared_feature_rows(candles, backtest_kwargs)
     run_kwargs = dict(backtest_kwargs)
     if shared_rows is not None:
         run_kwargs["feature_rows"] = shared_rows
@@ -225,7 +234,15 @@ def routing_comparison(
         "predicted": trading_metrics(predicted),
     }
     oracle_net: float | None = None
-    if user_regime_periods is not None:
+    if oracle_feature_rows is not None:
+        # Prebuilt oracle rows already carry the hindsight user_regime (and any
+        # merged metrics); route on them directly.
+        oracle_kwargs = dict(backtest_kwargs)
+        oracle_kwargs["feature_rows"] = oracle_feature_rows
+        oracle = _bt.run_backtest(candles, strategy=strategy, models_by_regime=models_by_regime, **oracle_kwargs)  # type: ignore[arg-type]
+        arms["oracle"] = trading_metrics(oracle)
+        oracle_net = _as_float(arms["oracle"].get("net_total_return"))
+    elif user_regime_periods is not None:
         oracle = _bt.run_backtest(
             candles,
             strategy=strategy,
