@@ -380,14 +380,16 @@ Write-Host "  Training complete." -ForegroundColor Green
 # PHASE 3.7: Non-regime UNIFIED baseline (for Phase 4.6's 4-way routing check)
 # ============================================================================
 # House rule 원칙 6: regime routing must be judged against a single model that
-# does NOT split by regime, on the SAME data / features / barrier / window.
-# Phase 4.6 feeds this as edge-validate's "unified" arm. Same flags as Phase 3
-# minus --regime-aware and the regime bucketing. Untuned (no --optuna) on
-# purpose: 100 trials on the full ~2.5M-row span would add hours, and a
-# default-params unified is the standard baseline -- add --optuna manually for a
-# tuned-vs-tuned comparison. Non-fatal: if it fails, Phase 4.6 skips routing.
+# does NOT split by regime, on the SAME data / features / barrier / window --
+# AND the same tuning, or the comparison confounds "regime split" with "one arm
+# was tuned and the other was not". This pipeline is the rigorous full run, so
+# the unified arm gets the SAME --optuna --optuna-trials 100 Phase 3's per-regime
+# models get. Only difference from Phase 3 is --regime-aware / the bucketing.
+# Cost: 100 trials on the full ~2.5M-row training span is the slowest single
+# phase here. Non-fatal: if it fails, Phase 4.6 skips routing and still reports
+# cost stress.
 Write-Host ""
-Write-Host "[Phase 3.7] Training non-regime unified baseline model..." -ForegroundColor Yellow
+Write-Host "[Phase 3.7] Training non-regime unified baseline (Optuna-tuned, for the 4-way check)..." -ForegroundColor Yellow
 $UnifiedModelDir = Join-Path $ArtifactsDir "unified_model"
 python -m btcusdt_quant train `
     --input $FullParquet `
@@ -399,6 +401,8 @@ python -m btcusdt_quant train `
     --horizon $Horizon `
     --tp-pct $LabelTpPct `
     --sl-pct $LabelSlPct `
+    --optuna `
+    --optuna-trials 100 `
     --output $UnifiedModelDir
 Warn-IfPhaseFailed "Phase 3.7 (unified baseline train)"
 Write-Host "  Model: $ModelDir" -ForegroundColor Green
