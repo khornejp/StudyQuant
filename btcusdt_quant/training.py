@@ -1216,34 +1216,48 @@ def _train_single_regime(
         return params, report
 
     if train_long:
-        print(f"[TRAIN]   Training LONG success model for regime '{regime_name}'...")
         long_labels = [row.targets.get("long_success", row.label) for row in regime_build.labeled_rows]
-        long_params, long_report = _resolve_model_params("long", long_labels)
-        long_model = models.CatBoostAdapter(
-            feature_names=regime_build.feature_names,
-            model_params=long_params,
-        )
-        long_model.fit(f_matrix, long_labels)
-        writer = governance.ArtifactWriter(regime_output_dir)
-        writer.write_json("long_model.json", long_model.as_dict())
-        artifacts.append("long_model.json")
-        if long_report is not None:
-            optuna_reports["long"] = long_report
+        # A single-class side cannot train a classifier -- CatBoost aborts with a
+        # cryptic "Target contains only one unique value". This happens for real
+        # on a rare regime whose bars almost all hit (or all miss) the barrier;
+        # skip the side with a reason (like the holdout/insufficient-rows skips)
+        # instead of crashing the whole run. The regime's other side or the
+        # default-regime fallback still covers those bars.
+        if len(set(long_labels)) < 2:
+            print(f"[TRAIN]   Regime '{regime_name}' LONG: skipped (single-class long_success labels)")
+            train_long = False
+        else:
+            print(f"[TRAIN]   Training LONG success model for regime '{regime_name}'...")
+            long_params, long_report = _resolve_model_params("long", long_labels)
+            long_model = models.CatBoostAdapter(
+                feature_names=regime_build.feature_names,
+                model_params=long_params,
+            )
+            long_model.fit(f_matrix, long_labels)
+            writer = governance.ArtifactWriter(regime_output_dir)
+            writer.write_json("long_model.json", long_model.as_dict())
+            artifacts.append("long_model.json")
+            if long_report is not None:
+                optuna_reports["long"] = long_report
 
     if train_short:
-        print(f"[TRAIN]   Training SHORT success model for regime '{regime_name}'...")
         short_labels = [row.targets.get("short_success", row.label) for row in regime_build.labeled_rows]
-        short_params, short_report = _resolve_model_params("short", short_labels)
-        short_model = models.CatBoostAdapter(
-            feature_names=regime_build.feature_names,
-            model_params=short_params,
-        )
-        short_model.fit(f_matrix, short_labels)
-        writer = governance.ArtifactWriter(regime_output_dir)
-        writer.write_json("short_model.json", short_model.as_dict())
-        artifacts.append("short_model.json")
-        if short_report is not None:
-            optuna_reports["short"] = short_report
+        if len(set(short_labels)) < 2:
+            print(f"[TRAIN]   Regime '{regime_name}' SHORT: skipped (single-class short_success labels)")
+            train_short = False
+        else:
+            print(f"[TRAIN]   Training SHORT success model for regime '{regime_name}'...")
+            short_params, short_report = _resolve_model_params("short", short_labels)
+            short_model = models.CatBoostAdapter(
+                feature_names=regime_build.feature_names,
+                model_params=short_params,
+            )
+            short_model.fit(f_matrix, short_labels)
+            writer = governance.ArtifactWriter(regime_output_dir)
+            writer.write_json("short_model.json", short_model.as_dict())
+            artifacts.append("short_model.json")
+            if short_report is not None:
+                optuna_reports["short"] = short_report
 
     print(f"[TRAIN]   Models saved to {regime_output_dir}")
 

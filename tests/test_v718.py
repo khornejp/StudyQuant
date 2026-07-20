@@ -194,7 +194,13 @@ class FeatureRegistryV718Tests(unittest.TestCase):
     def test_warmup_invalidation_strict_for_all_features(self) -> None:
         from btcusdt_quant import data
         base = data.utc_minute(2026, 1, 1, 0, 0)
-        min_samples = dataset.max_feature_min_samples()
+        # build_feature_rows gates warmup on max_feature_min_samples(len(candles))
+        # -- the ADAPTIVE cutoff that excludes features needing more bars than
+        # exist (e.g. weekly F13 needs 504,000). Use a fixed, buildable size and
+        # the matching adaptive cutoff; the no-arg 504,000 max would demand an
+        # impractically huge fixture and never match build's actual boundary.
+        n_candles = 5000
+        min_samples = dataset.max_feature_min_samples(n_candles)
         candles = [
             data.Candle(
                 open_time=base + timedelta(minutes=index),
@@ -208,7 +214,7 @@ class FeatureRegistryV718Tests(unittest.TestCase):
                 taker_buy_base_volume=5.0,
                 taker_buy_quote_volume=500.0,
             )
-            for index in range(min_samples + 5)
+            for index in range(n_candles)
         ]
         rows = dataset.build_feature_rows(candles)
         for row in rows[:min_samples - 1]:
@@ -281,37 +287,44 @@ class TestRegimeDetector(unittest.TestCase):
         self.assertIn("config", detector_summary)
 
     def test_live_loads_detector_thresholds(self) -> None:
+        # Train/serve parity: live routes with the SAVED dir_threshold (fit once
+        # at training time), handed to detect_directional -- not a value re-fit
+        # from the live buffer. Capture what detect_directional receives and
+        # confirm it is the persisted threshold. (Live routes via
+        # detect_directional now, not the legacy detect().)
+        from btcusdt_quant.models import CentroidLinearClassifier
+
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact_dir = Path(tmpdir) / "regime_artifacts"
-            model_dir = artifact_dir / "regime_ranging"
+            model_dir = artifact_dir / "regime_range"
             model_dir.mkdir(parents=True)
-            expected_thresholds = {"rv_threshold": 123.0, "trend_threshold": 456.0, "trend_min": 0.0}
+            expected_thresholds = {"dir_threshold": 42.0}
             summary = {
-                "regime_results": {"ranging": {"mean_test_f1": 0.1}},
+                "regime_results": {"range": {"mean_test_f1": 0.1}},
+                "default_regime": "range",
                 "regime_detector": {
                     "thresholds": expected_thresholds,
-                    "diagnostics": {"regime_counts": {"ranging": 1}, "thresholds": expected_thresholds, "regime_transition_count": 0, "max_single_run_length": 1},
+                    "diagnostics": {"regime_counts": {"range": 1}, "thresholds": expected_thresholds, "regime_transition_count": 0, "max_single_run_length": 1},
                     "config": features.RegimeDetector().config_dict(),
+                    "directional": True,
                 },
             }
             (artifact_dir / "regime_run_summary.json").write_text(json.dumps(summary), encoding="utf-8")
-            model = models.CatBoostAdapter(feature_names=["return_1"])
-            model.fit([[0.0], [0.1]], [1, 0])
+            model = CentroidLinearClassifier(feature_names=["return_1"]).fit([[0.0], [0.1]], [1, 0])
             (model_dir / "model.json").write_text(json.dumps(model.as_dict()), encoding="utf-8")
             captured_thresholds: list[dict[str, float] | None] = []
-            original_detect = features.RegimeDetector.detect
+            original_detect_directional = features.RegimeDetector.detect_directional
 
-            def patched_detect(
+            def patched_detect_directional(
                 detector: features.RegimeDetector,
-                rv_15: float,
                 trend_slope_30: float,
-                historical_rv_15_values: object = None,
                 thresholds: dict[str, float] | None = None,
+                historical_trend_slope_30_values: object = None,
             ) -> str:
                 captured_thresholds.append(thresholds)
-                return "ranging"
+                return "range"
 
-            features.RegimeDetector.detect = patched_detect
+            features.RegimeDetector.detect_directional = patched_detect_directional
             try:
                 output = Path(tmpdir) / "live"
                 result = live.run_live(
@@ -323,11 +336,11 @@ class TestRegimeDetector(unittest.TestCase):
                     regime_aware=True,
                 )
             finally:
-                features.RegimeDetector.detect = original_detect
+                features.RegimeDetector.detect_directional = original_detect_directional
 
         inference = result.summary.get("model_inference", {})
         self.assertEqual(captured_thresholds[-1], expected_thresholds)
-        self.assertEqual(inference.get("regime"), "ranging")
+        self.assertEqual(inference.get("regime"), "range")
         self.assertTrue(inference.get("model_loaded"))
 
     def _candles(self, rows: int) -> list[data.Candle]:
@@ -1806,24 +1819,27 @@ class E2ECLIV718Tests(unittest.TestCase):
             train_dir = Path(tmpdir) / "training"
             live_dir = Path(tmpdir) / "live"
             model_path = train_dir / "model.json"
-            # 1. CLI collect (default args, no network)
+            # 1. CLI collect (no network). 2000 rows: enough that rows survive
+            # the adaptive feature warmup (~1440 bars once 24h features qualify)
+            # plus the label horizon, so training gets labeled rows. 240 produced
+            # zero labeled rows ("not enough labeled rows for configured split").
             collect_result = subprocess.run(
-                [sys.executable, "-m", "btcusdt_quant", "collect", "--output", str(data_path), "--rows", "240"],
-                capture_output=True, text=True, timeout=30, cwd=project_root, env=env,
+                [sys.executable, "-m", "btcusdt_quant", "collect", "--output", str(data_path), "--rows", "2000"],
+                capture_output=True, text=True, timeout=60, cwd=project_root, env=env,
             )
             self.assertEqual(collect_result.returncode, 0, f"collect failed: {collect_result.stderr}")
             self.assertTrue(data_path.exists(), "collect should write CSV")
-            # 2. CLI train (default args, model_family=stdlib)
+            # 2. CLI train (default model family; may fit CatBoost on GPU -> allow time)
             train_result = subprocess.run(
                 [sys.executable, "-m", "btcusdt_quant", "train", "--output", str(train_dir), "--input", str(data_path)],
-                capture_output=True, text=True, timeout=30, cwd=project_root, env=env,
+                capture_output=True, text=True, timeout=300, cwd=project_root, env=env,
             )
             self.assertEqual(train_result.returncode, 0, f"train failed: {train_result.stderr}")
             self.assertTrue(model_path.exists(), "train should write model.json")
             # 3. CLI live (dry-run with model artifact)
             live_result = subprocess.run(
                 [sys.executable, "-m", "btcusdt_quant", "live", "--dry-run", "--output", str(live_dir), "--model-artifact", str(model_path)],
-                capture_output=True, text=True, timeout=30, cwd=project_root, env=env,
+                capture_output=True, text=True, timeout=120, cwd=project_root, env=env,
             )
             self.assertEqual(live_result.returncode, 0, f"live failed: {live_result.stderr}")
             live_summary_path = live_dir / "live_summary.json"
