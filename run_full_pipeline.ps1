@@ -375,6 +375,32 @@ Assert-PhaseSucceeded "Phase 3 (train)"
 
 Write-Host ""
 Write-Host "  Training complete." -ForegroundColor Green
+
+# ============================================================================
+# PHASE 3.7: Non-regime UNIFIED baseline (for Phase 4.6's 4-way routing check)
+# ============================================================================
+# House rule 원칙 6: regime routing must be judged against a single model that
+# does NOT split by regime, on the SAME data / features / barrier / window.
+# Phase 4.6 feeds this as edge-validate's "unified" arm. Same flags as Phase 3
+# minus --regime-aware and the regime bucketing. Untuned (no --optuna) on
+# purpose: 100 trials on the full ~2.5M-row span would add hours, and a
+# default-params unified is the standard baseline -- add --optuna manually for a
+# tuned-vs-tuned comparison. Non-fatal: if it fails, Phase 4.6 skips routing.
+Write-Host ""
+Write-Host "[Phase 3.7] Training non-regime unified baseline model..." -ForegroundColor Yellow
+$UnifiedModelDir = Join-Path $ArtifactsDir "unified_model"
+python -m btcusdt_quant train `
+    --input $FullParquet `
+    --training-start $DownloadStart `
+    --training-end $TrainingEnd `
+    --metrics-dir $MetricsDir `
+    --threshold-objective $ThresholdObjective `
+    --round-trip-cost $RoundTripCost `
+    --horizon $Horizon `
+    --tp-pct $LabelTpPct `
+    --sl-pct $LabelSlPct `
+    --output $UnifiedModelDir
+Warn-IfPhaseFailed "Phase 3.7 (unified baseline train)"
 Write-Host "  Model: $ModelDir" -ForegroundColor Green
 
 # ============================================================================
@@ -527,14 +553,20 @@ Warn-IfPhaseFailed "Phase 4.3 (verify_calibration)"
 # artifact) and executed barrier as Phase 4 at 1x/1.5x/2x fee+slippage over the
 # SAME 2025 OOS window, with the SAME --metrics-dir so F16 features match
 # training (no train/serve skew). survives_1_5x / survives_2x in the report are
-# the verdict. The 4-way routing_comparison (unified vs oracle vs predicted)
-# needs a non-regime unified model the pipeline does not train, so it is skipped
-# here -- run `edge-validate` manually with --unified-artifact for that.
+# the verdict.
+#
+# ALSO the mandatory 4-way routing_comparison (원칙 6): unified (Phase 3.7's
+# non-regime model) vs oracle (hindsight regimes.json -- diagnostic ceiling) vs
+# predicted (the artifact's multi-feature detector) vs detector diagnostics.
+# The interpretation string says whether regime splitting is helping or hurting.
+# If Phase 3.7 failed, edge-validate skips routing and still reports cost stress.
 Write-Host ""
-Write-Host "[Phase 4.6] Edge validation: cost stress on the 2025 OOS window..." -ForegroundColor Yellow
+Write-Host "[Phase 4.6] Edge validation: cost stress + 4-way routing on the 2025 OOS window..." -ForegroundColor Yellow
 python -m btcusdt_quant edge-validate `
     --input $FullParquet `
     --model-artifact $ModelDir `
+    --unified-artifact (Join-Path $UnifiedModelDir "model.json") `
+    --user-regime-file regimes.json `
     --metrics-dir $MetricsDir `
     --exec-tp-pct $LabelTpPct `
     --exec-sl-pct $LabelSlPct `

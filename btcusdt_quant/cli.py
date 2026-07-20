@@ -1150,8 +1150,8 @@ def run_edge_validate(
     )
 
     predicted_sources = [s for s in (regime_detector, regime_classifier_model, multi_feature_regime_detector) if s is not None]
-    if regime_bundle is not None and unified_artifact and len(predicted_sources) == 1:
-        unified_model = live.load_model_artifact(Path(unified_artifact))
+    unified_model = live.load_model_artifact(Path(unified_artifact)) if unified_artifact else None
+    if regime_bundle is not None and unified_model is not None and len(predicted_sources) == 1:
         report["routing_comparison"] = edge_validation.routing_comparison(
             candles,
             models_by_regime=models_by_regime,
@@ -1165,10 +1165,12 @@ def run_edge_validate(
             **bt_common,
         )
     else:
+        # unified_artifact may be given but unloadable (e.g. its train phase
+        # failed) -- skip routing gracefully rather than crash on a None model.
         report["routing_comparison_skipped"] = (
-            "needs a regime-bundle artifact, --unified-artifact, and exactly one predicted "
-            f"routing source (have bundle={regime_bundle is not None}, unified={bool(unified_artifact)}, "
-            f"predicted_sources={len(predicted_sources)})"
+            "needs a regime-bundle artifact, a loadable --unified-artifact, and exactly one "
+            f"predicted routing source (have bundle={regime_bundle is not None}, "
+            f"unified_loaded={unified_model is not None}, predicted_sources={len(predicted_sources)})"
         )
 
     safe_report = backtest.json_safe(report)

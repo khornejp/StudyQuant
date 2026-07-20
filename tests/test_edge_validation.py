@@ -328,6 +328,38 @@ class CliEdgeValidateSmokeTests(unittest.TestCase):
         self.assertIn("routing_comparison", report)
         self.assertEqual(set(report["routing_comparison"]["arms"]), {"unified", "predicted"})
 
+    def test_edge_validate_skips_routing_when_unified_missing(self) -> None:
+        # If --unified-artifact is given but unloadable (e.g. its train phase
+        # failed), routing is skipped gracefully; cost_stress still runs.
+        candles = _rising_candles(120)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            csv_path = root / "candles.csv"
+            dataset.write_candles_csv(csv_path, candles)
+            artifact = root / "bundle"
+            (artifact / "regime_range").mkdir(parents=True)
+            model = CentroidLinearClassifier(feature_names=["return_1"]).fit([[0.0], [0.1]], [1, 0])
+            (artifact / "regime_range" / "model.json").write_text(json.dumps(model.as_dict()), encoding="utf-8")
+            (artifact / "regime_run_summary.json").write_text(json.dumps({
+                "regime_results": {"range": {"mean_test_f1": 0.1}},
+                "default_regime": "range",
+                "tp_pct": 0.005, "sl_pct": 0.005, "threshold_horizon": 5,
+                "regime_detector": {"thresholds": {"dir_threshold": 0.0}, "diagnostics": {}, "config": features.RegimeDetector().config_dict()},
+            }), encoding="utf-8")
+            out = root / "out"
+            code = cli.main([
+                "edge-validate", "--input", str(csv_path), "--output", str(out),
+                "--model-artifact", str(artifact),
+                "--unified-artifact", str(root / "does_not_exist.json"),
+                "--auto-regime", "--horizon", "5", "--exec-tp-pct", "0.005", "--exec-sl-pct", "0.005",
+                "--cost-multipliers", "1.0",
+            ])
+            self.assertEqual(code, 0)
+            report = json.loads((out / "edge_validation_report.json").read_text(encoding="utf-8"))
+        self.assertIn("cost_stress", report)
+        self.assertIn("routing_comparison_skipped", report)
+        self.assertNotIn("routing_comparison", report)
+
 
 if __name__ == "__main__":
     unittest.main()
