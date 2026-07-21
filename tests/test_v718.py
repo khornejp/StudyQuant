@@ -2157,6 +2157,10 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
                 self.assertIn("model_family", model_data)
                 model_params = model_data.get("model_params", {})
                 self.assertNotIn("threshold", model_params, "threshold must not be in model_params")
+                # signal_scale is a decision param, not a CatBoost/LightGBM arg;
+                # injecting it made the constructor raise and silently fall back
+                # to the wrong model family.
+                self.assertNotIn("signal_scale", model_params, "signal_scale must not be in model_params")
                 # Verify every fold threshold is exactly the monkeypatched 0.37
                 for fold in result.fold_results:
                     self.assertEqual(fold.threshold, 0.37, "fold threshold must be overridden by optuna best threshold")

@@ -304,13 +304,16 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             print(f"[TRAIN] Optuna tuning window too small ({len(optuna_rows)} rows < 30); falling back to full dataset")
             optuna_rows = list(build.labeled_rows)
         optuna_runner = features.OptunaStudyRunner()
-        # Optuna requires a callable model_factory, not an instance
-        # Only signal_scale is a model constructor param; threshold is a decision param
+        # OptunaStudyRunner searches DECISION params only (threshold, signal_scale),
+        # not model hyperparameters -- both are stripped from the model constructor
+        # (see OptunaStudyRunner._call_model_factory). threshold is applied to the
+        # fold/final entry cutoff below; signal_scale only scales a fallback sigmoid
+        # for models lacking predict/probability (test stubs), so it has NO effect
+        # on a real CatBoost/LightGBM model and must NOT be fed to its constructor.
         def _optuna_model_factory(params: Mapping[str, float] | None = None) -> models.ModelAdapter:
             merged_params = dict(training_config.model_params)
             if params is not None:
-                # Only pass signal_scale to model constructor; threshold is decision param
-                model_params = {k: v for k, v in params.items() if k != "threshold"}
+                model_params = {k: v for k, v in params.items() if k not in ("threshold", "signal_scale")}
                 merged_params.update(model_params)
             return models.ModelFactory().create(
                 family=training_config.model_family,
@@ -325,16 +328,14 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             n_trials=training_config.optuna_trials,
             budget_profile=training_config.optuna_budget_profile,
         )
-        # Apply best params to actual training config
+        # Only the threshold (a decision param) is applied downstream. signal_scale
+        # is NOT injected into model_params: it is not a CatBoost/LightGBM argument,
+        # and doing so made the constructor raise "unexpected keyword argument
+        # 'signal_scale'", forcing a silent GPU->CPU->LightGBM fallback that trained
+        # the model with the WRONG family and a dead f1.
         best_params = optuna_report.get("best_params", {})
         if best_params:
             optuna_threshold = float(best_params.get("threshold", 0.5))
-            # Update training_config model_params with signal_scale for fold/final training
-            if "signal_scale" in best_params:
-                training_config = replace(
-                    training_config,
-                    model_params={**dict(training_config.model_params), "signal_scale": float(best_params["signal_scale"])},
-                )
     fold_results: list[FoldResult] = []
     for fold_index, split in enumerate(splits):
         print(f"[TRAIN]   Fold {fold_index + 1}/{len(splits)}: train={len(split.train)}, val={len(split.validation)}, test={len(split.test)}")
