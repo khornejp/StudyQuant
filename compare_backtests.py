@@ -66,6 +66,7 @@ COMPARABILITY_KEYS: tuple[str, ...] = (
     "initial_equity",
     "tp_sl_method",
     "kelly_enabled",
+    "range_gate_enabled",
     "kelly_multiplier",
     "kelly_lookback_bars",
     "kelly_holding_period_bars",

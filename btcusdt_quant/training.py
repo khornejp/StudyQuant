@@ -67,6 +67,18 @@ class TrainingConfig:
     optuna_enabled: bool = False
     optuna_budget_profile: str = "practical_start"
     optuna_trials: int = 0
+    # Exclude features whose training-time values are fallback/mock (source
+    # unavailable offline, e.g. F12 exchange-safety constants). A model trained
+    # on mock constants learns zero information from them AND acquires a
+    # train/serve skew the moment live feeds real values. Default ON; opt out
+    # only for research on the old behavior.
+    exclude_fallback_features: bool = True
+    # Shuffled-label negative control (research-and-edge-validation.md 8.5):
+    # permute each labeled row's label/targets across rows (features untouched)
+    # before training. A pipeline with no leakage/selection bias must lose its
+    # edge under this. NEVER deploy a model trained with this on.
+    shuffle_labels: bool = False
+    shuffle_labels_seed: int = 42
     champion_challenger_enabled: bool = False
     regime_aware: bool = False
     min_regime_rows: int = 80
@@ -189,6 +201,59 @@ class TrainingResult:
     artifacts: list[str]
 
 
+def drop_fallback_features(build: "dataset.DatasetBuild") -> tuple["dataset.DatasetBuild", list[str]]:
+    """Remove features whose TRAINING values are fallback/mock constants.
+
+    The source availability report lists features whose live source is absent
+    offline (F11/F12 style): build_feature_rows filled them with mock defaults,
+    so the model would train on constants (zero information) and then meet real
+    values in live -- an input-distribution train/serve skew. Excluding them
+    from feature_names keeps them computed in the rows (governance/registry
+    unchanged) but out of every training matrix; model.json carries its own
+    feature list, so backtest/live automatically use the same reduced set.
+    Refuses to drop below 10 features (a degenerate report must not empty the
+    model).
+    """
+    report = build.source_availability_report or {}
+    fallback = {str(name) for name in report.get("fallback_features", ()) or ()}
+    if not fallback:
+        return build, []
+    kept = tuple(name for name in build.feature_names if name not in fallback)
+    dropped = [name for name in build.feature_names if name in fallback]
+    if not dropped or len(kept) < 10:
+        return build, []
+    return replace(build, feature_names=kept), dropped
+
+
+def shuffle_labeled_row_targets(rows: Sequence[dataset.LabeledRow], seed: int) -> list[dataset.LabeledRow]:
+    """Permute every row's label payload across rows; features stay put.
+
+    The negative control: decouple labels from features while preserving the
+    exact label distribution, class balance and target dicts. label,
+    label_reason, target_return, targets and target_reasons travel TOGETHER to
+    their new row (a row must stay internally consistent); index/open_time/
+    features/regime stay with the original row. Deterministic under `seed`.
+    """
+    import random as _random
+
+    rows = list(rows)
+    order = list(range(len(rows)))
+    _random.Random(int(seed)).shuffle(order)
+    shuffled: list[dataset.LabeledRow] = []
+    for row, src in zip(rows, (rows[j] for j in order)):
+        shuffled.append(
+            replace(
+                row,
+                label=src.label,
+                label_reason=src.label_reason,
+                target_return=src.target_return,
+                targets=dict(src.targets),
+                target_reasons=dict(src.target_reasons),
+            )
+        )
+    return shuffled
+
+
 def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None, prebuilt_dataset: dataset.DatasetBuild | None = None, user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None) -> TrainingResult:
     training_config = config or TrainingConfig()
     if prebuilt_dataset is not None:
@@ -231,6 +296,27 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         )
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
+    # Mock-input exclusion: features whose offline values are fallback constants
+    # carry no information and become a train/serve skew in live. Applies to
+    # BOTH the regime and non-regime paths (this runs before the branch).
+    if training_config.exclude_fallback_features:
+        build, _dropped_fallback = drop_fallback_features(build)
+        if _dropped_fallback:
+            print(
+                f"[TRAIN] Excluded {len(_dropped_fallback)} fallback/mock features from training "
+                f"(source unavailable offline): {', '.join(sorted(_dropped_fallback))}"
+            )
+    # Shuffled-label negative control: permute labels across rows AFTER the
+    # cutoffs so the control trains on exactly the same rows as the real run.
+    if training_config.shuffle_labels:
+        build = replace(
+            build,
+            labeled_rows=shuffle_labeled_row_targets(build.labeled_rows, training_config.shuffle_labels_seed),
+        )
+        print(
+            "[TRAIN] *** SHUFFLED-LABEL NEGATIVE CONTROL: labels permuted across rows "
+            f"(seed={training_config.shuffle_labels_seed}). This model is for edge validation ONLY -- never deploy. ***"
+        )
     print(f"[TRAIN] Dataset built: {len(build.labeled_rows):,} labeled rows, {len(build.feature_names)} features")
     # Regime-aware: split by market regime and train separate models.
     # Pass the pre-cutoff dataset (full_labeled_rows) so the regime path can
@@ -247,11 +333,18 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     f11_f12_fallback_count = len(source_report.get("fallback_features", []))
     if not parity_passed:
         import warnings
-        warnings.warn(
-            f"feature_space_parity_passed=False in training: {f11_f12_fallback_count} features using fallback/mock values. "
-            "Model trained on mock F11/F12 features may underperform in live when real sources are available.",
-            stacklevel=2,
-        )
+        if training_config.exclude_fallback_features:
+            warnings.warn(
+                f"feature_space_parity_passed=False in training: {f11_f12_fallback_count} features had fallback/mock "
+                "values and were EXCLUDED from the training matrices (see the [TRAIN] exclusion log line).",
+                stacklevel=2,
+            )
+        else:
+            warnings.warn(
+                f"feature_space_parity_passed=False in training: {f11_f12_fallback_count} features using fallback/mock values. "
+                "Model trained on mock F11/F12 features may underperform in live when real sources are available.",
+                stacklevel=2,
+            )
     sample_intervals = cv.sample_intervals_from_labeled_rows(build.labeled_rows, build.label_horizon)
     uniqueness = cv.uniqueness_weights(sample_intervals)
     splits = configured_splits(len(build.labeled_rows), build.label_horizon, training_config, sample_intervals)
@@ -838,6 +931,11 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
         } if regime_source == "detector_directional" else None,
         "regime_classifier_model_path": training_config.regime_classifier_model_path,
         "multi_feature_regime_detector": multi_feature_detector_payload,
+        # Provenance for the two data-honesty switches: consumers must be able
+        # to tell a shuffled-label negative control from a real model, and see
+        # whether mock-fallback features were excluded from the matrices.
+        "shuffled_labels": training_config.shuffle_labels,
+        "exclude_fallback_features": training_config.exclude_fallback_features,
         "network_used": False,
         "orders_enabled": False,
         "credentials_required": False,
@@ -1155,25 +1253,44 @@ def _train_single_regime(
     artifacts = []
     optuna_reports: dict[str, dict[str, object]] = {}
 
+    # The final 20% chronological tail of this regime's rows is the threshold/
+    # metric holdout (see the holdout block below). It must stay UNSEEN by the
+    # Optuna study: previously Optuna's internal 80/20 split validated its 100
+    # trials on that same tail, then the entry threshold was selected and the
+    # holdout metrics reported on it -- the holdout was consumed three times
+    # (HPO selection + threshold + reported metric), inflating all three
+    # (research-and-edge-validation.md: "HPO 중 본 validation을 threshold/
+    # calibration에도 반복 사용하지 않는다"). Optuna now only receives the
+    # prefix; its own 80/20 split lands entirely inside it.
+    n_regime_rows = len(regime_build.labeled_rows)
+    holdout_split = max(1, int(n_regime_rows * 0.8))
+    holdout_gap = min(max(0, int(build.label_horizon)), max(0, (n_regime_rows - holdout_split) // 4))
+    holdout_start = holdout_split + holdout_gap
+    holdout_viable = holdout_start < n_regime_rows - 10 and holdout_split >= 10
+
     def _resolve_model_params(target_name: str, labels: Sequence[int]) -> tuple[dict[str, object], dict[str, object] | None]:
         """Return (catboost_params, optuna_report_or_None) for one target.
 
         When training_config.optuna_enabled is True we run a small Optuna
-        study on a chronological 80/20 split of this regime's rows (train on
-        the first 80%, validate on the last 20% after a capped purge gap --
-        see _tune_catboost_with_optuna) to
-        pick CatBoost hyperparameters; otherwise we use the legacy fixed
-        defaults so existing behavior is preserved.
+        study on the PREFIX of this regime's rows (everything before the
+        threshold holdout tail; Optuna's own chronological 80/20 split with a
+        capped purge gap lives inside that prefix -- see
+        _tune_catboost_with_optuna). The threshold/metric holdout is therefore
+        never seen by hyperparameter selection. Without Optuna we use the
+        legacy fixed defaults so existing behavior is preserved.
         """
         if not training_config.optuna_enabled:
             return dict(_REGIME_CATBOOST_DEFAULT_PARAMS), None
+        tune_matrix = f_matrix[:holdout_split] if holdout_viable else f_matrix
+        tune_labels = list(labels[:holdout_split]) if holdout_viable else list(labels)
         print(
             f"[TRAIN]   Optuna tuning CatBoost for regime '{regime_name}' / "
-            f"{target_name} ({training_config.optuna_trials or 20} trials)..."
+            f"{target_name} ({training_config.optuna_trials or 20} trials, "
+            f"{len(tune_matrix)}/{len(labels)} prefix rows; holdout tail reserved)..."
         )
         params, report = _tune_catboost_with_optuna(
-            feature_matrix_values=f_matrix,
-            labels=labels,
+            feature_matrix_values=tune_matrix,
+            labels=tune_labels,
             feature_names=regime_build.feature_names,
             n_trials=training_config.optuna_trials,
             label_horizon=build.label_horizon,
@@ -1283,11 +1400,10 @@ def _train_single_regime(
     # solely to produce an honest holdout metric and threshold selection.
     regime_holdout_metrics: dict[str, dict[str, float]] = {}
     selected_thresholds: dict[str, float] = {}
-    n_regime_rows = len(regime_build.labeled_rows)
-    holdout_split = max(1, int(n_regime_rows * 0.8))
-    holdout_gap = min(max(0, int(build.label_horizon)), max(0, (n_regime_rows - holdout_split) // 4))
-    holdout_start = holdout_split + holdout_gap
-    if holdout_start < n_regime_rows - 10 and holdout_split >= 10:
+    # holdout_split/holdout_start were computed ONCE above (before Optuna) so
+    # hyperparameter search could be restricted to the prefix; reuse them here
+    # so the threshold/metric holdout is exactly the slice Optuna never saw.
+    if holdout_viable:
         prefix_matrix = f_matrix[:holdout_split]
         holdout_matrix = f_matrix[holdout_start:]
         # Sides and their targets come from the shared policy; params follow.
@@ -1765,6 +1881,8 @@ def training_summary(
     return {
         "run_id": "offline_btcusdt_training_v1",
         "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
+        "shuffled_labels": training_config.shuffle_labels,
+        "exclude_fallback_features": training_config.exclude_fallback_features,
         "network_used": False,
         "credentials_required": False,
         "orders_enabled": False,

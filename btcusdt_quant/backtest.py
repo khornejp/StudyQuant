@@ -606,6 +606,7 @@ def run_backtest(
     multi_feature_regime_detector: object | None = None,
     kelly_config: risk.KellySizingConfig | None = None,
     allow_barrier_mismatch: bool = False,
+    range_gate_enabled: bool = True,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -673,6 +674,7 @@ def run_backtest(
         "tp_sl_method": tp_sl_method,
         "long_threshold_override": long_threshold,
         "short_threshold_override": short_threshold,
+        "range_gate_enabled": range_gate_enabled,
         "kelly_enabled": kelly_config is not None,
         "kelly_multiplier": kelly_config.kelly_multiplier if kelly_config else None,
         "kelly_lookback_bars": kelly_config.variance_lookback_bars if kelly_config else None,
@@ -874,7 +876,8 @@ def run_backtest(
                     # New structure: RegimeModelBundle with long/short models
                     allowed_directions = regime_bundle.direction_policy.get(regime, {"LONG", "SHORT"})
                     features_dict = feature_rows[i].features
-                    allowed_directions = apply_range_mean_reversion_gate(regime, features_dict, allowed_directions)
+                    if range_gate_enabled:
+                        allowed_directions = apply_range_mean_reversion_gate(regime, features_dict, allowed_directions)
 
                     # Ask the bundle whether it can price each side, instead of
                     # reaching into its dicts and then inventing 0.0 for the
@@ -943,7 +946,8 @@ def run_backtest(
                     # New structure: route through long/short models with the
                     # default regime's direction policy, mirroring the main path.
                     allowed_directions = regime_bundle.direction_policy.get(default_regime, {"LONG", "SHORT"})
-                    allowed_directions = apply_range_mean_reversion_gate(default_regime, features_dict, allowed_directions)
+                    if range_gate_enabled:
+                        allowed_directions = apply_range_mean_reversion_gate(default_regime, features_dict, allowed_directions)
                     long_prob = short_prob = None
                     if "LONG" in allowed_directions and regime_bundle.has_side_probability(default_regime, "long"):
                         long_prob = regime_bundle.probability_for(default_regime, "long", features_dict)

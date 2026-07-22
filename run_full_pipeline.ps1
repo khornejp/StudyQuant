@@ -405,6 +405,32 @@ python -m btcusdt_quant train `
     --optuna-trials 100 `
     --output $UnifiedModelDir
 Warn-IfPhaseFailed "Phase 3.7 (unified baseline train)"
+
+# ============================================================================
+# PHASE 3.8: Shuffled-label NEGATIVE CONTROL (research-and-edge-validation 8.5)
+# ============================================================================
+# Same rows, same features, same barrier -- labels permuted across rows. A
+# leak-free pipeline must lose its edge here; if Phase 4.7's backtest of this
+# model performs comparably to the real one, the "edge" is leakage, threshold
+# overfit, a backtest bug or selection bias. Untuned (no --optuna: 100 trials
+# on noise costs hours and this controls the DATA path, not the HPO path).
+# The artifact records shuffled_labels=true -- never deploy it.
+Write-Host ""
+Write-Host "[Phase 3.8] Training shuffled-label negative control (unified, untuned)..." -ForegroundColor Yellow
+$ShuffledModelDir = Join-Path $ArtifactsDir "shuffled_control_model"
+python -m btcusdt_quant train `
+    --input $FullParquet `
+    --training-start $DownloadStart `
+    --training-end $TrainingEnd `
+    --metrics-dir $MetricsDir `
+    --threshold-objective $ThresholdObjective `
+    --round-trip-cost $RoundTripCost `
+    --horizon $Horizon `
+    --tp-pct $LabelTpPct `
+    --sl-pct $LabelSlPct `
+    --shuffle-labels `
+    --output $ShuffledModelDir
+Warn-IfPhaseFailed "Phase 3.8 (shuffled-label control train)"
 Write-Host "  Model: $ModelDir" -ForegroundColor Green
 
 # ============================================================================
@@ -583,6 +609,31 @@ python -m btcusdt_quant edge-validate `
     --backtest-end $BacktestEnd `
     --output (Join-Path $BacktestDir "edge_validation")
 Warn-IfPhaseFailed "Phase 4.6 (edge-validate)"
+
+# ============================================================================
+# PHASE 4.7: Backtest the shuffled-label control on the same window/costs
+# ============================================================================
+# The verdict read: if this net/Sharpe is comparable to Phase 4's, the pipeline
+# is manufacturing edge from noise (leakage / threshold overfit / backtest bug /
+# selection bias). Expect ~zero-to-negative net. Same window, costs, horizon and
+# fixed exec barrier as Phase 4; fixed-size (no Kelly) to match Phase 3.8's
+# untuned scope.
+Write-Host ""
+Write-Host "[Phase 4.7] Backtesting shuffled-label control (expect no edge)..." -ForegroundColor Yellow
+python -m btcusdt_quant backtest `
+    --input $FullParquet `
+    --model-artifact (Join-Path $ShuffledModelDir "model.json") `
+    --exec-tp-pct $LabelTpPct `
+    --exec-sl-pct $LabelSlPct `
+    --metrics-dir $MetricsDir `
+    --fee-rate-per-side $FeePerSide `
+    --slippage-rate-per-side $SlippagePerSide `
+    --horizon $Horizon `
+    --threshold-floor $ThresholdFloor `
+    --backtest-start $BacktestStart `
+    --backtest-end $BacktestEnd `
+    --output (Join-Path $ArtifactsDir "backtest_results_shuffled_control")
+Warn-IfPhaseFailed "Phase 4.7 (shuffled-control backtest)"
 
 # ============================================================================
 # PHASE 4.5: Backtest the multi-horizon pilot on the same window/costs

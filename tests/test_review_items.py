@@ -1540,5 +1540,131 @@ class CompareBacktestsMetricTests(unittest.TestCase):
         )
 
 
+class ShuffledLabelHelperTests(unittest.TestCase):
+    def _rows(self, n: int = 40):
+        from datetime import timedelta
+        from btcusdt_quant import data as _data, dataset as _ds
+
+        base = _data.utc_minute(2026, 1, 2, 0, 0)
+        rows = []
+        for i in range(n):
+            label = i % 3 == 0
+            rows.append(_ds.LabeledRow(
+                index=i, open_time=base + timedelta(minutes=i),
+                features={"f": float(i)}, label=int(label),
+                label_reason="tp_first" if label else "timeout_no_tp",
+                target_return=0.01 if label else -0.002,
+                gap_flag=0, repaired=False, warmup_invalid=False,
+                targets={"long_success": int(label), "short_success": int(not label)},
+                target_reasons={"long_success": "x", "short_success": "y"},
+            ))
+        return rows
+
+    def test_deterministic_and_multiset_preserved(self) -> None:
+        rows = self._rows()
+        a = training.shuffle_labeled_row_targets(rows, seed=7)
+        b = training.shuffle_labeled_row_targets(rows, seed=7)
+        c = training.shuffle_labeled_row_targets(rows, seed=8)
+        self.assertEqual([r.label for r in a], [r.label for r in b])
+        self.assertNotEqual([r.label for r in a], [r.label for r in c])
+        # Same label multiset (class balance preserved), decoupled from features.
+        self.assertEqual(sorted(r.label for r in a), sorted(r.label for r in rows))
+        self.assertNotEqual([r.label for r in a], [r.label for r in rows])
+
+    def test_features_stay_and_payload_moves_together(self) -> None:
+        rows = self._rows()
+        shuffled = training.shuffle_labeled_row_targets(rows, seed=7)
+        for orig, sh in zip(rows, shuffled):
+            self.assertEqual(orig.features, sh.features)
+            self.assertEqual(orig.index, sh.index)
+            # label and its targets/reason must be internally consistent: they
+            # came from ONE source row.
+            self.assertEqual(sh.targets["long_success"], sh.label)
+            self.assertEqual(sh.label_reason, "tp_first" if sh.label else "timeout_no_tp")
+
+
+class FallbackFeatureExclusionTests(unittest.TestCase):
+    def _build(self, feature_names, fallback):
+        from btcusdt_quant import dataset as _ds
+
+        return _ds.DatasetBuild(
+            source="t", symbol="BTCUSDT", interval="1m", raw_rows=0, canonical=[],
+            gap_report=_ds.GapReport(0, 0, 0, 0.0, 0, "", ""),
+            feature_rows=[], labeled_rows=[], feature_names=tuple(feature_names),
+            label_horizon=60, label_threshold=0.001,
+            source_availability_report={"fallback_features": tuple(fallback)},
+        )
+
+    def test_drops_listed_fallback_features(self) -> None:
+        names = tuple(f"f{i}" for i in range(15))
+        build, dropped = training.drop_fallback_features(self._build(names, ["f1", "f3"]))
+        self.assertEqual(sorted(dropped), ["f1", "f3"])
+        self.assertEqual(len(build.feature_names), 13)
+        self.assertNotIn("f1", build.feature_names)
+
+    def test_refuses_to_drop_below_ten_features(self) -> None:
+        names = tuple(f"f{i}" for i in range(12))
+        build, dropped = training.drop_fallback_features(self._build(names, [f"f{i}" for i in range(5)]))
+        # 12-5=7 < 10 -> refuse, unchanged.
+        self.assertEqual(dropped, [])
+        self.assertEqual(len(build.feature_names), 12)
+
+    def test_noop_without_fallback_report(self) -> None:
+        names = tuple(f"f{i}" for i in range(15))
+        build, dropped = training.drop_fallback_features(self._build(names, []))
+        self.assertEqual(dropped, [])
+        self.assertEqual(build.feature_names, names)
+
+
+class RangeGateToggleTests(unittest.TestCase):
+    """--disable-range-gate: at range_position 0.5 the gate blocks every entry;
+    disabling it must let the model's probability trade."""
+
+    class _LongBundle:
+        def __init__(self) -> None:
+            self.long_models = {"range": _StubModel(0.9)}
+            self.short_models: dict = {}
+            self.regime_thresholds = {"range": {"long": 0.5, "short": 0.99}}
+            self.direction_policy = {"range": {"LONG"}}
+            self.label_tp_pct = 0.01
+            self.label_sl_pct = 0.005
+
+        def has_side_probability(self, regime, side):
+            return regime in (self.long_models if side == "long" else self.short_models)
+
+        def probability_for(self, regime, side, features):
+            registry = self.long_models if side == "long" else self.short_models
+            model = registry.get(regime)
+            return None if model is None else float(model.probability(features))
+
+    def _run(self, gate_enabled: bool):
+        import dataclasses as _dc
+        from btcusdt_quant import dataset as _ds
+
+        candles = KellyBacktestWiringTests()._make_candles(300)
+        rows = [
+            _dc.replace(r, user_regime="range", features={**r.features, "range_position_20": 0.5})
+            for r in _ds.build_feature_rows(candles)
+        ]
+        return run_backtest(
+            candles,
+            models_by_regime={"range": self._LongBundle()},
+            feature_rows=rows,
+            label_horizon=10,
+            cooldown_bars=0,
+            exec_tp_pct=0.01,
+            exec_sl_pct=0.005,
+            range_gate_enabled=gate_enabled,
+        )
+
+    def test_gate_blocks_and_toggle_frees_entries(self) -> None:
+        gated = self._run(gate_enabled=True)
+        ungated = self._run(gate_enabled=False)
+        self.assertEqual(gated.trade_count, 0, "mid-range position must be blocked by the gate")
+        self.assertGreater(ungated.trade_count, 0, "disabling the gate must allow probability-driven entries")
+        self.assertIs(gated.run_config["range_gate_enabled"], True)
+        self.assertIs(ungated.run_config["range_gate_enabled"], False)
+
+
 if __name__ == "__main__":
     unittest.main()

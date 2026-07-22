@@ -555,6 +555,9 @@ def run_train(
     label_horizon: int = 60,
     label_threshold: float = 0.001,
     round_trip_cost: float = 0.0008,
+    shuffle_labels: bool = False,
+    shuffle_labels_seed: int = 42,
+    exclude_fallback_features: bool = True,
 ) -> dict[str, object]:
     if multitask:
         model_family = "pytorch_multitask"
@@ -582,6 +585,9 @@ def run_train(
         optuna_enabled=optuna_enabled,
         optuna_trials=optuna_trials,
         optuna_budget_profile=optuna_budget_profile,
+        shuffle_labels=shuffle_labels,
+        shuffle_labels_seed=shuffle_labels_seed,
+        exclude_fallback_features=exclude_fallback_features,
         champion_challenger_enabled=champion_challenger_enabled,
         regime_aware=regime_aware,
         min_regime_rows=min_regime_rows,
@@ -1287,6 +1293,9 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--sl-pct", type=float, default=dataset.DEFAULT_LABEL_SL_PCT, help=f"stop loss %% for triple-barrier labeling. The backtest MUST execute this same barrier (--exec-sl-pct). (default {dataset.DEFAULT_LABEL_SL_PCT} = 0.50%%)")
     train.add_argument("--horizon", type=int, default=60, help="triple-barrier horizon in bars (minutes for 1m data); default 60")
     train.add_argument("--label-threshold", type=float, default=0.001, help="return threshold for directional labeling (0.10%% = 0.001)")
+    train.add_argument("--shuffle-labels", action="store_true", help="SHUFFLED-LABEL NEGATIVE CONTROL: permute every row's label/targets across rows (features untouched) before training. A leak-free pipeline must lose its edge under this; comparable net profit from the shuffled model means leakage, threshold overfit, a backtest bug or selection bias. The artifact records shuffled_labels=true -- NEVER deploy it.")
+    train.add_argument("--shuffle-labels-seed", type=int, default=42, help="seed for --shuffle-labels permutation (default 42); vary it to repeat the control")
+    train.add_argument("--keep-fallback-features", action="store_true", help="keep features whose training-time values are fallback/mock constants (source unavailable offline, e.g. F12 exchange-safety). Default behavior now EXCLUDES them: mock constants carry zero information and become a train/serve input skew when live feeds real values. Pass this only to reproduce the old behavior.")
     train.add_argument(
         "--threshold-objective",
         default="trading_pnl",
@@ -1349,6 +1358,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--kelly-multiplier", type=float, default=0.5, help="fraction of full Kelly to bet (default 0.5 = Half-Kelly: ~18.5%% less growth for ~43%% less max drawdown). Only used with --kelly-sizing.")
     backtest_parser.add_argument("--kelly-lookback-bars", type=int, default=1440, help="trailing bars for the Kelly variance estimate (default 1440 = 1 day of 1m bars). Only used with --kelly-sizing.")
     backtest_parser.add_argument("--regime-classifier-dir", default=None, help="output directory from train-regime-classifier (contains regime_classifier_model.cbm). When set, this SAME saved classifier drives regime routing here via F17 multi-timeframe features -- pass the identical directory used for training's --regime-classifier-dir so routing stays consistent with how the up/down/range models were trained. Takes priority over --auto-regime. Ignored if --user-regime-file is given.")
+    backtest_parser.add_argument("--disable-range-gate", action="store_true", help="A/B experiment flag: skip the range mean-reversion direction gate (which blocks entries at range_position_20 0.25-0.75 and forces LONG-only/SHORT-only at the extremes). With 2025 ~91%% range, the gate suppresses most entries; disabling it lets the model's own probability decide direction everywhere. Backtest-only -- live keeps the gate. Recorded in run_config for comparability.")
     mh_parser = subparsers.add_parser(
         "train-multi-horizon",
         help="pilot: train one entry model per label horizon (e.g. 30/60/90m) and blend their probabilities (G-Research 7th-place pattern). Saves a single model.json loadable by `backtest --model-artifact <dir>/model.json`.",
@@ -1633,6 +1643,9 @@ def main(argv: list[str] | None = None) -> int:
                 label_horizon=args.horizon,
                 label_threshold=args.label_threshold,
                 round_trip_cost=args.round_trip_cost,
+                shuffle_labels=args.shuffle_labels,
+                shuffle_labels_seed=args.shuffle_labels_seed,
+                exclude_fallback_features=not args.keep_fallback_features,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)
@@ -1986,6 +1999,7 @@ def main(argv: list[str] | None = None) -> int:
                 feature_rows=shared_feature_rows,
                 kelly_config=kelly_config,
                 allow_barrier_mismatch=args.allow_barrier_mismatch,
+                range_gate_enabled=not args.disable_range_gate,
             )
             for _warning in result.barrier_warnings:
                 print(f"[BACKTEST] WARNING: {_warning}")

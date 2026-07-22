@@ -490,6 +490,26 @@ class TestRegimeTraining(unittest.TestCase):
             with self.assertRaises(ValueError):
                 backtest.check_execution_barrier_parity(bundle, 0.003, 0.0015)
 
+    def test_optuna_tunes_on_prefix_only_never_the_threshold_holdout(self) -> None:
+        # The final 20% tail of each regime is the threshold/metric holdout;
+        # Optuna must only ever receive the 80% prefix. Capture what the tuner
+        # is handed: up (120 rows, long) -> 96; range (150 rows, long+short)
+        # -> 120 twice; down is skipped (insufficient rows).
+        captured: list[int] = []
+        original_tune = training._tune_catboost_with_optuna
+
+        def _capturing_tune(feature_matrix_values, labels, feature_names, n_trials, label_horizon):
+            captured.append(len(labels))
+            return dict(training._REGIME_CATBOOST_DEFAULT_PARAMS), {"optuna_available": False, "reason": "patched_for_test"}
+
+        training._tune_catboost_with_optuna = _capturing_tune
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                self._run_regime_training(Path(tmpdir), self.REGIMES, optuna=True)
+        finally:
+            training._tune_catboost_with_optuna = original_tune
+        self.assertEqual(sorted(captured), [96, 120, 120], "Optuna must see only the pre-holdout prefix of each regime/side")
+
     def _run_regime_training(
         self,
         output: Path,
@@ -497,6 +517,7 @@ class TestRegimeTraining(unittest.TestCase):
         tp_pct: float | None = None,
         sl_pct: float | None = None,
         label_horizon: int | None = None,
+        optuna: bool = False,
     ) -> training.TrainingResult:
         build = self._build_dataset(len(regimes))
         if label_horizon is not None:
@@ -516,6 +537,9 @@ class TestRegimeTraining(unittest.TestCase):
 
         features.RegimeDetector.detect_all_directional = patched_detect_all_directional
         config_kwargs: dict[str, object] = {"regime_aware": True, "lineage_enabled": False}
+        if optuna:
+            config_kwargs["optuna_enabled"] = True
+            config_kwargs["optuna_trials"] = 2
         if tp_pct is not None:
             config_kwargs["tp_pct"] = tp_pct
         if sl_pct is not None:
