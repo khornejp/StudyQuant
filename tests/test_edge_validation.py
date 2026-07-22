@@ -328,6 +328,44 @@ class CliEdgeValidateSmokeTests(unittest.TestCase):
         self.assertIn("routing_comparison", report)
         self.assertEqual(set(report["routing_comparison"]["arms"]), {"unified", "predicted"})
 
+    def _bundle_artifact(self, root: Path) -> Path:
+        artifact = root / "bundle"
+        (artifact / "regime_range").mkdir(parents=True)
+        model = CentroidLinearClassifier(feature_names=["return_1"]).fit([[0.0], [0.1]], [1, 0])
+        (artifact / "regime_range" / "model.json").write_text(json.dumps(model.as_dict()), encoding="utf-8")
+        (artifact / "regime_run_summary.json").write_text(json.dumps({
+            "regime_results": {"range": {"mean_test_f1": 0.1}},
+            "default_regime": "range",
+            "tp_pct": 0.005, "sl_pct": 0.005, "threshold_horizon": 5,
+            "regime_detector": {"thresholds": {"dir_threshold": 0.0}, "diagnostics": {}, "config": features.RegimeDetector().config_dict()},
+        }), encoding="utf-8")
+        return artifact
+
+    def test_edge_validate_kelly_sizing_flag(self) -> None:
+        # --kelly-sizing must reach run_backtest (execution parity with a
+        # Kelly-sized Phase 4 backtest); the report records it and cost_stress
+        # still produces levels.
+        candles = _rising_candles(150)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            csv_path = root / "candles.csv"
+            dataset.write_candles_csv(csv_path, candles)
+            artifact = self._bundle_artifact(root)
+            out = root / "out"
+            code = cli.main([
+                "edge-validate", "--input", str(csv_path), "--output", str(out),
+                "--model-artifact", str(artifact), "--auto-regime",
+                "--horizon", "5", "--exec-tp-pct", "0.005", "--exec-sl-pct", "0.005",
+                "--cost-multipliers", "1.0,2.0",
+                "--kelly-sizing", "--kelly-multiplier", "0.5", "--kelly-lookback-bars", "60",
+                "--threshold-floor", "0.3",
+            ])
+            self.assertEqual(code, 0)
+            report = json.loads((out / "edge_validation_report.json").read_text(encoding="utf-8"))
+        self.assertIs(report["kelly_sizing"], True)
+        self.assertEqual(report["threshold_floor"], 0.3)
+        self.assertEqual(set(report["cost_stress"]["levels"]), {"1x", "2x"})
+
     def test_edge_validate_skips_routing_when_unified_missing(self) -> None:
         # If --unified-artifact is given but unloadable (e.g. its train phase
         # failed), routing is skipped gracefully; cost_stress still runs.

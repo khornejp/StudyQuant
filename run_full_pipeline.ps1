@@ -577,6 +577,8 @@ python -m btcusdt_quant edge-validate `
     --fee-rate-per-side $FeePerSide `
     --slippage-rate-per-side $SlippagePerSide `
     --horizon $Horizon `
+    --threshold-floor $ThresholdFloor `
+    @KellyFlags `
     --backtest-start $BacktestStart `
     --backtest-end $BacktestEnd `
     --output (Join-Path $BacktestDir "edge_validation")

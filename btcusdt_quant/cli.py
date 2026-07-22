@@ -1046,6 +1046,10 @@ def run_edge_validate(
     metrics_dir: str | None = None,
     backtest_start: str | None = None,
     backtest_end: str | None = None,
+    threshold_floor: float = 0.0,
+    kelly_sizing: bool = False,
+    kelly_multiplier: float = 0.5,
+    kelly_lookback_bars: int = 1440,
 ) -> dict[str, object]:
     """Run the OOS edge-validation harnesses over a trained backtest artifact.
 
@@ -1119,6 +1123,19 @@ def run_edge_validate(
             oracle_feature_rows = dataset.build_feature_rows(
                 candles, user_regime_periods=user_regime_periods, external_sources=external_sources
             )
+    # Execution parity with the Phase 4 backtest: the shipped strategy is
+    # Kelly-sized (position_size is the CAP) with the same threshold floor, so
+    # the validation must size the SAME way or "does the edge survive cost?" is
+    # answered for a strategy nobody deploys. kelly round-trip cost tracks the
+    # fee/slippage cost_stress varies, so Kelly sizes down as cost rises.
+    kelly_config = None
+    if kelly_sizing:
+        from . import risk as _risk
+        kelly_config = _risk.KellySizingConfig(
+            kelly_multiplier=kelly_multiplier,
+            variance_lookback_bars=kelly_lookback_bars,
+            holding_period_bars=horizon,
+        )
     bt_common: dict[str, object] = {
         "label_horizon": horizon,
         "exec_tp_pct": exec_tp_pct,
@@ -1129,12 +1146,19 @@ def run_edge_validate(
         "allow_barrier_mismatch": allow_barrier_mismatch,
         "start_date": backtest_start,
         "end_date": backtest_end,
+        "threshold_floor": threshold_floor,
+        "kelly_config": kelly_config,
     }
     cost_kwargs = dict(bt_common)
     if plain_feature_rows is not None:
         cost_kwargs["feature_rows"] = plain_feature_rows
 
-    report: dict[str, object] = {"artifact": str(artifact), "backtest_horizon": horizon}
+    report: dict[str, object] = {
+        "artifact": str(artifact),
+        "backtest_horizon": horizon,
+        "kelly_sizing": kelly_sizing,
+        "threshold_floor": threshold_floor,
+    }
     # cost_stress routes with the PREDICTED source (not the oracle periods).
     report["cost_stress"] = edge_validation.cost_stress(
         candles,
@@ -1372,6 +1396,10 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser.add_argument("--metrics-dir", default=None, help="Binance metrics archive dir (collect-metrics output) -- pass the SAME dir used for training so the validation backtests see real F16 features instead of 0.0 (train/serve parity)")
     ev_parser.add_argument("--backtest-start", default=None, help="ISO date; trade only from here (earlier candles feed feature computation only). Match the backtest's --backtest-start so the OOS window is the same")
     ev_parser.add_argument("--backtest-end", default=None, help="inclusive ISO end date of the trading window; match the backtest's --backtest-end")
+    ev_parser.add_argument("--threshold-floor", type=float, default=0.0, help="hard lower bound on the entry thresholds; match the backtest's --threshold-floor for parity (default 0)")
+    ev_parser.add_argument("--kelly-sizing", action="store_true", help="size each trade with fractional Kelly (position_size becomes the cap), matching a Phase-4 backtest run with --kelly-sizing. Without it the validation is fixed-size and its cost survival will not match the deployed strategy")
+    ev_parser.add_argument("--kelly-multiplier", type=float, default=0.5, help="fraction of full Kelly (default 0.5 = Half-Kelly); match the backtest")
+    ev_parser.add_argument("--kelly-lookback-bars", type=int, default=1440, help="trailing bars for the Kelly variance estimate (default 1440); match the backtest")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -1698,6 +1726,10 @@ def main(argv: list[str] | None = None) -> int:
             metrics_dir=args.metrics_dir,
             backtest_start=args.backtest_start,
             backtest_end=args.backtest_end,
+            threshold_floor=args.threshold_floor,
+            kelly_sizing=args.kelly_sizing,
+            kelly_multiplier=args.kelly_multiplier,
+            kelly_lookback_bars=args.kelly_lookback_bars,
         )
         return 0
     if args.command == "backtest":
