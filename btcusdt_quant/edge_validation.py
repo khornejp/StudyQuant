@@ -233,7 +233,6 @@ def routing_comparison(
         "unified": trading_metrics(unified),
         "predicted": trading_metrics(predicted),
     }
-    oracle_net: float | None = None
     if oracle_feature_rows is not None:
         # Prebuilt oracle rows already carry the hindsight user_regime (and any
         # merged metrics); route on them directly.
@@ -241,7 +240,6 @@ def routing_comparison(
         oracle_kwargs["feature_rows"] = oracle_feature_rows
         oracle = _bt.run_backtest(candles, strategy=strategy, models_by_regime=models_by_regime, **oracle_kwargs)  # type: ignore[arg-type]
         arms["oracle"] = trading_metrics(oracle)
-        oracle_net = _as_float(arms["oracle"].get("net_total_return"))
     elif user_regime_periods is not None:
         oracle = _bt.run_backtest(
             candles,
@@ -251,15 +249,11 @@ def routing_comparison(
             **backtest_kwargs,  # type: ignore[arg-type]
         )
         arms["oracle"] = trading_metrics(oracle)
-        oracle_net = _as_float(arms["oracle"].get("net_total_return"))
-
-    unified_net = _as_float(arms["unified"].get("net_total_return"))
-    predicted_net = _as_float(arms["predicted"].get("net_total_return"))
 
     return {
         "arms": arms,
         "detector_diagnostics": getattr(predicted, "regime_routing_diagnostics", {}),
-        "interpretation": _interpret_routing(unified_net, oracle_net, predicted_net),
+        "interpretation": _interpret_routing(arms),
     }
 
 
@@ -447,14 +441,40 @@ def _dispersion(per_model: Mapping[str, Mapping[str, object]], key: str) -> dict
     }
 
 
-def _interpret_routing(unified: float | None, oracle: float | None, predicted: float | None) -> str:
-    if predicted is None or unified is None:
-        return "insufficient metrics to interpret routing"
-    if oracle is not None:
-        if oracle > 0.0 and predicted <= 0.0:
-            return "oracle profitable, predicted not: detector / transition / routing-lag problem"
-        if oracle <= 0.0:
-            return "oracle also unprofitable: label, feature, entry-model or regime-split problem, not the detector"
-    if unified > predicted:
-        return "unified beats predicted routing: current bucketing splits the sample and hurts the edge"
-    return "predicted routing at least matches unified; no routing pathology flagged by net return alone"
+def _interpret_routing(arms: Mapping[str, Mapping[str, object]], min_trades: int = _bt.MIN_TRADES_FOR_RISK_METRICS) -> str:
+    """Verdict on the 4-way, but ONLY from arms with a reliable sample.
+
+    An arm below ``min_trades`` (backtest's own risk-metric floor) is
+    statistical noise: a 12-trade oracle at 50% win rate would otherwise flip
+    the verdict between "detector problem" and "feature problem" purely on
+    coin-flips. Under-sampled arms are named in a caveat and excluded from the
+    verdict; a strong claim fires only when every arm it depends on clears the
+    floor.
+    """
+    def _net(arm: str) -> float | None:
+        m = arms.get(arm)
+        return _as_float(m.get("net_total_return")) if isinstance(m, Mapping) else None
+
+    def _n(arm: str) -> int:
+        m = arms.get(arm)
+        c = m.get("trade_count") if isinstance(m, Mapping) else None
+        return int(c) if isinstance(c, (int, float)) and not isinstance(c, bool) else 0
+
+    reliable = {arm: _n(arm) >= min_trades and _net(arm) is not None for arm in ("unified", "predicted", "oracle") if arm in arms}
+    caveats = [f"{arm} arm has only {_n(arm)} trades (<{min_trades}); excluded from the verdict"
+               for arm, ok in reliable.items() if not ok]
+    caveat = (" [" + "; ".join(caveats) + "]") if caveats else ""
+
+    u_net, p_net = _net("unified"), _net("predicted")
+    if p_net is None or u_net is None or not reliable.get("predicted") or not reliable.get("unified"):
+        return "predicted/unified arm sample too small to interpret routing" + caveat
+
+    o_net = _net("oracle")
+    if "oracle" in arms and reliable.get("oracle") and o_net is not None:
+        if o_net > 0.0 and p_net <= 0.0:
+            return "oracle profitable, predicted not: detector / transition / routing-lag problem" + caveat
+        if o_net <= 0.0:
+            return "oracle also unprofitable: label, feature, entry-model or regime-split problem, not the detector" + caveat
+    if u_net > p_net:
+        return "unified beats predicted routing: current bucketing splits the sample and hurts the edge" + caveat
+    return "predicted routing at least matches unified; no routing pathology flagged by net return alone" + caveat

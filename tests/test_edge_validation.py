@@ -261,6 +261,39 @@ class RoutingComparisonTests(unittest.TestCase):
                 regime_detector=_RangeDetector(), regime_classifier_model=object(),
             )
 
+    def test_interpretation_ignores_undersampled_arms(self) -> None:
+        # A 12-trade oracle at +net must NOT flip the verdict to "detector
+        # problem" -- it's below the risk-metric floor and is coin-flip noise.
+        interp = edge_validation._interpret_routing(
+            {
+                "unified": {"net_total_return": -0.03, "trade_count": 465},
+                "predicted": {"net_total_return": -0.005, "trade_count": 40},
+                "oracle": {"net_total_return": 0.0018, "trade_count": 12},
+            }
+        )
+        self.assertNotIn("detector", interp)
+        self.assertIn("oracle arm has only 12 trades", interp)
+        # unified (-0.03) < predicted (-0.005): predicted is not beaten.
+        self.assertIn("predicted routing at least matches unified", interp)
+
+    def test_interpretation_uses_reliable_oracle(self) -> None:
+        interp = edge_validation._interpret_routing(
+            {
+                "unified": {"net_total_return": -0.03, "trade_count": 465},
+                "predicted": {"net_total_return": -0.005, "trade_count": 40},
+                "oracle": {"net_total_return": 0.02, "trade_count": 300},
+            }
+        )
+        self.assertIn("detector", interp)
+        self.assertNotIn("trades (<", interp)
+
+    def test_interpretation_bails_when_core_arms_undersampled(self) -> None:
+        interp = edge_validation._interpret_routing(
+            {"unified": {"net_total_return": -0.03, "trade_count": 5},
+             "predicted": {"net_total_return": -0.005, "trade_count": 3}}
+        )
+        self.assertIn("too small to interpret", interp)
+
     def test_requires_unified_model(self) -> None:
         candles = _rising_candles(20)
         with self.assertRaises(ValueError):
