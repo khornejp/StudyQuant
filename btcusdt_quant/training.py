@@ -79,6 +79,11 @@ class TrainingConfig:
     # edge under this. NEVER deploy a model trained with this on.
     shuffle_labels: bool = False
     shuffle_labels_seed: int = 42
+    # Which triple-barrier target the NON-regime path learns as row.label.
+    # "profitability" (long-side, the default/back-compat) or "short_success"
+    # to train a short model, or "long_success"/"direction" for research. The
+    # regime path is unaffected -- it reads row.targets[side] explicitly.
+    train_target: str = "profitability"
     champion_challenger_enabled: bool = False
     regime_aware: bool = False
     min_regime_rows: int = 80
@@ -225,6 +230,30 @@ def drop_fallback_features(build: "dataset.DatasetBuild") -> tuple["dataset.Data
     return replace(build, feature_names=kept), dropped
 
 
+_TRAIN_TARGET_KEYS: tuple[str, ...] = ("profitability", "long_success", "short_success", "direction")
+
+
+def apply_training_target(rows: Sequence[dataset.LabeledRow], target: str) -> list[dataset.LabeledRow]:
+    """Remap row.label to the chosen triple-barrier target for the non-regime path.
+
+    The non-regime training path reads row.label everywhere (folds, Optuna,
+    calibration, final fit). row.label defaults to `profitability` (long-side).
+    Setting it to short_success trains a SHORT model on the same features
+    without touching any of those call sites; the regime path is untouched
+    because it reads row.targets[side] explicitly. No-op for the default target.
+    """
+    if target == "profitability":
+        return list(rows)
+    if target not in _TRAIN_TARGET_KEYS:
+        raise ValueError(f"train_target must be one of {_TRAIN_TARGET_KEYS}, got {target!r}")
+    remapped: list[dataset.LabeledRow] = []
+    for row in rows:
+        if target not in row.targets:
+            raise ValueError(f"row {row.index} has no target {target!r}")
+        remapped.append(replace(row, label=int(row.targets[target])))
+    return remapped
+
+
 def shuffle_labeled_row_targets(rows: Sequence[dataset.LabeledRow], seed: int) -> list[dataset.LabeledRow]:
     """Permute every row's label payload across rows; features stay put.
 
@@ -296,6 +325,12 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         )
     if len(build.labeled_rows) < 80:
         raise ValueError("at least 80 labeled rows are required for the default offline training run")
+    # Non-regime target selection: remap row.label to the chosen target BEFORE
+    # the regime branch. The regime path reads row.targets[side] directly and is
+    # unaffected; only the non-regime path's row.label reads change.
+    if training_config.train_target != "profitability":
+        build = replace(build, labeled_rows=apply_training_target(build.labeled_rows, training_config.train_target))
+        print(f"[TRAIN] Non-regime target: row.label remapped to '{training_config.train_target}'")
     # Mock-input exclusion: features whose offline values are fallback constants
     # carry no information and become a train/serve skew in live. Applies to
     # BOTH the regime and non-regime paths (this runs before the branch).

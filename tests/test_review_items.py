@@ -1583,6 +1583,36 @@ class ShuffledLabelHelperTests(unittest.TestCase):
             self.assertEqual(sh.label_reason, "tp_first" if sh.label else "timeout_no_tp")
 
 
+class TrainingTargetRemapTests(unittest.TestCase):
+    def _rows(self, n: int = 8):
+        from datetime import timedelta
+        from btcusdt_quant import data as _data, dataset as _ds
+
+        base = _data.utc_minute(2026, 1, 2, 0, 0)
+        return [_ds.LabeledRow(
+            index=i, open_time=base + timedelta(minutes=i), features={"f": float(i)},
+            label=1, label_reason="x", target_return=0.0, gap_flag=0, repaired=False, warmup_invalid=False,
+            targets={"long_success": i % 2, "short_success": 1 - i % 2, "direction": 1},
+            target_reasons={},
+        ) for i in range(n)]
+
+    def test_remaps_label_to_short_success_features_untouched(self) -> None:
+        rows = self._rows()
+        out = training.apply_training_target(rows, "short_success")
+        self.assertEqual([r.label for r in out], [1 - i % 2 for i in range(8)])
+        for orig, r in zip(rows, out):
+            self.assertEqual(orig.features, r.features)  # features never move
+
+    def test_profitability_is_noop(self) -> None:
+        rows = self._rows()
+        out = training.apply_training_target(rows, "profitability")
+        self.assertEqual([r.label for r in out], [r.label for r in rows])
+
+    def test_rejects_unknown_target(self) -> None:
+        with self.assertRaises(ValueError):
+            training.apply_training_target(self._rows(), "bogus")
+
+
 class FallbackFeatureExclusionTests(unittest.TestCase):
     def _build(self, feature_names, fallback):
         from btcusdt_quant import dataset as _ds

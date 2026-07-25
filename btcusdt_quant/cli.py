@@ -558,6 +558,7 @@ def run_train(
     shuffle_labels: bool = False,
     shuffle_labels_seed: int = 42,
     exclude_fallback_features: bool = True,
+    train_target: str = "profitability",
 ) -> dict[str, object]:
     if multitask:
         model_family = "pytorch_multitask"
@@ -588,6 +589,7 @@ def run_train(
         shuffle_labels=shuffle_labels,
         shuffle_labels_seed=shuffle_labels_seed,
         exclude_fallback_features=exclude_fallback_features,
+        train_target=train_target,
         champion_challenger_enabled=champion_challenger_enabled,
         regime_aware=regime_aware,
         min_regime_rows=min_regime_rows,
@@ -1296,6 +1298,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--shuffle-labels", action="store_true", help="SHUFFLED-LABEL NEGATIVE CONTROL: permute every row's label/targets across rows (features untouched) before training. A leak-free pipeline must lose its edge under this; comparable net profit from the shuffled model means leakage, threshold overfit, a backtest bug or selection bias. The artifact records shuffled_labels=true -- NEVER deploy it.")
     train.add_argument("--shuffle-labels-seed", type=int, default=42, help="seed for --shuffle-labels permutation (default 42); vary it to repeat the control")
     train.add_argument("--keep-fallback-features", action="store_true", help="keep features whose training-time values are fallback/mock constants (source unavailable offline, e.g. F12 exchange-safety). Default behavior now EXCLUDES them: mock constants carry zero information and become a train/serve input skew when live feeds real values. Pass this only to reproduce the old behavior.")
+    train.add_argument("--target", default="profitability", choices=["profitability", "long_success", "short_success", "direction"], help="NON-regime triple-barrier target to learn (default profitability = long-side). --target short_success trains a SHORT model on the same features (its own triple barrier: -tp before +sl); use for a mean-reversion short experiment. The regime-aware path ignores this (it trains long_success/short_success per regime side).")
     train.add_argument(
         "--threshold-objective",
         default="trading_pnl",
@@ -1646,6 +1649,7 @@ def main(argv: list[str] | None = None) -> int:
                 shuffle_labels=args.shuffle_labels,
                 shuffle_labels_seed=args.shuffle_labels_seed,
                 exclude_fallback_features=not args.keep_fallback_features,
+                train_target=args.target,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)
