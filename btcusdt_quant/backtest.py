@@ -287,6 +287,12 @@ class BacktestTrade:
     # earned, and are what the risk metrics must be computed on.
     trade_return_pct: float = 0.0
     gross_trade_return_pct: float = 0.0
+    # True when the entry was a resting limit (maker) fill: entry side pays no
+    # fee/slippage (see _close_trade), and the fill only happened because a
+    # later bar's price came back to the signal-bar close -- so the trade
+    # population is adversely selected (the bars that ran away are the missed
+    # ones counted in maker_fill_diagnostics.unfilled).
+    entry_maker: bool = False
 
 
 @dataclass
@@ -350,6 +356,11 @@ class BacktestResult:
     # on a clean run; a genuine unapproved mismatch raises instead of landing
     # here.
     barrier_warnings: list[str] = field(default_factory=list)
+    # Maker limit-fill accounting (empty when maker_fill_window == 0, i.e. the
+    # default instant taker fill). placed/filled/unfilled let a reader see the
+    # fill rate and how many signals were lost to unfilled limits -- the
+    # missed trades that erode a maker strategy's edge.
+    maker_fill_diagnostics: dict[str, object] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -383,6 +394,7 @@ class BacktestResult:
             "run_config": self.run_config,
             "missing_side_models": self.missing_side_models,
             "barrier_warnings": self.barrier_warnings,
+            "maker_fill_diagnostics": self.maker_fill_diagnostics,
             "trades": [
                 {
                     "entry_time": t.entry_time,
@@ -412,6 +424,7 @@ class BacktestResult:
                     "position_size_used": t.position_size_used,
                     "trade_return_pct": t.trade_return_pct,
                     "gross_trade_return_pct": t.gross_trade_return_pct,
+                    "entry_maker": t.entry_maker,
                 }
                 for t in self.trades
             ],
@@ -549,8 +562,14 @@ def _close_trade(
     slippage_rate_per_side: float,
 ) -> tuple[float, float, float]:
     gross_pnl_pct = _trade_gross_pnl_pct(trade, exit_price)
-    fee_pct = fee_rate_per_side * 2.0
-    slippage_pct = slippage_rate_per_side * 2.0
+    # A maker (resting-limit) entry pays no entry-side fee/slippage: you set the
+    # price and the book crosses you. Only the exit side is charged. A taker
+    # entry pays both sides. (Exit is modeled taker either way -- a TP limit
+    # could be maker too, but a SL is a taker stop, so charging exit taker is
+    # the conservative choice.)
+    entry_sides = 1.0 if trade.entry_maker else 2.0
+    fee_pct = fee_rate_per_side * entry_sides
+    slippage_pct = slippage_rate_per_side * entry_sides
     cost_pct = fee_pct + slippage_pct
     net_pnl_pct = gross_pnl_pct - cost_pct
 
@@ -607,6 +626,8 @@ def run_backtest(
     kelly_config: risk.KellySizingConfig | None = None,
     allow_barrier_mismatch: bool = False,
     range_gate_enabled: bool = True,
+    maker_fill_window: int = 0,
+    maker_fill_penetration: float = 0.0,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -641,6 +662,10 @@ def run_backtest(
         raise ValueError("min_hold_bars must be non-negative")
     if min_hold_bars > label_horizon:
         raise ValueError("min_hold_bars must not exceed label_horizon")
+    if maker_fill_window < 0:
+        raise ValueError("maker_fill_window must be non-negative")
+    if maker_fill_penetration < 0.0:
+        raise ValueError("maker_fill_penetration must be non-negative")
     if cooldown_bars < 0:
         raise ValueError("cooldown_bars must be non-negative")
     # Before anything else: the models must have been labeled on the barrier we
@@ -675,6 +700,8 @@ def run_backtest(
         "long_threshold_override": long_threshold,
         "short_threshold_override": short_threshold,
         "range_gate_enabled": range_gate_enabled,
+        "maker_fill_window": maker_fill_window,
+        "maker_fill_penetration": maker_fill_penetration,
         "kelly_enabled": kelly_config is not None,
         "kelly_multiplier": kelly_config.kelly_multiplier if kelly_config else None,
         "kelly_lookback_bars": kelly_config.variance_lookback_bars if kelly_config else None,
@@ -704,6 +731,13 @@ def run_backtest(
     active_trade: BacktestTrade | None = None
     bar_count = 0
     next_entry_index = 0
+    # Maker limit-fill state (used only when maker_fill_window > 0). A resting
+    # order is a dict {side, limit, expiry, features, ctx}; counters feed
+    # maker_fill_diagnostics.
+    pending_order: dict[str, object] | None = None
+    maker_orders_placed = 0
+    maker_orders_filled = 0
+    maker_orders_unfilled = 0
 
     if feature_rows is None:
         feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
@@ -823,6 +857,45 @@ def run_backtest(
             prev_close = candles[j - 1].close
             if prev_close > 0.0:
                 bar_returns[j] = (candles[j].close - prev_close) / prev_close
+
+    def _open_trade(side, entry_price, entry_time_iso, features, ctx, entry_maker):
+        """Build a BacktestTrade (or None if Kelly refuses). ctx is the
+        signal-time (regime, long_prob, short_prob, lt, st, genuine_sides).
+        Reads the loop's current `i` for the Kelly variance window."""
+        nonlocal kelly_skipped_shorts, kelly_skipped_longs, kelly_skipped_entries
+        regime, lprob, sprob, lt_, st_, genuine = ctx
+        tp_price, sl_price, _decision = live.optimized_tp_sl(entry_price, side, features, strategy)
+        trade_size: float | None = None
+        if kelly_config is not None:
+            entered_side = "long" if side == "BUY" else "short"
+            if entered_side not in genuine:
+                # See the long note at the taker path: a BUY/SELL with no
+                # declared genuine side cannot be Kelly-sized on a real
+                # probability. Fail closed, attributed by side.
+                if entered_side == "short":
+                    kelly_skipped_shorts += 1
+                else:
+                    kelly_skipped_longs += 1
+                return None
+            entry_prob = lprob if side == "BUY" else sprob
+            window_start = max(0, i + 1 - kelly_config.variance_lookback_bars)
+            trade_size = kelly_fraction_for_entry(
+                kelly_config, entry_prob, entry_price, tp_price, sl_price,
+                bar_returns[window_start:i + 1], position_size, round_trip_cost=round_trip_cost,
+            )
+            if trade_size <= 0.0:
+                kelly_skipped_entries += 1
+                return None
+        return BacktestTrade(
+            entry_time=entry_time_iso, exit_time="", side=side,
+            entry_price=entry_price, exit_price=0.0, tp_price=tp_price, sl_price=sl_price,
+            pnl_pct=0.0, outcome="", strategy=strategy.name,
+            entry_regime=regime, long_probability=lprob, short_probability=sprob,
+            used_threshold=lt_ if side == "BUY" else st_,
+            model_side="long" if side == "BUY" else "short",
+            entry_probability=lprob if side == "BUY" else sprob,
+            position_size_used=trade_size, entry_maker=entry_maker,
+        )
 
     last_in_window_candle = None
     for i, candle in enumerate(candles):
@@ -1068,73 +1141,62 @@ def run_backtest(
                 if cooldown_bars > 0:
                     next_entry_index = i + cooldown_bars + 1
 
-        # Enter new trade
-        if active_trade is None and signal in {"BUY", "SELL"} and i >= next_entry_index:
-            entry_price = candle.close
-            tp_price, sl_price, decision = live.optimized_tp_sl(
-                entry_price, signal, feature_rows[i].features if i < len(feature_rows) else {}, strategy
-            )
-            trade_size: float | None = None
-            if kelly_config is not None:
-                entered_side = "long" if signal == "BUY" else "short"
-                if entered_side not in _ctx_genuine_sides:
-                    # No `and _ctx_genuine_sides` guard: an empty set must also
-                    # refuse. A BUY/SELL with no declared genuine side is a bug
-                    # (a routing path that forgot to declare its side), and
-                    # sizing it on a None probability would bet the cap. Every
-                    # current path declares "long" before emitting a signal, so
-                    # this only fires on the real one-sided cases below -- but
-                    # it now fails CLOSED for a future path that forgets.
-                    #
-                    # Kelly cannot size a bet whose win probability it does not
-                    # have. Two ways to get here, both reported by side:
-                    #  - single-model routing: one score, P(long_success)-like.
-                    #    A SELL fires because it is LOW, and 1-P(long) is not a
-                    #    short win probability (measured: P(long)=0.49,
-                    #    P(short)=0.00 -- they do not sum to 1).
-                    #  - a regime bundle that simply has no model for this side,
-                    #    e.g. range/short failed to fit at train time.
-                    # Either way the fix is a per-side model; the counters say
-                    # which side went untraded rather than blaming "no edge".
-                    if entered_side == "short":
-                        kelly_skipped_shorts += 1
+        # ---- Enter new trade ----
+        if maker_fill_window <= 0:
+            # Default: instant taker fill at the signal-bar close.
+            if active_trade is None and signal in {"BUY", "SELL"} and i >= next_entry_index:
+                ctx = (_ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st, set(_ctx_genuine_sides))
+                feats = feature_rows[i].features if i < len(feature_rows) else {}
+                opened = _open_trade(signal, candle.close, candle.open_time.isoformat(), feats, ctx, False)
+                if opened is not None:
+                    active_trade = opened
+                    bar_count = 0
+        else:
+            # Maker resting-limit model: place a limit at the signal-bar close,
+            # fill only when a LATER bar's price returns to it (adverse
+            # selection), cancel if unfilled within maker_fill_window bars
+            # (the missed trades that erode a maker edge).
+            # 1) try to fill an order placed on an EARLIER bar
+            if active_trade is None and pending_order is not None:
+                if i > int(pending_order["expiry"]):
+                    pending_order = None
+                    maker_orders_unfilled += 1
+                else:
+                    lp = float(pending_order["limit"])
+                    pside = str(pending_order["side"])
+                    # Queue-priority proxy: require the price to PENETRATE the
+                    # limit by maker_fill_penetration (fraction), not merely
+                    # touch it. A resting order sits behind others at its price;
+                    # a bare touch may only fill the front of the queue. Needing
+                    # the market to trade through the level models your order
+                    # clearing. 0 = touch fills (optimistic).
+                    if pside == "BUY":
+                        hit = candle.low <= lp * (1.0 - maker_fill_penetration)
                     else:
-                        kelly_skipped_longs += 1
-                    continue
-                entry_prob = _ctx_long_prob if signal == "BUY" else _ctx_short_prob
-                window_start = max(0, i + 1 - kelly_config.variance_lookback_bars)
-                trade_size = kelly_fraction_for_entry(
-                    kelly_config,
-                    entry_prob,
-                    entry_price,
-                    tp_price,
-                    sl_price,
-                    bar_returns[window_start:i + 1],
-                    position_size,
-                    round_trip_cost=round_trip_cost,
-                )
-                if trade_size <= 0.0:
-                    kelly_skipped_entries += 1
-                    continue
-            active_trade = BacktestTrade(
-                entry_time=candle.open_time.isoformat(),
-                exit_time="",
-                side=signal,
-                entry_price=entry_price,
-                exit_price=0.0,
-                tp_price=tp_price,
-                sl_price=sl_price,
-                pnl_pct=0.0,
-                outcome="",
-                strategy=strategy.name,
-                entry_regime=_ctx_regime,
-                long_probability=_ctx_long_prob,
-                short_probability=_ctx_short_prob,
-                used_threshold=_ctx_lt if signal == "BUY" else _ctx_st,
-                model_side="long" if signal == "BUY" else "short",
-                entry_probability=_ctx_long_prob if signal == "BUY" else _ctx_short_prob,
-                position_size_used=trade_size,
-            )
+                        hit = candle.high >= lp * (1.0 + maker_fill_penetration)
+                    if hit:
+                        opened = _open_trade(
+                            pside, lp, candle.open_time.isoformat(),
+                            pending_order["features"], pending_order["ctx"], True,
+                        )
+                        pending_order = None
+                        if opened is not None:
+                            active_trade = opened
+                            bar_count = 0
+                            maker_orders_filled += 1
+                        else:
+                            # Kelly refused at fill -- order consumed, not traded.
+                            maker_orders_unfilled += 1
+            # 2) place a new resting order on a fresh signal
+            if active_trade is None and pending_order is None and signal in {"BUY", "SELL"} and i >= next_entry_index:
+                pending_order = {
+                    "side": signal,
+                    "limit": candle.close,
+                    "expiry": i + maker_fill_window,
+                    "features": feature_rows[i].features if i < len(feature_rows) else {},
+                    "ctx": (_ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st, set(_ctx_genuine_sides)),
+                }
+                maker_orders_placed += 1
 
     # Close any remaining open trade at the last IN-WINDOW candle (not the
     # file's last candle, which may lie past the backtest window).
@@ -1213,6 +1275,15 @@ def run_backtest(
             "avg_fraction": sum(sizes) / len(sizes) if sizes else 0.0,
             "min_fraction": min(sizes) if sizes else 0.0,
             "max_fraction": max(sizes) if sizes else 0.0,
+        }
+    if maker_fill_window > 0:
+        result.maker_fill_diagnostics = {
+            "maker_fill_window": maker_fill_window,
+            "maker_fill_penetration": maker_fill_penetration,
+            "orders_placed": maker_orders_placed,
+            "orders_filled": maker_orders_filled,
+            "orders_unfilled": maker_orders_unfilled,
+            "fill_rate": maker_orders_filled / maker_orders_placed if maker_orders_placed else 0.0,
         }
     return result
 

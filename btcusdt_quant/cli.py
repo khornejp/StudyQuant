@@ -1361,6 +1361,8 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--kelly-multiplier", type=float, default=0.5, help="fraction of full Kelly to bet (default 0.5 = Half-Kelly: ~18.5%% less growth for ~43%% less max drawdown). Only used with --kelly-sizing.")
     backtest_parser.add_argument("--kelly-lookback-bars", type=int, default=1440, help="trailing bars for the Kelly variance estimate (default 1440 = 1 day of 1m bars). Only used with --kelly-sizing.")
     backtest_parser.add_argument("--regime-classifier-dir", default=None, help="output directory from train-regime-classifier (contains regime_classifier_model.cbm). When set, this SAME saved classifier drives regime routing here via F17 multi-timeframe features -- pass the identical directory used for training's --regime-classifier-dir so routing stays consistent with how the up/down/range models were trained. Takes priority over --auto-regime. Ignored if --user-regime-file is given.")
+    backtest_parser.add_argument("--maker-fill-window", type=int, default=0, help="model MAKER (resting limit) entries instead of the default instant taker fill at the signal-bar close. A BUY places a limit at the signal close and fills only when a LATER bar's low returns to it within this many bars (a SELL uses the high); unfilled within the window = the order is cancelled and the trade is MISSED. Maker entries pay no entry-side fee/slippage (only exit). This surfaces the two costs a taker backtest hides: adverse selection (you only fill when price came back to you) and missed trades (the moves that ran away). 0 = disabled (instant taker fill). See maker_fill_diagnostics in the summary for fill rate.")
+    backtest_parser.add_argument("--maker-fill-penetration-bps", type=float, default=0.0, help="queue-priority stress for --maker-fill-window: require the price to PENETRATE the resting limit by this many bps before it fills, not merely touch it (a resting order sits behind others at its price, so a bare touch may only fill the front of the queue). E.g. 2 = a BUY limit fills only when a bar's low reaches 2bps BELOW the limit. 0 = touch fills (optimistic). Only meaningful with --maker-fill-window > 0.")
     backtest_parser.add_argument("--disable-range-gate", action="store_true", help="A/B experiment flag: skip the range mean-reversion direction gate (which blocks entries at range_position_20 0.25-0.75 and forces LONG-only/SHORT-only at the extremes). With 2025 ~91%% range, the gate suppresses most entries; disabling it lets the model's own probability decide direction everywhere. Backtest-only -- live keeps the gate. Recorded in run_config for comparability.")
     mh_parser = subparsers.add_parser(
         "train-multi-horizon",
@@ -2004,6 +2006,8 @@ def main(argv: list[str] | None = None) -> int:
                 kelly_config=kelly_config,
                 allow_barrier_mismatch=args.allow_barrier_mismatch,
                 range_gate_enabled=not args.disable_range_gate,
+                maker_fill_window=args.maker_fill_window,
+                maker_fill_penetration=args.maker_fill_penetration_bps / 1e4,
             )
             for _warning in result.barrier_warnings:
                 print(f"[BACKTEST] WARNING: {_warning}")

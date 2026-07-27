@@ -1012,9 +1012,12 @@ class SideCapabilityTests(unittest.TestCase):
         import inspect
         from btcusdt_quant import backtest
 
+        # The guard now lives in the nested _open_trade helper (shared by the
+        # taker and maker fill paths); getsource(run_backtest) includes it. The
+        # side set is passed in as `genuine`.
         src = inspect.getsource(backtest.run_backtest)
-        self.assertIn("if entered_side not in _ctx_genuine_sides:", src)
-        self.assertNotIn("if _ctx_genuine_sides and entered_side not in", src)
+        self.assertIn("if entered_side not in genuine:", src)
+        self.assertNotIn("if genuine and entered_side not in", src)
 
 
 class CentroidLinearClassifierTests(unittest.TestCase):
@@ -1694,6 +1697,95 @@ class RangeGateToggleTests(unittest.TestCase):
         self.assertGreater(ungated.trade_count, 0, "disabling the gate must allow probability-driven entries")
         self.assertIs(gated.run_config["range_gate_enabled"], True)
         self.assertIs(ungated.run_config["range_gate_enabled"], False)
+
+
+class MakerFillTests(unittest.TestCase):
+    """--maker-fill-window: resting-limit entries with adverse selection and
+    missed (unfilled) orders, vs the default instant taker fill."""
+
+    class _AlwaysLong:
+        def probability(self, values) -> float:
+            return 0.9
+
+    def _candles(self, specs):
+        from datetime import timedelta
+        from btcusdt_quant import data
+        base = data.utc_minute(2026, 1, 2, 0, 0)
+        out = []
+        for index, (o, h, l, c) in enumerate(specs):
+            out.append(
+                data.Candle(
+                    open_time=base + timedelta(minutes=index),
+                    open=o, high=h, low=l, close=c,
+                    volume=10.0, quote_volume=10.0 * c, number_of_trades=100,
+                    taker_buy_base_volume=5.0, taker_buy_quote_volume=5.0 * c,
+                )
+            )
+        return out
+
+    def _run(self, specs, window, penetration=0.0):
+        return run_backtest(
+            self._candles(specs),
+            model=self._AlwaysLong(),
+            position_size=0.1,
+            label_horizon=10,
+            cooldown_bars=0,
+            long_threshold=0.6,
+            short_threshold=0.01,
+            maker_fill_window=window,
+            maker_fill_penetration=penetration,
+        )
+
+    def test_taker_default_fills_at_close(self) -> None:
+        # window 0 = unchanged instant taker fill at bar-0 close.
+        specs = [(100.0, 101.0, 99.0, 100.0)] + [(100.0, 101.0, 99.0, 100.0)] * 20
+        result = self._run(specs, window=0)
+        self.assertGreater(result.trade_count, 0)
+        first = result.trades[0]
+        self.assertFalse(first.entry_maker)
+        self.assertAlmostEqual(first.entry_price, 100.0)
+        # taker charges BOTH sides: fee_pct == 2 * fee_rate_per_side
+        self.assertAlmostEqual(first.fee_pct, 2.0 * result.fee_rate_per_side)
+        self.assertEqual(result.maker_fill_diagnostics, {})
+
+    def test_maker_fills_when_price_returns_and_waives_entry_cost(self) -> None:
+        # bar 0 signals BUY -> limit at close 100. bar 1 dips to low 99 <= 100
+        # -> fill at 100 on bar 1 (a LATER bar), entry_maker True.
+        specs = [(100.0, 100.2, 99.8, 100.0)]              # signal bar
+        specs += [(100.1, 100.6, 99.0, 100.2)]             # bar1: low 99 <= 100 -> fills
+        specs += [(100.2, 100.4, 100.0, 100.3)] * 20       # hold to timeout
+        result = self._run(specs, window=5)
+        self.assertGreater(result.trade_count, 0)
+        first = result.trades[0]
+        self.assertTrue(first.entry_maker)
+        self.assertAlmostEqual(first.entry_price, 100.0)
+        # maker waives the entry side: only the exit side is charged.
+        self.assertAlmostEqual(first.fee_pct, 1.0 * result.fee_rate_per_side)
+        self.assertAlmostEqual(first.slippage_pct, 1.0 * result.slippage_rate_per_side)
+        self.assertGreaterEqual(result.maker_fill_diagnostics["orders_filled"], 1)
+
+    def test_maker_unfilled_when_price_runs_away(self) -> None:
+        # Monotonic ramp: every later low is above every prior close, so no
+        # resting BUY limit is ever touched -> no trade, all orders unfilled.
+        specs = [(100.0 + 5 * k, 100.0 + 5 * k + 1.0, 100.0 + 5 * k - 1.0, 100.0 + 5 * k) for k in range(20)]
+        result = self._run(specs, window=5)
+        self.assertEqual(result.trade_count, 0)
+        self.assertGreaterEqual(result.maker_fill_diagnostics["orders_placed"], 1)
+        self.assertEqual(result.maker_fill_diagnostics["orders_filled"], 0)
+        self.assertGreaterEqual(result.maker_fill_diagnostics["orders_unfilled"], 1)
+
+    def test_penetration_blocks_a_bare_touch(self) -> None:
+        # bar1 dips exactly to the limit (100.0) -- a bare touch. With a 5bps
+        # penetration requirement the queue-priority proxy refuses the fill; a
+        # touch (0 penetration) would take it. Same candles, both windows large
+        # enough that only the fill rule differs.
+        # Every bar: close 100.0, low exactly 100.0. So every (re-placed) limit
+        # is 100.0 and later lows only ever TOUCH it, never trade through.
+        specs = [(100.0, 100.2, 100.0, 100.0)] * 9
+        touched = self._run(specs, window=5, penetration=0.0)
+        blocked = self._run(specs, window=5, penetration=0.0005)  # 5 bps
+        self.assertGreaterEqual(touched.maker_fill_diagnostics["orders_filled"], 1)
+        self.assertEqual(blocked.maker_fill_diagnostics["orders_filled"], 0)
 
 
 if __name__ == "__main__":
