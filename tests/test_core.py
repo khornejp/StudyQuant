@@ -1353,7 +1353,23 @@ class EndToEndArtifactRegressionTests(unittest.TestCase):
             fold_count = int(fold_count_value)
             model = json.loads((output / "model.json").read_text(encoding="utf-8"))
             weights = cast(dict[str, float], model["weights"])
-            self.assertEqual(set(weights), set(dataset.FEATURE_NAMES))
+            # NOT every FEATURE_NAMES entry: training drops features whose
+            # offline values are fallback/mock constants (drop_fallback_features),
+            # because a model fit on a constant meets real values in live -- an
+            # input-distribution train/serve skew. What must hold is that the
+            # model's feature set is exactly FEATURE_NAMES minus those, and that
+            # no unknown name leaked in.
+            fallback = {
+                str(name)
+                for name in cast(
+                    dict[str, object], summary.get("f11_f12_handling", {})
+                ).get("fallback_features", ())
+                or ()
+            }
+            self.assertEqual(set(weights), set(dataset.FEATURE_NAMES) - fallback)
+            self.assertEqual(set(weights), set(cast(list[str], model["feature_names"])))
+            # A degenerate availability report must not empty the model.
+            self.assertGreaterEqual(len(weights), 10)
             self.assertTrue(any(value != 0.0 for value in weights.values()))
             with (output / "fold_metrics.csv").open("r", newline="", encoding="utf-8") as handle:
                 fold_rows = list(csv.DictReader(handle))
@@ -1452,8 +1468,21 @@ class TestDatasetCacheParquet(unittest.TestCase):
         self.assertEqual(len(loaded.labeled_rows), len(build.labeled_rows))
         self.assertEqual(len(loaded.feature_rows), len(build.feature_rows))
         self.assertEqual(loaded.feature_names, build.feature_names)
-        self.assertEqual(loaded.labeled_rows[0].features["return_1"], build.labeled_rows[0].features["return_1"])
-        self.assertEqual(loaded.feature_rows[0].features["return_1"], build.feature_rows[0].features["return_1"])
+        # float32, not float64: FeatureVector stores columnar float32 (see
+        # _bind_feature_canonical), so a round trip returns the float32
+        # neighbour of the original (0.01 -> 0.009999999776482582). Exact
+        # equality would be asserting a storage precision the format does not
+        # promise; what the cache must preserve is the value to float32.
+        self.assertAlmostEqual(
+            loaded.labeled_rows[0].features["return_1"],
+            build.labeled_rows[0].features["return_1"],
+            places=6,
+        )
+        self.assertAlmostEqual(
+            loaded.feature_rows[0].features["return_1"],
+            build.feature_rows[0].features["return_1"],
+            places=6,
+        )
 
     def test_parquet_missing_feature_fills_gracefully(self) -> None:
         build = self._build_dataset(feature_names=("return_1", "return_5"))
