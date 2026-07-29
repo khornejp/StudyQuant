@@ -300,6 +300,10 @@ class BacktestResult:
     trades: list[BacktestTrade] = field(default_factory=list)
     total_return: float = 0.0
     gross_total_return: float = 0.0
+    # Simple per-trade means in notional bps -- see the note in as_dict for why
+    # these are NOT gross_total_return / trade_count.
+    mean_gross_bps_per_trade: float = 0.0
+    mean_net_bps_per_trade: float = 0.0
     win_rate: float = 0.0
     profit_factor: float = 0.0
     max_drawdown: float = 0.0
@@ -368,6 +372,17 @@ class BacktestResult:
             "net_total_return": self.total_return,
             "gross_total_return": self.gross_total_return,
             "cost_impact_return": self.gross_total_return - self.total_return,
+            # Per-trade expectancy as a SIMPLE mean over trades, in notional
+            # bps. Deliberately published next to the *_total_return figures
+            # because dividing those by trade_count gives a DIFFERENT number:
+            # trade PnL compounds on a growing equity, so an equity-weighted
+            # per-trade average runs above the simple mean whenever the run is
+            # profitable (measured ~12% higher on the 30m maker run: 8.20 vs
+            # 7.34 bps). Costs are a per-trade CONSTANT, so an expectancy-vs-
+            # cost comparison has to use the simple mean or it mixes bases --
+            # which is how a break-even estimate ends up flattering.
+            "mean_gross_bps_per_trade": self.mean_gross_bps_per_trade,
+            "mean_net_bps_per_trade": self.mean_net_bps_per_trade,
             "win_rate": self.win_rate,
             "profit_factor": self.profit_factor,
             "max_drawdown": self.max_drawdown,
@@ -562,14 +577,17 @@ def _close_trade(
     slippage_rate_per_side: float,
 ) -> tuple[float, float, float]:
     gross_pnl_pct = _trade_gross_pnl_pct(trade, exit_price)
-    # A maker (resting-limit) entry pays no entry-side fee/slippage: you set the
-    # price and the book crosses you. Only the exit side is charged. A taker
-    # entry pays both sides. (Exit is modeled taker either way -- a TP limit
-    # could be maker too, but a SL is a taker stop, so charging exit taker is
-    # the conservative choice.)
-    entry_sides = 1.0 if trade.entry_maker else 2.0
-    fee_pct = fee_rate_per_side * entry_sides
-    slippage_pct = slippage_rate_per_side * entry_sides
+    # A maker (resting-limit) entry saves the entry SLIPPAGE -- you named the
+    # price, so there is no spread/impact to cross -- but NOT the entry FEE.
+    # The exchange charges a maker fee on a resting fill; only a rebate tier
+    # makes it zero, and this backtest does not model one. On Binance USDT-M
+    # VIP0 the maker fee is 0.0200%, i.e. exactly DEFAULT_FEE_RATE_PER_SIDE, so
+    # waiving it here used to over-credit every maker trade by a full 2bps --
+    # enough on its own to flip the 30m maker verdict.
+    # (Exit is modeled taker either way -- a TP limit could be maker too, but a
+    # SL is a taker stop, so charging exit taker is the conservative choice.)
+    fee_pct = fee_rate_per_side * 2.0
+    slippage_pct = slippage_rate_per_side * (1.0 if trade.entry_maker else 2.0)
     cost_pct = fee_pct + slippage_pct
     net_pnl_pct = gross_pnl_pct - cost_pct
 
@@ -737,7 +755,12 @@ def run_backtest(
     pending_order: dict[str, object] | None = None
     maker_orders_placed = 0
     maker_orders_filled = 0
-    maker_orders_unfilled = 0
+    # Expiries and Kelly refusals are counted apart: an expiry is the book
+    # never coming back to the limit (what fill_rate is about), a refusal is a
+    # fill the sizer then declined. Lumping them made fill_rate a statement
+    # about two unrelated things.
+    maker_orders_expired = 0
+    maker_orders_kelly_refused = 0
 
     if feature_rows is None:
         feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods)
@@ -850,7 +873,12 @@ def run_backtest(
     kelly_skipped_entries = 0
     kelly_skipped_shorts = 0
     kelly_skipped_longs = 0
-    round_trip_cost = 2.0 * (fee_rate_per_side + slippage_rate_per_side)
+    # Kelly must size against the cost this run will actually pay. Under the
+    # maker model the entry saves its slippage (see _close_trade), so quoting
+    # the taker round-trip here would make Kelly refuse entries the run can
+    # afford.
+    _entry_slippage_sides = 1.0 if maker_fill_window > 0 else 2.0
+    round_trip_cost = 2.0 * fee_rate_per_side + _entry_slippage_sides * slippage_rate_per_side
     if kelly_config is not None:
         bar_returns = [float("nan")] * len(candles)
         for j in range(1, len(candles)):
@@ -1073,6 +1101,56 @@ def run_backtest(
 
         result.signal_counts[signal] += 1
 
+        # Maker resting-limit model, part 1: try to fill an order placed on an
+        # EARLIER bar. This sits ABOVE the exit block on purpose. A maker order
+        # fills part-way THROUGH this bar, so the rest of the bar is real,
+        # tradeable time and can hit a barrier -- unlike a taker entry at the
+        # close, which leaves nothing of the bar behind. Opening below the exit
+        # block (as this used to) skipped the fill bar's barrier check entirely,
+        # and the fill bar is BY CONSTRUCTION one that moved against the entry
+        # (price came back to the limit), so the skipped outcomes were the bad
+        # ones: measured 1.34% of fills had already breached SL. Filling here
+        # lets the SAME exit logic below resolve the fill bar, with no second
+        # copy of the barrier rules. bar_count therefore reaches 1 on the fill
+        # bar -- correct, since the position is held for part of it.
+        #   Residual OHLC limitation: a BUY's low necessarily comes at/after the
+        # fill (price had to fall to the limit), so the SL side is sound, but the
+        # high may predate the dip, so a same-bar TP can resolve optimistically.
+        # Measured at 0.20% of fills -- accepted.
+        # 2) placing a new order stays below, after the exit block.
+        if maker_fill_window > 0 and active_trade is None and pending_order is not None:
+            if i > int(pending_order["expiry"]):
+                pending_order = None
+                maker_orders_expired += 1
+            else:
+                lp = float(pending_order["limit"])
+                pside = str(pending_order["side"])
+                # Queue-priority proxy: require the price to PENETRATE the
+                # limit by maker_fill_penetration (fraction), not merely
+                # touch it. A resting order sits behind others at its price;
+                # a bare touch may only fill the front of the queue. Needing
+                # the market to trade through the level models your order
+                # clearing. 0 = touch fills (optimistic).
+                if pside == "BUY":
+                    hit = candle.low <= lp * (1.0 - maker_fill_penetration)
+                else:
+                    hit = candle.high >= lp * (1.0 + maker_fill_penetration)
+                if hit:
+                    opened = _open_trade(
+                        pside, lp, candle.open_time.isoformat(),
+                        pending_order["features"], pending_order["ctx"], True,
+                    )
+                    pending_order = None
+                    if opened is not None:
+                        active_trade = opened
+                        bar_count = 0
+                        maker_orders_filled += 1
+                    else:
+                        # The limit DID fill; Kelly then refused to size it.
+                        # Counted apart from expiries so fill_rate stays a
+                        # statement about the book, not about sizing.
+                        maker_orders_kelly_refused += 1
+
         # Exit active trade if SL/TP hit or horizon exceeded
         if active_trade is not None:
             bar_count += 1
@@ -1152,42 +1230,9 @@ def run_backtest(
                     active_trade = opened
                     bar_count = 0
         else:
-            # Maker resting-limit model: place a limit at the signal-bar close,
-            # fill only when a LATER bar's price returns to it (adverse
-            # selection), cancel if unfilled within maker_fill_window bars
-            # (the missed trades that erode a maker edge).
-            # 1) try to fill an order placed on an EARLIER bar
-            if active_trade is None and pending_order is not None:
-                if i > int(pending_order["expiry"]):
-                    pending_order = None
-                    maker_orders_unfilled += 1
-                else:
-                    lp = float(pending_order["limit"])
-                    pside = str(pending_order["side"])
-                    # Queue-priority proxy: require the price to PENETRATE the
-                    # limit by maker_fill_penetration (fraction), not merely
-                    # touch it. A resting order sits behind others at its price;
-                    # a bare touch may only fill the front of the queue. Needing
-                    # the market to trade through the level models your order
-                    # clearing. 0 = touch fills (optimistic).
-                    if pside == "BUY":
-                        hit = candle.low <= lp * (1.0 - maker_fill_penetration)
-                    else:
-                        hit = candle.high >= lp * (1.0 + maker_fill_penetration)
-                    if hit:
-                        opened = _open_trade(
-                            pside, lp, candle.open_time.isoformat(),
-                            pending_order["features"], pending_order["ctx"], True,
-                        )
-                        pending_order = None
-                        if opened is not None:
-                            active_trade = opened
-                            bar_count = 0
-                            maker_orders_filled += 1
-                        else:
-                            # Kelly refused at fill -- order consumed, not traded.
-                            maker_orders_unfilled += 1
-            # 2) place a new resting order on a fresh signal
+            # Maker resting-limit model, part 2: place a limit on a fresh
+            # signal. Part 1 (filling an order placed on an EARLIER bar) runs
+            # ABOVE the exit block -- see the note there for why.
             if active_trade is None and pending_order is None and signal in {"BUY", "SELL"} and i >= next_entry_index:
                 pending_order = {
                     "side": signal,
@@ -1197,6 +1242,13 @@ def run_backtest(
                     "ctx": (_ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st, set(_ctx_genuine_sides)),
                 }
                 maker_orders_placed += 1
+
+    # An order still resting when the window closed never got its verdict.
+    # Counting it keeps placed == filled + expired + kelly_refused, so a reader
+    # can tell the accounting is complete rather than off by a silent one.
+    if pending_order is not None:
+        pending_order = None
+        maker_orders_expired += 1
 
     # Close any remaining open trade at the last IN-WINDOW candle (not the
     # file's last candle, which may lie past the backtest window).
@@ -1225,6 +1277,10 @@ def run_backtest(
     result.total_return = (equity - initial_equity) / initial_equity
     result.gross_total_return = (gross_equity - initial_equity) / initial_equity
     result.trade_count = len(result.trades)
+    if result.trades:
+        _n = float(len(result.trades))
+        result.mean_gross_bps_per_trade = sum(t.gross_pnl_pct for t in result.trades) / _n * 1e4
+        result.mean_net_bps_per_trade = sum(t.pnl_pct for t in result.trades) / _n * 1e4
     # Risk metrics are computed on EQUITY returns (pnl scaled by the fraction
     # actually bet), not on price returns. Under a constant position_size the
     # multiplier cancels in Sharpe and merely rescales profit_factor's ratio,
@@ -1282,8 +1338,16 @@ def run_backtest(
             "maker_fill_penetration": maker_fill_penetration,
             "orders_placed": maker_orders_placed,
             "orders_filled": maker_orders_filled,
-            "orders_unfilled": maker_orders_unfilled,
-            "fill_rate": maker_orders_filled / maker_orders_placed if maker_orders_placed else 0.0,
+            # Never touched by the book within the window. This -- not sizing --
+            # is what "the maker missed the trade" means.
+            "orders_expired": maker_orders_expired,
+            # Filled, then declined by Kelly. Zero unless kelly_config is set.
+            "orders_kelly_refused": maker_orders_kelly_refused,
+            # placed == filled + expired + kelly_refused, by construction.
+            "fill_rate": (
+                (maker_orders_filled + maker_orders_kelly_refused) / maker_orders_placed
+                if maker_orders_placed else 0.0
+            ),
         }
     return result
 

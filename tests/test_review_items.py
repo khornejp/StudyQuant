@@ -1747,6 +1747,12 @@ class MakerFillTests(unittest.TestCase):
         # taker charges BOTH sides: fee_pct == 2 * fee_rate_per_side
         self.assertAlmostEqual(first.fee_pct, 2.0 * result.fee_rate_per_side)
         self.assertEqual(result.maker_fill_diagnostics, {})
+        # mean_*_bps_per_trade is the SIMPLE per-trade mean, not
+        # total_return / trade_count (which is equity-weighted, because trade
+        # PnL compounds). Comparing expectancy against a per-trade constant
+        # cost requires the simple mean.
+        expected = sum(t.pnl_pct for t in result.trades) / len(result.trades) * 1e4
+        self.assertAlmostEqual(result.mean_net_bps_per_trade, expected)
 
     def test_maker_fills_when_price_returns_and_waives_entry_cost(self) -> None:
         # bar 0 signals BUY -> limit at close 100. bar 1 dips to low 99 <= 100
@@ -1759,8 +1765,12 @@ class MakerFillTests(unittest.TestCase):
         first = result.trades[0]
         self.assertTrue(first.entry_maker)
         self.assertAlmostEqual(first.entry_price, 100.0)
-        # maker waives the entry side: only the exit side is charged.
-        self.assertAlmostEqual(first.fee_pct, 1.0 * result.fee_rate_per_side)
+        # A resting limit saves the entry SLIPPAGE (you named the price) but
+        # NOT the entry FEE -- the exchange charges a maker fee on a resting
+        # fill. Waiving the fee too over-credited every maker trade by a full
+        # per-side fee (2bps at the default), which alone flipped the sign of
+        # the 30m maker net expectancy.
+        self.assertAlmostEqual(first.fee_pct, 2.0 * result.fee_rate_per_side)
         self.assertAlmostEqual(first.slippage_pct, 1.0 * result.slippage_rate_per_side)
         self.assertGreaterEqual(result.maker_fill_diagnostics["orders_filled"], 1)
 
@@ -1772,7 +1782,36 @@ class MakerFillTests(unittest.TestCase):
         self.assertEqual(result.trade_count, 0)
         self.assertGreaterEqual(result.maker_fill_diagnostics["orders_placed"], 1)
         self.assertEqual(result.maker_fill_diagnostics["orders_filled"], 0)
-        self.assertGreaterEqual(result.maker_fill_diagnostics["orders_unfilled"], 1)
+        self.assertGreaterEqual(result.maker_fill_diagnostics["orders_expired"], 1)
+        # The accounting must close: every order placed ends up filled, expired
+        # or Kelly-refused. An order still resting at the window edge used to
+        # vanish from the totals.
+        diag = result.maker_fill_diagnostics
+        self.assertEqual(
+            diag["orders_placed"],
+            diag["orders_filled"] + diag["orders_expired"] + diag["orders_kelly_refused"],
+        )
+
+    def test_fill_bar_can_hit_the_stop(self) -> None:
+        # A maker order fills part-way through its bar, so the REST of that bar
+        # can hit a barrier. bar 0 signals BUY -> limit at 100. bar 1 dips to
+        # the limit and keeps falling well past the stop (default sl_pct puts
+        # the SL just under 100), so the trade must resolve SL on the FILL BAR
+        # rather than surviving to bar 2. Opening the trade below the exit block
+        # skipped this bar entirely -- and since a fill bar is by construction
+        # one that moved against the entry, the skipped outcomes were the losses.
+        specs = [(100.0, 100.2, 99.8, 100.0)]        # signal bar
+        specs += [(100.0, 100.05, 90.0, 90.5)]       # bar1: fills at 100, craters
+        # Ramp away afterwards so no re-placed limit is ever touched again --
+        # the run then contains exactly the one trade under test.
+        specs += [(95.5 + 5 * k, 96.5 + 5 * k, 94.5 + 5 * k, 95.5 + 5 * k) for k in range(20)]
+        result = self._run(specs, window=5)
+        self.assertEqual(result.trade_count, 1)
+        first = result.trades[0]
+        self.assertTrue(first.entry_maker)
+        self.assertEqual(first.outcome, "SL")
+        # Resolved ON the fill bar, not a later one.
+        self.assertEqual(first.exit_time, first.entry_time)
 
     def test_penetration_blocks_a_bare_touch(self) -> None:
         # bar1 dips exactly to the limit (100.0) -- a bare touch. With a 5bps

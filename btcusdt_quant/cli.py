@@ -1058,6 +1058,9 @@ def run_edge_validate(
     kelly_sizing: bool = False,
     kelly_multiplier: float = 0.5,
     kelly_lookback_bars: int = 1440,
+    range_gate_enabled: bool = True,
+    maker_fill_window: int = 0,
+    maker_fill_penetration: float = 0.0,
 ) -> dict[str, object]:
     """Run the OOS edge-validation harnesses over a trained backtest artifact.
 
@@ -1156,6 +1159,15 @@ def run_edge_validate(
         "end_date": backtest_end,
         "threshold_floor": threshold_floor,
         "kelly_config": kelly_config,
+        # Execution parity with the Phase 4 backtest, same argument as
+        # kelly_config above: these three change WHICH signals become trades
+        # and what each trade costs. Left at their defaults the harness would
+        # cost-stress the gated TAKER strategy while the experiment under test
+        # ran gate-off with maker fills -- answering "does the edge survive
+        # cost?" for a strategy nobody is proposing to deploy.
+        "range_gate_enabled": range_gate_enabled,
+        "maker_fill_window": maker_fill_window,
+        "maker_fill_penetration": maker_fill_penetration,
     }
     cost_kwargs = dict(bt_common)
     if plain_feature_rows is not None:
@@ -1415,6 +1427,9 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser.add_argument("--kelly-sizing", action="store_true", help="size each trade with fractional Kelly (position_size becomes the cap), matching a Phase-4 backtest run with --kelly-sizing. Without it the validation is fixed-size and its cost survival will not match the deployed strategy")
     ev_parser.add_argument("--kelly-multiplier", type=float, default=0.5, help="fraction of full Kelly (default 0.5 = Half-Kelly); match the backtest")
     ev_parser.add_argument("--kelly-lookback-bars", type=int, default=1440, help="trailing bars for the Kelly variance estimate (default 1440); match the backtest")
+    ev_parser.add_argument("--disable-range-gate", action="store_true", help="skip the range mean-reversion direction gate, matching a backtest run with --disable-range-gate. The gate changes WHICH signals become trades, so leaving it on here cost-stresses a different strategy than the one under test")
+    ev_parser.add_argument("--maker-fill-window", type=int, default=0, help="model MAKER (resting limit) entries, matching a backtest run with --maker-fill-window. Entries save the entry-side slippage and only fill when a later bar returns to the limit; 0 = instant taker fill. Match the backtest or the cost stress answers for a different execution model")
+    ev_parser.add_argument("--maker-fill-penetration-bps", type=float, default=0.0, help="queue-priority stress for --maker-fill-window (bps the price must trade THROUGH the limit before it fills); match the backtest")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -1749,6 +1764,9 @@ def main(argv: list[str] | None = None) -> int:
             kelly_sizing=args.kelly_sizing,
             kelly_multiplier=args.kelly_multiplier,
             kelly_lookback_bars=args.kelly_lookback_bars,
+            range_gate_enabled=not args.disable_range_gate,
+            maker_fill_window=args.maker_fill_window,
+            maker_fill_penetration=args.maker_fill_penetration_bps / 1e4,
         )
         return 0
     if args.command == "backtest":
