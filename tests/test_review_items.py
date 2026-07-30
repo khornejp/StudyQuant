@@ -1797,9 +1797,9 @@ class MakerFillTests(unittest.TestCase):
         )
 
     def test_taker_and_maker_rates_are_distinct(self) -> None:
-        # The maker and taker fees are DIFFERENT numbers (VIP0: 0.02% vs 0.05%).
-        # A single rate applied to both sides charged the maker rate for taker
-        # fills and under-counted a taker round trip by 6bps. Pin that a taker
+        # The maker and taker fees are DIFFERENT numbers (Bitget VIP0: 0.02% vs
+        # 0.06%). A single rate applied to both sides charged the maker rate for
+        # taker fills and under-counted a taker round trip by 8bps. Pin that a taker
         # trade pays 2x taker while a maker-entry trade pays maker + taker, with
         # explicit rates so the assertion does not just restate the defaults.
         specs = [(100.0, 100.2, 99.8, 100.0)]
@@ -1808,21 +1808,43 @@ class MakerFillTests(unittest.TestCase):
         common = dict(
             model=self._AlwaysLong(), position_size=0.1, label_horizon=10,
             cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
-            fee_rate_per_side=0.0005, maker_fee_rate_per_side=0.0002,
+            fee_rate_per_side=0.0006, maker_fee_rate_per_side=0.0002,
             slippage_rate_per_side=0.0,
         )
         taker = run_backtest(self._candles(specs), maker_fill_window=0, **common)
         maker = run_backtest(self._candles(specs), maker_fill_window=5, **common)
         self.assertFalse(taker.trades[0].entry_maker)
-        self.assertAlmostEqual(taker.trades[0].fee_pct, 0.0010)   # 5 + 5 bps
+        self.assertAlmostEqual(taker.trades[0].fee_pct, 0.0012)   # 6 + 6 bps
         self.assertTrue(maker.trades[0].entry_maker)
-        self.assertAlmostEqual(maker.trades[0].fee_pct, 0.0007)   # 2 + 5 bps
+        self.assertAlmostEqual(maker.trades[0].fee_pct, 0.0008)   # 2 + 6 bps
         # A maker rebate is representable (negative rate), but must be opt-in.
         rebate = run_backtest(
             self._candles(specs), maker_fill_window=5,
             **{**common, "maker_fee_rate_per_side": -0.0001},
         )
-        self.assertAlmostEqual(rebate.trades[0].fee_pct, 0.0004)  # -1 + 5 bps
+        self.assertAlmostEqual(rebate.trades[0].fee_pct, 0.0005)  # -1 + 6 bps
+
+    def test_cost_basis_is_shared_between_training_and_backtest(self) -> None:
+        # Threshold selection charges training.DEFAULT_ROUND_TRIP_COST while
+        # execution charges backtest.DEFAULT_ROUND_TRIP_COST_PCT. They are
+        # separate literals (backtest imports live, training does not), and they
+        # drifted: training stayed at 0.0008 -- 2 x (MAKER fee + slippage) --
+        # after the backtest moved to the real taker rate, so thresholds were
+        # picked against half the cost execution pays and admitted signals whose
+        # gross edge dies in fees. Whoever re-tiers the account must move both.
+        self.assertAlmostEqual(
+            training.DEFAULT_ROUND_TRIP_COST, backtest_module.DEFAULT_ROUND_TRIP_COST_PCT
+        )
+        # And the round trip really is taker-in/taker-out, not the maker rate.
+        self.assertAlmostEqual(
+            backtest_module.DEFAULT_ROUND_TRIP_COST_PCT,
+            2.0 * (backtest_module.DEFAULT_TAKER_FEE_RATE_PER_SIDE
+                   + backtest_module.DEFAULT_SLIPPAGE_RATE_PER_SIDE),
+        )
+        self.assertGreater(
+            backtest_module.DEFAULT_TAKER_FEE_RATE_PER_SIDE,
+            backtest_module.DEFAULT_MAKER_FEE_RATE_PER_SIDE,
+        )
 
     def test_maker_exit_prices_the_exit_leg_as_a_resting_limit(self) -> None:
         # Bitget can attach TP/SL as limit orders at open, so the exit leg can be
@@ -1834,20 +1856,20 @@ class MakerFillTests(unittest.TestCase):
         common = dict(
             model=self._AlwaysLong(), position_size=0.1, label_horizon=10,
             cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
-            fee_rate_per_side=0.0005, maker_fee_rate_per_side=0.0002,
+            fee_rate_per_side=0.0006, maker_fee_rate_per_side=0.0002,
             slippage_rate_per_side=0.0001,
         )
         # maker entry + maker exit: 2+2 bps fee, no slippage on either leg.
         both = run_backtest(self._candles(specs), maker_fill_window=5, maker_exit=True, **common)
         self.assertAlmostEqual(both.trades[0].fee_pct, 0.0004)
         self.assertAlmostEqual(both.trades[0].slippage_pct, 0.0)
-        # maker entry + taker exit: 2+5 bps fee, slippage on the exit leg only.
+        # maker entry + taker exit: 2+6 bps fee, slippage on the exit leg only.
         mixed = run_backtest(self._candles(specs), maker_fill_window=5, **common)
-        self.assertAlmostEqual(mixed.trades[0].fee_pct, 0.0007)
+        self.assertAlmostEqual(mixed.trades[0].fee_pct, 0.0008)
         self.assertAlmostEqual(mixed.trades[0].slippage_pct, 0.0001)
-        # taker entry + maker exit: 5+2 bps fee, slippage on the entry leg only.
+        # taker entry + maker exit: 6+2 bps fee, slippage on the entry leg only.
         taker_in = run_backtest(self._candles(specs), maker_fill_window=0, maker_exit=True, **common)
-        self.assertAlmostEqual(taker_in.trades[0].fee_pct, 0.0007)
+        self.assertAlmostEqual(taker_in.trades[0].fee_pct, 0.0008)
         self.assertAlmostEqual(taker_in.trades[0].slippage_pct, 0.0001)
         # Resting both legs must be the cheapest of the three.
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)

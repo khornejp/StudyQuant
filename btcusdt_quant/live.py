@@ -1835,17 +1835,19 @@ def apply_range_mean_reversion_gate(regime: str, features: dict[str, float], all
 
 
 # EV (Expected Value) calculation for LONG/SHORT entry decisions
-# Binance USDT-M perpetual, VIP0, no discount and no maker rebate (confirmed for
-# this account 2026-07-30): TAKER 0.0500%, maker 0.0200%. Both legs are taker
-# here -- an EV gate decides whether to cross the spread NOW, and the exit is a
-# TP/SL order that a stop makes taker anyway.
+# Bitget USDT-M perpetual, VIP0, no discount and no maker rebate -- the real
+# trading account (confirmed 2026-07-30): TAKER 0.0600%, maker 0.0200%. Both
+# legs are taker here -- an EV gate decides whether to cross the spread NOW, and
+# the exit is a TP/SL order that a stop makes taker anyway. Costs follow the
+# ACCOUNT, not exchange.py's Binance adapter (the live path is on hold and the
+# adapter has not been re-pointed).
 #   Until 2026-07-30 these were 0.0002 labeled "Binance taker fee". 0.0200% is
-# the MAKER rate, so the gate modeled 4bps of fees where 10bps are charged, and
+# the MAKER rate, so the gate modeled 4bps of fees where 12bps are charged, and
 # admitted trades that execution then closed at a loss. If maker-only entry is
 # ever modeled here, add a separate maker leg -- do not lower this one.
 EV_COST_CONFIG = {
-    "fee_entry": 0.0005,      # 0.05% Binance USDT-M VIP0 taker fee
-    "fee_exit": 0.0005,       # 0.05% Binance USDT-M VIP0 taker fee
+    "fee_entry": 0.0006,      # 0.06% Bitget USDT-M VIP0 taker fee
+    "fee_exit": 0.0006,       # 0.06% Bitget USDT-M VIP0 taker fee
     "slippage": 0.0001,       # 0.01% estimated slippage
     "spread_cost": 0.0001,    # 0.01% estimated spread cost
     "safety_margin": 0.0002,  # 0.02% safety margin

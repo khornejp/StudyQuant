@@ -117,7 +117,12 @@ if (-not $ThresholdFloor) { $ThresholdFloor = "0.0" }
 # cost 2*(fee+slippage) is derived below and passed to train (threshold
 # objective + holdout metrics) while the per-side values go to backtest
 # execution -- so threshold selection and execution always share one basis.
-if (-not $FeePerSide)      { $FeePerSide      = "0.0002" }  # 0.02%
+# FeePerSide is the TAKER rate -- what an immediate fill pays, and what every
+# leg of the default execution is. It was 0.0002 (the Bitget VIP0 MAKER rate)
+# until 2026-07-30, so the whole pipeline priced taker fills at the maker fee
+# and under-charged 8bps per round trip. Keep it equal to backtest.py's
+# DEFAULT_TAKER_FEE_RATE_PER_SIDE.
+if (-not $FeePerSide)      { $FeePerSide      = "0.0006" }  # 0.06% Bitget VIP0 taker
 if (-not $SlippagePerSide) { $SlippagePerSide = "0.0002" }  # 0.02%
 $RoundTripCost = [string](2.0 * ([double]$FeePerSide + [double]$SlippagePerSide))
 # Fractional-Kelly position sizing for the backtests (Phase 4 / 4.5).

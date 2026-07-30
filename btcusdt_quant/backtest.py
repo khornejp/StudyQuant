@@ -232,21 +232,25 @@ MIN_TRADES_FOR_RISK_METRICS = 20
 # a true match from an exact one.
 _BARRIER_MATCH_TOL = 1e-9
 
-# Binance USDT-M perpetual, VIP0, no BNB/referral discount and no maker rebate
-# (confirmed for this account 2026-07-30): maker 0.0200%, taker 0.0500%. The two
+# Bitget USDT-M perpetual, VIP0, no discount and no maker rebate -- the real
+# trading account (confirmed 2026-07-30): maker 0.0200%, taker 0.0600%. The two
 # are NOT the same number, and the difference decides whether a thin edge lives:
-# a 0.0500% taker round trip is 10bps of fee alone. Until 2026-07-30 this module
-# had a single DEFAULT_FEE_RATE_PER_SIDE = 0.0002 applied to both sides, i.e. it
+# a taker round trip is 12bps of fee alone. Until 2026-07-30 this module had a
+# single DEFAULT_FEE_RATE_PER_SIDE = 0.0002 applied to both sides, i.e. it
 # charged the MAKER rate for TAKER fills and under-counted every taker round trip
-# by 6bps. Re-tier these two constants (and only these) if the account moves.
+# by 8bps. Re-tier these two constants (and only these) if the account moves.
+# (exchange.py speaks Binance USD-M -- the live path is on hold and its adapter
+# has not been re-pointed. Costs follow the account, not the adapter.)
 DEFAULT_MAKER_FEE_RATE_PER_SIDE = 0.0002
-DEFAULT_TAKER_FEE_RATE_PER_SIDE = 0.0005
+DEFAULT_TAKER_FEE_RATE_PER_SIDE = 0.0006
 # `fee_rate_per_side` throughout this module means the TAKER rate: it is what an
 # immediate fill pays, and the exit is modeled taker on every path. The maker
 # rate applies only to a resting-limit ENTRY (see _close_trade).
 DEFAULT_FEE_RATE_PER_SIDE = DEFAULT_TAKER_FEE_RATE_PER_SIDE
 DEFAULT_SLIPPAGE_RATE_PER_SIDE = 0.0002
-# Taker in, taker out -- the default execution. 2*(5+2) = 14bps.
+# Taker in, taker out -- the default execution. 2*(6+2) = 16bps. Training's
+# --round-trip-cost must equal this or threshold selection optimizes against a
+# cost the backtest does not charge (test_cost_basis_is_shared pins it).
 DEFAULT_ROUND_TRIP_COST_PCT = 2.0 * (DEFAULT_FEE_RATE_PER_SIDE + DEFAULT_SLIPPAGE_RATE_PER_SIDE)
 
 
@@ -475,7 +479,7 @@ def _validate_cost_rates(
     # is refused is a rebate large enough to make the round trip cost nothing:
     # that is free money, and a backtest that models it will always find an
     # "edge". In reality the rebate never exceeds the taker fee it is paired
-    # with (Binance's deepest USDT-M maker rebate is well inside its taker rate),
+    # with (Bitget's deepest USDT-M maker rebate is well inside its taker rate),
     # so this rejects typos, not tiers.
     if maker_fee_rate_per_side + fee_rate_per_side < 0.0:
         raise ValueError(
@@ -621,7 +625,7 @@ def _close_trade(
     #   Both legs used to be modeled wrongly here. Until 2026-07-30 a maker
     # entry paid NO fee at all (over-crediting 2bps/trade); before that both
     # legs were charged the maker rate even for taker fills (under-charging
-    # 6bps on a taker round trip); and the exit was hardcoded taker, which
+    # 8bps on a taker round trip); and the exit was hardcoded taker, which
     # understated an exchange that lets you rest TP/SL as limit orders.
     #   exit_maker is an ASSUMPTION, not an observation -- see run_backtest's
     # maker_exit for what it takes for granted and why the SL leg is where it

@@ -14,6 +14,18 @@ from typing import Mapping, Sequence
 from . import cv, dataset, features, governance, lineage, models, monitoring
 
 
+# Round-trip trading cost (fees + slippage, both sides) charged by the
+# trading_pnl threshold objective and the holdout PnL metrics. It MUST equal
+# backtest.DEFAULT_ROUND_TRIP_COST_PCT -- thresholds picked against a cheaper
+# cost than execution pays admit signals whose gross edge dies in fees. The
+# two are separate literals because backtest imports live and training does
+# not; tests/test_review_items.py pins them equal, so change both together.
+#   Was 0.0008 until 2026-07-30, i.e. 2 x (maker 0.02% + slippage 0.02%). The
+# maker rate was being charged for taker fills; the real Bitget VIP0 taker
+# round trip is 2 x (0.06% + 0.02%) = 0.16%.
+DEFAULT_ROUND_TRIP_COST = 0.0016
+
+
 # THE direction policy: which sides each regime is allowed to trade, and the
 # triple-barrier target each side must learn. A short model has to learn
 # short_success -- the complement of P(long_success) is not a short probability
@@ -140,10 +152,10 @@ class TrainingConfig:
     tp_pct: float = 0.003
     sl_pct: float = 0.0015
     # Round-trip trading cost (fees + slippage, both sides) used by the
-    # trading_pnl threshold objective and holdout PnL metrics. Must mirror the
-    # backtest cost model (2 x (fee 0.02% + slippage 0.02%) = 0.08% default) or
+    # trading_pnl threshold objective and holdout PnL metrics. See
+    # DEFAULT_ROUND_TRIP_COST -- it must mirror the backtest cost model or
     # thresholds get selected for the wrong cost assumption.
-    round_trip_cost: float = 0.0008
+    round_trip_cost: float = DEFAULT_ROUND_TRIP_COST
     # Decision-threshold selection objective.
     #   "precision_recall" (default, backward-compatible): rank candidates by
     #     precision with a recall>=0.3 floor; fall back to F1 otherwise.
@@ -1645,7 +1657,7 @@ def select_threshold(
     min_trades: int | None = None,
     tp_pct: float = 0.003,
     sl_pct: float = 0.0015,
-    round_trip_cost: float = 0.0008,
+    round_trip_cost: float = DEFAULT_ROUND_TRIP_COST,
 ) -> float:
     """Choose a decision threshold from a discrete grid of candidates.
 
@@ -1717,7 +1729,7 @@ def _trading_pnl(
     threshold: float,
     tp_pct: float = 0.003,
     sl_pct: float = 0.0015,
-    round_trip_cost: float = 0.0008,
+    round_trip_cost: float = DEFAULT_ROUND_TRIP_COST,
 ) -> list[float]:
     """Simulate per-row PnL for a SIDE-SPECIFIC success model.
 
@@ -1799,7 +1811,7 @@ def _calmar(pnl: Sequence[float]) -> float:
     return total_return / mdd_value
 
 
-def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: float, tp_pct: float = dataset.DEFAULT_LABEL_TP_PCT, sl_pct: float = dataset.DEFAULT_LABEL_SL_PCT, round_trip_cost: float = 0.0008) -> dict[str, float]:
+def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: float, tp_pct: float = dataset.DEFAULT_LABEL_TP_PCT, sl_pct: float = dataset.DEFAULT_LABEL_SL_PCT, round_trip_cost: float = DEFAULT_ROUND_TRIP_COST) -> dict[str, float]:
     if not probabilities or not labels:
         return {"rows": 0.0, "accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "ece": 0.0, "expected_calibration_error": 0.0, "mce": 0.0, "brier": 0.0, "brier_score": 0.0, "brier_skill_score": 0.0, "positive_rate": 0.0, "predicted_positive_rate": 0.0, "mdd": 0.0, "sharpe": 0.0, "calmar": 0.0}
     predictions = [1 if probability >= threshold else 0 for probability in probabilities]

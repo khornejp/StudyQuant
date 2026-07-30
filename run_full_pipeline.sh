@@ -97,7 +97,12 @@ THRESHOLD_FLOOR="${THRESHOLD_FLOOR:-0.0}"
 # Cost basis SINGLE SOURCE: per-side fee/slippage fractions. Round-trip
 # cost 2*(fee+slippage) is derived and passed to train (threshold objective
 # + holdout metrics); per-side values go to backtest execution.
-FEE_PER_SIDE="${FEE_PER_SIDE:-0.0002}"            # 0.02%
+# FEE_PER_SIDE is the TAKER rate -- what an immediate fill pays, and what every
+# leg of the default execution is. It was 0.0002 (the Bitget VIP0 MAKER rate)
+# until 2026-07-30, so the whole pipeline priced taker fills at the maker fee
+# and under-charged 8bps per round trip. Keep it equal to backtest.py's
+# DEFAULT_TAKER_FEE_RATE_PER_SIDE.
+FEE_PER_SIDE="${FEE_PER_SIDE:-0.0006}"            # 0.06% Bitget VIP0 taker
 SLIPPAGE_PER_SIDE="${SLIPPAGE_PER_SIDE:-0.0002}"  # 0.02%
 ROUND_TRIP_COST=$(python -c "print(2.0 * (${FEE_PER_SIDE} + ${SLIPPAGE_PER_SIDE}))")
 # Fractional-Kelly position sizing for the backtests (Phase 4 / 4.5). Half-Kelly
