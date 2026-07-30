@@ -1702,6 +1702,84 @@ class RangeGateToggleTests(unittest.TestCase):
 _ALL_EXITS = sorted(backtest_module.EXIT_OUTCOMES)
 
 
+def _ohlc_candles(specs):
+    from datetime import timedelta
+    from btcusdt_quant import data
+    base = data.utc_minute(2026, 1, 2, 0, 0)
+    return [
+        data.Candle(
+            open_time=base + timedelta(minutes=index),
+            open=o, high=h, low=l, close=c,
+            volume=10.0, quote_volume=10.0 * c, number_of_trades=100,
+            taker_buy_base_volume=5.0, taker_buy_quote_volume=5.0 * c,
+        )
+        for index, (o, h, l, c) in enumerate(specs)
+    ]
+
+
+class StopFillModelTests(unittest.TestCase):
+    """--sl-fill: an exchange-resident stop vs a bot-side one are DIFFERENT
+    orders, and for mean reversion the difference does not cancel out."""
+
+    class _AlwaysLong:
+        def probability(self, values) -> float:
+            return 0.9
+
+    def _run(self, specs, sl_fill):
+        return run_backtest(
+            _ohlc_candles(specs),
+            model=self._AlwaysLong(),
+            position_size=0.1, label_horizon=10, cooldown_bars=0,
+            long_threshold=0.6, short_threshold=0.01,
+            exec_tp_pct=0.02, exec_sl_pct=0.01,
+            fee_rate_per_side=0.0, slippage_rate_per_side=0.0,
+            sl_fill=sl_fill,
+        )
+
+    def test_reverted_wick_exits_better_than_the_level(self) -> None:
+        # Enter at 100 (bar 0 close) -> SL at 99. Bar 1 wicks to 98.5 and closes
+        # back at 100.5; bar 2 opens at 100.4. An exchange stop was already
+        # taken out at 99. A bot-side stop only reacts to the close, and by then
+        # price is back above -- it exits at 100.4, a PROFIT. This is why
+        # next_open is not merely the pessimistic model: mean reversion lives on
+        # exactly these wicks.
+        specs = [(100.0, 100.2, 99.8, 100.0)]
+        specs += [(100.0, 100.6, 98.5, 100.5)]
+        specs += [(100.4, 100.6, 100.2, 100.5)] * 20
+        barrier = self._run(specs, "barrier")
+        deferred = self._run(specs, "next_open")
+        self.assertEqual(barrier.trades[0].outcome, "SL")
+        self.assertAlmostEqual(barrier.trades[0].exit_price, 99.0)
+        self.assertLess(barrier.trades[0].gross_pnl_pct, 0.0)
+        self.assertAlmostEqual(deferred.trades[0].exit_price, 100.4)
+        self.assertGreater(deferred.trades[0].gross_pnl_pct, 0.0)
+
+    def test_gap_through_exits_worse_than_the_level(self) -> None:
+        # Same entry and stop, but bar 1 closes below the level and bar 2 gaps
+        # to 97. The bot-side stop eats the gap; the exchange stop did not.
+        specs = [(100.0, 100.2, 99.8, 100.0)]
+        specs += [(100.0, 100.1, 98.6, 98.8)]
+        specs += [(97.0, 97.2, 96.8, 97.0)] * 20
+        barrier = self._run(specs, "barrier")
+        deferred = self._run(specs, "next_open")
+        self.assertAlmostEqual(barrier.trades[0].exit_price, 99.0)
+        self.assertAlmostEqual(deferred.trades[0].exit_price, 97.0)
+        self.assertLess(deferred.trades[0].gross_pnl_pct, barrier.trades[0].gross_pnl_pct)
+        # Still an SL either way -- the fee leg does not change with the price.
+        self.assertEqual(deferred.trades[0].outcome, "SL")
+
+    def test_only_the_sl_leg_moves_and_the_mode_is_recorded(self) -> None:
+        # A TP limit and a horizon close are unaffected: same trade, same price.
+        specs = [(100.0, 100.2, 99.8, 100.0)] + [(100.0, 100.1, 99.9, 100.05)] * 20
+        barrier = self._run(specs, "barrier")
+        deferred = self._run(specs, "next_open")
+        self.assertEqual(barrier.trades[0].outcome, "TIMEOUT")
+        self.assertAlmostEqual(barrier.trades[0].exit_price, deferred.trades[0].exit_price)
+        self.assertEqual(deferred.run_config["sl_fill"], "next_open")
+        with self.assertRaises(ValueError):
+            self._run(specs, "next_close")
+
+
 class MakerFillTests(unittest.TestCase):
     """--maker-fill-window: resting-limit entries with adverse selection and
     missed (unfilled) orders, vs the default instant taker fill."""
@@ -1711,20 +1789,7 @@ class MakerFillTests(unittest.TestCase):
             return 0.9
 
     def _candles(self, specs):
-        from datetime import timedelta
-        from btcusdt_quant import data
-        base = data.utc_minute(2026, 1, 2, 0, 0)
-        out = []
-        for index, (o, h, l, c) in enumerate(specs):
-            out.append(
-                data.Candle(
-                    open_time=base + timedelta(minutes=index),
-                    open=o, high=h, low=l, close=c,
-                    volume=10.0, quote_volume=10.0 * c, number_of_trades=100,
-                    taker_buy_base_volume=5.0, taker_buy_quote_volume=5.0 * c,
-                )
-            )
-        return out
+        return _ohlc_candles(specs)
 
     def _run(self, specs, window, penetration=0.0):
         return run_backtest(

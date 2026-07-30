@@ -254,6 +254,10 @@ DEFAULT_SLIPPAGE_RATE_PER_SIDE = 0.0002
 # a horizon market-close unless you deliberately rest a limit as the horizon
 # approaches, and OPEN_AT_END is the harness flattening at the window edge.
 EXIT_OUTCOMES = frozenset({"TP", "SL", "TIMEOUT", "OPEN_AT_END"})
+# Where a stopped-out trade fills. Not two strictnesses of one model -- two
+# different orders (exchange-resident stop vs bot-side stop), so this has to
+# match what live would actually place. See run_backtest's sl_fill.
+SL_FILL_MODES = frozenset({"barrier", "next_open"})
 # Taker in, taker out -- the default execution. 2*(6+2) = 16bps. Training's
 # --round-trip-cost must equal this or threshold selection optimizes against a
 # cost the backtest does not charge (test_cost_basis_is_shared pins it).
@@ -703,6 +707,7 @@ def run_backtest(
     maker_fill_window: int = 0,
     maker_fill_penetration: float = 0.0,
     maker_exit_outcomes: Sequence[str] | None = None,
+    sl_fill: str = "barrier",
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -756,11 +761,35 @@ def run_backtest(
         and {"TP","SL","TIMEOUT"} wins -- the answer is entirely in which of
         these you are willing to assume, which is why passing them explicitly
         beats one boolean that quietly assumed all four.
+    sl_fill: WHERE a stopped-out trade fills, which is a different execution
+        path rather than a stricter version of the same one.
+
+        "barrier" (default) fills at sl_price exactly. That models a stop
+        resting AT the exchange (live.py's STOP_MARKET): it triggers intrabar,
+        so the fill is at the level plus the slippage constant, and a gap
+        through the level is not modeled.
+
+        "next_open" fills at the NEXT bar's open. That models a bot-side stop:
+        the bar closes past sl_price, you see it, you send a market order that
+        fills on the following bar. It is not merely the pessimistic version --
+        it is two-sided, and for mean reversion the sides do not cancel. A bar
+        that wicks through the stop and closes back above it does not stop you
+        out at all here, and one that does stop you out often opens back in
+        your favour; against that, a real gap fills worse than the level ever
+        would. Which is right depends on which stop the strategy would actually
+        place, so this must match live -- an exchange-resident stop cannot be
+        backtested as "next_open", and a bot-side stop cannot be backtested as
+        "barrier".
+
+        On the last candle there is no next bar; the trade closes at that
+        candle's close instead, still recorded as SL.
     """
     if strategy is None:
         strategy = live.strategy_for_regime(None, "balanced")
     strategy = apply_exec_barrier(strategy, exec_tp_pct, exec_sl_pct)
     _validate_cost_rates(fee_rate_per_side, slippage_rate_per_side, maker_fee_rate_per_side)
+    if sl_fill not in SL_FILL_MODES:
+        raise ValueError(f"sl_fill must be one of {sorted(SL_FILL_MODES)}, got {sl_fill!r}")
     maker_exit_set = frozenset(str(o).upper() for o in (maker_exit_outcomes or ()))
     unknown = maker_exit_set - EXIT_OUTCOMES
     if unknown:
@@ -820,6 +849,7 @@ def run_backtest(
         "slippage_rate_per_side": slippage_rate_per_side,
         "maker_fill_window": maker_fill_window,
         "maker_exit_outcomes": sorted(maker_exit_set),
+        "sl_fill": sl_fill,
         "maker_fill_penetration": maker_fill_penetration,
         "kelly_enabled": kelly_config is not None,
         "kelly_multiplier": kelly_config.kelly_multiplier if kelly_config else None,
@@ -1305,9 +1335,23 @@ def run_backtest(
                 else:
                     outcome = "TIMEOUT"
 
+                # A bot-side stop does not fill at the level: the bar closes
+                # past it, you react, and the market order fills on the next
+                # bar's open -- better than the level if the wick reverted,
+                # worse if it gapped. Only the SL leg moves; a TP limit and a
+                # horizon close are unaffected. No next bar (last candle) means
+                # closing at this bar's close, still an SL.
+                exit_candle = candle
+                if outcome == "SL" and sl_fill == "next_open":
+                    if i + 1 < len(candles):
+                        exit_candle = candles[i + 1]
+                        exit_price = exit_candle.open
+                    else:
+                        exit_price = candle.close
+
                 equity, gross_equity, _ = _close_trade(
                     active_trade,
-                    candle.open_time.isoformat(),
+                    exit_candle.open_time.isoformat(),
                     exit_price,
                     outcome,
                     equity,
@@ -1327,7 +1371,9 @@ def run_backtest(
                 active_trade = None
                 bar_count = 0
                 if cooldown_bars > 0:
-                    next_entry_index = i + cooldown_bars + 1
+                    # Count the cooldown from the bar the position actually
+                    # closed on, which a deferred stop pushes forward by one.
+                    next_entry_index = (i + 1 if exit_candle is not candle else i) + cooldown_bars + 1
 
         # ---- Enter new trade ----
         if maker_fill_window <= 0:
@@ -1532,6 +1578,7 @@ def compare_strategies(
     threshold_floor: float = 0.0,
     label_horizon: int = 60,
     maker_exit_outcomes: Sequence[str] | None = None,
+    sl_fill: str = "barrier",
     allow_barrier_mismatch: bool = False,
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison."""
@@ -1630,6 +1677,7 @@ def compare_strategies(
             fee_rate_per_side=fee_rate_per_side,
             maker_fee_rate_per_side=maker_fee_rate_per_side,
             maker_exit_outcomes=maker_exit_outcomes,
+            sl_fill=sl_fill,
             slippage_rate_per_side=slippage_rate_per_side,
             models_by_regime=models_by_regime,
             user_regime_periods=user_regime_periods,
