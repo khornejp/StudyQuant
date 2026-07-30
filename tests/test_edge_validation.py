@@ -119,6 +119,34 @@ class CostStressTests(unittest.TestCase):
         self.assertLessEqual(net_2x, net_1x)
         self.assertIsInstance(report["survives_1_5x"], bool)
 
+    def test_maker_legs_are_stressed_too(self) -> None:
+        # The multiplier means "every fee I pay is this much worse". Scaling only
+        # the taker rate would let a both-legs-maker strategy through 2x almost
+        # untouched -- its fees are ALL maker -- and report a stress that was
+        # never applied. Rest both legs, then check the fee actually paid scales.
+        candles = _rising_candles(60)
+        report = edge_validation.cost_stress(
+            candles, model=_FixedModel(0.9), long_threshold=0.6, short_threshold=0.99,
+            base_fee_rate_per_side=0.0006, base_maker_fee_rate_per_side=0.0002,
+            base_slippage_rate_per_side=0.0, multipliers=(1.0, 2.0),
+            maker_fill_window=5, maker_exit=True, **_BT_KW,
+        )
+        self.assertEqual(report["base_maker_fee_rate_per_side"], 0.0002)
+        fee_1x = report["levels"]["1x"]["total_fees"]
+        fee_2x = report["levels"]["2x"]["total_fees"]
+        self.assertGreater(fee_1x, 0.0)
+        # Both legs rest and slippage is 0, so every fee here is a MAKER fee: if
+        # the maker rate did not scale, the ratio would be ~1.0. Not exactly 2.0
+        # either -- fees are charged on notional, and the costlier run compounds
+        # to a smaller equity, so it trades slightly smaller.
+        self.assertGreater(fee_2x / fee_1x, 1.9)
+        self.assertLess(fee_2x / fee_1x, 2.0)
+        # And the maker rate is a controlled input like the other two.
+        with self.assertRaises(TypeError):
+            edge_validation.cost_stress(
+                candles, model=_FixedModel(0.9), maker_fee_rate_per_side=0.0002,
+            )
+
     def test_rejects_bad_multipliers(self) -> None:
         candles = _rising_candles(10)
         with self.assertRaises(ValueError):

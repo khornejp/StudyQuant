@@ -94,6 +94,7 @@ def cost_stress(
     models_by_regime: Mapping[str, object] | None = None,
     strategy: "_live.StrategyConfig | None" = None,
     base_fee_rate_per_side: float = _bt.DEFAULT_FEE_RATE_PER_SIDE,
+    base_maker_fee_rate_per_side: float = _bt.DEFAULT_MAKER_FEE_RATE_PER_SIDE,
     base_slippage_rate_per_side: float = _bt.DEFAULT_SLIPPAGE_RATE_PER_SIDE,
     multipliers: Sequence[float] = DEFAULT_COST_MULTIPLIERS,
     **backtest_kwargs: object,
@@ -104,12 +105,23 @@ def cost_stress(
     slippage scale — so any change in net expectancy is attributable purely to
     cost. ``survives_1_5x`` / ``survives_2x`` are the house-rule gate: a real
     edge stays positive at 1.5x and does not collapse at 2x.
+
+    ALL THREE rates scale, including the maker fee. A run with maker legs
+    (``maker_fill_window`` / ``maker_exit``) that scaled only the taker rate
+    would hold part of its cost fixed and report a stress it never applied —
+    and a both-legs-maker strategy would come through 2x barely touched. The
+    multiplier means "every fee I pay is this much worse", which is the
+    question the gate is asking.
     """
     if not multipliers:
         raise ValueError("multipliers must not be empty")
     if any(m <= 0.0 for m in multipliers):
         raise ValueError("cost multipliers must be positive")
-    _reject_controlled(backtest_kwargs, ("fee_rate_per_side", "slippage_rate_per_side"), "cost_stress")
+    _reject_controlled(
+        backtest_kwargs,
+        ("fee_rate_per_side", "maker_fee_rate_per_side", "slippage_rate_per_side"),
+        "cost_stress",
+    )
     # Every level shares the same signals and features -- only cost changes --
     # so build the features once instead of once per multiplier.
     shared_rows = _shared_feature_rows(candles, backtest_kwargs, user_regime_periods=backtest_kwargs.get("user_regime_periods"))  # type: ignore[arg-type]
@@ -125,6 +137,7 @@ def cost_stress(
             strategy=strategy,
             models_by_regime=models_by_regime,
             fee_rate_per_side=base_fee_rate_per_side * mult,
+            maker_fee_rate_per_side=base_maker_fee_rate_per_side * mult,
             slippage_rate_per_side=base_slippage_rate_per_side * mult,
             **run_kwargs,  # type: ignore[arg-type]
         )
@@ -139,6 +152,7 @@ def cost_stress(
 
     return {
         "base_fee_rate_per_side": base_fee_rate_per_side,
+        "base_maker_fee_rate_per_side": base_maker_fee_rate_per_side,
         "base_slippage_rate_per_side": base_slippage_rate_per_side,
         "multipliers": list(multipliers),
         "levels": levels,

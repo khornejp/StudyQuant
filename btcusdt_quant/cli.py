@@ -1048,6 +1048,7 @@ def run_edge_validate(
     long_threshold: float | None = None,
     short_threshold: float | None = None,
     fee_rate_per_side: float | None = None,
+    maker_fee_rate_per_side: float | None = None,
     slippage_rate_per_side: float | None = None,
     cost_multipliers: tuple[float, ...] = (1.0, 1.5, 2.0),
     allow_barrier_mismatch: bool = False,
@@ -1061,6 +1062,7 @@ def run_edge_validate(
     range_gate_enabled: bool = True,
     maker_fill_window: int = 0,
     maker_fill_penetration: float = 0.0,
+    maker_exit: bool = False,
 ) -> dict[str, object]:
     """Run the OOS edge-validation harnesses over a trained backtest artifact.
 
@@ -1118,6 +1120,7 @@ def run_edge_validate(
     user_regime_periods = dataset.load_user_regime_periods(Path(user_regime_file)) if user_regime_file else None
 
     fee = fee_rate_per_side if fee_rate_per_side is not None else backtest.DEFAULT_FEE_RATE_PER_SIDE
+    maker_fee = maker_fee_rate_per_side if maker_fee_rate_per_side is not None else backtest.DEFAULT_MAKER_FEE_RATE_PER_SIDE
     slippage = slippage_rate_per_side if slippage_rate_per_side is not None else backtest.DEFAULT_SLIPPAGE_RATE_PER_SIDE
     # Metrics parity: the pipeline trains WITH --metrics-dir (F16 features), so
     # the validation backtests must merge the SAME metrics or every F16 input is
@@ -1168,6 +1171,7 @@ def run_edge_validate(
         "range_gate_enabled": range_gate_enabled,
         "maker_fill_window": maker_fill_window,
         "maker_fill_penetration": maker_fill_penetration,
+        "maker_exit": maker_exit,
     }
     cost_kwargs = dict(bt_common)
     if plain_feature_rows is not None:
@@ -1185,6 +1189,7 @@ def run_edge_validate(
         model=model,
         models_by_regime=models_by_regime,
         base_fee_rate_per_side=fee,
+        base_maker_fee_rate_per_side=maker_fee,
         base_slippage_rate_per_side=slippage,
         multipliers=cost_multipliers,
         regime_detector=regime_detector,
@@ -1432,6 +1437,8 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser.add_argument("--disable-range-gate", action="store_true", help="skip the range mean-reversion direction gate, matching a backtest run with --disable-range-gate. The gate changes WHICH signals become trades, so leaving it on here cost-stresses a different strategy than the one under test")
     ev_parser.add_argument("--maker-fill-window", type=int, default=0, help="model MAKER (resting limit) entries, matching a backtest run with --maker-fill-window. Entries save the entry-side slippage and only fill when a later bar returns to the limit; 0 = instant taker fill. Match the backtest or the cost stress answers for a different execution model")
     ev_parser.add_argument("--maker-fill-penetration-bps", type=float, default=0.0, help="queue-priority stress for --maker-fill-window (bps the price must trade THROUGH the limit before it fills); match the backtest")
+    ev_parser.add_argument("--maker-exit", action="store_true", help="price the EXIT leg as a resting limit, matching a backtest run with --maker-exit. Match the backtest: exit cost is roughly half the round trip, so validating a taker exit says nothing about a strategy that rests its TP/SL. Carries the same SL-fill assumption -- see the backtest's --maker-exit")
+    ev_parser.add_argument("--maker-fee-rate-per-side", type=float, default=None, help="base per-side MAKER fee fraction (defaults to backtest.DEFAULT_MAKER_FEE_RATE_PER_SIDE = 0.0002, Bitget VIP0); stress runs multiply it just like the taker rate, so a both-legs-maker strategy is actually stressed rather than passing 2x untouched")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -1756,6 +1763,7 @@ def main(argv: list[str] | None = None) -> int:
             long_threshold=args.long_threshold,
             short_threshold=args.short_threshold,
             fee_rate_per_side=args.fee_rate_per_side,
+            maker_fee_rate_per_side=args.maker_fee_rate_per_side,
             slippage_rate_per_side=args.slippage_rate_per_side,
             cost_multipliers=multipliers,
             allow_barrier_mismatch=args.allow_barrier_mismatch,
@@ -1769,6 +1777,7 @@ def main(argv: list[str] | None = None) -> int:
             range_gate_enabled=not args.disable_range_gate,
             maker_fill_window=args.maker_fill_window,
             maker_fill_penetration=args.maker_fill_penetration_bps / 1e4,
+            maker_exit=args.maker_exit,
         )
         return 0
     if args.command == "backtest":
