@@ -107,7 +107,7 @@ def cost_stress(
     edge stays positive at 1.5x and does not collapse at 2x.
 
     ALL THREE rates scale, including the maker fee. A run with maker legs
-    (``maker_fill_window`` / ``maker_exit``) that scaled only the taker rate
+    (``maker_fill_window`` / ``maker_exit_outcomes``) that scaled only the taker rate
     would hold part of its cost fixed and report a stress it never applied —
     and a both-legs-maker strategy would come through 2x barely touched. The
     multiplier means "every fee I pay is this much worse", which is the

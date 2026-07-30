@@ -1699,6 +1699,9 @@ class RangeGateToggleTests(unittest.TestCase):
         self.assertIs(ungated.run_config["range_gate_enabled"], False)
 
 
+_ALL_EXITS = sorted(backtest_module.EXIT_OUTCOMES)
+
+
 class MakerFillTests(unittest.TestCase):
     """--maker-fill-window: resting-limit entries with adverse selection and
     missed (unfilled) orders, vs the default instant taker fill."""
@@ -1860,7 +1863,7 @@ class MakerFillTests(unittest.TestCase):
             slippage_rate_per_side=0.0001,
         )
         # maker entry + maker exit: 2+2 bps fee, no slippage on either leg.
-        both = run_backtest(self._candles(specs), maker_fill_window=5, maker_exit=True, **common)
+        both = run_backtest(self._candles(specs), maker_fill_window=5, maker_exit_outcomes=_ALL_EXITS, **common)
         self.assertAlmostEqual(both.trades[0].fee_pct, 0.0004)
         self.assertAlmostEqual(both.trades[0].slippage_pct, 0.0)
         # maker entry + taker exit: 2+6 bps fee, slippage on the exit leg only.
@@ -1868,12 +1871,50 @@ class MakerFillTests(unittest.TestCase):
         self.assertAlmostEqual(mixed.trades[0].fee_pct, 0.0008)
         self.assertAlmostEqual(mixed.trades[0].slippage_pct, 0.0001)
         # taker entry + maker exit: 6+2 bps fee, slippage on the entry leg only.
-        taker_in = run_backtest(self._candles(specs), maker_fill_window=0, maker_exit=True, **common)
+        taker_in = run_backtest(self._candles(specs), maker_fill_window=0, maker_exit_outcomes=_ALL_EXITS, **common)
         self.assertAlmostEqual(taker_in.trades[0].fee_pct, 0.0008)
         self.assertAlmostEqual(taker_in.trades[0].slippage_pct, 0.0001)
         # Resting both legs must be the cheapest of the three.
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
+
+    def test_exit_cost_follows_the_outcome_not_a_flag(self) -> None:
+        # Which exits rest is the whole verdict, not a trim: a TP limit really is
+        # crossed by someone else (maker), an SL is a stop that crosses the book
+        # (taker), and a TIMEOUT is a horizon market-close. On the 30m long the
+        # mix is TP 13.4% / SL 29.8% / TIMEOUT 56.8% against a ~44% break-even,
+        # so one flag covering all of them decided the answer by assumption.
+        # Pin that the discount applies to the outcome that HAPPENED and to no
+        # other, without hard-coding which outcome this fixture produces.
+        specs = [(100.0, 100.2, 99.8, 100.0)]
+        specs += [(100.0, 100.05, 99.5, 100.2)]
+        specs += [(100.2, 100.4, 100.0, 100.3)] * 20
+        common = dict(
+            model=self._AlwaysLong(), position_size=0.1, label_horizon=10,
+            cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            fee_rate_per_side=0.0006, maker_fee_rate_per_side=0.0002,
+            slippage_rate_per_side=0.0,
+        )
+        happened = run_backtest(self._candles(specs), maker_fill_window=5, **common).trades[0].outcome
+        self.assertIn(happened, _ALL_EXITS)
+        resting = run_backtest(
+            self._candles(specs), maker_fill_window=5, maker_exit_outcomes=[happened], **common
+        )
+        crossing = run_backtest(
+            self._candles(specs), maker_fill_window=5,
+            maker_exit_outcomes=[o for o in _ALL_EXITS if o != happened], **common,
+        )
+        self.assertAlmostEqual(resting.trades[0].fee_pct, 0.0004)   # 2 + 2 bps
+        self.assertAlmostEqual(crossing.trades[0].fee_pct, 0.0008)  # 2 + 6 bps
+        # Case-insensitive, and the run records what it actually assumed.
+        lower = run_backtest(
+            self._candles(specs), maker_fill_window=5, maker_exit_outcomes=[happened.lower()], **common
+        )
+        self.assertAlmostEqual(lower.trades[0].fee_pct, 0.0004)
+        self.assertEqual(lower.run_config["maker_exit_outcomes"], [happened])
+        # A typo must not silently price everything taker.
+        with self.assertRaises(ValueError):
+            run_backtest(self._candles(specs), maker_exit_outcomes=["TAKE_PROFIT"], **common)
 
     def test_fill_bar_can_hit_the_stop(self) -> None:
         # A maker order fills part-way through its bar, so the REST of that bar

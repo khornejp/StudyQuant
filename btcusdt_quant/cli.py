@@ -1034,6 +1034,22 @@ def merge_metrics_external_sources(
     return merged
 
 
+def resolve_maker_exit_outcomes(args: argparse.Namespace) -> tuple[str, ...]:
+    """--maker-exit / --maker-exit-outcomes -> the outcome tuple run_backtest takes.
+
+    Refuses both at once rather than picking a winner: they express the same
+    setting, and a run whose reported cost basis is not the one the caller
+    thinks they asked for is the failure mode this whole area keeps producing.
+    """
+    if args.maker_exit and args.maker_exit_outcomes:
+        raise SystemExit("pass either --maker-exit or --maker-exit-outcomes, not both")
+    if args.maker_exit:
+        return tuple(sorted(backtest.EXIT_OUTCOMES))
+    if not args.maker_exit_outcomes:
+        return ()
+    return tuple(part.strip().upper() for part in args.maker_exit_outcomes.split(",") if part.strip())
+
+
 def run_edge_validate(
     input_path: str | None,
     output: Path,
@@ -1062,7 +1078,7 @@ def run_edge_validate(
     range_gate_enabled: bool = True,
     maker_fill_window: int = 0,
     maker_fill_penetration: float = 0.0,
-    maker_exit: bool = False,
+    maker_exit_outcomes: Sequence[str] | None = None,
 ) -> dict[str, object]:
     """Run the OOS edge-validation harnesses over a trained backtest artifact.
 
@@ -1171,7 +1187,7 @@ def run_edge_validate(
         "range_gate_enabled": range_gate_enabled,
         "maker_fill_window": maker_fill_window,
         "maker_fill_penetration": maker_fill_penetration,
-        "maker_exit": maker_exit,
+        "maker_exit_outcomes": maker_exit_outcomes,
     }
     cost_kwargs = dict(bt_common)
     if plain_feature_rows is not None:
@@ -1371,7 +1387,8 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--backtest-end", default=None, help="inclusive end date (YYYY-MM-DD) of the trading window. Without it the backtest silently trades from --backtest-start to the END OF FILE, so a parquet extended past 2025 would silently widen the traded span. Routing diagnostics are sliced to the same window.")
     backtest_parser.add_argument("--metrics-dir", default=None, help="directory of downloaded Binance metrics archive (collect-metrics output) -- pass the SAME directory used for training's --metrics-dir. Training with metrics and backtesting without them feeds the model F16 derivatives-metrics features (open interest change rates/z-scores, long/short ratios, taker ratio) as 0.0 -- inputs it never saw in training (train/serve feature skew). Without this flag those features are 0 in the backtest.")
     backtest_parser.add_argument("--fee-rate-per-side", type=float, default=None, help="override the per-side TAKER fee fraction (default 0.0006 = 0.06%%, Bitget USDT-M VIP0 -- the real account). This is what an immediate fill pays, and the exit is modeled taker on every path. Together with --slippage-rate-per-side this sets the executed round-trip cost; keep 2*(fee+slippage) equal to training's --round-trip-cost so the threshold objective and execution share one cost basis.")
-    backtest_parser.add_argument("--maker-exit", action="store_true", help="price the EXIT leg as a resting limit (maker fee, no slippage) instead of an immediate fill -- Bitget lets TP/SL be attached as limit orders at open. ASSUMES the exit limit always fills at the modeled exit price. That holds for TP and is defensible for the horizon exit, but it is the OPTIMISTIC case for SL: a stop-limit fills only if someone crosses it, and the fast one-way move that triggers a stop is exactly the one that blows through the level, leaving you still in and losing more than sl_pct. High average BTC volume does not help -- the risk is in the liquidation-cascade tail. Treat maker-exit vs default as a RANGE, not a number.")
+    backtest_parser.add_argument("--maker-exit", action="store_true", help="shorthand for --maker-exit-outcomes tp,sl,timeout,open_at_end: price EVERY exit as a resting limit. The most generous assumption available; prefer naming the outcomes you actually believe rest.")
+    backtest_parser.add_argument("--maker-exit-outcomes", default=None, help="comma-separated exit outcomes priced as resting limits (maker fee, no slippage) instead of immediate fills: any of tp,sl,timeout,open_at_end. Default: none, every exit is taker. Bitget lets TP/SL be attached as limit orders at open, so a resting exit is representable -- but the outcomes are not equally credible. tp is honest (price reached your level, your limit was resting there). sl is optimistic in the tail: a resting limit fills only if someone crosses it, and the fast one-way move that triggers a stop is exactly the one that blows through the level, leaving you still in and losing more than sl_pct. timeout is a horizon market-close unless the strategy deliberately rests a limit near the horizon -- that is a different strategy, not a cost setting. On the 30m long the mix is TP 13.4%%/SL 29.8%%/TIMEOUT 56.8%% and break-even needs ~44%% resting, so this flag decides the verdict rather than trimming it. Report which outcomes you assumed.")
     backtest_parser.add_argument("--maker-fee-rate-per-side", type=float, default=None, help="override the per-side MAKER fee fraction (default 0.0002 = 0.02%%, Bitget USDT-M VIP0). Applies only to a resting-limit ENTRY under --maker-fill-window (and to the exit under --maker-exit); set it negative only if the account genuinely has a maker rebate. Not the same number as --fee-rate-per-side -- charging the maker rate for taker fills under-counted every taker round trip by 8bps before 2026-07-30.")
     backtest_parser.add_argument("--slippage-rate-per-side", type=float, default=None, help="override the per-side slippage fraction (default 0.0002 = 0.02%%). See --fee-rate-per-side.")
     backtest_parser.add_argument("--horizon", type=int, default=60, help="max holding bars before forced TIMEOUT exit (minutes for 1m data). MUST match the training --horizon so backtest execution and triple-barrier labels share the same time barrier (a train horizon of 120 with a backtest horizon of 60 silently misaligns label vs execution). Default 60 = training default.")
@@ -1437,7 +1454,8 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser.add_argument("--disable-range-gate", action="store_true", help="skip the range mean-reversion direction gate, matching a backtest run with --disable-range-gate. The gate changes WHICH signals become trades, so leaving it on here cost-stresses a different strategy than the one under test")
     ev_parser.add_argument("--maker-fill-window", type=int, default=0, help="model MAKER (resting limit) entries, matching a backtest run with --maker-fill-window. Entries save the entry-side slippage and only fill when a later bar returns to the limit; 0 = instant taker fill. Match the backtest or the cost stress answers for a different execution model")
     ev_parser.add_argument("--maker-fill-penetration-bps", type=float, default=0.0, help="queue-priority stress for --maker-fill-window (bps the price must trade THROUGH the limit before it fills); match the backtest")
-    ev_parser.add_argument("--maker-exit", action="store_true", help="price the EXIT leg as a resting limit, matching a backtest run with --maker-exit. Match the backtest: exit cost is roughly half the round trip, so validating a taker exit says nothing about a strategy that rests its TP/SL. Carries the same SL-fill assumption -- see the backtest's --maker-exit")
+    ev_parser.add_argument("--maker-exit", action="store_true", help="shorthand for --maker-exit-outcomes tp,sl,timeout,open_at_end; see the backtest's --maker-exit")
+    ev_parser.add_argument("--maker-exit-outcomes", default=None, help="exit outcomes priced as resting limits, matching a backtest run with the same flag. Match the backtest: exit cost is roughly half the round trip, so cost-stressing a taker exit says nothing about a strategy that rests its TP/SL. See the backtest's --maker-exit-outcomes for what each outcome assumes")
     ev_parser.add_argument("--maker-fee-rate-per-side", type=float, default=None, help="base per-side MAKER fee fraction (defaults to backtest.DEFAULT_MAKER_FEE_RATE_PER_SIDE = 0.0002, Bitget VIP0); stress runs multiply it just like the taker rate, so a both-legs-maker strategy is actually stressed rather than passing 2x untouched")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
@@ -1777,7 +1795,7 @@ def main(argv: list[str] | None = None) -> int:
             range_gate_enabled=not args.disable_range_gate,
             maker_fill_window=args.maker_fill_window,
             maker_fill_penetration=args.maker_fill_penetration_bps / 1e4,
-            maker_exit=args.maker_exit,
+            maker_exit_outcomes=resolve_maker_exit_outcomes(args),
         )
         return 0
     if args.command == "backtest":
@@ -1989,7 +2007,7 @@ def main(argv: list[str] | None = None) -> int:
                 strategies,
                 fee_rate_per_side=resolved_fee,
                 maker_fee_rate_per_side=resolved_maker_fee,
-                maker_exit=args.maker_exit,
+                maker_exit_outcomes=resolve_maker_exit_outcomes(args),
                 slippage_rate_per_side=resolved_slippage,
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,
@@ -2027,7 +2045,7 @@ def main(argv: list[str] | None = None) -> int:
                 strategies["balanced"],
                 fee_rate_per_side=resolved_fee,
                 maker_fee_rate_per_side=resolved_maker_fee,
-                maker_exit=args.maker_exit,
+                maker_exit_outcomes=resolve_maker_exit_outcomes(args),
                 slippage_rate_per_side=resolved_slippage,
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,

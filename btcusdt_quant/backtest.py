@@ -248,6 +248,12 @@ DEFAULT_TAKER_FEE_RATE_PER_SIDE = 0.0006
 # rate applies only to a resting-limit ENTRY (see _close_trade).
 DEFAULT_FEE_RATE_PER_SIDE = DEFAULT_TAKER_FEE_RATE_PER_SIDE
 DEFAULT_SLIPPAGE_RATE_PER_SIDE = 0.0002
+# Every way a trade can close. Which of these rest as limit orders decides the
+# exit fee, and they are NOT interchangeable: TP is a limit that someone crosses
+# (maker), SL is a stop that crosses the book to get you out (taker), TIMEOUT is
+# a horizon market-close unless you deliberately rest a limit as the horizon
+# approaches, and OPEN_AT_END is the harness flattening at the window edge.
+EXIT_OUTCOMES = frozenset({"TP", "SL", "TIMEOUT", "OPEN_AT_END"})
 # Taker in, taker out -- the default execution. 2*(6+2) = 16bps. Training's
 # --round-trip-cost must equal this or threshold selection optimizes against a
 # cost the backtest does not charge (test_cost_basis_is_shared pins it).
@@ -613,7 +619,7 @@ def _close_trade(
     fee_rate_per_side: float,
     slippage_rate_per_side: float,
     maker_fee_rate_per_side: float = DEFAULT_MAKER_FEE_RATE_PER_SIDE,
-    exit_maker: bool = False,
+    maker_exit_outcomes: frozenset[str] = frozenset(),
 ) -> tuple[float, float, float]:
     gross_pnl_pct = _trade_gross_pnl_pct(trade, exit_price)
     # Cost is per LEG and depends on how that leg filled. A resting limit gets
@@ -627,9 +633,10 @@ def _close_trade(
     # legs were charged the maker rate even for taker fills (under-charging
     # 8bps on a taker round trip); and the exit was hardcoded taker, which
     # understated an exchange that lets you rest TP/SL as limit orders.
-    #   exit_maker is an ASSUMPTION, not an observation -- see run_backtest's
-    # maker_exit for what it takes for granted and why the SL leg is where it
-    # is most likely to be wrong.
+    #   Whether the exit rests depends on HOW it closed, which is why the
+    # decision lives here (the only place that knows the outcome) rather than
+    # being one flag for all exits. See run_backtest's maker_exit_outcomes.
+    exit_maker = outcome in maker_exit_outcomes
     entry_fee = maker_fee_rate_per_side if trade.entry_maker else fee_rate_per_side
     exit_fee = maker_fee_rate_per_side if exit_maker else fee_rate_per_side
     fee_pct = entry_fee + exit_fee
@@ -695,7 +702,7 @@ def run_backtest(
     range_gate_enabled: bool = True,
     maker_fill_window: int = 0,
     maker_fill_penetration: float = 0.0,
-    maker_exit: bool = False,
+    maker_exit_outcomes: Sequence[str] | None = None,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -719,32 +726,47 @@ def run_backtest(
     cooldown_bars: bars to wait after exit before re-entry
     long_threshold: override strategy long threshold (default uses strategy.long_threshold)
     short_threshold: override strategy short threshold (default uses strategy.short_threshold)
-    maker_exit: price the EXIT leg as a resting limit (maker fee, no slippage)
-        instead of an immediate fill. Bitget lets TP/SL be attached as limit
-        orders when the position is opened, so this is representable there.
+    maker_exit_outcomes: which EXIT outcomes price as a resting limit (maker
+        fee, no slippage) instead of an immediate fill; any subset of
+        EXIT_OUTCOMES, empty/None = all exits taker. Bitget lets TP/SL be
+        attached as limit orders when the position is opened, so a resting exit
+        is representable there.
 
-        This is an ASSUMPTION the backtest cannot verify, and it is generous in
-        one specific place. It takes for granted that the exit limit fills AT
-        the modeled exit price, which is fine for TP (price reached your level,
-        you rest there and get taken) and defensible for the horizon exit, but
-        is the optimistic case for SL. A stop-limit fills only if someone
-        crosses your resting order; the move that triggers a stop is precisely
-        the fast one-way move that blows through the level, and then you are
-        not out at -sl_pct -- you are still in, losing more. High average BTC
-        volume does not protect against this, because the risk lives in the
-        tail (liquidation cascades) where the queue at your price is deepest
-        exactly when you need out.
+        It is per-outcome because the outcomes are not equally credible, and
+        the mix decides the verdict rather than decorating it:
 
-        So results with maker_exit=True are an UPPER BOUND on the exit-cost
-        saving. Sizing the SL-non-fill tail needs real fills; until then, read
-        the maker_exit and taker-exit runs as a range, not a number. The
-        outcome mix that decides how much it matters is in the trades' outcome
-        field (measured on the 30m long: TP 13.4%, SL 29.8%, TIMEOUT 56.8%).
+        - TP is the honest case. Price reached your level, your limit was
+          resting there, someone crossed it. Maker.
+        - SL is the optimistic case, and it is optimistic in the tail. A resting
+          limit fills only if someone crosses it, and the move that triggers a
+          stop is precisely the fast one-way move that blows through the level.
+          Then you are not out at -sl_pct -- you are still in, losing more. High
+          average BTC volume does not protect you: the risk lives in the
+          liquidation cascades where the queue at your price is deepest exactly
+          when you need out. Modeling SL as maker understates BOTH the fee and
+          the fill price, and this function only models the fee half.
+        - TIMEOUT is a horizon market-close unless the strategy deliberately
+          rests a limit as the horizon approaches -- which is a different
+          strategy (it can miss and hold past the horizon), not a cost setting.
+        - OPEN_AT_END is the harness flattening at the window edge, an artifact
+          of the backtest window rather than a trade decision.
+
+        Measured on the 30m long (2025): TP 13.4%, SL 29.8%, TIMEOUT 56.8%, and
+        break-even needs at least ~44% of exits to rest. So {"TP"} alone loses
+        and {"TP","SL","TIMEOUT"} wins -- the answer is entirely in which of
+        these you are willing to assume, which is why passing them explicitly
+        beats one boolean that quietly assumed all four.
     """
     if strategy is None:
         strategy = live.strategy_for_regime(None, "balanced")
     strategy = apply_exec_barrier(strategy, exec_tp_pct, exec_sl_pct)
     _validate_cost_rates(fee_rate_per_side, slippage_rate_per_side, maker_fee_rate_per_side)
+    maker_exit_set = frozenset(str(o).upper() for o in (maker_exit_outcomes or ()))
+    unknown = maker_exit_set - EXIT_OUTCOMES
+    if unknown:
+        raise ValueError(
+            f"unknown maker_exit_outcomes {sorted(unknown)}; expected a subset of {sorted(EXIT_OUTCOMES)}"
+        )
     if label_horizon <= 0:
         raise ValueError("label_horizon must be positive")
     if min_hold_bars < 0:
@@ -797,7 +819,7 @@ def run_backtest(
         "maker_fee_rate_per_side": maker_fee_rate_per_side,
         "slippage_rate_per_side": slippage_rate_per_side,
         "maker_fill_window": maker_fill_window,
-        "maker_exit": maker_exit,
+        "maker_exit_outcomes": sorted(maker_exit_set),
         "maker_fill_penetration": maker_fill_penetration,
         "kelly_enabled": kelly_config is not None,
         "kelly_multiplier": kelly_config.kelly_multiplier if kelly_config else None,
@@ -956,9 +978,14 @@ def run_backtest(
     # maker model the entry pays the maker fee and no slippage (see
     # _close_trade), so quoting the taker round-trip here would make Kelly
     # refuse entries the run can afford.
+    # Kelly has to quote ONE exit cost before knowing how the trade will close,
+    # so it takes the taker rate unless EVERY outcome rests. Sizing off the
+    # cheaper leg for a trade that then exits taker would over-size it; being
+    # too conservative only refuses marginal entries.
+    _all_exits_maker = maker_exit_set >= EXIT_OUTCOMES
     _entry_fee = maker_fee_rate_per_side if maker_fill_window > 0 else fee_rate_per_side
-    _exit_fee = maker_fee_rate_per_side if maker_exit else fee_rate_per_side
-    _slip_legs = (0.0 if maker_fill_window > 0 else 1.0) + (0.0 if maker_exit else 1.0)
+    _exit_fee = maker_fee_rate_per_side if _all_exits_maker else fee_rate_per_side
+    _slip_legs = (0.0 if maker_fill_window > 0 else 1.0) + (0.0 if _all_exits_maker else 1.0)
     round_trip_cost = _entry_fee + _exit_fee + _slip_legs * slippage_rate_per_side
     if kelly_config is not None:
         bar_returns = [float("nan")] * len(candles)
@@ -1289,7 +1316,7 @@ def run_backtest(
                     fee_rate_per_side,
                     slippage_rate_per_side,
                     maker_fee_rate_per_side,
-                    maker_exit,
+                    maker_exit_set,
                 )
                 result.total_fees += active_trade.fee_paid
                 result.total_slippage += active_trade.slippage_paid
@@ -1349,7 +1376,7 @@ def run_backtest(
             fee_rate_per_side,
             slippage_rate_per_side,
             maker_fee_rate_per_side,
-            maker_exit,
+            maker_exit_set,
         )
         result.total_fees += active_trade.fee_paid
         result.total_slippage += active_trade.slippage_paid
@@ -1504,7 +1531,7 @@ def compare_strategies(
     exec_sl_pct: float | None = None,
     threshold_floor: float = 0.0,
     label_horizon: int = 60,
-    maker_exit: bool = False,
+    maker_exit_outcomes: Sequence[str] | None = None,
     allow_barrier_mismatch: bool = False,
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison."""
@@ -1602,7 +1629,7 @@ def compare_strategies(
             initial_equity,
             fee_rate_per_side=fee_rate_per_side,
             maker_fee_rate_per_side=maker_fee_rate_per_side,
-            maker_exit=maker_exit,
+            maker_exit_outcomes=maker_exit_outcomes,
             slippage_rate_per_side=slippage_rate_per_side,
             models_by_regime=models_by_regime,
             user_regime_periods=user_regime_periods,

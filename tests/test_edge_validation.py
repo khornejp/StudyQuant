@@ -14,6 +14,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from btcusdt_quant import backtest as _bt
 from btcusdt_quant import cli, data, dataset, edge_validation, features, live
 from btcusdt_quant.models import CentroidLinearClassifier
 
@@ -129,7 +130,7 @@ class CostStressTests(unittest.TestCase):
             candles, model=_FixedModel(0.9), long_threshold=0.6, short_threshold=0.99,
             base_fee_rate_per_side=0.0006, base_maker_fee_rate_per_side=0.0002,
             base_slippage_rate_per_side=0.0, multipliers=(1.0, 2.0),
-            maker_fill_window=5, maker_exit=True, **_BT_KW,
+            maker_fill_window=5, maker_exit_outcomes=sorted(_bt.EXIT_OUTCOMES), **_BT_KW,
         )
         self.assertEqual(report["base_maker_fee_rate_per_side"], 0.0002)
         fee_1x = report["levels"]["1x"]["total_fees"]
