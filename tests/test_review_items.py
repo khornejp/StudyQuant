@@ -1765,12 +1765,16 @@ class MakerFillTests(unittest.TestCase):
         first = result.trades[0]
         self.assertTrue(first.entry_maker)
         self.assertAlmostEqual(first.entry_price, 100.0)
-        # A resting limit saves the entry SLIPPAGE (you named the price) but
-        # NOT the entry FEE -- the exchange charges a maker fee on a resting
-        # fill. Waiving the fee too over-credited every maker trade by a full
-        # per-side fee (2bps at the default), which alone flipped the sign of
-        # the 30m maker net expectancy.
-        self.assertAlmostEqual(first.fee_pct, 2.0 * result.fee_rate_per_side)
+        # A resting limit saves the entry SLIPPAGE (you named the price) and
+        # gets the cheaper MAKER fee -- but it is not free: only a rebate tier
+        # makes a resting fill cost nothing, and this account has none. So the
+        # entry pays the maker rate and the exit the taker rate.
+        # Both halves were wrong at different times: the entry fee was waived
+        # entirely, and before that the maker rate was charged on taker fills.
+        self.assertAlmostEqual(
+            first.fee_pct, result.maker_fee_rate_per_side + result.fee_rate_per_side
+        )
+        self.assertLess(result.maker_fee_rate_per_side, result.fee_rate_per_side)
         self.assertAlmostEqual(first.slippage_pct, 1.0 * result.slippage_rate_per_side)
         self.assertGreaterEqual(result.maker_fill_diagnostics["orders_filled"], 1)
 
@@ -1791,6 +1795,63 @@ class MakerFillTests(unittest.TestCase):
             diag["orders_placed"],
             diag["orders_filled"] + diag["orders_expired"] + diag["orders_kelly_refused"],
         )
+
+    def test_taker_and_maker_rates_are_distinct(self) -> None:
+        # The maker and taker fees are DIFFERENT numbers (VIP0: 0.02% vs 0.05%).
+        # A single rate applied to both sides charged the maker rate for taker
+        # fills and under-counted a taker round trip by 6bps. Pin that a taker
+        # trade pays 2x taker while a maker-entry trade pays maker + taker, with
+        # explicit rates so the assertion does not just restate the defaults.
+        specs = [(100.0, 100.2, 99.8, 100.0)]
+        specs += [(100.0, 100.05, 99.5, 100.2)]
+        specs += [(100.2, 100.4, 100.0, 100.3)] * 20
+        common = dict(
+            model=self._AlwaysLong(), position_size=0.1, label_horizon=10,
+            cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            fee_rate_per_side=0.0005, maker_fee_rate_per_side=0.0002,
+            slippage_rate_per_side=0.0,
+        )
+        taker = run_backtest(self._candles(specs), maker_fill_window=0, **common)
+        maker = run_backtest(self._candles(specs), maker_fill_window=5, **common)
+        self.assertFalse(taker.trades[0].entry_maker)
+        self.assertAlmostEqual(taker.trades[0].fee_pct, 0.0010)   # 5 + 5 bps
+        self.assertTrue(maker.trades[0].entry_maker)
+        self.assertAlmostEqual(maker.trades[0].fee_pct, 0.0007)   # 2 + 5 bps
+        # A maker rebate is representable (negative rate), but must be opt-in.
+        rebate = run_backtest(
+            self._candles(specs), maker_fill_window=5,
+            **{**common, "maker_fee_rate_per_side": -0.0001},
+        )
+        self.assertAlmostEqual(rebate.trades[0].fee_pct, 0.0004)  # -1 + 5 bps
+
+    def test_maker_exit_prices_the_exit_leg_as_a_resting_limit(self) -> None:
+        # Bitget can attach TP/SL as limit orders at open, so the exit leg can be
+        # maker too. Cost is per LEG: each side pays maker-or-taker fee and pays
+        # slippage only if it crossed. The exit used to be hardcoded taker.
+        specs = [(100.0, 100.2, 99.8, 100.0)]
+        specs += [(100.0, 100.05, 99.5, 100.2)]
+        specs += [(100.2, 100.4, 100.0, 100.3)] * 20
+        common = dict(
+            model=self._AlwaysLong(), position_size=0.1, label_horizon=10,
+            cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            fee_rate_per_side=0.0005, maker_fee_rate_per_side=0.0002,
+            slippage_rate_per_side=0.0001,
+        )
+        # maker entry + maker exit: 2+2 bps fee, no slippage on either leg.
+        both = run_backtest(self._candles(specs), maker_fill_window=5, maker_exit=True, **common)
+        self.assertAlmostEqual(both.trades[0].fee_pct, 0.0004)
+        self.assertAlmostEqual(both.trades[0].slippage_pct, 0.0)
+        # maker entry + taker exit: 2+5 bps fee, slippage on the exit leg only.
+        mixed = run_backtest(self._candles(specs), maker_fill_window=5, **common)
+        self.assertAlmostEqual(mixed.trades[0].fee_pct, 0.0007)
+        self.assertAlmostEqual(mixed.trades[0].slippage_pct, 0.0001)
+        # taker entry + maker exit: 5+2 bps fee, slippage on the entry leg only.
+        taker_in = run_backtest(self._candles(specs), maker_fill_window=0, maker_exit=True, **common)
+        self.assertAlmostEqual(taker_in.trades[0].fee_pct, 0.0007)
+        self.assertAlmostEqual(taker_in.trades[0].slippage_pct, 0.0001)
+        # Resting both legs must be the cheapest of the three.
+        self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
+        self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
 
     def test_fill_bar_can_hit_the_stop(self) -> None:
         # A maker order fills part-way through its bar, so the REST of that bar

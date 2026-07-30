@@ -1365,7 +1365,9 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--allow-barrier-mismatch", action="store_true", help="permit --exec-tp-pct/--exec-sl-pct to differ from the tp_pct/sl_pct the loaded models were LABELED on (recorded in regime_run_summary.json). Off by default: the model predicts P(TP before SL) for the barrier it was trained on, so executing a different one denominates every probability, threshold and win rate in a barrier nobody trained on, and the run reports a meaningless number without erroring. No pipeline needs this -- tp_sl_sweep.sh RETRAINS each cell at its own tp/sl, so its barriers match. Pass it only for a deliberate one-off probe of how a fixed model behaves under a barrier it was not trained for, and read the result as a sensitivity check, not as performance.")
     backtest_parser.add_argument("--backtest-end", default=None, help="inclusive end date (YYYY-MM-DD) of the trading window. Without it the backtest silently trades from --backtest-start to the END OF FILE, so a parquet extended past 2025 would silently widen the traded span. Routing diagnostics are sliced to the same window.")
     backtest_parser.add_argument("--metrics-dir", default=None, help="directory of downloaded Binance metrics archive (collect-metrics output) -- pass the SAME directory used for training's --metrics-dir. Training with metrics and backtesting without them feeds the model F16 derivatives-metrics features (open interest change rates/z-scores, long/short ratios, taker ratio) as 0.0 -- inputs it never saw in training (train/serve feature skew). Without this flag those features are 0 in the backtest.")
-    backtest_parser.add_argument("--fee-rate-per-side", type=float, default=None, help="override the per-side fee fraction (default 0.0002 = 0.02%%). Together with --slippage-rate-per-side this sets the backtest's executed round-trip cost; keep 2*(fee+slippage) equal to training's --round-trip-cost so the threshold objective and execution share one cost basis.")
+    backtest_parser.add_argument("--fee-rate-per-side", type=float, default=None, help="override the per-side TAKER fee fraction (default 0.0005 = 0.05%%, Binance USDT-M VIP0). This is what an immediate fill pays, and the exit is modeled taker on every path. Together with --slippage-rate-per-side this sets the executed round-trip cost; keep 2*(fee+slippage) equal to training's --round-trip-cost so the threshold objective and execution share one cost basis.")
+    backtest_parser.add_argument("--maker-exit", action="store_true", help="price the EXIT leg as a resting limit (maker fee, no slippage) instead of an immediate fill -- Bitget lets TP/SL be attached as limit orders at open. ASSUMES the exit limit always fills at the modeled exit price. That holds for TP and is defensible for the horizon exit, but it is the OPTIMISTIC case for SL: a stop-limit fills only if someone crosses it, and the fast one-way move that triggers a stop is exactly the one that blows through the level, leaving you still in and losing more than sl_pct. High average BTC volume does not help -- the risk is in the liquidation-cascade tail. Treat maker-exit vs default as a RANGE, not a number.")
+    backtest_parser.add_argument("--maker-fee-rate-per-side", type=float, default=None, help="override the per-side MAKER fee fraction (default 0.0002 = 0.02%%, Binance USDT-M VIP0). Applies only to a resting-limit ENTRY under --maker-fill-window; set it negative only if the account genuinely has a maker rebate. Not the same number as --fee-rate-per-side -- charging the maker rate for taker fills under-counted every taker round trip by 6bps before 2026-07-30.")
     backtest_parser.add_argument("--slippage-rate-per-side", type=float, default=None, help="override the per-side slippage fraction (default 0.0002 = 0.02%%). See --fee-rate-per-side.")
     backtest_parser.add_argument("--horizon", type=int, default=60, help="max holding bars before forced TIMEOUT exit (minutes for 1m data). MUST match the training --horizon so backtest execution and triple-barrier labels share the same time barrier (a train horizon of 120 with a backtest horizon of 60 silently misaligns label vs execution). Default 60 = training default.")
     backtest_parser.add_argument("--threshold-floor", type=float, default=0.0, help="hard lower bound on the learned/strategy entry thresholds (does NOT clamp an explicit --long/--short-threshold override). Learned selected_thresholds can drop to ~0.32 on weak models; e.g. --threshold-floor 0.45 keeps entries above a minimum confidence so sub-cost signals don't flood the backtest. Default 0 = disabled.")
@@ -1960,14 +1962,25 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 multi_feature_regime_detector = None  # already applied
             resolved_fee = args.fee_rate_per_side if args.fee_rate_per_side is not None else backtest.DEFAULT_FEE_RATE_PER_SIDE
+            resolved_maker_fee = args.maker_fee_rate_per_side if args.maker_fee_rate_per_side is not None else backtest.DEFAULT_MAKER_FEE_RATE_PER_SIDE
             resolved_slippage = args.slippage_rate_per_side if args.slippage_rate_per_side is not None else backtest.DEFAULT_SLIPPAGE_RATE_PER_SIDE
-            if args.fee_rate_per_side is not None or args.slippage_rate_per_side is not None:
-                print(f"[BACKTEST] cost override: fee_per_side={resolved_fee}, slippage_per_side={resolved_slippage}, round_trip={2.0 * (resolved_fee + resolved_slippage)}")
+            # Always print the cost basis, not only on override: a net figure is
+            # meaningless without the fee tier it assumed, and this project has
+            # already published numbers that quietly used the maker rate for
+            # taker fills. Show what the run will actually charge.
+            _maker_rt = resolved_maker_fee + resolved_fee + resolved_slippage
+            print(
+                f"[BACKTEST] cost basis: taker_fee={resolved_fee} maker_fee={resolved_maker_fee} "
+                f"slippage={resolved_slippage} | taker round_trip={2.0 * (resolved_fee + resolved_slippage)}"
+                + (f", maker-entry round_trip={_maker_rt}" if args.maker_fill_window > 0 else "")
+            )
             comparison = backtest.compare_strategies(
                 candles,
                 model,
                 strategies,
                 fee_rate_per_side=resolved_fee,
+                maker_fee_rate_per_side=resolved_maker_fee,
+                maker_exit=args.maker_exit,
                 slippage_rate_per_side=resolved_slippage,
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,
@@ -2004,6 +2017,8 @@ def main(argv: list[str] | None = None) -> int:
                 model,
                 strategies["balanced"],
                 fee_rate_per_side=resolved_fee,
+                maker_fee_rate_per_side=resolved_maker_fee,
+                maker_exit=args.maker_exit,
                 slippage_rate_per_side=resolved_slippage,
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,

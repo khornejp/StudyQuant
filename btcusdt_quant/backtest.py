@@ -232,8 +232,21 @@ MIN_TRADES_FOR_RISK_METRICS = 20
 # a true match from an exact one.
 _BARRIER_MATCH_TOL = 1e-9
 
-DEFAULT_FEE_RATE_PER_SIDE = 0.0002
+# Binance USDT-M perpetual, VIP0, no BNB/referral discount and no maker rebate
+# (confirmed for this account 2026-07-30): maker 0.0200%, taker 0.0500%. The two
+# are NOT the same number, and the difference decides whether a thin edge lives:
+# a 0.0500% taker round trip is 10bps of fee alone. Until 2026-07-30 this module
+# had a single DEFAULT_FEE_RATE_PER_SIDE = 0.0002 applied to both sides, i.e. it
+# charged the MAKER rate for TAKER fills and under-counted every taker round trip
+# by 6bps. Re-tier these two constants (and only these) if the account moves.
+DEFAULT_MAKER_FEE_RATE_PER_SIDE = 0.0002
+DEFAULT_TAKER_FEE_RATE_PER_SIDE = 0.0005
+# `fee_rate_per_side` throughout this module means the TAKER rate: it is what an
+# immediate fill pays, and the exit is modeled taker on every path. The maker
+# rate applies only to a resting-limit ENTRY (see _close_trade).
+DEFAULT_FEE_RATE_PER_SIDE = DEFAULT_TAKER_FEE_RATE_PER_SIDE
 DEFAULT_SLIPPAGE_RATE_PER_SIDE = 0.0002
+# Taker in, taker out -- the default execution. 2*(5+2) = 14bps.
 DEFAULT_ROUND_TRIP_COST_PCT = 2.0 * (DEFAULT_FEE_RATE_PER_SIDE + DEFAULT_SLIPPAGE_RATE_PER_SIDE)
 
 
@@ -321,6 +334,7 @@ class BacktestResult:
     trade_count: int = 0
     signal_counts: dict[str, int] = field(default_factory=dict)
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE
+    maker_fee_rate_per_side: float = DEFAULT_MAKER_FEE_RATE_PER_SIDE
     slippage_rate_per_side: float = DEFAULT_SLIPPAGE_RATE_PER_SIDE
     round_trip_cost_pct: float = DEFAULT_ROUND_TRIP_COST_PCT
     total_fees: float = 0.0
@@ -394,6 +408,7 @@ class BacktestResult:
             "trade_count": len(self.trades),
             "signal_counts": self.signal_counts,
             "fee_rate_per_side": self.fee_rate_per_side,
+            "maker_fee_rate_per_side": self.maker_fee_rate_per_side,
             "slippage_rate_per_side": self.slippage_rate_per_side,
             "round_trip_cost_pct": self.round_trip_cost_pct,
             "total_fees": self.total_fees,
@@ -446,9 +461,27 @@ class BacktestResult:
         }
 
 
-def _validate_cost_rates(fee_rate_per_side: float, slippage_rate_per_side: float) -> None:
+def _validate_cost_rates(
+    fee_rate_per_side: float,
+    slippage_rate_per_side: float,
+    maker_fee_rate_per_side: float = DEFAULT_MAKER_FEE_RATE_PER_SIDE,
+) -> None:
     if not isfinite(fee_rate_per_side):
         raise ValueError("fee_rate_per_side must be finite")
+    if not isfinite(maker_fee_rate_per_side):
+        raise ValueError("maker_fee_rate_per_side must be finite")
+    # A NEGATIVE maker fee is legitimate -- liquidity-provider tiers really do
+    # pay you to rest an order -- so it is allowed, unlike the other rates. What
+    # is refused is a rebate large enough to make the round trip cost nothing:
+    # that is free money, and a backtest that models it will always find an
+    # "edge". In reality the rebate never exceeds the taker fee it is paired
+    # with (Binance's deepest USDT-M maker rebate is well inside its taker rate),
+    # so this rejects typos, not tiers.
+    if maker_fee_rate_per_side + fee_rate_per_side < 0.0:
+        raise ValueError(
+            "maker_fee_rate_per_side + fee_rate_per_side must be non-negative "
+            "(a maker rebate cannot exceed the taker fee on the other leg)"
+        )
     if not isfinite(slippage_rate_per_side):
         raise ValueError("slippage_rate_per_side must be finite")
     if fee_rate_per_side < 0.0:
@@ -575,19 +608,30 @@ def _close_trade(
     position_size: float,
     fee_rate_per_side: float,
     slippage_rate_per_side: float,
+    maker_fee_rate_per_side: float = DEFAULT_MAKER_FEE_RATE_PER_SIDE,
+    exit_maker: bool = False,
 ) -> tuple[float, float, float]:
     gross_pnl_pct = _trade_gross_pnl_pct(trade, exit_price)
-    # A maker (resting-limit) entry saves the entry SLIPPAGE -- you named the
-    # price, so there is no spread/impact to cross -- but NOT the entry FEE.
-    # The exchange charges a maker fee on a resting fill; only a rebate tier
-    # makes it zero, and this backtest does not model one. On Binance USDT-M
-    # VIP0 the maker fee is 0.0200%, i.e. exactly DEFAULT_FEE_RATE_PER_SIDE, so
-    # waiving it here used to over-credit every maker trade by a full 2bps --
-    # enough on its own to flip the 30m maker verdict.
-    # (Exit is modeled taker either way -- a TP limit could be maker too, but a
-    # SL is a taker stop, so charging exit taker is the conservative choice.)
-    fee_pct = fee_rate_per_side * 2.0
-    slippage_pct = slippage_rate_per_side * (1.0 if trade.entry_maker else 2.0)
+    # Cost is per LEG and depends on how that leg filled. A resting limit gets
+    # the cheaper MAKER fee and pays no slippage -- you named the price, so
+    # there is no spread/impact to cross. An immediate fill pays TAKER plus
+    # slippage. It is never free: only a rebate tier makes a resting fill cost
+    # nothing, and this account has none (Bitget VIP0, maker 0.02% / taker
+    # 0.06%, confirmed 2026-07-30).
+    #   Both legs used to be modeled wrongly here. Until 2026-07-30 a maker
+    # entry paid NO fee at all (over-crediting 2bps/trade); before that both
+    # legs were charged the maker rate even for taker fills (under-charging
+    # 6bps on a taker round trip); and the exit was hardcoded taker, which
+    # understated an exchange that lets you rest TP/SL as limit orders.
+    #   exit_maker is an ASSUMPTION, not an observation -- see run_backtest's
+    # maker_exit for what it takes for granted and why the SL leg is where it
+    # is most likely to be wrong.
+    entry_fee = maker_fee_rate_per_side if trade.entry_maker else fee_rate_per_side
+    exit_fee = maker_fee_rate_per_side if exit_maker else fee_rate_per_side
+    fee_pct = entry_fee + exit_fee
+    slippage_pct = slippage_rate_per_side * (
+        (0.0 if trade.entry_maker else 1.0) + (0.0 if exit_maker else 1.0)
+    )
     cost_pct = fee_pct + slippage_pct
     net_pnl_pct = gross_pnl_pct - cost_pct
 
@@ -631,6 +675,7 @@ def run_backtest(
     threshold_floor: float = 0.0,
     precomputed_routing_diagnostics: dict | None = None,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
+    maker_fee_rate_per_side: float = DEFAULT_MAKER_FEE_RATE_PER_SIDE,
     slippage_rate_per_side: float = DEFAULT_SLIPPAGE_RATE_PER_SIDE,
     models_by_regime: Mapping[str, object] | None = None,
     user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None,
@@ -646,6 +691,7 @@ def run_backtest(
     range_gate_enabled: bool = True,
     maker_fill_window: int = 0,
     maker_fill_penetration: float = 0.0,
+    maker_exit: bool = False,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -669,11 +715,32 @@ def run_backtest(
     cooldown_bars: bars to wait after exit before re-entry
     long_threshold: override strategy long threshold (default uses strategy.long_threshold)
     short_threshold: override strategy short threshold (default uses strategy.short_threshold)
+    maker_exit: price the EXIT leg as a resting limit (maker fee, no slippage)
+        instead of an immediate fill. Bitget lets TP/SL be attached as limit
+        orders when the position is opened, so this is representable there.
+
+        This is an ASSUMPTION the backtest cannot verify, and it is generous in
+        one specific place. It takes for granted that the exit limit fills AT
+        the modeled exit price, which is fine for TP (price reached your level,
+        you rest there and get taken) and defensible for the horizon exit, but
+        is the optimistic case for SL. A stop-limit fills only if someone
+        crosses your resting order; the move that triggers a stop is precisely
+        the fast one-way move that blows through the level, and then you are
+        not out at -sl_pct -- you are still in, losing more. High average BTC
+        volume does not protect against this, because the risk lives in the
+        tail (liquidation cascades) where the queue at your price is deepest
+        exactly when you need out.
+
+        So results with maker_exit=True are an UPPER BOUND on the exit-cost
+        saving. Sizing the SL-non-fill tail needs real fills; until then, read
+        the maker_exit and taker-exit runs as a range, not a number. The
+        outcome mix that decides how much it matters is in the trades' outcome
+        field (measured on the 30m long: TP 13.4%, SL 29.8%, TIMEOUT 56.8%).
     """
     if strategy is None:
         strategy = live.strategy_for_regime(None, "balanced")
     strategy = apply_exec_barrier(strategy, exec_tp_pct, exec_sl_pct)
-    _validate_cost_rates(fee_rate_per_side, slippage_rate_per_side)
+    _validate_cost_rates(fee_rate_per_side, slippage_rate_per_side, maker_fee_rate_per_side)
     if label_horizon <= 0:
         raise ValueError("label_horizon must be positive")
     if min_hold_bars < 0:
@@ -695,6 +762,7 @@ def run_backtest(
     result = BacktestResult()
     result.barrier_warnings = barrier_warnings
     result.fee_rate_per_side = fee_rate_per_side
+    result.maker_fee_rate_per_side = maker_fee_rate_per_side
     result.slippage_rate_per_side = slippage_rate_per_side
     result.round_trip_cost_pct = 2.0 * (fee_rate_per_side + slippage_rate_per_side)
     result.min_hold_bars = min_hold_bars
@@ -718,7 +786,14 @@ def run_backtest(
         "long_threshold_override": long_threshold,
         "short_threshold_override": short_threshold,
         "range_gate_enabled": range_gate_enabled,
+        # Both rates, because a run's net is only interpretable against the fee
+        # tier it assumed -- and this project has already published numbers that
+        # silently used the maker rate for taker fills.
+        "fee_rate_per_side": fee_rate_per_side,
+        "maker_fee_rate_per_side": maker_fee_rate_per_side,
+        "slippage_rate_per_side": slippage_rate_per_side,
         "maker_fill_window": maker_fill_window,
+        "maker_exit": maker_exit,
         "maker_fill_penetration": maker_fill_penetration,
         "kelly_enabled": kelly_config is not None,
         "kelly_multiplier": kelly_config.kelly_multiplier if kelly_config else None,
@@ -874,11 +949,13 @@ def run_backtest(
     kelly_skipped_shorts = 0
     kelly_skipped_longs = 0
     # Kelly must size against the cost this run will actually pay. Under the
-    # maker model the entry saves its slippage (see _close_trade), so quoting
-    # the taker round-trip here would make Kelly refuse entries the run can
-    # afford.
-    _entry_slippage_sides = 1.0 if maker_fill_window > 0 else 2.0
-    round_trip_cost = 2.0 * fee_rate_per_side + _entry_slippage_sides * slippage_rate_per_side
+    # maker model the entry pays the maker fee and no slippage (see
+    # _close_trade), so quoting the taker round-trip here would make Kelly
+    # refuse entries the run can afford.
+    _entry_fee = maker_fee_rate_per_side if maker_fill_window > 0 else fee_rate_per_side
+    _exit_fee = maker_fee_rate_per_side if maker_exit else fee_rate_per_side
+    _slip_legs = (0.0 if maker_fill_window > 0 else 1.0) + (0.0 if maker_exit else 1.0)
+    round_trip_cost = _entry_fee + _exit_fee + _slip_legs * slippage_rate_per_side
     if kelly_config is not None:
         bar_returns = [float("nan")] * len(candles)
         for j in range(1, len(candles)):
@@ -1207,6 +1284,8 @@ def run_backtest(
                     active_trade.position_size_used if active_trade.position_size_used is not None else position_size,
                     fee_rate_per_side,
                     slippage_rate_per_side,
+                    maker_fee_rate_per_side,
+                    maker_exit,
                 )
                 result.total_fees += active_trade.fee_paid
                 result.total_slippage += active_trade.slippage_paid
@@ -1265,6 +1344,8 @@ def run_backtest(
             active_trade.position_size_used if active_trade.position_size_used is not None else position_size,
             fee_rate_per_side,
             slippage_rate_per_side,
+            maker_fee_rate_per_side,
+            maker_exit,
         )
         result.total_fees += active_trade.fee_paid
         result.total_slippage += active_trade.slippage_paid
@@ -1404,6 +1485,7 @@ def compare_strategies(
     strategies: Mapping[str, live.StrategyConfig] | None = None,
     initial_equity: float = 10000.0,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
+    maker_fee_rate_per_side: float = DEFAULT_MAKER_FEE_RATE_PER_SIDE,
     slippage_rate_per_side: float = DEFAULT_SLIPPAGE_RATE_PER_SIDE,
     models_by_regime: Mapping[str, object] | None = None,
     user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None,
@@ -1418,6 +1500,7 @@ def compare_strategies(
     exec_sl_pct: float | None = None,
     threshold_floor: float = 0.0,
     label_horizon: int = 60,
+    maker_exit: bool = False,
     allow_barrier_mismatch: bool = False,
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison."""
@@ -1514,6 +1597,8 @@ def compare_strategies(
             strategy,
             initial_equity,
             fee_rate_per_side=fee_rate_per_side,
+            maker_fee_rate_per_side=maker_fee_rate_per_side,
+            maker_exit=maker_exit,
             slippage_rate_per_side=slippage_rate_per_side,
             models_by_regime=models_by_regime,
             user_regime_periods=user_regime_periods,
