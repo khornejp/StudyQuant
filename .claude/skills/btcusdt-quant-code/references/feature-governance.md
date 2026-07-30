@@ -68,3 +68,26 @@ feature 값은 항상 유한하고 정해진 경계 안에 있어야 한다. 이
 
 확률은 Platt/Beta/Isotonic으로 캘리브레이션되고, sample 게이트와 ECE/Brier drift 모니터링이 붙는다. 새
 확률 출력도 캘리브레이션·드리프트 경로에 태워 raw score를 그대로 신뢰하지 않는다.
+
+## Feature 가설과 availability
+
+registry의 source와 lookback만으로는 실제 사용 가능 시각이 충분히 표현되지 않을 수 있다. 새 feature에는 다음을
+추가로 문서화한다.
+
+- 경제적 또는 시장 미시구조 가설
+- source event time과 ingestion/availability time
+- earliest decision timestamp
+- incomplete candle 사용 여부
+- publication lag 또는 exchange API 지연
+
+OHLCV 파생 feature 여러 개가 같은 return/trend/volatility 정보를 다른 형태로 반복할 수 있다. feature 수가 늘어난
+것을 정보량 증가로 해석하지 않는다.
+
+## Feature 채택 규칙
+
+- SHAP, gain, permutation importance는 진단 도구이지 채택 증거가 아니다.
+- 기존 accepted 모델에 feature 또는 group 하나만 추가해 동일 OOS split에서 비교한다.
+- grouped ablation으로 제거 시 성능이 안정적으로 악화되는지 확인한다.
+- fold, 기간, regime, horizon, seed별 일관성을 본다.
+- 비용 후 trading 결과가 개선되지 않으면 predictive metric만의 미세 개선으로 채택하지 않는다.
+- feature selection 자체도 fold train에서만 수행하고 선택 결과를 artifact에 기록한다.

@@ -47,3 +47,25 @@ regime은 코드 품질과 누수가 동시에 걸리는 지점이라 특히 규
 - regime별로만 좋고 통합이 나쁘면, 라우팅·전환에서 정보가 새거나(누수) 전환 비용이 숨었을 수 있다.
 - hindsight 라우팅 성능과 실시간 탐지 라우팅 성능의 격차가 크면, 그 격차가 곧 "라우터가 실제로 얼마나
   어려운가"를 말해준다 — 이 격차를 성능으로 착각하지 않는다.
+
+## 필수 4-way 비교
+
+regime-aware 결과를 평가할 때 다음 네 경로를 같은 split, label, 비용으로 비교한다.
+
+1. regime detector 자체의 classification/calibration 결과
+2. hindsight/true regime을 사용한 oracle routing
+3. causal predicted regime을 사용한 실제 routing
+4. regime을 사용하지 않는 unified entry model
+
+해석:
+
+- oracle은 좋고 predicted만 나쁘면 detector, transition, hysteresis 또는 routing lag 문제다.
+- oracle도 나쁘면 entry model, label, feature 또는 regime 분할 자체 문제다.
+- unified가 predicted보다 좋으면 현재 bucketing이 표본을 쪼개고 edge를 약화시킨다.
+- detector accuracy가 높아도 중요한 전환 구간에서 틀리면 trading 결과는 나쁠 수 있으므로 confusion뿐 아니라
+  transition-window 성능과 비용을 본다.
+
+## Routing diagnostics 범위
+
+라우팅 진단은 해당 OOS 평가 기간에 한정해 계산한다. 전체 2020~2025 분포와 confusion을 특정 2025 test 구간의
+성능 근거로 사용하지 않는다. train/validation/test별 regime count, route count, fallback count를 따로 저장한다.

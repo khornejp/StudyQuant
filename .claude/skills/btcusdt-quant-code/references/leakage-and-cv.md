@@ -58,3 +58,21 @@ CV가 아무리 깨끗해도 serve 경로가 다르게 계산하면 소용없다
   출처를 위 기준으로 되짚는다.
 - CPCV split의 `purged`/`embargoed`가 비어 있으면(라벨 horizon이 있는데도) purge 설정이 빠졌을 수 있다.
 - 라벨 horizon과 CV `label_horizon`/`purge_gap`이 어긋나면 경계 누수가 생긴다 — 값이 일치하는지 확인.
+
+## Timestamp·resample 추가 감사
+
+split이 올바르더라도 row 내부 시점이 틀리면 누수가 남는다.
+
+- feature cutoff, decision, earliest execution, label start/end를 명시한다.
+- 현재 candle close를 사용한 feature는 같은 close에 즉시 체결하지 않는다.
+- `resample()` 사용 시 `closed`, `label`, timezone, bucket 완료 여부를 확인한다.
+- 15m/1h/4h feature는 해당 상위 timeframe candle이 완료된 뒤에만 사용할 수 있다.
+- `bfill`과 미래 관측치 기반 interpolation은 기본 금지한다.
+- quantile clipping, rank normalization, feature selection도 fold train에서만 fit한다.
+- calibration과 threshold 선택에는 test split이 아니라 전용 validation split을 사용한다.
+- 동일 validation을 HPO, calibration, threshold에 반복 사용하면 nested split 또는 단계별 split 헬퍼를 쓴다.
+
+## Negative control
+
+누수와 파이프라인 버그를 찾기 위해 shuffled-label/permutation 실험을 둔다. 라벨을 섞었는데도 의미 있는 OOS
+성과가 남으면 feature leakage, split contamination, index misalignment 또는 backtest accounting 오류를 의심한다.
