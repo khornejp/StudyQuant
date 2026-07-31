@@ -167,7 +167,26 @@ class UserRegimePeriod:
 
 USER_REGIME_NAMES: tuple[str, ...] = ("up", "down", "range")
 
-DATASET_CACHE_SCHEMA_VERSION = 1
+# Bumped to 2 on 2026-07-31: feature columns whose name collides with a
+# structural column (gap_flag is both a FeatureRow field and a feature) are now
+# stored under a "feature__" prefix. Before that the feature silently
+# overwrote the field's column and came back as NaN, so a cached matrix was not
+# the matrix it replaced.
+DATASET_CACHE_SCHEMA_VERSION = 2
+# Column names the row schema owns. A feature sharing one of these names cannot
+# share its column, so it is written prefixed and mapped back on read.
+_RESERVED_ROW_COLUMNS: frozenset[str] = frozenset({
+    "index", "open_time", "gap_flag", "repaired", "warmup_invalid", "user_regime",
+    "source_availability_status_json", "feature_availability_status_json",
+    "unavailable_sources_json", "fallback_features_json",
+    "label", "label_reason", "target_return", "targets_json", "target_reasons_json",
+})
+_FEATURE_COLUMN_PREFIX = "feature__"
+
+
+def _feature_column_name(feature_name: str) -> str:
+    """Parquet column holding this feature's values."""
+    return f"{_FEATURE_COLUMN_PREFIX}{feature_name}" if feature_name in _RESERVED_ROW_COLUMNS else feature_name
 DATASET_CACHE_METADATA_FILE = "_metadata.json"
 DATASET_CACHE_FEATURE_ROWS_FILE = "feature_rows.parquet"
 DATASET_CACHE_LABELED_ROWS_FILE = "labeled_rows.parquet"
@@ -1150,7 +1169,9 @@ def _write_rows_parquet(path: Path, rows: Sequence[FeatureRow] | Sequence[Labele
         )
     for name in feature_names:
         feature_name = str(name)
-        arrays[feature_name] = pa.array([_nullable_float(row.features.get(feature_name)) for row in rows], type=pa.float64())
+        arrays[_feature_column_name(feature_name)] = pa.array(
+            [_nullable_float(row.features.get(feature_name)) for row in rows], type=pa.float64()
+        )
     pq.write_table(pa.table(arrays), path)
 
 
@@ -1245,10 +1266,14 @@ def _infer_feature_names(column_names: Sequence[str], expected_feature_names: Se
     }
     if labeled:
         reserved.update({"label", "label_reason", "target_return", "targets_json", "target_reasons_json"})
-    inferred = [name for name in column_names if name not in reserved]
+    inferred = [
+        name[len(_FEATURE_COLUMN_PREFIX):] if name.startswith(_FEATURE_COLUMN_PREFIX) else name
+        for name in column_names
+        if name.startswith(_FEATURE_COLUMN_PREFIX) or name not in reserved
+    ]
     if expected_feature_names is not None:
         for name in expected_feature_names:
-            if name in column_names and name not in inferred:
+            if _feature_column_name(str(name)) in column_names and name not in inferred:
                 inferred.append(str(name))
     return tuple(inferred)
 
@@ -1256,8 +1281,9 @@ def _infer_feature_names(column_names: Sequence[str], expected_feature_names: Se
 def _features_from_columns(columns: Mapping[str, Sequence[object]], row_index: int, feature_names: Sequence[str]) -> FeatureVector:
     output: dict[str, float] = {}
     for name in feature_names:
-        if name in columns:
-            value = columns[name][row_index]
+        column = _feature_column_name(str(name))
+        if column in columns:
+            value = columns[column][row_index]
             output[name] = 0.0 if value is None else float(value)
         else:
             output[name] = 0.0

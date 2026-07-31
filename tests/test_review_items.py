@@ -1943,6 +1943,38 @@ class MakerFillTests(unittest.TestCase):
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
 
+    def test_feature_cache_returns_what_it_replaced(self) -> None:
+        # A stale feature cache would silently feed a run features computed from
+        # other data or other code -- the train/serve skew class that has already
+        # invalidated result sets here. So the cached path must be
+        # indistinguishable from the uncached one, and the key must move when
+        # the inputs do.
+        import tempfile
+        from pathlib import Path as _P
+        from btcusdt_quant import cli as _cli
+        candles = _ohlc_candles([(100.0 + i * 0.1, 100.3 + i * 0.1, 99.7 + i * 0.1, 100.1 + i * 0.1)
+                                 for i in range(60)])
+        direct = backtest_module.dataset.build_feature_rows(candles)
+        with tempfile.TemporaryDirectory() as tmp:
+            miss = _cli.build_feature_rows_cached(candles, tmp)          # writes
+            hit = _cli.build_feature_rows_cached(candles, tmp)           # reads
+            self.assertEqual(len(direct), len(hit))
+            for a, b in zip(direct, hit):
+                self.assertEqual(a.open_time, b.open_time)
+                self.assertEqual(dict(a.features), dict(b.features))
+            for a, b in zip(miss, hit):
+                self.assertEqual(dict(a.features), dict(b.features))
+            # A different candle span must not reuse the same entry.
+            k1 = _cli._feature_cache_key(None, candles, None, None)
+            k2 = _cli._feature_cache_key(None, candles[:-1], None, None)
+            self.assertNotEqual(k1, k2)
+            # Entries are per-key directories, so both can coexist.
+            _cli.build_feature_rows_cached(candles[:-1], tmp)
+            self.assertEqual(len(list(_P(tmp).iterdir())), 2)
+        # Without a cache directory it is a plain passthrough.
+        plain = _cli.build_feature_rows_cached(candles, None)
+        self.assertEqual(len(plain), len(direct))
+
     def test_directional_threshold_cannot_see_the_future(self) -> None:
         # fit_directional_threshold takes the percentile of the WHOLE series it
         # is handed, and the backtest hands it the whole file -- so a 2026 bar

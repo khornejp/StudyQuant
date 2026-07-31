@@ -1034,6 +1034,101 @@ def merge_metrics_external_sources(
     return merged
 
 
+def _feature_cache_key(
+    input_path: Path | None,
+    candles: Sequence[object],
+    metrics_dir: str | None,
+    user_regime_file: str | None,
+) -> str:
+    """Fingerprint of everything the feature matrix depends on.
+
+    A stale feature cache is the most expensive bug this repo can have -- it
+    would silently feed a run features computed from other data or other code,
+    which is the train/serve skew class that has already cost this project
+    several invalidated result sets. So the key is deliberately over-inclusive:
+    anything cheap to hash goes in, and a miss costs only the recompute that
+    would have happened anyway.
+
+    Covered: the input file's identity (path, mtime, size), the candle span
+    actually handed in, the metrics archive's contents, the user-regime file,
+    and the feature SCHEMA hash from the registry -- so changing a formula,
+    lookback or dependency invalidates the cache automatically.
+
+    NOT covered: a change to feature *implementation* that leaves the registry
+    entry identical. The registry is declarative, so a rewritten calculation
+    with the same declared formula hashes the same. Delete the cache directory
+    after touching features.py if the registry entry did not move.
+    """
+    import hashlib
+    from btcusdt_quant import parity
+
+    parts: list[str] = []
+    if input_path is not None and input_path.exists():
+        stat = input_path.stat()
+        parts.append(f"input={input_path.resolve().as_posix()}:{stat.st_mtime_ns}:{stat.st_size}")
+    else:
+        parts.append("input=<fixture>")
+    parts.append(f"candles={len(candles)}")
+    if candles:
+        parts.append(f"span={candles[0].open_time.isoformat()}..{candles[-1].open_time.isoformat()}")
+    if metrics_dir:
+        md = Path(metrics_dir)
+        files = sorted(f for f in md.glob("*.zip")) if md.is_dir() else []
+        digest = hashlib.sha256()
+        for f in files:
+            st = f.stat()
+            digest.update(f"{f.name}:{st.st_size}".encode())
+        parts.append(f"metrics={len(files)}:{digest.hexdigest()[:16]}")
+    else:
+        parts.append("metrics=<none>")
+    if user_regime_file:
+        urf = Path(user_regime_file)
+        parts.append(f"user_regime={urf.as_posix()}:{urf.stat().st_mtime_ns if urf.exists() else 0}")
+    registry = dataset.feature_formula_registry()
+    parts.append(f"schema={parity.feature_schema_hash(registry)}")
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:24]
+
+
+def build_feature_rows_cached(
+    candles: Sequence[object],
+    cache_dir: str | None,
+    *,
+    input_path: Path | None = None,
+    metrics_dir: str | None = None,
+    user_regime_file: str | None = None,
+    **build_kwargs: object,
+) -> list[object]:
+    """build_feature_rows, reusing a parquet of a previous identical build.
+
+    The feature matrix is computed over the WHOLE file on every run -- a 45m
+    backtest of six months still needs 2020 onward for the ~350-day weekly
+    warmup -- so the same 3.4M-row computation was being repeated for every
+    experiment. Cached, it is read back instead.
+
+    Off unless --feature-cache is given: a cache that turns itself on is a
+    cache that can silently serve the wrong thing.
+    """
+    if not cache_dir:
+        return dataset.build_feature_rows(candles, **build_kwargs)  # type: ignore[arg-type]
+    key = _feature_cache_key(input_path, candles, metrics_dir, user_regime_file)
+    entry = Path(cache_dir) / key
+    if (entry / dataset.DATASET_CACHE_FEATURE_ROWS_FILE).exists():
+        rows = dataset.load_feature_rows_cache(entry)
+        if len(rows) == len(candles):
+            print(f"[FEATURE] cache HIT {entry} ({len(rows):,} rows)")
+            return rows
+        # Row count disagreeing with the candles means the key collided or the
+        # file was truncated. Rebuild rather than trade on rows that do not
+        # line up with the bars.
+        print(f"[FEATURE] cache STALE {entry}: {len(rows):,} rows vs {len(candles):,} candles -- rebuilding")
+    rows = dataset.build_feature_rows(candles, **build_kwargs)  # type: ignore[arg-type]
+    entry.mkdir(parents=True, exist_ok=True)
+    names = sorted(rows[0].features) if rows else []
+    dataset.save_feature_rows_cache(entry, rows, names)
+    print(f"[FEATURE] cache WRITE {entry} ({len(rows):,} rows)")
+    return rows
+
+
 def resolve_maker_exit_outcomes(args: argparse.Namespace) -> tuple[str, ...]:
     """--maker-exit / --maker-exit-outcomes -> the outcome tuple run_backtest takes.
 
@@ -1396,6 +1491,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--slippage-rate-per-side", type=float, default=None, help="override the per-side slippage fraction (default 0.0002 = 0.02%%). See --fee-rate-per-side.")
     backtest_parser.add_argument("--horizon", type=int, default=60, help="max holding bars before forced TIMEOUT exit (minutes for 1m data). MUST match the training --horizon so backtest execution and triple-barrier labels share the same time barrier (a train horizon of 120 with a backtest horizon of 60 silently misaligns label vs execution). Default 60 = training default.")
     backtest_parser.add_argument("--threshold-floor", type=float, default=0.0, help="hard lower bound on the learned/strategy entry thresholds (does NOT clamp an explicit --long/--short-threshold override). Learned selected_thresholds can drop to ~0.32 on weak models; e.g. --threshold-floor 0.45 keeps entries above a minimum confidence so sub-cost signals don't flood the backtest. Default 0 = disabled.")
+    backtest_parser.add_argument("--feature-cache", default=None, help="directory holding cached feature matrices, keyed by a fingerprint of the input file (path/mtime/size), the candle span, the metrics archive contents, the user-regime file, and the feature SCHEMA hash from the registry. The matrix is computed over the WHOLE file on every run -- six months of backtest still needs 2020 onward for the ~350-day weekly warmup -- so without this every experiment repeats the same multi-million-row computation. A schema change (formula, lookback, dependency) invalidates the key automatically; a change to feature IMPLEMENTATION that leaves the registry entry identical does NOT, so delete the cache directory after editing features.py in that case. Off by default: a cache that turns itself on is a cache that can silently serve the wrong matrix.")
     backtest_parser.add_argument("--position-size", type=float, default=0.1, help="notional per trade as a fraction of equity (default 0.1 = 10%%). NOT leverage: it is notional/equity, so 0.5 means a position worth half the account and values above 1.0 need margin. It was hardcoded at 0.1 until 2026-07-31, which hid a deployment constraint -- an exchange's minimum order size sets a FLOOR on this number, and leverage does not lower that floor. On Binance USDT-M the step is 0.001 BTC, so at a $130 account the smallest legal trade is already ~0.5 of equity; on Bitget the 0.0001 BTC step makes it ~0.05. Backtest the size you can actually place, because returns and drawdown do not scale linearly with it.")
     backtest_parser.add_argument("--kelly-sizing", action="store_true", help="size each trade with fractional Kelly (f* = edge/variance, Half-Kelly by default) from the entry probability, executed TP/SL distances, and trailing bar-return variance scaled to --horizon. The fixed position_size becomes the CAP; entries with non-positive Kelly edge are skipped (kelly_sizing.entries_skipped_no_edge in the summary). Applies to the main backtest only; the strategy_comparison block stays fixed-size (marked sizing=fixed_position_size).")
     backtest_parser.add_argument("--kelly-multiplier", type=float, default=0.5, help="fraction of full Kelly to bet (default 0.5 = Half-Kelly: ~18.5%% less growth for ~43%% less max drawdown). Only used with --kelly-sizing.")
@@ -1974,7 +2070,13 @@ def main(argv: list[str] | None = None) -> int:
             backtest_external_sources = None
             if args.metrics_dir:
                 backtest_external_sources = merge_metrics_external_sources(Path(args.metrics_dir), candles, None)
-            shared_feature_rows = dataset.build_feature_rows(candles, user_regime_periods=user_regime_periods, external_sources=backtest_external_sources)
+            shared_feature_rows = build_feature_rows_cached(
+                candles, args.feature_cache,
+                input_path=input_path, metrics_dir=args.metrics_dir,
+                user_regime_file=args.user_regime_file,
+                user_regime_periods=user_regime_periods,
+                external_sources=backtest_external_sources,
+            )
             # Rule routing runs ONCE here (detect_all over the full series) and
             # the routed rows + windowed diagnostics are shared by both calls
             # below -- previously compare_strategies and run_backtest each
