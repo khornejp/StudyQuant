@@ -1943,6 +1943,29 @@ class MakerFillTests(unittest.TestCase):
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
 
+    def test_auto_regime_records_counts_and_threshold(self) -> None:
+        # --auto-regime routed every bar while leaving regime_routing_diagnostics
+        # empty, so an artifact could not say how many bars went up vs range vs
+        # down, nor at what slope the split was drawn. regime_coverage only
+        # counts matched/no_model, which is why "down was 20.5% of a -33%
+        # downtrend" had to be inferred from a no_model tally.
+        from btcusdt_quant.features import RegimeDetector
+        specs = [(100.0 + i * 0.1, 100.2 + i * 0.1, 99.8 + i * 0.1, 100.0 + i * 0.1) for i in range(80)]
+        result = run_backtest(
+            _ohlc_candles(specs), model=self._AlwaysLong(), position_size=0.1,
+            label_horizon=10, cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            exec_tp_pct=0.005, exec_sl_pct=0.005,
+            regime_detector=RegimeDetector(),
+        )
+        diag = result.regime_routing_diagnostics
+        self.assertEqual(diag["source"], "regime_detector.detect_all_directional")
+        self.assertEqual(set(diag["regime_counts"]), {"up", "range", "down"})
+        self.assertEqual(sum(diag["regime_counts"].values()), diag["window_rows"])
+        self.assertAlmostEqual(sum(diag["regime_ratios"].values()), 1.0)
+        self.assertIsInstance(diag["dir_threshold"], float)
+        # The look-ahead in the calibration window is recorded, not hidden.
+        self.assertIn("LOOK-AHEAD", diag["dir_threshold_calibration"])
+
     def test_compare_strategies_honours_position_size(self) -> None:
         # compare_strategies took no position_size at all, so every CLI backtest
         # silently ran at run_backtest's 0.1 default. That hid a deployment

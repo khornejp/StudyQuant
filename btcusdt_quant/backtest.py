@@ -264,6 +264,28 @@ SL_FILL_MODES = frozenset({"barrier", "next_open"})
 DEFAULT_ROUND_TRIP_COST_PCT = 2.0 * (DEFAULT_FEE_RATE_PER_SIDE + DEFAULT_SLIPPAGE_RATE_PER_SIDE)
 
 
+def _slice_to_window(
+    feature_rows: Sequence[object],
+    detected: Sequence[str],
+    start_date: str | None,
+    end_date: str | None,
+) -> list[str]:
+    """The detected regimes that fall inside the traded window.
+
+    Detection runs over the FULL series because hysteresis needs the preceding
+    history, but diagnostics must describe only the window actually traded --
+    otherwise a 2026 H1 run reports 2020-2026 regime counts, which says nothing
+    about the result being interpreted.
+    """
+    if start_date is None and end_date is None:
+        return list(detected)
+    lo, hi = window_bounds(start_date, end_date)
+    return [
+        regime for row, regime in zip(feature_rows, detected)
+        if (lo is None or row.open_time >= lo) and (hi is None or row.open_time < hi)
+    ]
+
+
 def apply_range_mean_reversion_gate(regime: str, features: dict[str, float], allowed_directions: set[str]) -> set[str]:
     """Apply mean-reversion direction gate for the range regime."""
     if regime != "range":
@@ -932,15 +954,7 @@ def run_backtest(
         # 2025 backtest gets 2020-2025 regime counts/transitions, which is
         # useless for interpreting the 2025 result (previously counts summed to
         # the full 3.15M candles instead of 2025's 525,600).
-        if start_date is not None or end_date is not None:
-            _diag_start, _diag_end = window_bounds(start_date, end_date)
-            detected_window = [
-                regime for row, regime in zip(feature_rows, detected)
-                if (_diag_start is None or row.open_time >= _diag_start)
-                and (_diag_end is None or row.open_time < _diag_end)
-            ]
-        else:
-            detected_window = detected
+        detected_window = _slice_to_window(feature_rows, detected, start_date, end_date)
         _diag = multi_feature_regime_detector.diagnostics(detected_window)
         result.regime_routing_diagnostics = _diag
         print(
@@ -986,7 +1000,52 @@ def run_backtest(
         import dataclasses as _dc
         trend_slopes = [float(r.features.get("trend_slope_30", 0.0)) for r in feature_rows]
         rv_values = [float(r.features.get("rv_15", 0.0)) for r in feature_rows]
-        detected = regime_detector.detect_all_directional(rv_values, trend_slopes)
+        # Fit the directional threshold explicitly so the RUN can report it.
+        # detect_all_directional would fit the same number internally and throw
+        # it away, which left --auto-regime runs with an empty
+        # regime_routing_diagnostics: a backtest could route every bar and the
+        # summary would not say how many went up vs range vs down, nor at what
+        # slope the split was drawn. regime_coverage only counts matched vs
+        # no_model, so "down was 20.5% of a -33% downtrend" was not knowable
+        # from the artifact.
+        #   The detector is duck-typed (tests and alternative routers supply
+        # their own), so only ask for the threshold when the object can give
+        # one; otherwise let detect_all_directional fit internally and report
+        # the threshold as unknown rather than refusing to route.
+        _fit = getattr(regime_detector, "fit_directional_threshold", None)
+        _dir_thresholds = _fit(trend_slopes) if callable(_fit) else {}
+        detected = (
+            regime_detector.detect_all_directional(rv_values, trend_slopes, thresholds=_dir_thresholds)
+            if _dir_thresholds
+            else regime_detector.detect_all_directional(rv_values, trend_slopes)
+        )
+        _dir_window = _slice_to_window(feature_rows, detected, start_date, end_date)
+        _counts = {r: _dir_window.count(r) for r in ("up", "range", "down")}
+        _n = len(_dir_window) or 1
+        result.regime_routing_diagnostics = {
+            "source": "regime_detector.detect_all_directional",
+            "regime_counts": _counts,
+            "regime_ratios": {k: v / _n for k, v in _counts.items()},
+            "regime_transition_count": sum(1 for a, b in zip(_dir_window, _dir_window[1:]) if a != b),
+            "dir_threshold": _dir_thresholds.get("dir_threshold"),
+            # The threshold is the 55th percentile of |trend_slope_30| over
+            # EVERY row handed in, which is the whole file -- so a 2026 bar is
+            # classified against a boundary that used 2026 data. Not causal, and
+            # live cannot reproduce it (there is no future distribution to
+            # calibrate on). Recorded rather than silently fixed: changing the
+            # calibration window changes every regime-routed result, so it is a
+            # separate decision from being able to SEE the number.
+            "dir_threshold_calibration": "full-series (LOOK-AHEAD -- see comment)",
+            "calibration_rows": len(trend_slopes),
+            "window_rows": len(_dir_window),
+        }
+        print(
+            "[BACKTEST] directional routing: "
+            f"counts={_counts} "
+            f"ratios={ {k: round(v / _n, 3) for k, v in _counts.items()} } "
+            f"dir_threshold={_dir_thresholds.get('dir_threshold', float('nan')):.3e} "
+            f"(calibrated on {len(trend_slopes):,} rows -- FULL SERIES, look-ahead)"
+        )
         feature_rows = [
             _dc.replace(row, user_regime=regime)
             for row, regime in zip(feature_rows, detected)
