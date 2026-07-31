@@ -1943,6 +1943,31 @@ class MakerFillTests(unittest.TestCase):
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
 
+    def test_compare_strategies_honours_position_size(self) -> None:
+        # compare_strategies took no position_size at all, so every CLI backtest
+        # silently ran at run_backtest's 0.1 default. That hid a deployment
+        # constraint: an exchange's minimum order size puts a FLOOR on this
+        # number (0.001 BTC on Binance USDT-M is ~0.5 of a $130 account), and
+        # the size you can actually place was never the size being validated.
+        specs = [(100.0, 100.2, 99.8, 100.0)]
+        specs += [(100.0, 100.05, 99.5, 100.2)]
+        specs += [(100.2, 100.4, 100.0, 100.3)] * 20
+        common = dict(
+            strategies=None, label_horizon=10,
+            exec_tp_pct=0.002, exec_sl_pct=0.002,
+            fee_rate_per_side=0.0006, maker_fee_rate_per_side=0.0002,
+            slippage_rate_per_side=0.0,
+        )
+        small = backtest_module.compare_strategies(
+            _ohlc_candles(specs), self._AlwaysLong(), position_size=0.1, **common
+        )
+        big = backtest_module.compare_strategies(
+            _ohlc_candles(specs), self._AlwaysLong(), position_size=0.5, **common
+        )
+        # Same signals, five times the notional -> a different result, not the
+        # default silently reused for both.
+        self.assertNotEqual(small["best_total_return"], big["best_total_return"])
+
     def test_exit_cost_follows_the_outcome_not_a_flag(self) -> None:
         # Which exits rest is the whole verdict, not a trim: a TP limit really is
         # crossed by someone else (maker), an SL is a stop that crosses the book
