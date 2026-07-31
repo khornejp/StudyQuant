@@ -1313,6 +1313,87 @@ class RegimeDetector:
         dir_threshold = max(float(self.config.min_trend_abs), pct)
         return {"dir_threshold": dir_threshold}
 
+    def fit_directional_threshold_expanding(
+        self,
+        trend_slope_30_values: Sequence[float],
+        percentile: float = 0.55,
+        refit_every: int = 1440,
+        min_rows: int = 1440,
+    ) -> list[float]:
+        """Per-row directional threshold calibrated on PAST rows only.
+
+        ``fit_directional_threshold`` takes the percentile of the whole series
+        it is handed, so a backtest that passes the full file classifies a 2026
+        bar against a boundary computed with 2026 data. That is look-ahead, and
+        live cannot reproduce it -- there is no future distribution to calibrate
+        on. This is the causal version: the threshold in force at row i comes
+        from ``|slope|`` over rows before i.
+
+        Refits every ``refit_every`` rows rather than every row, because that is
+        what a live system does (a nightly recalibration, not a per-tick one)
+        and because an exact expanding percentile per row would cost O(n^2).
+        Rows before ``min_rows`` have no history to calibrate on and fall back to
+        ``config.min_trend_abs``, which classifies them as range unless the slope
+        is genuinely large -- the conservative direction for a warmup period.
+        """
+        values = [abs(v) for v in trend_slope_30_values]
+        n = len(values)
+        floor = float(self.config.min_trend_abs)
+        out = [floor] * n
+        if n == 0:
+            return out
+        try:
+            import numpy as _np
+        except ImportError:  # pragma: no cover - numpy is a hard dependency
+            _np = None
+        pct = max(0.0, min(1.0, float(percentile)))
+        if _np is not None:
+            arr = _np.asarray(values, dtype=float)
+            arr = _np.where(_np.isfinite(arr), arr, _np.nan)
+            current = floor
+            start = max(int(min_rows), 1)
+            for edge in range(start, n + int(refit_every), max(int(refit_every), 1)):
+                edge = min(edge, n)
+                prefix = arr[:edge]
+                prefix = prefix[~_np.isnan(prefix)]
+                if prefix.size:
+                    current = max(floor, float(_np.quantile(prefix, pct)))
+                stop = min(edge + int(refit_every), n)
+                for i in range(edge, stop):
+                    out[i] = current
+                if edge >= n:
+                    break
+            return out
+        current = floor
+        for i in range(n):
+            if i >= min_rows and i % max(int(refit_every), 1) == 0:
+                current = max(floor, self._percentile(
+                    [v for v in values[:i] if isfinite(v)], pct, fallback=floor))
+            out[i] = current
+        return out
+
+    def detect_all_directional_causal(
+        self,
+        rv_15_values: Sequence[float],
+        trend_slope_30_values: Sequence[float],
+        refit_every: int = 1440,
+        min_rows: int = 1440,
+    ) -> tuple[list[str], list[float]]:
+        """Directional regimes using only past data to set the boundary.
+
+        Returns ``(regimes, thresholds)`` so a caller can report the boundary
+        that was actually in force, which the full-series fit made impossible to
+        state honestly.
+        """
+        per_row = self.fit_directional_threshold_expanding(
+            trend_slope_30_values, refit_every=refit_every, min_rows=min_rows
+        )
+        raw = [
+            self._classify_directional(trend, {"dir_threshold": threshold})
+            for trend, threshold in zip(trend_slope_30_values, per_row)
+        ]
+        return self._apply_hysteresis(raw), per_row
+
     def detect_all_directional(
         self,
         rv_15_values: Sequence[float],

@@ -1008,18 +1008,19 @@ def run_backtest(
         # slope the split was drawn. regime_coverage only counts matched vs
         # no_model, so "down was 20.5% of a -33% downtrend" was not knowable
         # from the artifact.
-        #   The detector is duck-typed (tests and alternative routers supply
-        # their own), so only ask for the threshold when the object can give
-        # one; otherwise let detect_all_directional fit internally and report
-        # the threshold as unknown rather than refusing to route.
-        _fit = getattr(regime_detector, "fit_directional_threshold", None)
-        _dir_thresholds = _fit(trend_slopes) if callable(_fit) else {}
-        detected = (
-            regime_detector.detect_all_directional(rv_values, trend_slopes, thresholds=_dir_thresholds)
-            if _dir_thresholds
-            else regime_detector.detect_all_directional(rv_values, trend_slopes)
-        )
+        #   Calibrate the up/down boundary on PAST rows only. The full-series
+        # fit classified a 2026 bar against a percentile computed with 2026
+        # data -- look-ahead that live cannot reproduce, because live has no
+        # future distribution to calibrate on. The detector is duck-typed
+        # (tests and alternative routers supply their own), so fall back to the
+        # plain call when the object cannot do the causal version.
+        _causal = getattr(regime_detector, "detect_all_directional_causal", None)
+        if callable(_causal):
+            detected, _threshold_series = _causal(rv_values, trend_slopes)
+        else:
+            detected, _threshold_series = regime_detector.detect_all_directional(rv_values, trend_slopes), []
         _dir_window = _slice_to_window(feature_rows, detected, start_date, end_date)
+        _win_thresholds = _slice_to_window(feature_rows, _threshold_series, start_date, end_date)
         _counts = {r: _dir_window.count(r) for r in ("up", "range", "down")}
         _n = len(_dir_window) or 1
         result.regime_routing_diagnostics = {
@@ -1027,15 +1028,15 @@ def run_backtest(
             "regime_counts": _counts,
             "regime_ratios": {k: v / _n for k, v in _counts.items()},
             "regime_transition_count": sum(1 for a, b in zip(_dir_window, _dir_window[1:]) if a != b),
-            "dir_threshold": _dir_thresholds.get("dir_threshold"),
-            # The threshold is the 55th percentile of |trend_slope_30| over
-            # EVERY row handed in, which is the whole file -- so a 2026 bar is
-            # classified against a boundary that used 2026 data. Not causal, and
-            # live cannot reproduce it (there is no future distribution to
-            # calibrate on). Recorded rather than silently fixed: changing the
-            # calibration window changes every regime-routed result, so it is a
-            # separate decision from being able to SEE the number.
-            "dir_threshold_calibration": "full-series (LOOK-AHEAD -- see comment)",
+            # The boundary MOVES now, so report its range over the window
+            # rather than a single number that was never in force throughout.
+            "dir_threshold_first": _win_thresholds[0] if _win_thresholds else None,
+            "dir_threshold_last": _win_thresholds[-1] if _win_thresholds else None,
+            "dir_threshold_min": min(_win_thresholds) if _win_thresholds else None,
+            "dir_threshold_max": max(_win_thresholds) if _win_thresholds else None,
+            "dir_threshold_calibration": (
+                "expanding-past-only (causal)" if _win_thresholds else "detector-internal (unknown)"
+            ),
             "calibration_rows": len(trend_slopes),
             "window_rows": len(_dir_window),
         }
@@ -1043,8 +1044,9 @@ def run_backtest(
             "[BACKTEST] directional routing: "
             f"counts={_counts} "
             f"ratios={ {k: round(v / _n, 3) for k, v in _counts.items()} } "
-            f"dir_threshold={_dir_thresholds.get('dir_threshold', float('nan')):.3e} "
-            f"(calibrated on {len(trend_slopes):,} rows -- FULL SERIES, look-ahead)"
+            f"dir_threshold={_win_thresholds[0] if _win_thresholds else float('nan'):.3e}"
+            f"->{_win_thresholds[-1] if _win_thresholds else float('nan'):.3e} "
+            "(expanding, past-only)"
         )
         feature_rows = [
             _dc.replace(row, user_regime=regime)

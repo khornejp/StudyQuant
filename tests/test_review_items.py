@@ -1943,6 +1943,36 @@ class MakerFillTests(unittest.TestCase):
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
 
+    def test_directional_threshold_cannot_see_the_future(self) -> None:
+        # fit_directional_threshold takes the percentile of the WHOLE series it
+        # is handed, and the backtest hands it the whole file -- so a 2026 bar
+        # was classified against a boundary computed with 2026 data. Live has no
+        # future distribution to calibrate on, so that boundary is unreachable
+        # in production. Pin the property that makes the causal version correct:
+        # changing the future must not move a past threshold.
+        import random
+        from btcusdt_quant.features import RegimeDetector
+        random.seed(0)
+        detector = RegimeDetector()
+        n, split = 8000, 5000
+        slopes = [random.gauss(0.0, 1e-4) for _ in range(n)]
+        blown = slopes[:split] + [random.gauss(0.0, 5e-3) for _ in range(n - split)]
+
+        base = detector.fit_directional_threshold_expanding(slopes, refit_every=1440, min_rows=1440)
+        alt = detector.fit_directional_threshold_expanding(blown, refit_every=1440, min_rows=1440)
+        self.assertEqual(base[:split], alt[:split])
+        # ...and the full-series fit DOES move, which is the bug being fixed.
+        self.assertNotEqual(
+            detector.fit_directional_threshold(slopes)["dir_threshold"],
+            detector.fit_directional_threshold(blown)["dir_threshold"],
+        )
+        # Warmup rows have no history: fall back to the floor, not to a
+        # percentile of data they cannot have seen.
+        self.assertEqual(base[0], detector.config.min_trend_abs)
+        regimes, thresholds = detector.detect_all_directional_causal([0.001] * n, slopes)
+        self.assertEqual(len(regimes), n)
+        self.assertEqual(thresholds, base)
+
     def test_auto_regime_records_counts_and_threshold(self) -> None:
         # --auto-regime routed every bar while leaving regime_routing_diagnostics
         # empty, so an artifact could not say how many bars went up vs range vs
@@ -1962,9 +1992,12 @@ class MakerFillTests(unittest.TestCase):
         self.assertEqual(set(diag["regime_counts"]), {"up", "range", "down"})
         self.assertEqual(sum(diag["regime_counts"].values()), diag["window_rows"])
         self.assertAlmostEqual(sum(diag["regime_ratios"].values()), 1.0)
-        self.assertIsInstance(diag["dir_threshold"], float)
-        # The look-ahead in the calibration window is recorded, not hidden.
-        self.assertIn("LOOK-AHEAD", diag["dir_threshold_calibration"])
+        # The boundary moves, so the run reports its range, not one number that
+        # was never in force throughout.
+        for key in ("dir_threshold_first", "dir_threshold_last", "dir_threshold_min", "dir_threshold_max"):
+            self.assertIsInstance(diag[key], float)
+        self.assertLessEqual(diag["dir_threshold_min"], diag["dir_threshold_max"])
+        self.assertEqual(diag["dir_threshold_calibration"], "expanding-past-only (causal)")
 
     def test_compare_strategies_honours_position_size(self) -> None:
         # compare_strategies took no position_size at all, so every CLI backtest
