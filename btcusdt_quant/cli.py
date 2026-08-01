@@ -1491,6 +1491,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--slippage-rate-per-side", type=float, default=None, help="override the per-side slippage fraction (default 0.0002 = 0.02%%). See --fee-rate-per-side.")
     backtest_parser.add_argument("--horizon", type=int, default=60, help="max holding bars before forced TIMEOUT exit (minutes for 1m data). MUST match the training --horizon so backtest execution and triple-barrier labels share the same time barrier (a train horizon of 120 with a backtest horizon of 60 silently misaligns label vs execution). Default 60 = training default.")
     backtest_parser.add_argument("--threshold-floor", type=float, default=0.0, help="hard lower bound on the learned/strategy entry thresholds (does NOT clamp an explicit --long/--short-threshold override). Learned selected_thresholds can drop to ~0.32 on weak models; e.g. --threshold-floor 0.45 keeps entries above a minimum confidence so sub-cost signals don't flood the backtest. Default 0 = disabled.")
+    backtest_parser.add_argument("--range-gate-edge", type=float, default=backtest.DEFAULT_RANGE_GATE_EDGE, help="how close to the edge of the 20-bar range an entry must be for the range mean-reversion gate (default 0.25 = bottom quartile long-only, top quartile short-only, middle half no trade). Hardcoded until 2026-08-01 and never validated: it is the gate's only free parameter and it decides which ~50%% of range-regime bars are tradable. Symmetric by construction -- the upper band is 1-edge, because an asymmetric band is a directional bet dressed up as an entry filter and belongs in the model. Ignored with --disable-range-gate. Must be in (0, 0.5].")
     backtest_parser.add_argument("--feature-cache", default=None, help="directory holding cached feature matrices, keyed by a fingerprint of the input file (path/mtime/size), the candle span, the metrics archive contents, the user-regime file, and the feature SCHEMA hash from the registry. The matrix is computed over the WHOLE file on every run -- six months of backtest still needs 2020 onward for the ~350-day weekly warmup -- so without this every experiment repeats the same multi-million-row computation. A schema change (formula, lookback, dependency) invalidates the key automatically; a change to feature IMPLEMENTATION that leaves the registry entry identical does NOT, so delete the cache directory after editing features.py in that case. Off by default: a cache that turns itself on is a cache that can silently serve the wrong matrix.")
     backtest_parser.add_argument("--position-size", type=float, default=0.1, help="notional per trade as a fraction of equity (default 0.1 = 10%%). NOT leverage: it is notional/equity, so 0.5 means a position worth half the account and values above 1.0 need margin. It was hardcoded at 0.1 until 2026-07-31, which hid a deployment constraint -- an exchange's minimum order size sets a FLOOR on this number, and leverage does not lower that floor. On Binance USDT-M the step is 0.001 BTC, so at a $130 account the smallest legal trade is already ~0.5 of equity; on Bitget the 0.0001 BTC step makes it ~0.05. Backtest the size you can actually place, because returns and drawdown do not scale linearly with it.")
     backtest_parser.add_argument("--kelly-sizing", action="store_true", help="size each trade with fractional Kelly (f* = edge/variance, Half-Kelly by default) from the entry probability, executed TP/SL distances, and trailing bar-return variance scaled to --horizon. The fixed position_size becomes the CAP; entries with non-positive Kelly edge are skipped (kelly_sizing.entries_skipped_no_edge in the summary). Applies to the main backtest only; the strategy_comparison block stays fixed-size (marked sizing=fixed_position_size).")
@@ -2114,6 +2115,7 @@ def main(argv: list[str] | None = None) -> int:
                 model,
                 strategies,
                 position_size=args.position_size,
+                range_gate_edge=args.range_gate_edge,
                 fee_rate_per_side=resolved_fee,
                 maker_fee_rate_per_side=resolved_maker_fee,
                 maker_exit_outcomes=resolve_maker_exit_outcomes(args),
@@ -2154,6 +2156,7 @@ def main(argv: list[str] | None = None) -> int:
                 model,
                 strategies["balanced"],
                 position_size=args.position_size,
+                range_gate_edge=args.range_gate_edge,
                 fee_rate_per_side=resolved_fee,
                 maker_fee_rate_per_side=resolved_maker_fee,
                 maker_exit_outcomes=resolve_maker_exit_outcomes(args),

@@ -1821,15 +1821,35 @@ def _coerce_regime_detector_config(payload: object) -> features.RegimeDetectorCo
     )
 
 
-def apply_range_mean_reversion_gate(regime: str, features: dict[str, float], allowed_directions: set[str]) -> set[str]:
-    """Apply mean-reversion direction gate for the range regime."""
+# How close to the edge of the 20-bar range an entry must be. 0.25 means the
+# bottom and top quartiles trade (long and short respectively) and the middle
+# half does not trade at all. It was hardcoded until 2026-08-01 and has never
+# been validated -- it is the gate's only free parameter and it decides which
+# ~50% of range-regime bars are tradable, so it deserves a sweep rather than a
+# literal.
+DEFAULT_RANGE_GATE_EDGE = 0.25
+
+
+def apply_range_mean_reversion_gate(
+    regime: str,
+    features: dict[str, float],
+    allowed_directions: set[str],
+    edge: float = DEFAULT_RANGE_GATE_EDGE,
+) -> set[str]:
+    """Mean-reversion direction gate for the range regime.
+
+    Trades only near the edges of the recent 20-bar range: the bottom ``edge``
+    fraction is long-only, the top ``edge`` fraction short-only, and the middle
+    is not traded. Symmetric by construction -- an asymmetric band would be a
+    directional bet dressed up as an entry filter, which belongs in the model.
+    """
     if regime != "range":
         return allowed_directions
 
     range_pos = features.get("range_position_20", 0.5)
-    if range_pos < 0.25:
+    if range_pos < edge:
         return {"LONG"}
-    if range_pos > 0.75:
+    if range_pos > 1.0 - edge:
         return {"SHORT"}
     return set()
 

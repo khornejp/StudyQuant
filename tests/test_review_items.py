@@ -1943,6 +1943,30 @@ class MakerFillTests(unittest.TestCase):
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
 
+    def test_range_gate_edge_is_one_knob_in_one_place(self) -> None:
+        # The gate existed TWICE -- once in live.py and once in backtest.py --
+        # with backtest.py already importing live. Two copies of the rule that
+        # decides which bars are tradable is the train/serve skew this module
+        # spends its comments guarding against, so backtest now re-exports.
+        from btcusdt_quant import live as _live
+        self.assertIs(backtest_module.apply_range_mean_reversion_gate,
+                      _live.apply_range_mean_reversion_gate)
+        gate = _live.apply_range_mean_reversion_gate
+        both = {"LONG", "SHORT"}
+        # The band is symmetric: widen the edge and a bar that was untradable
+        # at 0.25 becomes long-only, and its mirror becomes short-only.
+        self.assertEqual(gate("range", {"range_position_20": 0.30}, both, 0.25), set())
+        self.assertEqual(gate("range", {"range_position_20": 0.30}, both, 0.35), {"LONG"})
+        self.assertEqual(gate("range", {"range_position_20": 0.70}, both, 0.35), {"SHORT"})
+        # Non-range regimes are untouched whatever the edge.
+        self.assertEqual(gate("down", {"range_position_20": 0.01}, both, 0.40), both)
+        # A missing feature must not silently become a tradable edge.
+        self.assertEqual(gate("range", {}, both, 0.25), set())
+        # Out-of-range edges are refused rather than clamped.
+        for bad in (0.0, -0.1, 0.6, 1.0):
+            with self.assertRaises(ValueError):
+                run_backtest(_ohlc_candles([(100.0, 100.2, 99.8, 100.0)] * 5), range_gate_edge=bad)
+
     def test_feature_cache_returns_what_it_replaced(self) -> None:
         # A stale feature cache would silently feed a run features computed from
         # other data or other code -- the train/serve skew class that has already

@@ -286,17 +286,12 @@ def _slice_to_window(
     ]
 
 
-def apply_range_mean_reversion_gate(regime: str, features: dict[str, float], allowed_directions: set[str]) -> set[str]:
-    """Apply mean-reversion direction gate for the range regime."""
-    if regime != "range":
-        return allowed_directions
-
-    range_pos = features.get("range_position_20", 0.5)
-    if range_pos < 0.25:
-        return {"LONG"}
-    if range_pos > 0.75:
-        return {"SHORT"}
-    return set()
+# The gate lives in live.py and is re-exported here rather than reimplemented.
+# backtest.py already imports live, so the second copy that used to sit here was
+# free to drift from the one live actually executes -- the exact train/serve
+# skew this module spends most of its comments guarding against.
+apply_range_mean_reversion_gate = live.apply_range_mean_reversion_gate
+DEFAULT_RANGE_GATE_EDGE = live.DEFAULT_RANGE_GATE_EDGE
 
 
 @dataclass
@@ -726,6 +721,7 @@ def run_backtest(
     kelly_config: risk.KellySizingConfig | None = None,
     allow_barrier_mismatch: bool = False,
     range_gate_enabled: bool = True,
+    range_gate_edge: float = DEFAULT_RANGE_GATE_EDGE,
     maker_fill_window: int = 0,
     maker_fill_penetration: float = 0.0,
     maker_exit_outcomes: Sequence[str] | None = None,
@@ -810,6 +806,8 @@ def run_backtest(
         strategy = live.strategy_for_regime(None, "balanced")
     strategy = apply_exec_barrier(strategy, exec_tp_pct, exec_sl_pct)
     _validate_cost_rates(fee_rate_per_side, slippage_rate_per_side, maker_fee_rate_per_side)
+    if not 0.0 < range_gate_edge <= 0.5:
+        raise ValueError(f"range_gate_edge must be in (0, 0.5], got {range_gate_edge}")
     if sl_fill not in SL_FILL_MODES:
         raise ValueError(f"sl_fill must be one of {sorted(SL_FILL_MODES)}, got {sl_fill!r}")
     maker_exit_set = frozenset(str(o).upper() for o in (maker_exit_outcomes or ()))
@@ -863,6 +861,7 @@ def run_backtest(
         "long_threshold_override": long_threshold,
         "short_threshold_override": short_threshold,
         "range_gate_enabled": range_gate_enabled,
+        "range_gate_edge": range_gate_edge,
         # Both rates, because a run's net is only interpretable against the fee
         # tier it assumed -- and this project has already published numbers that
         # silently used the maker rate for taker fills.
@@ -1177,7 +1176,7 @@ def run_backtest(
                     allowed_directions = regime_bundle.direction_policy.get(regime, {"LONG", "SHORT"})
                     features_dict = feature_rows[i].features
                     if range_gate_enabled:
-                        allowed_directions = apply_range_mean_reversion_gate(regime, features_dict, allowed_directions)
+                        allowed_directions = apply_range_mean_reversion_gate(regime, features_dict, allowed_directions, range_gate_edge)
 
                     # Ask the bundle whether it can price each side, instead of
                     # reaching into its dicts and then inventing 0.0 for the
@@ -1247,7 +1246,7 @@ def run_backtest(
                     # default regime's direction policy, mirroring the main path.
                     allowed_directions = regime_bundle.direction_policy.get(default_regime, {"LONG", "SHORT"})
                     if range_gate_enabled:
-                        allowed_directions = apply_range_mean_reversion_gate(default_regime, features_dict, allowed_directions)
+                        allowed_directions = apply_range_mean_reversion_gate(default_regime, features_dict, allowed_directions, range_gate_edge)
                     long_prob = short_prob = None
                     if "LONG" in allowed_directions and regime_bundle.has_side_probability(default_regime, "long"):
                         long_prob = regime_bundle.probability_for(default_regime, "long", features_dict)
@@ -1641,6 +1640,7 @@ def compare_strategies(
     label_horizon: int = 60,
     maker_exit_outcomes: Sequence[str] | None = None,
     sl_fill: str = "barrier",
+    range_gate_edge: float = DEFAULT_RANGE_GATE_EDGE,
     allow_barrier_mismatch: bool = False,
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison."""
@@ -1741,6 +1741,7 @@ def compare_strategies(
             maker_fee_rate_per_side=maker_fee_rate_per_side,
             maker_exit_outcomes=maker_exit_outcomes,
             sl_fill=sl_fill,
+            range_gate_edge=range_gate_edge,
             slippage_rate_per_side=slippage_rate_per_side,
             models_by_regime=models_by_regime,
             user_regime_periods=user_regime_periods,
