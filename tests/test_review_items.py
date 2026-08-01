@@ -1943,6 +1943,32 @@ class MakerFillTests(unittest.TestCase):
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
 
+    def test_entry_signal_picks_the_stronger_side_not_the_first_one(self) -> None:
+        # evaluate_entry_signal was `if long ... elif short`, so a bar where the
+        # long qualified never scored the short. Long won by source order, not
+        # by being the better trade -- and with the long model's probabilities
+        # running far above the short model's, that made every long+short bundle
+        # effectively long-only.
+        from btcusdt_quant.live import evaluate_entry_signal
+        kw = dict(min_ev=0.0, long_threshold=0.30, short_threshold=0.30,
+                  gross_tp_pct=0.008, gross_sl_pct=0.004,
+                  cost_config={"fee_entry": 0.0, "fee_exit": 0.0, "slippage": 0.0,
+                               "spread_cost": 0.0, "safety_margin": 0.0})
+        # Both clear their thresholds and both have positive EV; the short is
+        # the stronger. Under the old ordering this returned LONG.
+        sig, lev, sev = evaluate_entry_signal(0.40, 0.60, **kw)
+        self.assertGreater(sev, lev)
+        self.assertEqual(sig, "SHORT")
+        # Mirror case still picks long.
+        sig, lev, sev = evaluate_entry_signal(0.60, 0.40, **kw)
+        self.assertEqual(sig, "LONG")
+        # One-sided cases are unchanged.
+        self.assertEqual(evaluate_entry_signal(0.60, 0.10, **kw)[0], "LONG")
+        self.assertEqual(evaluate_entry_signal(0.10, 0.60, **kw)[0], "SHORT")
+        self.assertEqual(evaluate_entry_signal(0.10, 0.10, **kw)[0], "NO_TRADE")
+        # An exact tie is a coin flip dressed as a signal -- stand aside.
+        self.assertEqual(evaluate_entry_signal(0.50, 0.50, **kw)[0], "NO_TRADE")
+
     def test_range_gate_edge_is_one_knob_in_one_place(self) -> None:
         # The gate existed TWICE -- once in live.py and once in backtest.py --
         # with backtest.py already importing live. Two copies of the rule that

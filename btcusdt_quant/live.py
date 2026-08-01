@@ -1945,12 +1945,30 @@ def evaluate_entry_signal(
     long_ev = calculate_long_ev(long_prob, gross_tp_pct, gross_sl_pct, cost_config)
     short_ev = calculate_short_ev(short_prob, gross_tp_pct, gross_sl_pct, cost_config)
     
-    if long_ev > min_ev and long_prob > long_threshold:
+    # Both sides are scored, then the STRONGER one wins. This used to be
+    # `if long ... elif short`, which meant a bar where the long qualified never
+    # evaluated the short at all -- long won by position in the source, not by
+    # being the better trade. With long probabilities running well above short
+    # ones (the long model's median sits above the barrier break-even while the
+    # short model's 99th percentile sits below it), that ordering silently made
+    # the system long-only wherever both models existed.
+    #   The comparison is on EV, not on the margin over each threshold: the two
+    # probabilities come from different models with different base rates, so
+    # `prob - threshold` is not a common scale, while EV is in return units for
+    # both. Ranking by threshold margin can pick a side with negative expected
+    # value over one with positive.
+    long_ok = long_ev > min_ev and long_prob > long_threshold
+    short_ok = short_ev > min_ev and short_prob > short_threshold
+    if long_ok and short_ok:
+        # A genuine tie is a coin flip dressed as a signal -- stand aside.
+        if long_ev == short_ev:
+            return "NO_TRADE", long_ev, short_ev
+        return ("LONG" if long_ev > short_ev else "SHORT"), long_ev, short_ev
+    if long_ok:
         return "LONG", long_ev, short_ev
-    elif short_ev > min_ev and short_prob > short_threshold:
+    if short_ok:
         return "SHORT", long_ev, short_ev
-    else:
-        return "NO_TRADE", long_ev, short_ev
+    return "NO_TRADE", long_ev, short_ev
 
 
 class LiveEngine:
