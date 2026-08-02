@@ -206,6 +206,10 @@ class FoldResult:
     test_metrics: dict[str, float]
     train_metrics: dict[str, float]
     model_selection: dict[str, object]
+    # What the fold's model would have EARNED on its test slice, not just how
+    # well it classified there. See oos_trading_metrics for why this is the only
+    # honest read the pipeline produces.
+    test_trading: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -243,6 +247,70 @@ def drop_fallback_features(build: "dataset.DatasetBuild") -> tuple["dataset.Data
 
 
 _TRAIN_TARGET_KEYS: tuple[str, ...] = ("profitability", "long_success", "short_success", "direction")
+
+
+def oos_trading_metrics(
+    probabilities: Sequence[float],
+    forward_returns: Sequence[float],
+    threshold: float,
+    round_trip_cost: float = DEFAULT_ROUND_TRIP_COST,
+) -> dict[str, float]:
+    """What a fold's model would have EARNED on its own test slice.
+
+    The fold loop already fits a model on the train slice alone and already
+    scores the test slice, then records F1 and Brier and discards the rest.
+    That left this project promoting candidates on the performance of a model
+    refit over its whole training span (run_training's final fit uses EVERY
+    labeled row), and the first genuinely unseen window it ever met -- 2026 H1
+    -- lost money at every confidence level. Four walk-forward test slices were
+    sitting unused the entire time.
+
+    ``forward_returns`` is LabeledRow.target_return: the realised return over
+    the label horizon, already stored per row. So this needs no retraining, no
+    backtest and no new data -- it reads what the fold already computed.
+
+    Reported per side because a probability model is two signals: entries above
+    the threshold are the long book, and the bottom decile is the short book.
+    ``net_bps`` subtracts the flat round trip, so a positive number is a
+    strategy and a negative one is not.
+
+    This is NOT a backtest. It ignores position sizing, cooldown, the
+    one-position-at-a-time constraint and fill modelling, so it overstates
+    capacity and says nothing about drawdown. It answers one question only, and
+    answers it out of sample: does the model's ranking pay for its costs?
+    """
+    n = min(len(probabilities), len(forward_returns))
+    if n == 0:
+        return {}
+    p = [float(x) for x in probabilities[:n]]
+    r = [float(x) for x in forward_returns[:n]]
+    cost_bps = 1e4 * float(round_trip_cost)
+
+    def _mean_bps(values: Sequence[float]) -> float:
+        return 1e4 * sum(values) / len(values) if values else float("nan")
+
+    longs = [r[i] for i in range(n) if p[i] >= threshold]
+    order = sorted(range(n), key=lambda i: p[i])
+    k = max(1, n // 10)
+    bottom = [r[i] for i in order[:k]]
+    top = [r[i] for i in order[-k:]]
+
+    long_gross = _mean_bps(longs)
+    short_gross = -_mean_bps(bottom)  # shorting the least-confident decile
+    return {
+        "rows": float(n),
+        "threshold": float(threshold),
+        "cost_bps": cost_bps,
+        "entry_rate": len(longs) / n,
+        "long_gross_bps": long_gross,
+        "long_net_bps": long_gross - cost_bps,
+        "long_trades": float(len(longs)),
+        "top_decile_gross_bps": _mean_bps(top),
+        "short_gross_bps": short_gross,
+        "short_net_bps": short_gross - cost_bps,
+        "short_trades": float(len(bottom)),
+        "all_rows_mean_bps": _mean_bps(r),
+    }
 
 
 def apply_training_target(rows: Sequence[dataset.LabeledRow], target: str) -> list[dataset.LabeledRow]:
@@ -526,8 +594,21 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 test_metrics=metrics(calibrated_test, test_labels, threshold),
                 train_metrics=metrics(calibrated_train, train_labels, threshold),
                 model_selection=selection.as_dict(),
+                test_trading=oos_trading_metrics(
+                    calibrated_test,
+                    [row.target_return for row in test_rows],
+                    threshold,
+                    round_trip_cost=training_config.round_trip_cost,
+                ),
             )
         )
+        _tt = fold_results[-1].test_trading
+        if _tt:
+            print(
+                f"[TRAIN]     OOS trading (fold test slice): entries {_tt['entry_rate']:.1%} "
+                f"long_net={_tt['long_net_bps']:+.2f}bps short_net={_tt['short_net_bps']:+.2f}bps "
+                f"(cost {_tt['cost_bps']:.1f}bps, all-rows {_tt['all_rows_mean_bps']:+.2f}bps)"
+            )
     final_indices = list(range(len(build.labeled_rows)))
     final_selection = fit_model_adapter(build.labeled_rows, effective_feature_names, training_config, _weights_for_indices(uniqueness, final_indices))
     latency_report = inference_latency_report(final_selection.adapter, feature_matrix(build.labeled_rows, effective_feature_names))
@@ -1923,6 +2004,28 @@ def training_summary(
     test_accuracy_values = [fold.test_metrics["accuracy"] for fold in fold_results]
     test_ece_values = [fold.test_metrics["ece"] for fold in fold_results]
     test_brier_values = [fold.test_metrics["brier"] for fold in fold_results]
+    # Walk-forward OOS trading, per fold and summarised. This is the number a
+    # candidate lives or dies on: the saved model is refit over every labeled
+    # row, so any evaluation on the training span is in-sample, and the fold
+    # test slices are the only unseen windows this pipeline produces. Report
+    # how many of them cleared cost rather than an average, because one strong
+    # fold hiding three losing ones is exactly the failure being guarded
+    # against.
+    _trading = [fold.test_trading for fold in fold_results if fold.test_trading]
+    _long_net = [t["long_net_bps"] for t in _trading if t.get("long_net_bps") == t.get("long_net_bps")]
+    _short_net = [t["short_net_bps"] for t in _trading if t.get("short_net_bps") == t.get("short_net_bps")]
+    oos_trading = {
+        "folds": _trading,
+        "fold_count": len(_trading),
+        "long_net_bps_by_fold": _long_net,
+        "short_net_bps_by_fold": _short_net,
+        "long_folds_profitable": sum(1 for v in _long_net if v > 0.0),
+        "short_folds_profitable": sum(1 for v in _short_net if v > 0.0),
+        "long_net_bps_mean": mean(_long_net) if _long_net else 0.0,
+        "short_net_bps_mean": mean(_short_net) if _short_net else 0.0,
+        "long_net_bps_worst": min(_long_net) if _long_net else 0.0,
+        "short_net_bps_worst": min(_short_net) if _short_net else 0.0,
+    }
     selection = final_selection.as_dict() if final_selection is not None else default_model_selection(training_config, None)
     latency = dict(latency_report or {})
     return {
@@ -1953,6 +2056,7 @@ def training_summary(
         "inference_latency_p99_ms": float(latency.get("p99_ms", 0.0)),
         "effective_sample_size": uniqueness.effective_sample_size if uniqueness is not None else float(len(build.labeled_rows)),
         "mean_test_f1": mean(test_f1_values) if test_f1_values else 0.0,
+        "oos_trading": oos_trading,
         "mean_test_accuracy": mean(test_accuracy_values) if test_accuracy_values else 0.0,
         "mean_test_ece": mean(test_ece_values) if test_ece_values else 0.0,
         "mean_test_brier": mean(test_brier_values) if test_brier_values else 0.0,

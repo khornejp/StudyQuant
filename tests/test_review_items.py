@@ -1898,6 +1898,36 @@ class MakerFillTests(unittest.TestCase):
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
 
+    def test_oos_trading_metrics_price_the_ranking_after_cost(self) -> None:
+        # The fold loop recorded F1 and Brier and threw away the model and its
+        # test-slice probabilities, so this project promoted candidates on a
+        # model refit across its whole training span and only discovered the
+        # overfit on the single unseen window it ever tried. These metrics turn
+        # each fold's test slice into a verdict: does the ranking pay for cost?
+        from btcusdt_quant.training import oos_trading_metrics
+        # A perfectly informative ranking: probability tracks the return.
+        probs = [i / 100.0 for i in range(100)]
+        rets = [(i - 50) / 1e4 for i in range(100)]        # -50 bps .. +49 bps
+        m = oos_trading_metrics(probs, rets, threshold=0.9, round_trip_cost=0.0004)
+        self.assertEqual(m["long_trades"], 10)             # p >= 0.9
+        self.assertAlmostEqual(m["long_gross_bps"], 44.5)  # mean of +40..+49
+        self.assertAlmostEqual(m["long_net_bps"], 44.5 - 4.0)
+        # The short book is the least-confident decile, and shorting losers pays.
+        self.assertAlmostEqual(m["short_gross_bps"], 45.5)  # -(mean of -50..-41)
+        self.assertAlmostEqual(m["short_net_bps"], 45.5 - 4.0)
+        self.assertAlmostEqual(m["all_rows_mean_bps"], -0.5)
+        # An uninformative ranking must not look profitable: reverse the returns
+        # so high probability marks the WORST bars.
+        bad = oos_trading_metrics(probs, list(reversed(rets)), threshold=0.9, round_trip_cost=0.0004)
+        self.assertLess(bad["long_net_bps"], 0.0)
+        self.assertLess(bad["short_net_bps"], 0.0)
+        # Cost is subtracted, not decorative: a ranking whose edge is under the
+        # round trip reports a negative net.
+        thin = oos_trading_metrics(probs, [0.0002] * 100, threshold=0.5, round_trip_cost=0.0004)
+        self.assertAlmostEqual(thin["long_gross_bps"], 2.0)
+        self.assertAlmostEqual(thin["long_net_bps"], -2.0)
+        self.assertEqual(oos_trading_metrics([], [], 0.5), {})
+
     def test_positions_never_overlap_in_time(self) -> None:
         # The suite is structurally blind to this class of defect: a backtest
         # can hold two positions at once, or size one with equity that already
