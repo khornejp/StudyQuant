@@ -1909,6 +1909,45 @@ class MakerFillTests(unittest.TestCase):
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
 
+    def test_funding_alignment_carries_only_settled_information(self) -> None:
+        # Funding is the one input that is not a transform of OHLCV, so it is
+        # the one worth being strict about: filling a bar with the NEXT
+        # settlement's rate would put tomorrow's number in today's features, and
+        # it would look like signal because funding predicts the forward return.
+        from datetime import datetime, timezone as _tz
+        from btcusdt_quant import funding_source as fs
+        settle = [
+            fs.FundingRow(datetime(2026, 1, 1, 0, 0, tzinfo=_tz.utc), 0.0001),
+            fs.FundingRow(datetime(2026, 1, 1, 8, 0, tzinfo=_tz.utc), -0.0002),
+        ]
+        minutes = [
+            datetime(2025, 12, 31, 23, 59, tzinfo=_tz.utc),
+            datetime(2026, 1, 1, 0, 0, tzinfo=_tz.utc),
+            datetime(2026, 1, 1, 7, 59, tzinfo=_tz.utc),
+            datetime(2026, 1, 1, 8, 0, tzinfo=_tz.utc),
+        ]
+        out = fs.funding_features_to_minutes(settle, minutes)
+        # Before the first settlement nothing is known -- not even a zero, which
+        # would be indistinguishable from a genuine zero rate.
+        self.assertNotIn(minutes[0], out)
+        # A bar carries the LAST SETTLED rate, never the one still to come.
+        self.assertAlmostEqual(out[minutes[1]]["current_rate"], 0.0001)
+        self.assertAlmostEqual(out[minutes[2]]["current_rate"], 0.0001)
+        self.assertAlmostEqual(out[minutes[3]]["current_rate"], -0.0002)
+        # The schedule is public, so counting down to it is causal.
+        self.assertAlmostEqual(out[minutes[1]]["minutes_to_next"], 480.0)
+        self.assertAlmostEqual(out[minutes[2]]["minutes_to_next"], 1.0)
+        # next_rate is NOT fabricated: the archive only holds realised rates.
+        self.assertNotIn("next_rate", out[minutes[1]])
+        # Overlapping monthly files must not double-count a settlement.
+        self.assertEqual(len(fs.dedup_funding_rows(settle + settle)), 2)
+        # A header line is data-driven, not assumed.
+        parsed = fs.parse_funding_csv_text(
+            "calc_time,funding_interval_hours,last_funding_rate\n1767225600000,8,0.00010000\n"
+        )
+        self.assertEqual(len(parsed), 1)
+        self.assertAlmostEqual(parsed[0].funding_rate, 0.0001)
+
     def test_execution_defaults_to_limit_only(self) -> None:
         # This account never crosses the spread, so a run that forgets the flags
         # must model the execution it actually performs. The defaults were the

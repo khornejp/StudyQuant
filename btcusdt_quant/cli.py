@@ -1034,6 +1034,37 @@ def merge_metrics_external_sources(
     return merged
 
 
+def merge_funding_external_sources(
+    funding_dir: Path,
+    candles: "list[data.Candle]",
+    external_sources: dict | None,
+) -> dict:
+    """Merge funding-rate features into per-candle external_sources.
+
+    Same shape as merge_metrics_external_sources and for the same reason: train
+    and backtest must derive the feature identically or the model meets inputs
+    in one place it never saw in the other. A run that trains with --funding-dir
+    MUST backtest with the same directory.
+
+    Funding is the only input here that is not a transform of OHLCV, which is
+    why it is worth the plumbing: every other feature rearranges the same price
+    series. See funding_source for what is and is not causally available.
+    """
+    from btcusdt_quant import funding_source
+    rows = funding_source.load_funding_dir(funding_dir)
+    minute_times = [c.open_time for c in candles]
+    by_minute = funding_source.funding_features_to_minutes(rows, minute_times)
+    print(f"Loaded funding: {len(rows)} settlements -> {len(by_minute)} aligned minutes")
+    if not by_minute:
+        print(f"WARNING: no funding rows aligned to the candle window from {funding_dir}; funding features stay at fallback.", file=sys.stderr)
+    merged = dict(external_sources or {})
+    for minute, feats in by_minute.items():
+        entry = dict(merged.get(minute, {}))
+        entry["funding_rate"] = feats
+        merged[minute] = entry
+    return merged
+
+
 def _feature_cache_key(
     input_path: Path | None,
     candles: Sequence[object],
@@ -1171,6 +1202,7 @@ def run_edge_validate(
     cost_multipliers: tuple[float, ...] = (1.0, 1.5, 2.0),
     allow_barrier_mismatch: bool = False,
     metrics_dir: str | None = None,
+    funding_dir: str | None = None,
     backtest_start: str | None = None,
     backtest_end: str | None = None,
     threshold_floor: float = 0.0,
@@ -1251,6 +1283,9 @@ def run_edge_validate(
     oracle_feature_rows = None
     if metrics_dir:
         external_sources = merge_metrics_external_sources(Path(metrics_dir), candles, None)
+    if funding_dir:
+        external_sources = merge_funding_external_sources(Path(funding_dir), candles, external_sources)
+    if external_sources is not None:
         plain_feature_rows = dataset.build_feature_rows(candles, external_sources=external_sources)
         if user_regime_periods is not None:
             oracle_feature_rows = dataset.build_feature_rows(
@@ -1377,6 +1412,13 @@ def build_parser() -> argparse.ArgumentParser:
     collect_metrics.add_argument("--output", default="artifacts/metrics", help="metrics archive output directory")
     collect_metrics.add_argument("--allow-public-network", action="store_true", help="opt in to public Binance metrics download")
     collect_metrics.add_argument("--force", action="store_true", help="re-download even if the daily zip already exists on disk (default: reuse cached files)")
+
+    collect_funding = subparsers.add_parser("collect-funding", help="collect Binance USDT-M funding-rate archive (monthly)")
+    collect_funding.add_argument("--start", required=True, help="inclusive start date YYYY-MM-DD")
+    collect_funding.add_argument("--end", required=True, help="inclusive end date YYYY-MM-DD")
+    collect_funding.add_argument("--output", default="artifacts/funding", help="funding archive output directory")
+    collect_funding.add_argument("--allow-public-network", action="store_true", help="opt in to public Binance funding download")
+    collect_funding.add_argument("--force", action="store_true", help="re-download even if the monthly zip already exists on disk")
     train_regime_classifier = subparsers.add_parser("train-regime-classifier", help="Stage 2 of the multi-timeframe regime work: train a leakage-safe (walk-forward OOF) up/range/down probability classifier on F17 multi-timeframe features, for use as F18 features in the entry (long/short) models.")
     train_regime_classifier.add_argument("--input", required=True, help="path to candle Parquet or CSV")
     train_regime_classifier.add_argument("--regime-file", required=True, help="regimes.json with hand-labeled up/down/range periods (the classifier's training target)")
@@ -1403,6 +1445,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--champion-challenger", action="store_true", help="enable champion-challenger promotion evaluation from fold test metrics")
     train.add_argument("--collect-external-sources", action="store_true", help="collect real F11/F12 external sources (funding rate, mark price) from Binance API for training")
     train.add_argument("--metrics-dir", default=None, help="directory of downloaded Binance metrics archive (collect-metrics output). When set, F16 derivatives-metrics features (open interest, long/short, taker) are computed from it and merged into training. Without it those features degrade to 0.")
+    train.add_argument("--funding-dir", default=None, help="directory of downloaded funding-rate archives (collect-funding output). Funding is the only model input that is NOT a transform of OHLCV -- every other feature rearranges the same price series -- so it is the one axis that adds information rather than reshuffling it. Measured 2020-2026H1 its correlation with the forward return is negative in every window and horizon (crowded longs precede weaker returns), small but sign-stable, and strongest exactly where the price features collapsed. Pass the SAME directory to train and to backtest: training with funding and backtesting without it feeds the model fallback constants it never saw (train/serve skew), which is the same trap --metrics-dir carries.")
     train.add_argument("--regime-classifier-dir", default=None, help="output directory from train-regime-classifier (contains regime_probabilities.json and regime_classifier_model.cbm). When set: (1) F18 regime probability features (regime_prob_up/range/down) are merged into training as inputs, AND (2) training bucket assignment (which regime's model a row's data trains) uses the argmax of those SAME walk-forward-OOF-safe F18 values -- NOT a fresh prediction from the .cbm file (re-predicting on training rows with a classifier fit on the complete span would leak later rows' influence into earlier rows' bucket assignment). The .cbm file itself is used at backtest/live time instead, where classifying genuinely unseen rows is safe -- pass the SAME directory to backtest's --regime-classifier-dir. Without --regime-classifier-dir, training falls back to trend_slope_30-only detection and F18 features degrade to 0. Ignored if --multi-feature-regime is given.")
     train.add_argument("--multi-feature-regime", action="store_true", help="assign regime buckets with the multi-feature rule-based detector (regime_rules.MultiFeatureRegimeDetector: trend/vol/range/breakout scores over F17, hysteresis + min-hold) instead of the learned classifier or single-slope detector. Takes priority over --regime-classifier-dir. The fitted detector is saved to regime_run_summary.json; pass --multi-feature-regime to backtest/live so routing matches. Entry models MUST be (re)trained with this flag for the buckets to match serving.")
     train.add_argument("--rule-regime-config", default=None, help="path to a JSON file of MultiFeatureRegimeConfig overrides (trend_enter, fast_exit, min_hold_bars, switch_confirm_bars, allow_direct_reversal, trend_weights, fast_trend_weights, ...). Only used with --multi-feature-regime. The fitted detector embeds these overrides and is saved to the artifact, so backtest/live inherit them automatically. Missing keys fall back to defaults.")
@@ -1490,6 +1533,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--allow-barrier-mismatch", action="store_true", help="permit --exec-tp-pct/--exec-sl-pct to differ from the tp_pct/sl_pct the loaded models were LABELED on (recorded in regime_run_summary.json). Off by default: the model predicts P(TP before SL) for the barrier it was trained on, so executing a different one denominates every probability, threshold and win rate in a barrier nobody trained on, and the run reports a meaningless number without erroring. No pipeline needs this -- tp_sl_sweep.sh RETRAINS each cell at its own tp/sl, so its barriers match. Pass it only for a deliberate one-off probe of how a fixed model behaves under a barrier it was not trained for, and read the result as a sensitivity check, not as performance.")
     backtest_parser.add_argument("--backtest-end", default=None, help="inclusive end date (YYYY-MM-DD) of the trading window. Without it the backtest silently trades from --backtest-start to the END OF FILE, so a parquet extended past 2025 would silently widen the traded span. Routing diagnostics are sliced to the same window.")
     backtest_parser.add_argument("--metrics-dir", default=None, help="directory of downloaded Binance metrics archive (collect-metrics output) -- pass the SAME directory used for training's --metrics-dir. Training with metrics and backtesting without them feeds the model F16 derivatives-metrics features (open interest change rates/z-scores, long/short ratios, taker ratio) as 0.0 -- inputs it never saw in training (train/serve feature skew). Without this flag those features are 0 in the backtest.")
+    backtest_parser.add_argument("--funding-dir", default=None, help="directory of downloaded funding-rate archives (collect-funding output). Funding is the only model input that is NOT a transform of OHLCV -- every other feature rearranges the same price series -- so it is the one axis that adds information rather than reshuffling it. Measured 2020-2026H1 its correlation with the forward return is negative in every window and horizon (crowded longs precede weaker returns), small but sign-stable, and strongest exactly where the price features collapsed. Pass the SAME directory to train and to backtest: training with funding and backtesting without it feeds the model fallback constants it never saw (train/serve skew), which is the same trap --metrics-dir carries.")
     backtest_parser.add_argument("--fee-rate-per-side", type=float, default=None, help="override the per-side TAKER fee fraction (default 0.0006 = 0.06%%, Bitget USDT-M VIP0 -- the real account). This is what an immediate fill pays, and the exit is modeled taker on every path. Together with --slippage-rate-per-side this sets the executed round-trip cost; keep 2*(fee+slippage) equal to training's --round-trip-cost so the threshold objective and execution share one cost basis.")
     backtest_parser.add_argument("--maker-exit", action="store_true", help="shorthand for --maker-exit-outcomes tp,sl,timeout,open_at_end: price EVERY exit as a resting limit. The most generous assumption available; prefer naming the outcomes you actually believe rest.")
     backtest_parser.add_argument("--maker-exit-outcomes", default=None, help="comma-separated exit outcomes priced as resting limits (maker fee, no slippage) instead of immediate fills: any of tp,sl,timeout,open_at_end. Default: none, every exit is taker. Bitget lets TP/SL be attached as limit orders at open, so a resting exit is representable -- but the outcomes are not equally credible. tp is honest (price reached your level, your limit was resting there). sl is optimistic in the tail: a resting limit fills only if someone crosses it, and the fast one-way move that triggers a stop is exactly the one that blows through the level, leaving you still in and losing more than sl_pct. timeout is a horizon market-close unless the strategy deliberately rests a limit near the horizon -- that is a different strategy, not a cost setting. On the 30m long the mix is TP 13.4%%/SL 29.8%%/TIMEOUT 56.8%% and break-even needs ~44%% resting, so this flag decides the verdict rather than trimming it. Report which outcomes you assumed.")
@@ -1522,6 +1566,7 @@ def build_parser() -> argparse.ArgumentParser:
     mh_parser.add_argument("--sl-pct", type=float, default=dataset.DEFAULT_LABEL_SL_PCT, help=f"triple-barrier SL fraction for labeling (default {dataset.DEFAULT_LABEL_SL_PCT})")
     mh_parser.add_argument("--label-threshold", type=float, default=0.001, help="direction label threshold (default 0.001)")
     mh_parser.add_argument("--metrics-dir", default=None, help="optional futures metrics archive dir (collect-metrics output) so training features match a backtest run with the same --metrics-dir")
+    mh_parser.add_argument("--funding-dir", default=None, help="directory of downloaded funding-rate archives (collect-funding output). Funding is the only model input that is NOT a transform of OHLCV -- every other feature rearranges the same price series -- so it is the one axis that adds information rather than reshuffling it. Measured 2020-2026H1 its correlation with the forward return is negative in every window and horizon (crowded longs precede weaker returns), small but sign-stable, and strongest exactly where the price features collapsed. Pass the SAME directory to train and to backtest: training with funding and backtesting without it feeds the model fallback constants it never saw (train/serve skew), which is the same trap --metrics-dir carries.")
     mh_parser.add_argument("--regime-aware", action="store_true", help="bucket rows with the multi-feature rule detector and fit one multi-horizon ensemble per regime AND side (up->long, down->short, range->both), each on its own long_success/short_success target. Emits the same artifact layout as `train --regime-aware`, so `backtest --model-artifact <dir>` routes and sizes it exactly like the regime model (including two-sided Kelly). Without this flag a single flat model is trained on the long-side profitability target, which cannot price shorts.")
     mh_parser.add_argument("--rule-regime-config", default=None, help="path to a MultiFeatureRegimeConfig JSON (regime-aware mode only); defaults to the built-in config")
     mh_parser.add_argument("--min-regime-rows", type=int, default=2000, help="skip a regime with fewer labeled rows than this (regime-aware mode; default 2000)")
@@ -1552,6 +1597,7 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser.add_argument("--cost-multipliers", default="1.0,1.5,2.0", help="comma-separated cost multipliers for the stress sweep (default 1.0,1.5,2.0)")
     ev_parser.add_argument("--allow-barrier-mismatch", action="store_true", help="permit --exec-tp/sl-pct to differ from the barrier the models were labeled on (sensitivity probe only, not performance)")
     ev_parser.add_argument("--metrics-dir", default=None, help="Binance metrics archive dir (collect-metrics output) -- pass the SAME dir used for training so the validation backtests see real F16 features instead of 0.0 (train/serve parity)")
+    ev_parser.add_argument("--funding-dir", default=None, help="directory of downloaded funding-rate archives (collect-funding output). Funding is the only model input that is NOT a transform of OHLCV -- every other feature rearranges the same price series -- so it is the one axis that adds information rather than reshuffling it. Measured 2020-2026H1 its correlation with the forward return is negative in every window and horizon (crowded longs precede weaker returns), small but sign-stable, and strongest exactly where the price features collapsed. Pass the SAME directory to train and to backtest: training with funding and backtesting without it feeds the model fallback constants it never saw (train/serve skew), which is the same trap --metrics-dir carries.")
     ev_parser.add_argument("--backtest-start", default=None, help="ISO date; trade only from here (earlier candles feed feature computation only). Match the backtest's --backtest-start so the OOS window is the same")
     ev_parser.add_argument("--backtest-end", default=None, help="inclusive ISO end date of the trading window; match the backtest's --backtest-end")
     ev_parser.add_argument("--threshold-floor", type=float, default=0.0, help="hard lower bound on the entry thresholds; match the backtest's --threshold-floor for parity (default 0)")
@@ -1612,6 +1658,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"output={summary['output_dir']}")
         if not summary["min_rows_passed"]:
             print(f"warning: min_rows not met (raw_rows={summary['coverage_report']['raw_rows']}, min_rows={args.min_rows})")
+        return 0
+    if args.command == "collect-funding":
+        output = Path(args.output)
+        try:
+            if not args.allow_public_network:
+                raise RuntimeError("funding collection requires --allow-public-network")
+            from btcusdt_quant import funding_source
+            rows = funding_source.BinanceFundingDownloader().download_range(args.start, args.end, output, force=args.force)
+        except Exception as error:
+            print(f"funding collection failed: {error}", file=sys.stderr)
+            return 1
+        print("BTCUSDT funding collection complete")
+        print(f"settlements={len(rows)}")
+        if rows:
+            print(f"coverage={rows[0].funding_time.date()} -> {rows[-1].funding_time.date()}")
+        print(f"output={output}")
         return 0
     if args.command == "collect-metrics":
         output = Path(args.output)
@@ -1705,12 +1767,18 @@ def main(argv: list[str] | None = None) -> int:
         # archive. Computed offline (no network): load rows, derive causal
         # features on the 5m grid, forward-fill onto each candle's 1m clock,
         # and pack as external_sources[candle_time]["metrics"] = {feat: value}.
-        if args.metrics_dir:
+        if args.metrics_dir or args.funding_dir:
             if input_path is None:
-                print("--metrics-dir requires --input to specify candle data", file=sys.stderr)
+                print("--metrics-dir/--funding-dir require --input to specify candle data", file=sys.stderr)
                 return 1
-            metrics_candles = dataset.load_parquet_candles(input_path) if input_path.suffix.lower() == ".parquet" else dataset.load_csv_candles(input_path)
-            external_sources = merge_metrics_external_sources(Path(args.metrics_dir), metrics_candles, external_sources)
+            # Load the candle clock once: both external sources align onto the
+            # same 1m timeline, and reading the parquet twice for a multi-year
+            # file is minutes of duplicated work.
+            source_candles = dataset.load_parquet_candles(input_path) if input_path.suffix.lower() == ".parquet" else dataset.load_csv_candles(input_path)
+            if args.metrics_dir:
+                external_sources = merge_metrics_external_sources(Path(args.metrics_dir), source_candles, external_sources)
+            if args.funding_dir:
+                external_sources = merge_funding_external_sources(Path(args.funding_dir), source_candles, external_sources)
         # Merge regime probability features (F18) from a train-regime-classifier
         # run. regime_probabilities.json maps ISO timestamp -> {regime_prob_up,
         # regime_prob_range, regime_prob_down}, already leakage-safe
@@ -1894,6 +1962,7 @@ def main(argv: list[str] | None = None) -> int:
             cost_multipliers=multipliers,
             allow_barrier_mismatch=args.allow_barrier_mismatch,
             metrics_dir=args.metrics_dir,
+            funding_dir=args.funding_dir,
             backtest_start=args.backtest_start,
             backtest_end=args.backtest_end,
             threshold_floor=args.threshold_floor,
@@ -2077,6 +2146,8 @@ def main(argv: list[str] | None = None) -> int:
             backtest_external_sources = None
             if args.metrics_dir:
                 backtest_external_sources = merge_metrics_external_sources(Path(args.metrics_dir), candles, None)
+            if args.funding_dir:
+                backtest_external_sources = merge_funding_external_sources(Path(args.funding_dir), candles, backtest_external_sources)
             shared_feature_rows = build_feature_rows_cached(
                 candles, args.feature_cache,
                 input_path=input_path, metrics_dir=args.metrics_dir,
