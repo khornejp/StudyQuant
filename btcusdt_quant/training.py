@@ -211,7 +211,7 @@ class FoldResult:
     # What the fold's model would have EARNED on its test slice, not just how
     # well it classified there. See oos_trading_metrics for why this is the only
     # honest read the pipeline produces.
-    test_trading: dict[str, float] = field(default_factory=dict)
+    test_trading: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -251,12 +251,47 @@ def drop_fallback_features(build: "dataset.DatasetBuild") -> tuple["dataset.Data
 _TRAIN_TARGET_KEYS: tuple[str, ...] = ("profitability", "long_success", "short_success", "direction")
 
 
+def realized_payoffs(
+    rows: Sequence["dataset.LabeledRow"],
+    target: str,
+    tp_pct: float,
+    sl_pct: float,
+) -> list[float]:
+    """What each row's trade actually PAID, in return units.
+
+    ``target_return`` is the close-to-close move at the horizon, which is the
+    realised payoff only when no barrier was reachable. A row whose TP was
+    touched and then reversed is scored with the wrong sign and magnitude by
+    the raw return, so the barrier outcome is reconstructed from the per-target
+    reason the labeler already stored:
+
+        *_tp_first -> +tp_pct      (the barrier that was hit)
+        *_sl_first -> -sl_pct
+        *_timeout  ->  target_return, signed for the side
+
+    A SHORT target inverts the horizon return: falling prices pay a short.
+    """
+    short = target == "short_success"
+    out: list[float] = []
+    for row in rows:
+        reason = str(row.target_reasons.get(target, row.label_reason) or "")
+        if reason.endswith("tp_first"):
+            out.append(float(tp_pct))
+        elif reason.endswith("sl_first") or reason == "ambiguous_path" or reason.startswith("gap_cross_sl"):
+            out.append(-float(sl_pct))
+        else:
+            r = float(row.target_return)
+            out.append(-r if short else r)
+    return out
+
+
 def oos_trading_metrics(
     probabilities: Sequence[float],
     forward_returns: Sequence[float],
     threshold: float,
     round_trip_cost: float = DEFAULT_ROUND_TRIP_COST,
-) -> dict[str, float]:
+    target: str = "profitability",
+) -> dict[str, object]:
     """What a fold's model would have EARNED on its own test slice.
 
     The fold loop already fits a model on the train slice alone and already
@@ -272,9 +307,14 @@ def oos_trading_metrics(
     backtest and no new data -- it reads what the fold already computed.
 
     Reported per side because a probability model is two signals: entries above
-    the threshold are the long book, and the bottom decile is the short book.
+    the threshold are the primary book, and the bottom decile is its opposite.
     ``net_bps`` subtracts the flat round trip, so a positive number is a
     strategy and a negative one is not.
+
+    ``target`` names what a high probability MEANS. Under ``short_success`` a
+    confident bar is a SHORT, so the books swap: the caller must pass payoffs
+    already signed for that side (see realized_payoffs), and the labels below
+    read "primary" and "opposite" rather than long and short.
 
     This is NOT a backtest. It ignores position sizing, cooldown, the
     one-position-at-a-time constraint and fill modelling, so it overstates
@@ -298,8 +338,12 @@ def oos_trading_metrics(
     top = [r[i] for i in order[-k:]]
 
     long_gross = _mean_bps(longs)
-    short_gross = -_mean_bps(bottom)  # shorting the least-confident decile
+    # The opposite book: take the least-confident decile the other way. The
+    # payoffs are already signed for `target`, so negating gives the return of
+    # trading against the model's low-confidence bars.
+    short_gross = -_mean_bps(bottom)
     return {
+        "target": target,
         "rows": float(n),
         "threshold": float(threshold),
         "cost_bps": cost_bps,
@@ -598,9 +642,15 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 model_selection=selection.as_dict(),
                 test_trading=oos_trading_metrics(
                     calibrated_test,
-                    [row.target_return for row in test_rows],
+                    realized_payoffs(
+                        test_rows,
+                        training_config.train_target,
+                        training_config.tp_pct,
+                        training_config.sl_pct,
+                    ),
                     threshold,
                     round_trip_cost=training_config.round_trip_cost,
+                    target=training_config.train_target,
                 ),
             )
         )

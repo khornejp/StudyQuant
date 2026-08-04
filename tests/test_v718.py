@@ -2440,8 +2440,11 @@ class TestBacktest(unittest.TestCase):
         self.assertIsInstance(result.max_drawdown, float)
         self.assertIsInstance(result.sharpe, float)
 
-    def test_backtest_deducts_fee_and_slippage_from_trade_pnl(self) -> None:
-        candles = self._priced_candles([100.0, 101.0])
+    def test_backtest_deducts_maker_fees_and_no_slippage(self) -> None:
+        # Limit-only execution: both legs rest, so both pay the MAKER fee and
+        # neither pays slippage. The dip on bar 1 is what lets the resting entry
+        # limit fill at all -- a monotonically rising fixture never revisits it.
+        candles = self._priced_candles([100.0, 99.0, 101.0])
         strategy = live.StrategyConfig("test", 0.60, 0.40, 0.500, 0.500, 1.0, 1.0, 0.0)
 
         result = backtest.run_backtest(
@@ -2450,22 +2453,26 @@ class TestBacktest(unittest.TestCase):
             strategy,
             initial_equity=100.0,
             position_size=1.0,
-            label_horizon=1,
-            fee_rate_per_side=0.0002,
+            # 2, not 1: a maker fill lands mid-bar and the exit block runs on
+            # that same bar, so horizon 1 would close the trade where it opened.
+            label_horizon=2,
+            maker_fee_rate_per_side=0.0002,
             slippage_rate_per_side=0.0002,
         )
 
         self.assertEqual(result.trade_count, 1)
         trade = result.trades[0]
+        self.assertTrue(trade.entry_maker)
+        self.assertAlmostEqual(trade.entry_price, 100.0)   # the limit, not a crossed price
         self.assertAlmostEqual(trade.gross_pnl_pct, 0.0100)
-        self.assertAlmostEqual(trade.fee_pct, 0.0004)
-        self.assertAlmostEqual(trade.slippage_pct, 0.0004)
-        self.assertAlmostEqual(trade.cost_pct, 0.0008)
-        self.assertAlmostEqual(trade.pnl_pct, 0.0092)
+        self.assertAlmostEqual(trade.fee_pct, 0.0004)      # maker + maker
+        self.assertAlmostEqual(trade.slippage_pct, 0.0)    # nothing crossed
+        self.assertAlmostEqual(trade.cost_pct, 0.0004)
+        self.assertAlmostEqual(trade.pnl_pct, 0.0096)
         self.assertAlmostEqual(result.gross_total_return, 0.0100)
-        self.assertAlmostEqual(result.total_return, 0.0092)
+        self.assertAlmostEqual(result.total_return, 0.0096)
         self.assertAlmostEqual(result.total_fees, 0.04)
-        self.assertAlmostEqual(result.total_slippage, 0.04)
+        self.assertAlmostEqual(result.total_slippage, 0.0)
 
     def test_backtest_cost_impact_scales_with_trade_count(self) -> None:
         candles = self._priced_candles([100.0] * 20)
@@ -2479,15 +2486,24 @@ class TestBacktest(unittest.TestCase):
             position_size=1.0,
             label_horizon=1,
             cooldown_bars=0,
-            fee_rate_per_side=0.0002,
+            maker_fee_rate_per_side=0.0002,
             slippage_rate_per_side=0.0002,
         )
 
+        # round_trip_cost_pct is what this run actually charged -- two maker
+        # fees, no slippage -- so the compounding check uses the real basis.
         expected_return = (1.0 - result.round_trip_cost_pct) ** result.trade_count - 1.0
         self.assertGreaterEqual(result.trade_count, 10)
         self.assertAlmostEqual(result.gross_total_return, 0.0)
         self.assertAlmostEqual(result.total_return, expected_return)
-        self.assertLess(result.total_return, -0.01)
+        # The drag is tied to the cost this run charged, not to a literal that
+        # silently encoded the old taker basis: flat prices means every trade
+        # loses exactly the round trip, so the total is about trade_count of
+        # them (slightly less, because it compounds on a shrinking equity).
+        self.assertLess(
+            result.total_return,
+            -0.9 * result.round_trip_cost_pct * result.trade_count,
+        )
 
     def test_backtest_rejects_non_finite_cost_rates(self) -> None:
         candles = self._priced_candles([100.0, 101.0])
@@ -2548,7 +2564,9 @@ class TestBacktest(unittest.TestCase):
         self.assertEqual(d["trades"][0]["side"], "BUY")
 
     def test_backtest_min_hold_bars_delays_exit(self) -> None:
-        candles = self._priced_candles([100.0, 110.0, 110.0, 110.0, 110.0, 110.0])
+        # Bar 1 dips so the resting entry limit fills; the flat run after it is
+        # what min_hold_bars has to hold through.
+        candles = self._priced_candles([100.0, 99.0, 110.0, 110.0, 110.0, 110.0, 110.0])
         strategy = live.StrategyConfig("test", 0.60, 0.40, 0.500, 0.500, 1.0, 1.0, 0.0)
         result = backtest.run_backtest(
             candles,
@@ -2558,7 +2576,7 @@ class TestBacktest(unittest.TestCase):
             position_size=1.0,
             label_horizon=5,
             min_hold_bars=3,
-            fee_rate_per_side=0.0,
+            maker_fee_rate_per_side=0.0,
             slippage_rate_per_side=0.0,
         )
         self.assertEqual(result.trade_count, 1)

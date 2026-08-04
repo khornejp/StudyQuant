@@ -254,6 +254,14 @@ DEFAULT_SLIPPAGE_RATE_PER_SIDE = 0.0002
 # a horizon market-close unless you deliberately rest a limit as the horizon
 # approaches, and OPEN_AT_END is the harness flattening at the window edge.
 EXIT_OUTCOMES = frozenset({"TP", "SL", "TIMEOUT", "OPEN_AT_END"})
+# This account trades LIMIT ONLY and never crosses the spread, so the default
+# execution rests both legs: the entry waits for price to come back to the
+# signal-bar close, and every exit outcome is a resting limit. Until 2026-08-04
+# the defaults were the opposite -- instant taker entry and taker exits -- which
+# meant a run that forgot the flags silently measured an execution this account
+# does not perform, and priced it at 16bps instead of 4. Pass
+# `maker_fill_window=0` and `maker_exit_outcomes=[]` to model a crossing run.
+DEFAULT_MAKER_FILL_WINDOW = 5
 # A stopped-out trade fills AT sl_price: the stop rests as a limit order like
 # every other leg. Modeling a bot-side market stop (fill at the next bar's open)
 # was removed on 2026-08-02 -- this account trades limit-only and never crosses
@@ -733,7 +741,7 @@ def run_backtest(
     allow_barrier_mismatch: bool = False,
     range_gate_enabled: bool = True,
     range_gate_edge: float = DEFAULT_RANGE_GATE_EDGE,
-    maker_fill_window: int = 0,
+    maker_fill_window: int = DEFAULT_MAKER_FILL_WINDOW,
     maker_fill_penetration: float = 0.0,
     maker_exit_outcomes: Sequence[str] | None = None,
 ) -> BacktestResult:
@@ -796,7 +804,11 @@ def run_backtest(
     _validate_cost_rates(fee_rate_per_side, slippage_rate_per_side, maker_fee_rate_per_side)
     if not 0.0 < range_gate_edge <= 0.5:
         raise ValueError(f"range_gate_edge must be in (0, 0.5], got {range_gate_edge}")
-    maker_exit_set = frozenset(str(o).upper() for o in (maker_exit_outcomes or ()))
+    # None means "the default", which is limit-only: every exit rests. An
+    # explicit empty sequence is how a caller asks for taker exits.
+    if maker_exit_outcomes is None:
+        maker_exit_outcomes = sorted(EXIT_OUTCOMES)
+    maker_exit_set = frozenset(str(o).upper() for o in maker_exit_outcomes)
     unknown = maker_exit_set - EXIT_OUTCOMES
     if unknown:
         raise ValueError(
@@ -825,7 +837,14 @@ def run_backtest(
     result.fee_rate_per_side = fee_rate_per_side
     result.maker_fee_rate_per_side = maker_fee_rate_per_side
     result.slippage_rate_per_side = slippage_rate_per_side
-    result.round_trip_cost_pct = 2.0 * (fee_rate_per_side + slippage_rate_per_side)
+    # The round trip THIS run charges, from the legs it actually executes --
+    # not a fixed taker figure. A limit-only run pays two maker fees and no
+    # slippage; recording 2*(taker+slippage) regardless made the summary
+    # disagree with the trades in it.
+    _rt_entry = maker_fee_rate_per_side if maker_fill_window > 0 else fee_rate_per_side
+    _rt_exit = maker_fee_rate_per_side if maker_exit_set >= EXIT_OUTCOMES else fee_rate_per_side
+    _rt_slip = (0.0 if maker_fill_window > 0 else 1.0) + (0.0 if maker_exit_set >= EXIT_OUTCOMES else 1.0)
+    result.round_trip_cost_pct = _rt_entry + _rt_exit + _rt_slip * slippage_rate_per_side
     result.min_hold_bars = min_hold_bars
     result.cooldown_bars = cooldown_bars
     result.threshold_floor = threshold_floor

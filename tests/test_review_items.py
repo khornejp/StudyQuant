@@ -1757,6 +1757,10 @@ class MakerFillTests(unittest.TestCase):
             short_threshold=0.01,
             maker_fill_window=window,
             maker_fill_penetration=penetration,
+            # These cases are about the ENTRY leg. The default execution is
+            # limit-only on both legs, so pin taker exits to keep the entry the
+            # only thing under test.
+            maker_exit_outcomes=[],
         )
 
     def test_taker_default_fills_at_close(self) -> None:
@@ -1832,7 +1836,7 @@ class MakerFillTests(unittest.TestCase):
             model=self._AlwaysLong(), position_size=0.1, label_horizon=10,
             cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
             fee_rate_per_side=0.0006, maker_fee_rate_per_side=0.0002,
-            slippage_rate_per_side=0.0,
+            slippage_rate_per_side=0.0, maker_exit_outcomes=[],
         )
         taker = run_backtest(self._candles(specs), maker_fill_window=0, **common)
         maker = run_backtest(self._candles(specs), maker_fill_window=5, **common)
@@ -1894,7 +1898,7 @@ class MakerFillTests(unittest.TestCase):
         self.assertAlmostEqual(both.trades[0].fee_pct, 0.0004)
         self.assertAlmostEqual(both.trades[0].slippage_pct, 0.0)
         # maker entry + taker exit: 2+6 bps fee, slippage on the exit leg only.
-        mixed = run_backtest(self._candles(specs), maker_fill_window=5, **common)
+        mixed = run_backtest(self._candles(specs), maker_fill_window=5, maker_exit_outcomes=[], **common)
         self.assertAlmostEqual(mixed.trades[0].fee_pct, 0.0008)
         self.assertAlmostEqual(mixed.trades[0].slippage_pct, 0.0001)
         # taker entry + maker exit: 6+2 bps fee, slippage on the entry leg only.
@@ -1904,6 +1908,37 @@ class MakerFillTests(unittest.TestCase):
         # Resting both legs must be the cheapest of the three.
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
+
+    def test_execution_defaults_to_limit_only(self) -> None:
+        # This account never crosses the spread, so a run that forgets the flags
+        # must model the execution it actually performs. The defaults were the
+        # opposite until 2026-08-04: instant taker entry and taker exits, priced
+        # at 16 bps, while threshold selection charged 4 -- the same
+        # selection-vs-execution split the cost-basis work keeps closing.
+        specs = [(100.0, 100.2, 99.8, 100.0)]
+        specs += [(100.0, 100.05, 99.5, 100.2)]
+        specs += [(100.2, 100.4, 100.0, 100.3)] * 20
+        common = dict(
+            model=self._AlwaysLong(), position_size=0.1, label_horizon=10,
+            cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            fee_rate_per_side=0.0006, maker_fee_rate_per_side=0.0002,
+            slippage_rate_per_side=0.0002,
+        )
+        default = run_backtest(self._candles(specs), **common)
+        self.assertTrue(default.trades[0].entry_maker)
+        self.assertAlmostEqual(default.trades[0].fee_pct, 0.0004)    # 2 + 2 bps
+        self.assertAlmostEqual(default.trades[0].slippage_pct, 0.0)  # nothing crossed
+        # The recorded round trip is what the run charged, not a fixed taker
+        # figure -- and it matches the constant threshold selection uses.
+        self.assertAlmostEqual(default.round_trip_cost_pct, 0.0004)
+        self.assertAlmostEqual(default.round_trip_cost_pct,
+                               backtest_module.DEFAULT_ROUND_TRIP_COST_PCT)
+        # Crossing is still expressible, and then it costs the taker round trip.
+        crossing = run_backtest(
+            self._candles(specs), maker_fill_window=0, maker_exit_outcomes=[], **common
+        )
+        self.assertFalse(crossing.trades[0].entry_maker)
+        self.assertAlmostEqual(crossing.round_trip_cost_pct, 2.0 * (0.0006 + 0.0002))
 
     def test_oos_trading_metrics_price_the_ranking_after_cost(self) -> None:
         # The fold loop recorded F1 and Brier and threw away the model and its
@@ -1951,6 +1986,7 @@ class MakerFillTests(unittest.TestCase):
                 label_horizon=8, cooldown_bars=cooldown,
                 long_threshold=0.6, short_threshold=0.01,
                 exec_tp_pct=0.004, exec_sl_pct=0.002,
+                maker_fill_window=0, maker_exit_outcomes=[],
             )
             trades = result.trades
             self.assertGreater(len(trades), 1, f"cooldown={cooldown} produced too few trades to test")
