@@ -261,10 +261,18 @@ EXIT_OUTCOMES = frozenset({"TP", "SL", "TIMEOUT", "OPEN_AT_END"})
 # a look-ahead: with cooldown_bars=0 the deferred exit let a new position open
 # on a bar whose equity already included the next bar's open. Restore from git
 # (commit 1699b88) if the limit-only premise ever changes.
-# Taker in, taker out -- the default execution. 2*(6+2) = 16bps. Training's
-# --round-trip-cost must equal this or threshold selection optimizes against a
-# cost the backtest does not charge (test_cost_basis_is_shared pins it).
-DEFAULT_ROUND_TRIP_COST_PCT = 2.0 * (DEFAULT_FEE_RATE_PER_SIDE + DEFAULT_SLIPPAGE_RATE_PER_SIDE)
+# The round trip this account actually pays: limit orders only, both legs
+# resting, so two maker fees and no slippage. 2*2 = 4bps.
+#   It was 2*(taker + slippage) = 16bps until 2026-08-04, which described an
+# execution this account does not use -- see the limit-only premise. Threshold
+# selection was therefore optimizing against four times the real cost, which
+# rejects every signal whose edge lives between 4 and 16bps. That is most of
+# them: a 45-bar horizon return averages ~0.5bps unconditionally.
+#   A taker round trip is still computable for a run that crosses
+# (2*(DEFAULT_TAKER_FEE_RATE_PER_SIDE + DEFAULT_SLIPPAGE_RATE_PER_SIDE)); it is
+# just not the default. Training's --round-trip-cost must equal this or
+# threshold selection and execution disagree (test_cost_basis_is_shared pins it).
+DEFAULT_ROUND_TRIP_COST_PCT = 2.0 * DEFAULT_MAKER_FEE_RATE_PER_SIDE
 
 
 def _slice_to_window(

@@ -124,7 +124,11 @@ if (-not $ThresholdFloor) { $ThresholdFloor = "0.0" }
 # DEFAULT_TAKER_FEE_RATE_PER_SIDE.
 if (-not $FeePerSide)      { $FeePerSide      = "0.0006" }  # 0.06% Bitget VIP0 taker
 if (-not $SlippagePerSide) { $SlippagePerSide = "0.0002" }  # 0.02%
-$RoundTripCost = [string](2.0 * ([double]$FeePerSide + [double]$SlippagePerSide))
+# Limit-only: both legs rest, so the round trip is two MAKER fees and no
+# slippage. FeePerSide/SlippagePerSide still price a crossing leg for the
+# backtest, but threshold selection must charge what this account pays.
+if (-not $MakerFeePerSide) { $MakerFeePerSide = "0.0002" }  # 0.02% VIP0 maker
+$RoundTripCost = [string](2.0 * [double]$MakerFeePerSide)
 # Fractional-Kelly position sizing for the backtests (Phase 4 / 4.5).
 # Half-Kelly (0.5) trades ~18.5% of growth for ~43% smaller max drawdown.
 # The backtest's fixed position_size becomes the CAP on the per-trade

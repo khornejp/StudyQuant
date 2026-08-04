@@ -104,7 +104,11 @@ THRESHOLD_FLOOR="${THRESHOLD_FLOOR:-0.0}"
 # DEFAULT_TAKER_FEE_RATE_PER_SIDE.
 FEE_PER_SIDE="${FEE_PER_SIDE:-0.0006}"            # 0.06% Bitget VIP0 taker
 SLIPPAGE_PER_SIDE="${SLIPPAGE_PER_SIDE:-0.0002}"  # 0.02%
-ROUND_TRIP_COST=$(python -c "print(2.0 * (${FEE_PER_SIDE} + ${SLIPPAGE_PER_SIDE}))")
+# Limit-only: both legs rest, so the round trip is two MAKER fees and no
+# slippage. FEE_PER_SIDE/SLIPPAGE_PER_SIDE still price a crossing leg for the
+# backtest, but threshold selection must charge what this account pays.
+MAKER_FEE_PER_SIDE="${MAKER_FEE_PER_SIDE:-0.0002}"   # 0.02% Bitget/Binance VIP0 maker
+ROUND_TRIP_COST=$(python -c "print(2.0 * ${MAKER_FEE_PER_SIDE})")
 # Fractional-Kelly position sizing for the backtests (Phase 4 / 4.5). Half-Kelly
 # (0.5) trades ~18.5% of growth for ~43% smaller max drawdown. The backtest's
 # fixed position_size becomes the CAP on the per-trade fraction; entries whose

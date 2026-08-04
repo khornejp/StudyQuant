@@ -1858,8 +1858,15 @@ class MakerFillTests(unittest.TestCase):
         self.assertAlmostEqual(
             training.DEFAULT_ROUND_TRIP_COST, backtest_module.DEFAULT_ROUND_TRIP_COST_PCT
         )
-        # And the round trip really is taker-in/taker-out, not the maker rate.
+        # And it is the LIMIT-ONLY round trip: both legs rest, so two maker fees
+        # and no slippage. It was the taker round trip (4x larger) until
+        # 2026-08-04, which priced an execution this account does not use and
+        # rejected every edge living between the two numbers.
         self.assertAlmostEqual(
+            backtest_module.DEFAULT_ROUND_TRIP_COST_PCT,
+            2.0 * backtest_module.DEFAULT_MAKER_FEE_RATE_PER_SIDE,
+        )
+        self.assertLess(
             backtest_module.DEFAULT_ROUND_TRIP_COST_PCT,
             2.0 * (backtest_module.DEFAULT_TAKER_FEE_RATE_PER_SIDE
                    + backtest_module.DEFAULT_SLIPPAGE_RATE_PER_SIDE),

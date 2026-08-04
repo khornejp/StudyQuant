@@ -20,10 +20,12 @@ from . import cv, dataset, features, governance, lineage, models, monitoring
 # cost than execution pays admit signals whose gross edge dies in fees. The
 # two are separate literals because backtest imports live and training does
 # not; tests/test_review_items.py pins them equal, so change both together.
-#   Was 0.0008 until 2026-07-30, i.e. 2 x (maker 0.02% + slippage 0.02%). The
-# maker rate was being charged for taker fills; the real Bitget VIP0 taker
-# round trip is 2 x (0.06% + 0.02%) = 0.16%.
-DEFAULT_ROUND_TRIP_COST = 0.0016
+#   History: 0.0008 until 2026-07-30 (maker rate charged for taker fills), then
+# 0.0016 (the taker round trip). Both were wrong for this account, which trades
+# limit-only: every leg rests, so the round trip is two maker fees and no
+# slippage = 0.0004. At 0.0016 threshold selection was pricing four times the
+# real cost and rejecting every edge between 4 and 16bps.
+DEFAULT_ROUND_TRIP_COST = 0.0004
 
 
 # THE direction policy: which sides each regime is allowed to trade, and the
