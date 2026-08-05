@@ -1909,6 +1909,40 @@ class MakerFillTests(unittest.TestCase):
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
 
+    def test_short_profitability_mirrors_the_long_label(self) -> None:
+        # Under the barrier-free design (barriers set beyond reach) the existing
+        # short_success label collapses: every bar times out and it returns 0,
+        # so it cannot train anything. profitability escapes that on the long
+        # side by counting a timeout as a win when the horizon return clears the
+        # threshold; the short side needs the same branch with the sign flipped.
+        # Without it, shorts can only be inferred from the bottom of a
+        # long-trained probability, which answers a different question -- a low
+        # P(return > +thr) covers small POSITIVE returns too.
+        from btcusdt_quant.dataset import (
+            triple_barrier_label_short,
+            triple_barrier_label_short_profitability,
+        )
+        far, thr = 0.5, 0.0004          # barriers beyond reach, 4 bps threshold
+        down = _ohlc_candles([(100.0, 100.1, 99.9, 100.0)] + [(99.9, 100.0, 99.8, 99.9)] * 12)
+        up = _ohlc_candles([(100.0, 100.1, 99.9, 100.0)] + [(100.1, 100.2, 100.0, 100.1)] * 12)
+        for candles, label, expected in ((down, "falling", 1), (up, "rising", 0)):
+            ret = candles[10].close / candles[0].close - 1.0
+            old, old_reason = triple_barrier_label_short(0, candles, 10, far, far)
+            new, new_reason = triple_barrier_label_short_profitability(0, candles, 10, thr, far, far, ret)
+            # The old label is a constant 0 whichever way price went.
+            self.assertEqual((old, old_reason), (0, "short_timeout"), label)
+            self.assertEqual(new, expected, f"{label}: return {1e4*ret:+.1f} bps")
+            self.assertEqual(new_reason, "short_timeout_return")
+        # A reachable barrier still decides it, exactly as short_success does.
+        crash = _ohlc_candles([(100.0, 100.1, 99.9, 100.0)] + [(99.0, 99.1, 97.0, 97.5)] * 3)
+        self.assertEqual(
+            triple_barrier_label_short_profitability(0, crash, 3, thr, 0.008, 0.004, -0.02)[1],
+            "short_tp_first",
+        )
+        # And the payoff signer treats it as a short.
+        from btcusdt_quant import training as _tr
+        self.assertIn("short_profitability", _tr._TRAIN_TARGET_KEYS)
+
     def test_funding_alignment_carries_only_settled_information(self) -> None:
         # Funding is the one input that is not a transform of OHLCV, so it is
         # the one worth being strict about: filling a bar with the NEXT

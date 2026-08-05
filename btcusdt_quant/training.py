@@ -248,7 +248,7 @@ def drop_fallback_features(build: "dataset.DatasetBuild") -> tuple["dataset.Data
     return replace(build, feature_names=kept), dropped
 
 
-_TRAIN_TARGET_KEYS: tuple[str, ...] = ("profitability", "long_success", "short_success", "direction")
+_TRAIN_TARGET_KEYS: tuple[str, ...] = ("profitability", "long_success", "short_success", "short_profitability", "direction")
 
 
 def realized_payoffs(
@@ -271,7 +271,7 @@ def realized_payoffs(
 
     A SHORT target inverts the horizon return: falling prices pay a short.
     """
-    short = target == "short_success"
+    short = target in ("short_success", "short_profitability")
     out: list[float] = []
     for row in rows:
         reason = str(row.target_reasons.get(target, row.label_reason) or "")

@@ -2236,6 +2236,9 @@ def attach_labels(
         # LONG/SHORT success labels
         long_success, long_reason = triple_barrier_label_long(row.index, candles, horizon, tp_pct, sl_pct)
         short_success, short_reason = triple_barrier_label_short(row.index, candles, horizon, tp_pct, sl_pct)
+        short_profit, short_profit_reason = triple_barrier_label_short_profitability(
+            row.index, candles, horizon, label_threshold, tp_pct, sl_pct, target_return
+        )
         # Direction target: simple future return sign
         direction_label = 1 if target_return > 0.0 else 0
         direction_reason = "future_positive" if target_return > 0.0 else "future_negative"
@@ -2263,12 +2266,14 @@ def attach_labels(
                     "profitability": label,
                     "long_success": long_success,
                     "short_success": short_success,
+                    "short_profitability": short_profit,
                 },
                 target_reasons={
                     "direction": direction_reason,
                     "profitability": label_reason,
                     "long_success": long_reason,
                     "short_success": short_reason,
+                    "short_profitability": short_profit_reason,
                 },
                 user_regime=row.user_regime,
             )
@@ -2359,6 +2364,35 @@ def triple_barrier_label_short(
         if sl_touched:
             return 0, "short_sl_first"
     return 0, "short_timeout"
+
+
+def triple_barrier_label_short_profitability(
+    entry_index: int,
+    candles: Sequence[data.Candle],
+    horizon: int,
+    label_threshold: float,
+    tp_pct: float,
+    sl_pct: float,
+    target_return: float,
+) -> tuple[int, str]:
+    """The mirror of ``triple_barrier_label``: is a SHORT worth taking here?
+
+    ``short_success`` alone is unusable once the barriers are set beyond reach
+    (the barrier-free horizon-exit design), because it returns 0 on every
+    timeout and the label collapses to a constant. ``profitability`` does not
+    have that problem on the long side -- it counts a timeout as a win when the
+    horizon return clears ``label_threshold`` -- so the short side needs the
+    same branch with the sign flipped: a SHORT wins on timeout when price FELL
+    by more than the threshold.
+
+    Without it the project can only infer shorts from the bottom of a
+    long-trained model's probability, which answers a different question: a low
+    P(return > +threshold) covers small POSITIVE returns too, not just falls.
+    """
+    label, reason = triple_barrier_label_short(entry_index, candles, horizon, tp_pct, sl_pct)
+    if reason != "short_timeout":
+        return label, reason
+    return (1 if -target_return > label_threshold else 0), "short_timeout_return"
 
 
 def _external_label(row: FeatureRow, target_return: float, label_threshold: float, external_events: Mapping[object, object] | None) -> tuple[int | None, str | None]:
