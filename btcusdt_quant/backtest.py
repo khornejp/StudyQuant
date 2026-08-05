@@ -283,6 +283,29 @@ DEFAULT_MAKER_FILL_WINDOW = 5
 DEFAULT_ROUND_TRIP_COST_PCT = 2.0 * DEFAULT_MAKER_FEE_RATE_PER_SIDE
 
 
+SHORT_TARGETS: frozenset[str] = frozenset({"short_success", "short_profitability"})
+
+
+def model_is_short_sided(model: object) -> bool:
+    """True when a HIGH probability from this model means SELL, not BUY.
+
+    A model artifact carries the target it was trained on. Without consulting
+    it, the single-model path reads every score as P(long): a short-trained
+    model would be bought exactly where it says to sell. Artifacts written
+    before train_target was recorded have no marker and are read as long, which
+    is what they were.
+    """
+    target = getattr(model, "train_target", None)
+    if target is None:
+        payload = getattr(model, "as_dict", None)
+        if callable(payload):
+            try:
+                target = payload().get("train_target")
+            except Exception:
+                target = None
+    return str(target) in SHORT_TARGETS
+
+
 def _slice_to_window(
     feature_rows: Sequence[object],
     detected: Sequence[str],
@@ -832,6 +855,11 @@ def run_backtest(
     barrier_warnings = check_execution_barrier_parity(
         models_by_regime, exec_tp_pct, exec_sl_pct, allow_mismatch=allow_barrier_mismatch
     )
+    # Resolved once: a short-trained model inverts the score-to-side mapping on
+    # every single-model branch below.
+    _short_sided = model_is_short_sided(model)
+    if _short_sided:
+        print("[BACKTEST] model train_target is short-sided: a HIGH score is a SELL")
     result = BacktestResult()
     result.barrier_warnings = barrier_warnings
     result.fee_rate_per_side = fee_rate_per_side
@@ -1235,9 +1263,9 @@ def run_backtest(
                     # prob<=0.45) silently overrode threshold experiments on the
                     # legacy single-model paths.
                     if prob > lt:
-                        signal = "BUY"
+                        signal = "SELL" if _short_sided else "BUY"
                     elif prob < st:
-                        signal = "SELL"
+                        signal = "BUY" if _short_sided else "SELL"
                     else:
                         signal = "HOLD"
             elif default_regime is not None and default_regime in models_by_regime:
@@ -1282,9 +1310,9 @@ def run_backtest(
                     _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = default_regime, prob, prob, lt, st
                     _ctx_genuine_sides.add("long")
                     if prob > lt:
-                        signal = "BUY"
+                        signal = "SELL" if _short_sided else "BUY"
                     elif prob < st:
-                        signal = "SELL"
+                        signal = "BUY" if _short_sided else "SELL"
                     else:
                         signal = "HOLD"
         elif model is not None and i < len(feature_rows):
@@ -1295,9 +1323,9 @@ def run_backtest(
             _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = None, prob, prob, lt, st
             _ctx_genuine_sides.add("long")
             if prob > lt:
-                signal = "BUY"
+                signal = "SELL" if _short_sided else "BUY"
             elif prob < st:
-                signal = "SELL"
+                signal = "BUY" if _short_sided else "SELL"
             else:
                 signal = "HOLD"
 

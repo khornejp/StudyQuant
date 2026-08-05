@@ -1909,6 +1909,36 @@ class MakerFillTests(unittest.TestCase):
         self.assertLess(both.trades[0].cost_pct, mixed.trades[0].cost_pct)
         self.assertLess(both.trades[0].cost_pct, taker_in.trades[0].cost_pct)
 
+    def test_short_trained_model_is_not_traded_backwards(self) -> None:
+        # A model artifact is just a score unless it says which side a high one
+        # means. The single-model backtest path assumed high = long, so a model
+        # trained on short_success or short_profitability would have been BOUGHT
+        # exactly where it says to sell, and its reported performance would have
+        # been for the opposite trades. Only the regime-bundle path escaped it,
+        # and only because the file is named short_model.json.
+        specs = [(100.0, 100.2, 99.8, 100.0)]
+        specs += [(100.0, 100.05, 99.5, 100.2)]
+        specs += [(100.2, 100.4, 100.0, 100.3)] * 20
+
+        class _ShortModel:
+            train_target = "short_profitability"
+            def probability(self, values) -> float:
+                return 0.9
+
+        common = dict(position_size=0.1, label_horizon=10, cooldown_bars=0,
+                      long_threshold=0.6, short_threshold=0.01)
+        long_run = run_backtest(_ohlc_candles(specs), model=self._AlwaysLong(), **common)
+        short_run = run_backtest(_ohlc_candles(specs), model=_ShortModel(), **common)
+        # Same score, opposite side, because the artifact says what it learned.
+        self.assertEqual(long_run.signal_counts["BUY"] > 0, True)
+        self.assertEqual(long_run.signal_counts["SELL"], 0)
+        self.assertEqual(short_run.signal_counts["SELL"] > 0, True)
+        self.assertEqual(short_run.signal_counts["BUY"], 0)
+        # An artifact written before the marker existed is read as long, which
+        # is what it was.
+        self.assertFalse(backtest_module.model_is_short_sided(self._AlwaysLong()))
+        self.assertTrue(backtest_module.model_is_short_sided(_ShortModel()))
+
     def test_short_profitability_mirrors_the_long_label(self) -> None:
         # Under the barrier-free design (barriers set beyond reach) the existing
         # short_success label collapses: every bar times out and it returns 0,

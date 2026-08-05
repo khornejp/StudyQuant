@@ -2000,6 +2000,13 @@ def write_training_artifacts(
     model_metadata = model_version_metadata(build, final_model, training_config, final_selection)
     model_payload = dict(final_model.as_dict())
     model_payload["model_version_metadata"] = model_metadata
+    # WHICH SIDE a high probability means. Without it the artifact is just a
+    # score, and the single-model backtest path assumes high = long: a model
+    # trained on short_success or short_profitability would then be traded
+    # exactly backwards, and the reported performance would be for the opposite
+    # trades. Only the regime-bundle path escaped that, and only because the
+    # file is named short_model.json.
+    model_payload["train_target"] = training_config.train_target
     writer = governance.ArtifactWriter(output_dir)
     writer.write_json("dataset_card.json", dataset.dataset_card(build))
     writer.write_text("dataset_card.md", dataset_card_markdown(build))
