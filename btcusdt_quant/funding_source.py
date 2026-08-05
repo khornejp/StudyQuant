@@ -181,13 +181,31 @@ class BinanceFundingDownloader:
         return dedup_funding_rows(rows)
 
 
-def load_funding_dir(funding_dir: Path) -> list[FundingRow]:
+def load_funding_dir(funding_dir: Path, strict: bool = True) -> list[FundingRow]:
+    """Every archive in the directory, refusing to quietly skip a broken one.
+
+    A silently dropped month does not produce missing features -- it produces
+    the previous month's rate carried forward across the gap, which is
+    indistinguishable from a real flat stretch and is wrong for every bar in it.
+    ``strict=False`` downgrades that to a warning for callers that would rather
+    proceed on partial data, but it is never the default.
+    """
     rows: list[FundingRow] = []
+    broken: list[str] = []
     for path in sorted(Path(funding_dir).glob("*.zip")):
         try:
             rows.extend(parse_funding_csv_text(_funding_csv_text_from_zip(path.read_bytes())))
-        except (zipfile.BadZipFile, FundingDownloadError):
-            continue
+        except (zipfile.BadZipFile, FundingDownloadError, OSError) as error:
+            broken.append(f"{path.name}: {error}")
+    if broken:
+        detail = "; ".join(broken)
+        if strict:
+            raise FundingDownloadError(
+                f"unreadable funding archive(s) in {funding_dir}: {detail}. "
+                "Delete them and re-run collect-funding; carrying the previous "
+                "month's rate across the gap would look like a flat stretch."
+            )
+        print(f"WARNING: skipping unreadable funding archive(s): {detail}")
     return dedup_funding_rows(rows)
 
 
@@ -205,11 +223,17 @@ def funding_features_to_minutes(
                        schedule is public in advance, so counting down to it is
                        causal; the rate that settlement will print is not.
 
-    ``next_rate`` is deliberately NOT produced. The archive stores realised
-    rates, and the next realised rate is future information -- filling it would
-    put tomorrow's number in today's feature vector. The feature therefore stays
-    at its fallback and is excluded from training by drop_fallback_features,
-    which is the honest outcome rather than a fabricated one.
+      next_rate        the SAME last settled rate, never a prediction.
+
+    The last point needs saying because omitting it is worse than repeating it.
+    Availability is decided per SOURCE, not per feature: once "funding_rate" is
+    present every feature reading it counts as available, so leaving next_rate
+    out does not get next_funding_rate dropped from training -- it gets it
+    trained as the constant 0.0 while a live feed that publishes a predicted
+    rate would hand the model a real number it never saw. Repeating the settled
+    rate makes the feature redundant with funding_rate, which is worthless but
+    parity-safe; the exchange's PREDICTED next rate must not be used offline or
+    live, because it exists in one place and not the other.
 
     Bars before the first settlement get nothing: with no settled rate there is
     no causal value to carry, and emitting 0.0 would be indistinguishable from a
@@ -229,10 +253,20 @@ def funding_features_to_minutes(
             cursor += 1
         if times[cursor] > minute:
             continue  # before the first settlement: nothing is known yet
-        following = times[cursor + 1] if cursor + 1 < len(times) else times[cursor] + horizon
+        if cursor + 1 < len(times):
+            following = times[cursor + 1]
+        else:
+            # Past the last settlement in the archive, extrapolate the published
+            # schedule instead of clamping. Clamping pinned minutes_to_next at
+            # 0 for every later bar, which reads as "funding is imminent" and
+            # latched funding_blackout_active on permanently.
+            elapsed = (minute - times[cursor]).total_seconds() / 60.0
+            periods = int(elapsed // DEFAULT_FUNDING_INTERVAL_MINUTES) + 1
+            following = times[cursor] + horizon * periods
         minutes_to_next = max(0.0, (following - minute).total_seconds() / 60.0)
         out[minute] = {
             "current_rate": float(rates[cursor]),
+            "next_rate": float(rates[cursor]),
             "minutes_to_next": float(minutes_to_next),
         }
     return out

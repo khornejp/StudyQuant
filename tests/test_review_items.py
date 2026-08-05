@@ -1937,8 +1937,28 @@ class MakerFillTests(unittest.TestCase):
         # The schedule is public, so counting down to it is causal.
         self.assertAlmostEqual(out[minutes[1]]["minutes_to_next"], 480.0)
         self.assertAlmostEqual(out[minutes[2]]["minutes_to_next"], 1.0)
-        # next_rate is NOT fabricated: the archive only holds realised rates.
-        self.assertNotIn("next_rate", out[minutes[1]])
+        # next_rate repeats the SETTLED rate rather than being omitted. Leaving
+        # it out does not get next_funding_rate dropped from training --
+        # availability is decided per SOURCE, so the feature would train as the
+        # constant 0.0 while a live feed publishing a predicted rate hands the
+        # model a real number it never saw.
+        self.assertAlmostEqual(out[minutes[1]]["next_rate"], out[minutes[1]]["current_rate"])
+        # Past the last settlement the schedule is extrapolated, not clamped:
+        # clamping pinned minutes_to_next at 0 forever, which reads as "funding
+        # is imminent" and latched funding_blackout_active on permanently.
+        far = datetime(2026, 1, 2, 12, 30, tzinfo=_tz.utc)   # 28.5h after the last settlement
+        tail = fs.funding_features_to_minutes(settle, [far])
+        self.assertGreater(tail[far]["minutes_to_next"], 0.0)
+        self.assertLessEqual(tail[far]["minutes_to_next"], 480.0)
+        # An unreadable archive is refused, not skipped: a dropped month carries
+        # the previous rate across the gap and looks like a flat stretch.
+        import tempfile
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as tmp:
+            (_P(tmp) / "BTCUSDT-fundingRate-2026-01.zip").write_bytes(b"not a zip")
+            with self.assertRaises(fs.FundingDownloadError):
+                fs.load_funding_dir(_P(tmp))
+            self.assertEqual(fs.load_funding_dir(_P(tmp), strict=False), [])
         # Overlapping monthly files must not double-count a settlement.
         self.assertEqual(len(fs.dedup_funding_rows(settle + settle)), 2)
         # A header line is data-driven, not assumed.

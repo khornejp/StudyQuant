@@ -1070,6 +1070,7 @@ def _feature_cache_key(
     candles: Sequence[object],
     metrics_dir: str | None,
     user_regime_file: str | None,
+    funding_dir: str | None = None,
 ) -> str:
     """Fingerprint of everything the feature matrix depends on.
 
@@ -1102,20 +1103,25 @@ def _feature_cache_key(
     parts.append(f"candles={len(candles)}")
     if candles:
         parts.append(f"span={candles[0].open_time.isoformat()}..{candles[-1].open_time.isoformat()}")
-    if metrics_dir:
-        md = Path(metrics_dir)
+    # EVERY external source has to be in the key. Funding was missing at first,
+    # which meant a matrix built without it could be served to a run that asked
+    # for it -- a cache hit delivering the wrong features, which is the failure
+    # mode this key exists to prevent.
+    for label, directory in (("metrics", metrics_dir), ("funding", funding_dir)):
+        if not directory:
+            parts.append(f"{label}=<none>")
+            continue
+        md = Path(directory)
         files = sorted(f for f in md.glob("*.zip")) if md.is_dir() else []
         digest = hashlib.sha256()
         for f in files:
             st = f.stat()
             # mtime as well as size: an archive rebuilt in place can land on the
             # identical byte count, and hitting the old key would then serve a
-            # feature matrix built from the PREVIOUS F16 values -- a silent
+            # feature matrix built from the PREVIOUS values -- a silent
             # train/serve skew that looks like a cache hit.
             digest.update(f"{f.name}:{st.st_size}:{st.st_mtime_ns}".encode())
-        parts.append(f"metrics={len(files)}:{digest.hexdigest()[:16]}")
-    else:
-        parts.append("metrics=<none>")
+        parts.append(f"{label}={len(files)}:{digest.hexdigest()[:16]}")
     if user_regime_file:
         urf = Path(user_regime_file)
         parts.append(f"user_regime={urf.as_posix()}:{urf.stat().st_mtime_ns if urf.exists() else 0}")
@@ -1131,6 +1137,7 @@ def build_feature_rows_cached(
     input_path: Path | None = None,
     metrics_dir: str | None = None,
     user_regime_file: str | None = None,
+    funding_dir: str | None = None,
     **build_kwargs: object,
 ) -> list[object]:
     """build_feature_rows, reusing a parquet of a previous identical build.
@@ -1145,7 +1152,7 @@ def build_feature_rows_cached(
     """
     if not cache_dir:
         return dataset.build_feature_rows(candles, **build_kwargs)  # type: ignore[arg-type]
-    key = _feature_cache_key(input_path, candles, metrics_dir, user_regime_file)
+    key = _feature_cache_key(input_path, candles, metrics_dir, user_regime_file, funding_dir)
     entry = Path(cache_dir) / key
     if (entry / dataset.DATASET_CACHE_FEATURE_ROWS_FILE).exists():
         rows = dataset.load_feature_rows_cache(entry)
@@ -2151,6 +2158,7 @@ def main(argv: list[str] | None = None) -> int:
             shared_feature_rows = build_feature_rows_cached(
                 candles, args.feature_cache,
                 input_path=input_path, metrics_dir=args.metrics_dir,
+                funding_dir=args.funding_dir,
                 user_regime_file=args.user_regime_file,
                 user_regime_periods=user_regime_periods,
                 external_sources=backtest_external_sources,
