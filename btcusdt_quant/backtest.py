@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from math import isfinite
@@ -71,7 +72,120 @@ def apply_multi_feature_routing(
     return routed, diag
 
 
-def _resolve_backtest_thresholds(regime_bundle, regime, long_threshold, short_threshold, strategy, threshold_floor: float = 0.0):
+# A probability can never exceed 1.0, so this cutoff refuses every entry.
+_UNREACHABLE_THRESHOLD = 2.0
+
+
+class RollingQuantileThreshold:
+    """Entry cutoff as a quantile of the model's OWN recent probabilities.
+
+    A fixed probability threshold is a fixed number, not a fixed selectivity.
+    The cut that took the top 5% of bars in training takes some other fraction
+    once the score distribution moves, and this project has measured that move:
+    on 2026 H1 the horizon-return model's top decile returned -2.24 bps while
+    its top 2% returned -10.76, i.e. the ranking still worked and the level did
+    not. A quantile cut fixes the SELECTIVITY instead and lets the level follow.
+
+    ``window`` is the number of past probabilities the quantile is measured
+    over. 0 means expanding (all history), which is the causal default this repo
+    uses elsewhere -- but note it is nearly inert here: with 2.65M rows already
+    banked from 2020-2025, the 130k rows of 2026 H1 barely move the quantile, so
+    expanding reproduces a fixed threshold at greater cost. A finite window is
+    what actually tracks the shift. Its length is a free parameter: pick it
+    before looking at the evaluation window, not after.
+
+    Strictly past-only: ``resolve`` reads the quantile BEFORE folding the
+    current bar's probability in, so a bar is never part of the reference set
+    that judges it.
+
+    Counts live in a Fenwick tree over ``bins`` equal-width buckets on [0, 1]
+    (default resolution 1e-4). Insert and quantile query are both O(log bins),
+    which a sorted list would not be over three million bars.
+    """
+
+    __slots__ = ("quantile", "window", "bins", "_tree", "_count", "_recent", "_warmup")
+
+    def __init__(self, quantile: float, window: int = 0, warmup: int = 20_000, bins: int = 10_000) -> None:
+        if not 0.0 < quantile < 1.0:
+            raise ValueError(f"quantile must be in (0, 1), got {quantile}")
+        self.quantile = float(quantile)
+        self.window = int(window)
+        self.bins = int(bins)
+        self._tree = [0] * (self.bins + 1)
+        self._count = 0
+        self._recent: deque[int] = deque()
+        # Below this many observations the empirical quantile is noise, and a
+        # noisy cutoff does not abstain -- it trades on a number it made up.
+        self._warmup = int(warmup)
+
+    def _bucket(self, probability: float) -> int:
+        raw = int(float(probability) * self.bins)
+        return min(max(raw, 0), self.bins - 1)
+
+    def _add(self, bucket: int, delta: int) -> None:
+        index = bucket + 1
+        while index <= self.bins:
+            self._tree[index] += delta
+            index += index & -index
+        self._count += delta
+
+    def _kth(self, rank: int) -> int:
+        """Smallest bucket whose cumulative count reaches ``rank`` (1-based)."""
+        index, step = 0, 1 << (self.bins.bit_length())
+        remaining = rank
+        while step > 0:
+            probe = index + step
+            if probe <= self.bins and self._tree[probe] < remaining:
+                index = probe
+                remaining -= self._tree[probe]
+            step >>= 1
+        return index  # 0-based bucket
+
+    def observe(self, probability: float) -> None:
+        bucket = self._bucket(probability)
+        self._add(bucket, 1)
+        if self.window > 0:
+            self._recent.append(bucket)
+            if len(self._recent) > self.window:
+                self._add(self._recent.popleft(), -1)
+
+    def threshold(self) -> float | None:
+        """The current cutoff, or None while still in warmup."""
+        if self._count < self._warmup:
+            return None
+        rank = int(self.quantile * self._count) + 1
+        return self._kth(min(rank, self._count)) / self.bins
+
+    def resolve(self, probability: float | None) -> float | None:
+        """The cutoff for this bar, then fold this bar's probability in.
+
+        Order matters: reading first is what keeps the bar out of its own
+        reference set.
+        """
+        cutoff = self.threshold()
+        if probability is not None:
+            self.observe(probability)
+        return cutoff
+
+
+@dataclass
+class QuantileEntryThresholds:
+    """The per-side rolling-quantile cutoffs for one backtest run."""
+
+    long: RollingQuantileThreshold | None = None
+    short: RollingQuantileThreshold | None = None
+
+    def resolve(self, long_prob: float | None, short_prob: float | None) -> tuple[float | None, float | None]:
+        return (
+            None if self.long is None else self.long.resolve(long_prob),
+            None if self.short is None else self.short.resolve(short_prob),
+        )
+
+
+def _resolve_backtest_thresholds(regime_bundle, regime, long_threshold, short_threshold, strategy,
+                                 threshold_floor: float = 0.0,
+                                 quantile_thresholds: "QuantileEntryThresholds | None" = None,
+                                 long_prob: float | None = None, short_prob: float | None = None):
     """Resolve (long, short) entry thresholds with the SAME precedence live uses:
     explicit CLI override > learned per-regime holdout threshold
     (regime_bundle.regime_thresholds[regime], the selected_thresholds saved at
@@ -89,6 +203,17 @@ def _resolve_backtest_thresholds(regime_bundle, regime, long_threshold, short_th
         learned = rt.get(regime, {}) or {}
     lt = long_threshold if long_threshold is not None else max(float(learned.get("long", strategy.long_threshold)), threshold_floor)
     st = short_threshold if short_threshold is not None else max(float(learned.get("short", strategy.short_threshold)), threshold_floor)
+    if quantile_thresholds is not None:
+        # A rolling-quantile cutoff replaces the level, not the floor: the floor
+        # is a separate refusal to trade below a minimum confidence and still
+        # applies. During warmup the quantile is None -- not "no threshold" but
+        # "no basis yet", so the cutoff is put out of reach and the bar stands
+        # aside rather than trading on an estimate built from a handful of bars.
+        q_long, q_short = quantile_thresholds.resolve(long_prob, short_prob)
+        if quantile_thresholds.long is not None:
+            lt = max(q_long, threshold_floor) if q_long is not None else _UNREACHABLE_THRESHOLD
+        if quantile_thresholds.short is not None:
+            st = max(q_short, threshold_floor) if q_short is not None else _UNREACHABLE_THRESHOLD
     return lt, st
 
 
@@ -757,6 +882,8 @@ def run_backtest(
     exec_tp_pct: float | None = None,
     exec_sl_pct: float | None = None,
     threshold_floor: float = 0.0,
+    entry_quantile: float | None = None,
+    entry_quantile_window: int = 0,
     precomputed_routing_diagnostics: dict | None = None,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
     maker_fee_rate_per_side: float = DEFAULT_MAKER_FEE_RATE_PER_SIDE,
@@ -870,6 +997,21 @@ def run_backtest(
     _short_sided = model_is_short_sided(model)
     if _short_sided:
         print("[BACKTEST] model train_target is short-sided: a HIGH score is a SELL")
+    # A rolling-quantile cutoff needs its own state per side, built once and
+    # advanced bar by bar. Only the two-sided/bundle path gets one: on the
+    # single-model path `short_threshold` is a LOW cutoff on the same score
+    # ("prob below this => SELL"), so a high-side quantile there would be
+    # backwards, and it is refused at the CLI rather than silently applied.
+    quantile_thresholds = None
+    if entry_quantile is not None:
+        quantile_thresholds = QuantileEntryThresholds(
+            long=RollingQuantileThreshold(1.0 - entry_quantile, window=entry_quantile_window),
+            short=RollingQuantileThreshold(1.0 - entry_quantile, window=entry_quantile_window),
+        )
+        print(
+            f"[BACKTEST] entry threshold: rolling quantile, top {entry_quantile:.4g} of past "
+            f"probabilities, window={'expanding' if entry_quantile_window <= 0 else entry_quantile_window}"
+        )
     result = BacktestResult()
     result.barrier_warnings = barrier_warnings
     result.fee_rate_per_side = fee_rate_per_side
@@ -929,6 +1071,10 @@ def run_backtest(
             _rt = getattr(_bundle, "regime_thresholds", None)
             if isinstance(_rt, Mapping):
                 _learned = _rt.get(_reg, {}) or {}
+            # NOT given the quantile state: this listing runs before the loop,
+            # so there is no cutoff yet, and consuming the estimator here would
+            # also feed it a phantom observation. In quantile mode the numbers
+            # below are the fixed values that WOULD have applied.
             _elt, _est = _resolve_backtest_thresholds(_bundle, _reg, long_threshold, short_threshold, strategy, threshold_floor)
             result.effective_thresholds[_reg] = {
                 "learned_long": float(_learned["long"]) if "long" in _learned else None,
@@ -1233,7 +1379,10 @@ def run_backtest(
                     if long_prob is not None or short_prob is not None:
                         from btcusdt_quant.live import evaluate_entry_signal
 
-                        lt, st = _resolve_backtest_thresholds(regime_bundle, regime, long_threshold, short_threshold, strategy, threshold_floor)
+                        lt, st = _resolve_backtest_thresholds(
+                            regime_bundle, regime, long_threshold, short_threshold, strategy, threshold_floor,
+                            quantile_thresholds, long_prob, short_prob,
+                        )
                         _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = regime, long_prob, short_prob, lt, st
                         if long_prob is not None:
                             _ctx_genuine_sides.add("long")
@@ -1296,7 +1445,10 @@ def run_backtest(
                         short_prob = regime_bundle.probability_for(default_regime, "short", features_dict)
                     if long_prob is not None or short_prob is not None:
                         from btcusdt_quant.live import evaluate_entry_signal
-                        lt, st = _resolve_backtest_thresholds(regime_bundle, default_regime, long_threshold, short_threshold, strategy, threshold_floor)
+                        lt, st = _resolve_backtest_thresholds(
+                            regime_bundle, default_regime, long_threshold, short_threshold, strategy, threshold_floor,
+                            quantile_thresholds, long_prob, short_prob,
+                        )
                         _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = default_regime, long_prob, short_prob, lt, st
                         if long_prob is not None:
                             _ctx_genuine_sides.add("long")

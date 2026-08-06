@@ -1004,6 +1004,48 @@ def run_live(
     return summary
 
 
+class TwoSidedModels:
+    """A long model and a short model, with no regime abstraction between them.
+
+    The only backtest path that scores both sides is the regime bundle, which
+    forces a regime bucketing this project has measured and found empty: the
+    router classifies on 30-minute slope magnitude, so its buckets carry
+    volatility rather than direction and one lasts ~15 minutes against a
+    45-minute horizon. Running long+short therefore meant writing a fake bundle
+    to disk with both models in a "range" cell and forcing every bar into it.
+
+    This is that hack made honest: one cell, every bar in it, both sides scored,
+    and evaluate_entry_signal taking the higher EV. The cell is named "all" and
+    not "range" on purpose -- apply_range_mean_reversion_gate fires only on a
+    regime literally called "range", so the name keeps --range-gate-edge a
+    separate lever instead of switching it on by accident.
+
+    The short model's probability is used as-is, NOT inverted. A short-target
+    model already outputs P(short wins); the inversion in the single-model path
+    exists only because that path has one score and must decide what it means.
+
+    Thresholds are not carried here: single-model artifacts record no learned
+    threshold, so _resolve_backtest_thresholds falls through to the CLI override
+    or the strategy default, exactly as the one-sided path already does.
+    """
+
+    def __init__(self, long_model: object | None, short_model: object | None) -> None:
+        if long_model is None and short_model is None:
+            raise ValueError("TwoSidedModels needs at least one side")
+        self.long_models = {"all": long_model} if long_model is not None else {}
+        self.short_models = {"all": short_model} if short_model is not None else {}
+        sides = {side for side, present in (("LONG", long_model), ("SHORT", short_model)) if present is not None}
+        self.direction_policy = {"all": sides}
+        self.default_regime = "all"
+
+    def has_side_probability(self, regime: str, side: str) -> bool:
+        return bool(self.long_models if side == "long" else self.short_models)
+
+    def probability_for(self, regime: str, side: str, features) -> float | None:
+        model = next(iter((self.long_models if side == "long" else self.short_models).values()), None)
+        return None if model is None else float(model.probability(features))
+
+
 def merge_metrics_external_sources(
     metrics_dir: Path,
     candles: "list[data.Candle]",
@@ -1527,6 +1569,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--input", default=None, help="CSV candles path; defaults to fixture")
     backtest_parser.add_argument("--output", default="artifacts/backtest", help="backtest output directory")
     backtest_parser.add_argument("--model-artifact", default=None, help="trained model artifact JSON path or regime-aware directory")
+    backtest_parser.add_argument("--short-model-artifact", default=None, help='path to a SHORT model artifact to trade alongside --model-artifact. Both sides are scored on every bar and the higher-EV side is taken, with no regime bucketing between them -- the router classifies on 30-minute slope magnitude, so its buckets carry volatility rather than direction. Without this flag, running long+short meant writing a fake regime bundle to disk with both models in a range cell. The synthetic cell is named all, not range, so --range-gate-edge stays a separate lever. Give the short its own entry confidence with --short-threshold.')
     backtest_parser.add_argument("--user-regime-file", default=None, help="path to JSON file with user-specified regime periods for backtest")
     backtest_parser.add_argument("--backtest-start", default="2025-01-01", help="start date for backtest (ISO format); candles before this date are used for feature computation only. Default 2025-01-01 matches the pipeline's full-year 2025 out-of-sample window (was 2025-07-01 when 2025 H1 was a held-out validation span; that split no longer exists).")
     backtest_parser.add_argument("--tp-floor", type=float, default=None, help="override TP floor (fraction, e.g. 0.003 = 0.30%%) for all strategy profiles. Use to match the tp_pct used at training time for a consistent sweep.")
@@ -1548,6 +1591,8 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--slippage-rate-per-side", type=float, default=None, help="override the per-side slippage fraction (default 0.0002 = 0.02%%). See --fee-rate-per-side.")
     backtest_parser.add_argument("--horizon", type=int, default=60, help="max holding bars before forced TIMEOUT exit (minutes for 1m data). MUST match the training --horizon so backtest execution and triple-barrier labels share the same time barrier (a train horizon of 120 with a backtest horizon of 60 silently misaligns label vs execution). Default 60 = training default.")
     backtest_parser.add_argument("--threshold-floor", type=float, default=0.0, help="hard lower bound on the learned/strategy entry thresholds (does NOT clamp an explicit --long/--short-threshold override). Learned selected_thresholds can drop to ~0.32 on weak models; e.g. --threshold-floor 0.45 keeps entries above a minimum confidence so sub-cost signals don't flood the backtest. Default 0 = disabled.")
+    backtest_parser.add_argument("--entry-quantile", type=float, default=None, help='enter the top FRACTION of bars by model probability instead of using a fixed cutoff -- 0.05 means the most confident 5%% of bars. The cutoff is recomputed every bar from the probabilities seen BEFORE it (strictly past-only), so it holds selectivity constant while the score distribution moves. A fixed number does the opposite: on 2026 H1 the horizon-return model kept its ranking (top 2%% still separated from top 10%%) while the level drifted, so the same 0.51 cutoff selected a different slice than it did in training. Requires a two-sided/bundle model: on the single-model path --short-threshold is a LOW cutoff on the same score, where a high-side quantile would be backwards. Cannot be combined with an explicit --long-threshold/--short-threshold.')
+    backtest_parser.add_argument("--entry-quantile-window", type=int, default=0, help='bars of history the --entry-quantile cutoff is measured over. 0 = expanding (all history), which is causal but nearly inert here: 2.65M rows are already banked from 2020-2025, so 2026 H1 barely moves the quantile and expanding reproduces a fixed threshold at greater cost. A finite window is what tracks the shift -- e.g. 129600 is 90 days of 1m bars. The length is a free parameter: choose it before looking at the evaluation window, and report it, because sweeping it against the result is threshold fitting under another name.')
     backtest_parser.add_argument("--range-gate-edge", type=float, default=backtest.DEFAULT_RANGE_GATE_EDGE, help="how close to the edge of the 20-bar range an entry must be for the range mean-reversion gate (default 0.25 = bottom quartile long-only, top quartile short-only, middle half no trade). Hardcoded until 2026-08-01 and never validated: it is the gate's only free parameter and it decides which ~50%% of range-regime bars are tradable. Symmetric by construction -- the upper band is 1-edge, because an asymmetric band is a directional bet dressed up as an entry filter and belongs in the model. Ignored with --disable-range-gate. Must be in (0, 0.5].")
     backtest_parser.add_argument("--feature-cache", default=None, help="directory holding cached feature matrices, keyed by a fingerprint of the input file (path/mtime/size), the candle span, the metrics archive contents, the user-regime file, and the feature SCHEMA hash from the registry. The matrix is computed over the WHOLE file on every run -- six months of backtest still needs 2020 onward for the ~350-day weekly warmup -- so without this every experiment repeats the same multi-million-row computation. A schema change (formula, lookback, dependency) invalidates the key automatically; a change to feature IMPLEMENTATION that leaves the registry entry identical does NOT, so delete the cache directory after editing features.py in that case. Off by default: a cache that turns itself on is a cache that can silently serve the wrong matrix.")
     backtest_parser.add_argument("--position-size", type=float, default=0.1, help="notional per trade as a fraction of equity (default 0.1 = 10%%). NOT leverage: it is notional/equity, so 0.5 means a position worth half the account and values above 1.0 need margin. It was hardcoded at 0.1 until 2026-07-31, which hid a deployment constraint -- an exchange's minimum order size sets a FLOOR on this number, and leverage does not lower that floor. On Binance USDT-M the step is 0.001 BTC, so at a $130 account the smallest legal trade is already ~0.5 of equity; on Bitget the 0.0001 BTC step makes it ~0.05. Backtest the size you can actually place, because returns and drawdown do not scale linearly with it.")
@@ -2118,6 +2163,63 @@ def main(argv: list[str] | None = None) -> int:
                             models_by_regime = None
                     elif (model_path / "model.json").is_file():
                         model = live.load_model_artifact(model_path / "model.json")
+            if args.short_model_artifact:
+                if regime_bundle is not None:
+                    raise SystemExit(
+                        "--short-model-artifact cannot be combined with a regime-bundle --model-artifact: "
+                        "the bundle already routes both sides per regime, and pairing it with a second "
+                        "standalone model would silently pick one of the two short models."
+                    )
+                short_path = Path(args.short_model_artifact)
+                if short_path.is_dir():
+                    short_path = short_path / "model.json"
+                short_model = live.load_model_artifact(short_path)
+                # A model trained on a LONG target scores P(long wins); read as
+                # a short probability it is exactly backwards, and the run would
+                # look like a working two-sided strategy the whole way through.
+                short_target = backtest.model_train_target(short_model)
+                if short_target is not None and not backtest.model_is_short_sided(short_model):
+                    raise SystemExit(
+                        f"--short-model-artifact was trained on target '{short_target}', which scores the LONG "
+                        "side. The short slot needs a short-target model (short_success / short_profitability); "
+                        "using this one would take shorts on the bars most likely to rise."
+                    )
+                if short_target is None:
+                    print(
+                        "WARNING: --short-model-artifact predates train_target in model.json, so its side "
+                        "cannot be verified. Confirm it was trained with --target short_success or "
+                        "short_profitability -- a long-target model here trades every short backwards.",
+                        file=sys.stderr,
+                    )
+                regime_bundle = TwoSidedModels(model, short_model)
+                models_by_regime = {"all": regime_bundle}
+                model = None  # both sides now route through the bundle
+                print("[BACKTEST] two-sided: long=--model-artifact, short=--short-model-artifact, no regime routing")
+            if args.entry_quantile is not None:
+                if not 0.0 < args.entry_quantile < 1.0:
+                    raise SystemExit(
+                        f"--entry-quantile is the FRACTION of bars to enter and must be in (0, 1); "
+                        f"got {args.entry_quantile}. For the most confident 5% of bars pass 0.05."
+                    )
+                if args.long_threshold is not None or args.short_threshold is not None:
+                    raise SystemExit(
+                        "--entry-quantile replaces the fixed entry cutoff, so it cannot be combined with "
+                        "--long-threshold/--short-threshold. Pass one or the other; passing both would leave "
+                        "which mechanism gated the run unreadable from the flags."
+                    )
+                if models_by_regime is None:
+                    raise SystemExit(
+                        "--entry-quantile needs a two-sided or regime-bundle model (--short-model-artifact, "
+                        "or a bundle --model-artifact). On the single-model path --short-threshold is a LOW "
+                        "cutoff on the same score, so a top-fraction quantile would gate shorts backwards."
+                    )
+                if args.threshold_floor > 0.0:
+                    print(
+                        f"[BACKTEST] --threshold-floor {args.threshold_floor} still applies on top of the "
+                        "quantile cutoff: bars in the top fraction but below the floor are skipped, so the "
+                        "realised entry rate will be under --entry-quantile.",
+                        file=sys.stderr,
+                    )
             strategies = {
                 "balanced": live.strategy_for_regime(None, "balanced"),
                 "conservative": live.strategy_for_regime(None, "conservative"),
@@ -2255,6 +2357,8 @@ def main(argv: list[str] | None = None) -> int:
                 exec_tp_pct=args.exec_tp_pct,
                 exec_sl_pct=args.exec_sl_pct,
                 threshold_floor=args.threshold_floor,
+                entry_quantile=args.entry_quantile,
+                entry_quantile_window=args.entry_quantile_window,
                 label_horizon=args.horizon,
                 precomputed_routing_diagnostics=shared_routing_diag,
                 regime_detector=regime_detector,

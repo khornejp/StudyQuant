@@ -1965,6 +1965,131 @@ class MakerFillTests(unittest.TestCase):
             artifact.write_text(_json.dumps(payload), encoding="utf-8")
             self.assertIsNone(backtest_module.model_train_target(_live.load_model_artifact(artifact)))
 
+    def test_two_sided_models_score_both_sides_without_a_regime(self) -> None:
+        # Before this, the ONLY backtest path that scored long and short on the
+        # same bar was the regime bundle, so running two-sided meant writing a
+        # fake bundle to disk with both models in a "range" cell -- which also
+        # switched on the range mean-reversion gate by accident. The synthetic
+        # cell is named "all" so that gate stays a separate lever.
+        from btcusdt_quant.cli import TwoSidedModels
+
+        class _P:
+            def __init__(self, p: float, target: str | None = None) -> None:
+                self._p, self.train_target = p, target
+            def probability(self, values) -> float:
+                return self._p
+
+        specs = [(100.0, 100.2, 99.8, 100.0)]
+        specs += [(100.0, 100.05, 99.5, 100.2)]
+        specs += [(100.2, 100.4, 100.0, 100.3)] * 20
+        candles = _ohlc_candles(specs)
+        common = dict(position_size=0.1, label_horizon=10, cooldown_bars=0,
+                      default_regime="all", model=None)
+
+        # The short model's score is used AS-IS, not inverted: a short-target
+        # model already outputs P(short wins). Inverting it here (as the
+        # single-model path must, having only one score) would sell the bars it
+        # rates least likely to fall.
+        shorty = TwoSidedModels(_P(0.05), _P(0.95, "short_profitability"))
+        short_run = run_backtest(candles, models_by_regime={"all": shorty},
+                                 long_threshold=0.6, short_threshold=0.6, **common)
+        self.assertGreater(short_run.signal_counts["SELL"], 0)
+        self.assertEqual(short_run.signal_counts["BUY"], 0)
+
+        longy = TwoSidedModels(_P(0.95), _P(0.05, "short_profitability"))
+        long_run = run_backtest(candles, models_by_regime={"all": longy},
+                                long_threshold=0.6, short_threshold=0.6, **common)
+        self.assertGreater(long_run.signal_counts["BUY"], 0)
+        self.assertEqual(long_run.signal_counts["SELL"], 0)
+
+        # One side missing must produce no signal for it, not a 0.0 that reads
+        # as a confident "no" -- has_side_probability is what the backtest asks.
+        long_only = TwoSidedModels(_P(0.95), None)
+        self.assertEqual(sorted(long_only.direction_policy["all"]), ["LONG"])
+        self.assertFalse(long_only.has_side_probability("all", "short"))
+        self.assertIsNone(long_only.probability_for("all", "short", {}))
+        one_sided = run_backtest(candles, models_by_regime={"all": long_only},
+                                 long_threshold=0.6, short_threshold=0.99, **common)
+        self.assertEqual(one_sided.signal_counts["SELL"], 0)
+
+        # Not "range": the range gate keys off that literal name.
+        self.assertNotIn("range", TwoSidedModels(_P(0.5), _P(0.5)).direction_policy)
+        with self.assertRaises(ValueError):
+            TwoSidedModels(None, None)
+
+    def test_rolling_quantile_threshold_holds_selectivity_not_a_level(self) -> None:
+        # A fixed probability cutoff fixes a NUMBER, not a selectivity: once the
+        # score distribution moves, the cut that took the top 5% of bars takes
+        # some other fraction. Measured on 2026 H1, the horizon-return model
+        # kept its ranking (top 2% still separated from top 10%) while the level
+        # drifted, so the trained cutoff selected a different slice.
+        import numpy as np
+        from btcusdt_quant.backtest import RollingQuantileThreshold, QuantileEntryThresholds
+
+        rng = random.Random(11)
+        sample = [rng.random() for _ in range(40_000)]
+        est = RollingQuantileThreshold(0.95, warmup=1_000)
+        for value in sample:
+            est.observe(value)
+        # Bucketed to 1e-4, so it must agree with the exact quantile to a bucket.
+        self.assertAlmostEqual(est.threshold(), float(np.quantile(sample, 0.95)), places=3)
+
+        # A finite window must FORGET, which is the whole point: expanding over
+        # 2.65M banked rows barely moves when 130k new ones arrive, so it
+        # reproduces a fixed threshold at greater cost.
+        rolling = RollingQuantileThreshold(0.5, window=1_000, warmup=100)
+        for _ in range(3_000):
+            rolling.observe(rng.uniform(0.0, 0.2))
+        low = rolling.threshold()
+        for _ in range(3_000):
+            rolling.observe(rng.uniform(0.8, 1.0))
+        self.assertLess(low, 0.25)
+        self.assertGreater(rolling.threshold(), 0.75)
+
+        # Strictly past-only: reading happens before folding this bar in, so a
+        # bar is never part of the reference set that judges it.
+        one = RollingQuantileThreshold(0.5, warmup=1)
+        self.assertIsNone(one.resolve(0.9))          # nothing seen yet
+        self.assertEqual(one.resolve(0.9), 0.9)      # now judged by the first
+        # Warmup abstains rather than trading on an estimate built from a
+        # handful of bars.
+        cold = RollingQuantileThreshold(0.9, warmup=50)
+        self.assertIsNone(cold.threshold())
+        self.assertEqual(QuantileEntryThresholds(long=cold).resolve(0.5, 0.5), (None, None))
+        with self.assertRaises(ValueError):
+            RollingQuantileThreshold(0.0)
+        with self.assertRaises(ValueError):
+            RollingQuantileThreshold(1.0)
+
+    def test_entry_quantile_stands_aside_during_warmup(self) -> None:
+        # None from the estimator means "no basis yet", not "no threshold". If
+        # it fell through to the learned/strategy cutoff, the opening stretch of
+        # every run would silently trade on the fixed threshold the flag was
+        # passed to replace -- and it is the longest stretch nobody looks at.
+        from btcusdt_quant.cli import TwoSidedModels
+
+        class _P:
+            train_target = None
+            def __init__(self, p: float) -> None:
+                self._p = p
+            def probability(self, values) -> float:
+                return self._p
+
+        specs = [(100.0, 100.2, 99.8, 100.0)]
+        specs += [(100.0, 100.05, 99.5, 100.2)]
+        specs += [(100.2, 100.4, 100.0, 100.3)] * 20
+        candles = _ohlc_candles(specs)
+        both = TwoSidedModels(_P(0.99), _P(0.10))
+        common = dict(models_by_regime={"all": both}, default_regime="all", model=None,
+                      position_size=0.1, label_horizon=10, cooldown_bars=0)
+        # A near-certain probability trades on a fixed cutoff...
+        hot = run_backtest(candles, long_threshold=0.6, short_threshold=0.6, **common)
+        self.assertGreater(hot.signal_counts["BUY"] + hot.signal_counts["SELL"], 0)
+        # ...and stands aside under a quantile that has not warmed up.
+        cold = run_backtest(candles, entry_quantile=0.05, **common)
+        self.assertEqual(cold.signal_counts["BUY"], 0)
+        self.assertEqual(cold.signal_counts["SELL"], 0)
+
     def test_short_profitability_mirrors_the_long_label(self) -> None:
         # Under the barrier-free design (barriers set beyond reach) the existing
         # short_success label collapses: every bar times out and it returns 0,
