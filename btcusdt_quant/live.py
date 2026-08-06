@@ -1539,24 +1539,44 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> models.Model
             raise ValueError(f"model artifact is not a JSON object: {path}")
         return None
     model_family = str(payload.get("model_family", ""))
+
+    def _with_side(adapter):
+        """Carry the artifact's train_target onto the loaded adapter.
+
+        Every adapter's from_dict reads only the fields it needs to rebuild the
+        estimator and drops the rest, so the train_target written at the end of
+        training never reached the object the backtest inspects: a short-trained
+        model loaded through here still answered "long" and would have been
+        traded backwards, which is the bug recording the field was meant to
+        close. Attached here, at the one place every family is constructed,
+        rather than in seven from_dicts.
+        """
+        target = payload.get("train_target")
+        if adapter is not None and target is not None:
+            try:
+                adapter.train_target = str(target)
+            except AttributeError:  # a frozen or slotted adapter keeps its own
+                pass
+        return adapter
+
     try:
         if model_family == "lightgbm":
-            return models.LightGBMAdapter.from_dict(payload)
+            return _with_side(models.LightGBMAdapter.from_dict(payload))
         if model_family == "catboost":
-            return models.CatBoostAdapter.from_dict(payload)
+            return _with_side(models.CatBoostAdapter.from_dict(payload))
         if model_family == models.CentroidLinearClassifier.model_family_name:
-            return models.CentroidLinearClassifier.from_dict(payload)
+            return _with_side(models.CentroidLinearClassifier.from_dict(payload))
         if model_family == "ensemble":
-            return models.EnsembleAdapter.from_dict(payload)
+            return _with_side(models.EnsembleAdapter.from_dict(payload))
         if model_family == "stacking_ensemble":
             from . import ensemble
-            return ensemble.StackingEnsembleAdapter.from_dict(payload)
+            return _with_side(ensemble.StackingEnsembleAdapter.from_dict(payload))
         if model_family == "multi_horizon_ensemble":
             from . import ensemble
-            return ensemble.MultiHorizonEnsembleAdapter.from_dict(payload)
+            return _with_side(ensemble.MultiHorizonEnsembleAdapter.from_dict(payload))
         if model_family == "pytorch_multitask":
             from . import multitask_nn
-            return multitask_nn.MultitaskNNAdapter.from_dict(payload)
+            return _with_side(multitask_nn.MultitaskNNAdapter.from_dict(payload))
         if strict:
             raise ValueError(f"unsupported model_family: {model_family}")
         return None

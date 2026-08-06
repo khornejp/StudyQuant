@@ -286,14 +286,12 @@ DEFAULT_ROUND_TRIP_COST_PCT = 2.0 * DEFAULT_MAKER_FEE_RATE_PER_SIDE
 SHORT_TARGETS: frozenset[str] = frozenset({"short_success", "short_profitability"})
 
 
-def model_is_short_sided(model: object) -> bool:
-    """True when a HIGH probability from this model means SELL, not BUY.
+def model_train_target(model: object) -> str | None:
+    """The target an artifact was trained on, or None if it does not record one.
 
-    A model artifact carries the target it was trained on. Without consulting
-    it, the single-model path reads every score as P(long): a short-trained
-    model would be bought exactly where it says to sell. Artifacts written
-    before train_target was recorded have no marker and are read as long, which
-    is what they were.
+    None means "unknown", not "long": artifacts written before train_target was
+    persisted carry no marker, so a caller that needs the side must either
+    default to long (what those artifacts were) or say it cannot verify.
     """
     target = getattr(model, "train_target", None)
     if target is None:
@@ -303,7 +301,19 @@ def model_is_short_sided(model: object) -> bool:
                 target = payload().get("train_target")
             except Exception:
                 target = None
-    return str(target) in SHORT_TARGETS
+    return None if target is None else str(target)
+
+
+def model_is_short_sided(model: object) -> bool:
+    """True when a HIGH probability from this model means SELL, not BUY.
+
+    A model artifact carries the target it was trained on. Without consulting
+    it, the single-model path reads every score as P(long): a short-trained
+    model would be bought exactly where it says to sell. Artifacts written
+    before train_target was recorded have no marker and are read as long, which
+    is what they were.
+    """
+    return model_train_target(model) in SHORT_TARGETS
 
 
 def _slice_to_window(

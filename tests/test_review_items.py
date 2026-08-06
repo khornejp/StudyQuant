@@ -1939,6 +1939,32 @@ class MakerFillTests(unittest.TestCase):
         self.assertFalse(backtest_module.model_is_short_sided(self._AlwaysLong()))
         self.assertTrue(backtest_module.model_is_short_sided(_ShortModel()))
 
+        # And it must survive the LOAD, which the check above does not prove:
+        # this test's models carry the attribute because the test set it, while
+        # every adapter's from_dict reads only the fields it needs to rebuild
+        # the estimator and drops the rest. The marker was written to model.json
+        # and then thrown away on the way back in, so a real short artifact
+        # loaded through the CLI still answered "long" -- the exact backwards
+        # trade this whole guard exists to stop.
+        import json as _json, tempfile
+        from pathlib import Path as _Path
+        from btcusdt_quant import live as _live, models as _models
+        fitted = _models.CentroidLinearClassifier()
+        fitted.fit([[0.0], [1.0]], [0, 1])
+        fitted.feature_names = ["a"]
+        payload = dict(fitted.as_dict())
+        payload["train_target"] = "short_profitability"
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = _Path(tmp) / "model.json"
+            artifact.write_text(_json.dumps(payload), encoding="utf-8")
+            loaded = _live.load_model_artifact(artifact)
+            self.assertEqual(backtest_module.model_train_target(loaded), "short_profitability")
+            self.assertTrue(backtest_module.model_is_short_sided(loaded))
+            # No marker still means long, not "unknown, refuse to trade".
+            payload.pop("train_target")
+            artifact.write_text(_json.dumps(payload), encoding="utf-8")
+            self.assertIsNone(backtest_module.model_train_target(_live.load_model_artifact(artifact)))
+
     def test_short_profitability_mirrors_the_long_label(self) -> None:
         # Under the barrier-free design (barriers set beyond reach) the existing
         # short_success label collapses: every bar times out and it returns 0,
