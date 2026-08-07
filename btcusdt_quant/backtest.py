@@ -75,6 +75,10 @@ def apply_multi_feature_routing(
 # A probability can never exceed 1.0, so this cutoff refuses every entry.
 _UNREACHABLE_THRESHOLD = 2.0
 
+# Selected-side observations a rolling quantile needs before its cutoff is
+# a measurement rather than noise.
+_TAIL_OBSERVATIONS_FOR_A_STABLE_QUANTILE = 200
+
 
 class RollingQuantileThreshold:
     """Entry cutoff as a quantile of the model's OWN recent probabilities.
@@ -105,7 +109,7 @@ class RollingQuantileThreshold:
 
     __slots__ = ("quantile", "window", "bins", "_tree", "_count", "_recent", "_warmup")
 
-    def __init__(self, quantile: float, window: int = 0, warmup: int = 20_000, bins: int = 10_000) -> None:
+    def __init__(self, quantile: float, window: int = 0, warmup: int | None = None, bins: int = 10_000) -> None:
         if not 0.0 < quantile < 1.0:
             raise ValueError(f"quantile must be in (0, 1), got {quantile}")
         self.quantile = float(quantile)
@@ -116,7 +120,14 @@ class RollingQuantileThreshold:
         self._recent: deque[int] = deque()
         # Below this many observations the empirical quantile is noise, and a
         # noisy cutoff does not abstain -- it trades on a number it made up.
-        self._warmup = int(warmup)
+        # What makes a tail quantile stable is the count IN THE TAIL, not the
+        # total, so the default scales with how thin the tail is: ~200 selected
+        # observations. A flat 20_000 was sized for an ungated 260k-bar window
+        # and starved a gated one -- behind a gate that passes 11% of bars it
+        # ate two thirds of the run before the first trade.
+        self._warmup = int(warmup) if warmup is not None else max(
+            2_000, int(_TAIL_OBSERVATIONS_FOR_A_STABLE_QUANTILE / min(self.quantile, 1.0 - self.quantile))
+        )
 
     def _bucket(self, probability: float) -> int:
         raw = int(float(probability) * self.bins)
@@ -559,6 +570,7 @@ class BacktestResult:
     # Rule-detector regime routing stats (counts/ratios/transitions/durations)
     # so they land in backtest_summary.json for data-driven tuning, not just logs.
     regime_routing_diagnostics: dict[str, object] = field(default_factory=dict)
+    vol_gate_diagnostics: dict[str, object] = field(default_factory=dict)
     # Threshold provenance: the floor applied, and per-regime learned vs
     # effective (post floor/override) entry thresholds actually used, so the
     # summary disambiguates artifact selected_thresholds from what traded.
@@ -626,6 +638,7 @@ class BacktestResult:
             "cooldown_bars": self.cooldown_bars,
             "regime_coverage": self.regime_coverage,
             "regime_routing_diagnostics": self.regime_routing_diagnostics,
+            "vol_gate_diagnostics": self.vol_gate_diagnostics,
             "threshold_floor": self.threshold_floor,
             "effective_thresholds": self.effective_thresholds,
             "kelly_sizing": self.kelly_sizing,
@@ -884,6 +897,8 @@ def run_backtest(
     threshold_floor: float = 0.0,
     entry_quantile: float | None = None,
     entry_quantile_window: int = 0,
+    vol_gate_feature: str | None = None,
+    vol_gate_min: float = 0.0,
     precomputed_routing_diagnostics: dict | None = None,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
     maker_fee_rate_per_side: float = DEFAULT_MAKER_FEE_RATE_PER_SIDE,
@@ -1002,6 +1017,14 @@ def run_backtest(
     # single-model path `short_threshold` is a LOW cutoff on the same score
     # ("prob below this => SELL"), so a high-side quantile there would be
     # backwards, and it is refused at the CLI rather than silently applied.
+    # Bars the volatility gate refused, so a run that trades almost nothing is
+    # visibly gated rather than mysteriously quiet.
+    vol_gate_skipped = 0
+    vol_gate_eligible = 0
+    if vol_gate_feature is not None:
+        print(
+            f"[BACKTEST] volatility gate: entries only where {vol_gate_feature} >= {vol_gate_min:.6g}"
+        )
     quantile_thresholds = None
     if entry_quantile is not None:
         quantile_thresholds = QuantileEntryThresholds(
@@ -1047,6 +1070,10 @@ def run_backtest(
         "short_threshold_override": short_threshold,
         "range_gate_enabled": range_gate_enabled,
         "range_gate_edge": range_gate_edge,
+        "vol_gate_feature": vol_gate_feature,
+        "vol_gate_min": vol_gate_min,
+        "entry_quantile": entry_quantile,
+        "entry_quantile_window": entry_quantile_window,
         # Both rates, because a run's net is only interpretable against the fee
         # tier it assumed -- and this project has already published numbers that
         # silently used the maker rate for taker fills.
@@ -1346,9 +1373,33 @@ def run_backtest(
         # (fail-closed): a signal with no declared side is a routing bug.
         _ctx_genuine_sides: set[str] = set()
 
+        # Volatility gate. Not a filter on WHICH bar looks best -- a refusal to
+        # trade where the horizon's dispersion is too small for any realistic
+        # IC to clear the round trip, since edge ~ IC * sigma_H while cost is
+        # flat. Measured on 2020-2025, sigma of the 45-bar forward return runs
+        # 22 bps in the lowest rv_60 quintile against 100 in the highest, so
+        # the bottom quintile would need IC 0.18 to pay 4 bps and the top needs
+        # 0.04. Placed before inference: a gated bar is not a HOLD the model
+        # chose, it is a bar the model was never asked about.
+        # It suppresses the ENTRY decision only. Skipping the rest of the bar
+        # would also skip the exit and maker-fill blocks below, which sit after
+        # this one: an open position would never close and a resting order
+        # would never fill, so the gate would silently rewrite the execution
+        # model instead of filtering entries.
+        _vol_gated = False
+        if vol_gate_feature is not None and i < len(feature_rows):
+            _vol = feature_rows[i].features.get(vol_gate_feature)
+            _vol_gated = _vol is None or not isfinite(float(_vol)) or float(_vol) < vol_gate_min
+            if _vol_gated:
+                vol_gate_skipped += 1
+            else:
+                vol_gate_eligible += 1
+
         # Model inference (regime-aware if models_by_regime provided)
         signal = "HOLD"
-        if models_by_regime is not None and i < len(feature_rows):
+        if _vol_gated:
+            pass  # never presented to the model; falls through as HOLD
+        elif models_by_regime is not None and i < len(feature_rows):
             regime = feature_rows[i].user_regime
             if regime is not None and regime in models_by_regime:
                 result.regime_coverage["matched"] = result.regime_coverage.get("matched", 0) + 1
@@ -1745,6 +1796,22 @@ def run_backtest(
                 if maker_orders_placed else 0.0
             ),
         }
+    if vol_gate_feature is not None:
+        # A gated run trades less by construction, so a better net total proves
+        # nothing on its own -- the eligible share is what makes the comparison
+        # against an ungated run readable.
+        _seen = vol_gate_skipped + vol_gate_eligible
+        result.vol_gate_diagnostics = {
+            "feature": vol_gate_feature,
+            "minimum": vol_gate_min,
+            "bars_eligible": vol_gate_eligible,
+            "bars_skipped": vol_gate_skipped,
+            "eligible_share": (vol_gate_eligible / _seen) if _seen else 0.0,
+        }
+        print(
+            f"[BACKTEST] volatility gate: {vol_gate_eligible:,} of {_seen:,} bars eligible "
+            f"({100.0 * vol_gate_eligible / (_seen or 1):.2f}%)"
+        )
     return result
 
 

@@ -2061,6 +2061,15 @@ class MakerFillTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             RollingQuantileThreshold(1.0)
 
+        # Warmup scales with how thin the tail is, because what makes a tail
+        # quantile stable is the count IN the tail. A flat default sized for an
+        # ungated 260k-bar window starved a gated one: behind a gate passing
+        # 11% of bars it ate two thirds of the run before the first trade.
+        self.assertEqual(RollingQuantileThreshold(0.5)._warmup, 2_000)     # floor
+        self.assertEqual(RollingQuantileThreshold(0.95)._warmup, 3_999)    # 200/0.05
+        self.assertEqual(RollingQuantileThreshold(0.99)._warmup, 19_999)   # 200/0.01
+        self.assertEqual(RollingQuantileThreshold(0.95, warmup=50)._warmup, 50)
+
     def test_entry_quantile_stands_aside_during_warmup(self) -> None:
         # None from the estimator means "no basis yet", not "no threshold". If
         # it fell through to the learned/strategy cutoff, the opening stretch of
@@ -2089,6 +2098,59 @@ class MakerFillTests(unittest.TestCase):
         cold = run_backtest(candles, entry_quantile=0.05, **common)
         self.assertEqual(cold.signal_counts["BUY"], 0)
         self.assertEqual(cold.signal_counts["SELL"], 0)
+
+    def test_vol_gate_suppresses_entries_without_stranding_positions(self) -> None:
+        # The gate sits before model inference, and the exit and maker-fill
+        # blocks sit AFTER it. Skipping the rest of a gated bar would leave an
+        # open position unable to close and a resting order unable to fill, so
+        # the gate would rewrite the execution model instead of filtering
+        # entries -- and a backtest whose trades never exit still reports a
+        # number.
+        from btcusdt_quant.cli import TwoSidedModels
+
+        class _P:
+            train_target = None
+            def __init__(self, p: float) -> None:
+                self._p = p
+            def probability(self, values) -> float:
+                return self._p
+
+        specs = [(100.0, 100.2, 99.8, 100.0)]
+        specs += [(100.0, 100.05, 99.5, 100.2)]
+        specs += [(100.2, 100.4, 100.0, 100.3)] * 40
+        candles = _ohlc_candles(specs)
+        common = dict(models_by_regime={"all": TwoSidedModels(_P(0.99), _P(0.10))},
+                      default_regime="all", model=None, position_size=0.1,
+                      label_horizon=10, cooldown_bars=0,
+                      long_threshold=0.6, short_threshold=0.6)
+
+        ungated = run_backtest(candles, **common)
+        self.assertGreater(len(ungated.trades), 0)
+        # Every trade must still have an exit -- this is what the naive
+        # `continue` broke.
+        self.assertTrue(all(t.exit_time for t in ungated.trades))
+
+        # rv_60 is a real feature but is ~0 on this flat fixture, so a positive
+        # minimum gates every bar.
+        gated = run_backtest(candles, vol_gate_feature="rv_60", vol_gate_min=1.0, **common)
+        self.assertEqual(gated.signal_counts["BUY"], 0)
+        self.assertEqual(gated.signal_counts["SELL"], 0)
+        self.assertEqual(len(gated.trades), 0)
+        diag = gated.vol_gate_diagnostics
+        self.assertEqual(diag["bars_eligible"], 0)
+        self.assertGreater(diag["bars_skipped"], 0)
+        self.assertEqual(diag["eligible_share"], 0.0)
+
+        # A minimum of 0 lets everything through and must reproduce the ungated
+        # run exactly: the gate is a filter, not a change of execution.
+        passthrough = run_backtest(candles, vol_gate_feature="rv_60", vol_gate_min=0.0, **common)
+        self.assertEqual(len(passthrough.trades), len(ungated.trades))
+        self.assertEqual(passthrough.signal_counts, ungated.signal_counts)
+        self.assertEqual(passthrough.vol_gate_diagnostics["eligible_share"], 1.0)
+
+        # A missing feature is gated, not treated as zero-and-eligible.
+        absent = run_backtest(candles, vol_gate_feature="not_a_feature", vol_gate_min=0.0, **common)
+        self.assertEqual(len(absent.trades), 0)
 
     def test_short_profitability_mirrors_the_long_label(self) -> None:
         # Under the barrier-free design (barriers set beyond reach) the existing
