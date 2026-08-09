@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -107,7 +108,7 @@ class RollingQuantileThreshold:
     which a sorted list would not be over three million bars.
     """
 
-    __slots__ = ("quantile", "window", "bins", "_tree", "_count", "_recent", "_warmup")
+    __slots__ = ("quantile", "window", "bins", "_tree", "_count", "_recent", "_warmup", "_seen")
 
     def __init__(self, quantile: float, window: int = 0, warmup: int | None = None, bins: int = 10_000) -> None:
         if not 0.0 < quantile < 1.0:
@@ -118,6 +119,7 @@ class RollingQuantileThreshold:
         self._tree = [0] * (self.bins + 1)
         self._count = 0
         self._recent: deque[int] = deque()
+        self._seen = 0
         # Below this many observations the empirical quantile is noise, and a
         # noisy cutoff does not abstain -- it trades on a number it made up.
         # What makes a tail quantile stable is the count IN THE TAIL, not the
@@ -152,7 +154,17 @@ class RollingQuantileThreshold:
             step >>= 1
         return index  # 0-based bucket
 
+    @property
+    def warmup(self) -> int:
+        return self._warmup
+
+    @property
+    def observations(self) -> int:
+        """Everything ever seen, unlike the windowed count the quantile uses."""
+        return self._seen
+
     def observe(self, probability: float) -> None:
+        self._seen += 1
         bucket = self._bucket(probability)
         self._add(bucket, 1)
         if self.window > 0:
@@ -899,6 +911,7 @@ def run_backtest(
     threshold_floor: float = 0.0,
     entry_quantile: float | None = None,
     entry_quantile_window: int = 0,
+    entry_quantile_warmup: int | None = None,
     vol_gate_feature: str | None = None,
     vol_gate_min: float = 0.0,
     trend_filter_sma_bars: int = 0,
@@ -1049,8 +1062,10 @@ def run_backtest(
     quantile_thresholds = None
     if entry_quantile is not None:
         quantile_thresholds = QuantileEntryThresholds(
-            long=RollingQuantileThreshold(1.0 - entry_quantile, window=entry_quantile_window),
-            short=RollingQuantileThreshold(1.0 - entry_quantile, window=entry_quantile_window),
+            long=RollingQuantileThreshold(1.0 - entry_quantile, window=entry_quantile_window,
+                                          warmup=entry_quantile_warmup),
+            short=RollingQuantileThreshold(1.0 - entry_quantile, window=entry_quantile_window,
+                                           warmup=entry_quantile_warmup),
         )
         print(
             f"[BACKTEST] entry threshold: rolling quantile, top {entry_quantile:.4g} of past "
@@ -1834,6 +1849,19 @@ def run_backtest(
                 if maker_orders_placed else 0.0
             ),
         }
+    if quantile_thresholds is not None and quantile_thresholds.long is not None:
+        # A warmup longer than the stream produces zero trades and no error, and
+        # a run that traded nothing reads exactly like a filter working
+        # perfectly. Say which it was.
+        seen = quantile_thresholds.long.observations
+        if quantile_thresholds.long.threshold() is None:
+            print(
+                f"WARNING: the entry quantile never left warmup -- {seen:,} observations against a "
+                f"warmup of {quantile_thresholds.long.warmup:,}, so NO bar was ever eligible to trade. "
+                f"This run says nothing about the strategy. Shorten the warmup or widen the stream "
+                f"(a volatility gate feeds the estimator only the bars it passes).",
+                file=sys.stderr,
+            )
     if trend_filter_sma_bars > 0:
         result.trend_filter_diagnostics = {
             "sma_bars": trend_filter_sma_bars,
