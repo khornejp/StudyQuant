@@ -2257,6 +2257,57 @@ class MakerFillTests(unittest.TestCase):
             train_metrics={}, model_selection={},
         ).vol_gate_min_used)
 
+    def test_trend_filter_blocks_entries_against_the_trend(self) -> None:
+        # The gated long edge is directional, not universal: on the fold test
+        # slices it paid +2.55 and +2.38 bps in the two uptrend folds and gave
+        # it all back at -3.37 in the -41% crash fold, and the short side could
+        # not hedge because it loses everywhere. Requiring close > SMA removed
+        # the crash fold entirely and took the pooled result from +0.18 bps
+        # (t=+0.34) to +1.98 (t=+2.47).
+        from btcusdt_quant.cli import TwoSidedModels
+
+        class _P:
+            train_target = None
+            def __init__(self, p: float) -> None:
+                self._p = p
+            def probability(self, values) -> float:
+                return self._p
+
+        common = dict(models_by_regime={"all": TwoSidedModels(_P(0.99), _P(0.10))},
+                      default_regime="all", model=None, position_size=0.1,
+                      label_horizon=10, cooldown_bars=0,
+                      long_threshold=0.6, short_threshold=0.6)
+
+        # A series that falls and then dips further: close sits below its own
+        # trailing mean, so a long is against the trend.
+        falling = [(100.0 - i, 100.5 - i, 99.0 - i, 100.0 - i) for i in range(40)]
+        candles = _ohlc_candles(falling)
+        unfiltered = run_backtest(candles, **common)
+        self.assertGreater(unfiltered.signal_counts["BUY"], 0)
+
+        filtered = run_backtest(candles, trend_filter_sma_bars=5, **common)
+        self.assertEqual(filtered.signal_counts["BUY"], 0)
+        self.assertGreater(filtered.trend_filter_diagnostics["signals_blocked"], 0)
+        self.assertEqual(filtered.trend_filter_diagnostics["sma_bars"], 5)
+
+        # Rising: the same model is allowed through, so the filter is reading
+        # the trend rather than simply refusing everything.
+        rising = [(100.0 + i, 100.5 + i, 99.5 + i, 100.0 + i) for i in range(40)]
+        allowed = run_backtest(_ohlc_candles(rising), trend_filter_sma_bars=5, **common)
+        self.assertGreater(allowed.signal_counts["BUY"], 0)
+
+        # Before the window fills there is no trend, and an unknown trend is not
+        # an uptrend -- a warmup bar must be refused, not waved through.
+        cold = run_backtest(_ohlc_candles(rising), trend_filter_sma_bars=10_000, **common)
+        self.assertEqual(cold.signal_counts["BUY"], 0)
+        self.assertEqual(cold.signal_counts["SELL"], 0)
+
+        # 0 disables it, reproducing the unfiltered run exactly: a filter, not a
+        # change to execution.
+        off = run_backtest(candles, trend_filter_sma_bars=0, **common)
+        self.assertEqual(off.signal_counts, unfiltered.signal_counts)
+        self.assertEqual(len(off.trades), len(unfiltered.trades))
+
     def test_short_profitability_mirrors_the_long_label(self) -> None:
         # Under the barrier-free design (barriers set beyond reach) the existing
         # short_success label collapses: every bar times out and it returns 0,

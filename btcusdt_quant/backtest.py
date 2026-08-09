@@ -571,6 +571,7 @@ class BacktestResult:
     # so they land in backtest_summary.json for data-driven tuning, not just logs.
     regime_routing_diagnostics: dict[str, object] = field(default_factory=dict)
     vol_gate_diagnostics: dict[str, object] = field(default_factory=dict)
+    trend_filter_diagnostics: dict[str, object] = field(default_factory=dict)
     # Threshold provenance: the floor applied, and per-regime learned vs
     # effective (post floor/override) entry thresholds actually used, so the
     # summary disambiguates artifact selected_thresholds from what traded.
@@ -639,6 +640,7 @@ class BacktestResult:
             "regime_coverage": self.regime_coverage,
             "regime_routing_diagnostics": self.regime_routing_diagnostics,
             "vol_gate_diagnostics": self.vol_gate_diagnostics,
+            "trend_filter_diagnostics": self.trend_filter_diagnostics,
             "threshold_floor": self.threshold_floor,
             "effective_thresholds": self.effective_thresholds,
             "kelly_sizing": self.kelly_sizing,
@@ -899,6 +901,7 @@ def run_backtest(
     entry_quantile_window: int = 0,
     vol_gate_feature: str | None = None,
     vol_gate_min: float = 0.0,
+    trend_filter_sma_bars: int = 0,
     precomputed_routing_diagnostics: dict | None = None,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
     maker_fee_rate_per_side: float = DEFAULT_MAKER_FEE_RATE_PER_SIDE,
@@ -1017,6 +1020,24 @@ def run_backtest(
     # single-model path `short_threshold` is a LOW cutoff on the same score
     # ("prob below this => SELL"), so a high-side quantile there would be
     # backwards, and it is refused at the CLI rather than silently applied.
+    # Trailing simple moving average of close, for the direction filter. Built
+    # with a running sum so a 200-day window over three million 1m bars stays
+    # linear. Bars before the window fills get None and are refused, not waved
+    # through: an unknown trend is not an uptrend.
+    trend_sma: list[float | None] = []
+    if trend_filter_sma_bars > 0:
+        _run = 0.0
+        for _n, _c in enumerate(candles):
+            _run += float(_c.close)
+            if _n >= trend_filter_sma_bars:
+                _run -= float(candles[_n - trend_filter_sma_bars].close)
+            trend_sma.append(_run / trend_filter_sma_bars if _n + 1 >= trend_filter_sma_bars else None)
+        print(
+            f"[BACKTEST] trend filter: long entries need close > SMA({trend_filter_sma_bars}), "
+            f"short entries need close < it"
+        )
+    trend_filter_blocked = 0
+
     # Bars the volatility gate refused, so a run that trades almost nothing is
     # visibly gated rather than mysteriously quiet.
     vol_gate_skipped = 0
@@ -1071,6 +1092,7 @@ def run_backtest(
         "range_gate_enabled": range_gate_enabled,
         "range_gate_edge": range_gate_edge,
         "vol_gate_feature": vol_gate_feature,
+        "trend_filter_sma_bars": trend_filter_sma_bars,
         "vol_gate_min": vol_gate_min,
         "entry_quantile": entry_quantile,
         "entry_quantile_window": entry_quantile_window,
@@ -1542,6 +1564,22 @@ def run_backtest(
             else:
                 signal = "HOLD"
 
+        # Direction filter, applied to the SIGNAL rather than before inference:
+        # both sides may have been scored and only one is out of line with the
+        # trend. Measured on the gated fold slices, requiring close > SMA200d
+        # removed the whole -41% crash fold (1021 entries -> 0) and took the
+        # pooled long result from +0.18 bps (t=+0.34) to +1.98 (t=+2.47). Only
+        # the long side was measured; the short rule is its mirror.
+        if trend_filter_sma_bars > 0 and signal in {"BUY", "SELL"}:
+            _sma = trend_sma[i] if i < len(trend_sma) else None
+            _aligned = (
+                False if _sma is None
+                else (candle.close > _sma if signal == "BUY" else candle.close < _sma)
+            )
+            if not _aligned:
+                trend_filter_blocked += 1
+                signal = "HOLD"
+
         result.signal_counts[signal] += 1
 
         # Maker resting-limit model, part 1: try to fill an order placed on an
@@ -1796,6 +1834,12 @@ def run_backtest(
                 if maker_orders_placed else 0.0
             ),
         }
+    if trend_filter_sma_bars > 0:
+        result.trend_filter_diagnostics = {
+            "sma_bars": trend_filter_sma_bars,
+            "signals_blocked": trend_filter_blocked,
+        }
+        print(f"[BACKTEST] trend filter blocked {trend_filter_blocked:,} entry signals")
     if vol_gate_feature is not None:
         # A gated run trades less by construction, so a better net total proves
         # nothing on its own -- the eligible share is what makes the comparison
