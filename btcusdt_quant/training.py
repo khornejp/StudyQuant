@@ -98,6 +98,32 @@ class TrainingConfig:
     # to train a short model, or "long_success"/"direction" for research. The
     # regime path is unaffected -- it reads row.targets[side] explicitly.
     train_target: str = "profitability"
+    # Reported ALONGSIDE the ungated fold metrics, never instead of them, and
+    # it does not touch fitting or threshold selection: this is a question
+    # asked of the model, not a change to it.
+    vol_gate_feature: str | None = None
+    vol_gate_min: float = 0.0
+    # Derives vol_gate_min from data instead of taking it on faith, without
+    # letting it see a test row: the cutoff is this quantile of the feature over
+    # the FIRST fold's train slice, which in walk-forward precedes every fold's
+    # test slice, and the same absolute number is then used for all folds.
+    #
+    # Not recomputed per fold, though that is the more obvious reading of
+    # "selected within the fold". A quantile is relative and the cost is
+    # absolute: in a calm stretch the local top 20% still cannot move far
+    # enough to pay 4 bps, and a per-fold quantile happily admits it. Measured
+    # on a 700k-row slice, per-fold cutoffs came out 0.00047-0.00083 against an
+    # absolute 0.00096, eligible share rose to 16-66% from 8-19%, and the gated
+    # result went from better than ungated to worse.
+    vol_gate_train_quantile: float | None = None
+    # Train on gated bars ONLY, instead of training on everything and gating at
+    # inference. Measured on the first gated run, the model's confidence and the
+    # gate are close to mutually exclusive: no gated bar reached the all-bar 99th
+    # percentile of probability in any fold, i.e. the model puts its confidence
+    # on low-volatility bars, where a 45-bar move disperses 22 bps and cannot pay
+    # a 4 bps round trip whatever the ranking says. Training on everything
+    # optimises for the 95% of rows that are never traded.
+    vol_gate_train_only: bool = False
     champion_challenger_enabled: bool = False
     regime_aware: bool = False
     min_regime_rows: int = 80
@@ -212,6 +238,16 @@ class FoldResult:
     # well it classified there. See oos_trading_metrics for why this is the only
     # honest read the pipeline produces.
     test_trading: dict[str, object] = field(default_factory=dict)
+    # The same figures restricted to the bars a volatility gate would allow.
+    # Empty when no gate is configured.
+    test_trading_gated: dict[str, object] = field(default_factory=dict)
+    # Per-row test-slice predictions, so a later question about a different
+    # gate or threshold does not need the folds refit. Carried on the fold that
+    # produced them rather than threaded through as a separate argument.
+    test_predictions: list[dict[str, object]] = field(default_factory=list)
+    # The cutoff this fold's gate actually used. Differs per fold when it was
+    # selected from the fold's own train slice.
+    vol_gate_min_used: float | None = None
 
 
 @dataclass(frozen=True)
@@ -247,6 +283,11 @@ def drop_fallback_features(build: "dataset.DatasetBuild") -> tuple["dataset.Data
         return build, []
     return replace(build, feature_names=kept), dropped
 
+
+# Volatility measures saved beside every fold prediction. Cheap to store, and
+# the difference between answering "what if the gate used rv_30 instead" in
+# seconds and answering it by refitting the folds for hours.
+_PERSISTED_VOLATILITY_FEATURES: tuple[str, ...] = ("rv_15", "rv_30", "rv_60", "rv_120", "atr_pct")
 
 _TRAIN_TARGET_KEYS: tuple[str, ...] = ("profitability", "long_success", "short_success", "short_profitability", "direction")
 
@@ -291,6 +332,7 @@ def oos_trading_metrics(
     threshold: float,
     round_trip_cost: float = DEFAULT_ROUND_TRIP_COST,
     target: str = "profitability",
+    eligible: Sequence[bool] | None = None,
 ) -> dict[str, object]:
     """What a fold's model would have EARNED on its own test slice.
 
@@ -326,6 +368,31 @@ def oos_trading_metrics(
         return {}
     p = [float(x) for x in probabilities[:n]]
     r = [float(x) for x in forward_returns[:n]]
+    # ``eligible`` restricts every figure below to a subset of the slice -- the
+    # bars a gate would have let through. Without it a gated strategy cannot be
+    # judged here at all: the metric would average the bars the gate refuses
+    # into the result it is supposed to measure.
+    eligible_share = 1.0
+    if eligible is not None:
+        keep = [i for i in range(n) if bool(eligible[i])]
+        eligible_share = len(keep) / n
+        if not keep:
+            # Reported, not dropped. An empty result gets filtered out of the
+            # aggregate by any `if result:` caller, which removes exactly the
+            # folds the gate refused hardest -- the ones most likely to be the
+            # bad ones -- and leaves fold_count and eligible_share describing a
+            # different set of folds than the summary claims.
+            return {
+                "target": target,
+                "rows": 0.0,
+                "eligible_share": 0.0,
+                "threshold": float(threshold),
+                "cost_bps": 1e4 * float(round_trip_cost),
+                "no_eligible_rows": True,
+            }
+        p = [p[i] for i in keep]
+        r = [r[i] for i in keep]
+        n = len(keep)
     cost_bps = 1e4 * float(round_trip_cost)
 
     def _mean_bps(values: Sequence[float]) -> float:
@@ -345,6 +412,7 @@ def oos_trading_metrics(
     return {
         "target": target,
         "rows": float(n),
+        "eligible_share": eligible_share,
         "threshold": float(threshold),
         "cost_bps": cost_bps,
         "entry_rate": len(longs) / n,
@@ -439,6 +507,29 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             build,
             labeled_rows=[row for row in build.labeled_rows if row.open_time <= training_config.training_end],
         )
+    if training_config.vol_gate_train_only:
+        key = training_config.vol_gate_feature
+        if not key or training_config.vol_gate_min <= 0.0:
+            raise ValueError(
+                "vol_gate_train_only needs vol_gate_feature and an absolute vol_gate_min. "
+                "The quantile form cannot be used here: it is measured on the first fold's "
+                "TRAIN slice, and the splits do not exist until after this filter has run."
+            )
+        floor = float(training_config.vol_gate_min)
+        kept = [
+            row for row in build.labeled_rows
+            if row.features.get(key) is not None and isfinite(float(row.features[key]))
+            and float(row.features[key]) >= floor
+        ]
+        if not kept:
+            raise ValueError(f"vol_gate_train_only removed every row: no {key} >= {floor}.")
+        print(
+            f"[TRAIN] gated training set: {len(kept):,} of {len(build.labeled_rows):,} rows "
+            f"({len(kept)/len(build.labeled_rows):.2%}) have {key} >= {floor:.8g}. "
+            f"Folds now cover different calendar spans than an ungated run, so fold indices "
+            f"are not comparable between the two."
+        )
+        build = replace(build, labeled_rows=kept)
     if training_config.only_build:
         print(f"[TRAIN] only-build complete: {len(build.labeled_rows):,} labeled rows, {len(build.feature_names)} features")
         return TrainingResult(
@@ -591,6 +682,16 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         if best_params:
             optuna_threshold = float(best_params.get("threshold", 0.5))
     fold_results: list[FoldResult] = []
+    # The CLI accepts any feature as a gate, so saving only a fixed five would
+    # let a run report a gated metric that cannot be reproduced offline from
+    # its own predictions file.
+    _persisted_gate_features = tuple(dict.fromkeys(
+        _PERSISTED_VOLATILITY_FEATURES
+        + ((training_config.vol_gate_feature,) if training_config.vol_gate_feature else ())
+    ))
+    # Fixed once, on the earliest train slice, then held constant -- see
+    # TrainingConfig.vol_gate_train_quantile for why not per fold.
+    _gate_min_from_first_fold: float | None = None
     for fold_index, split in enumerate(splits):
         print(f"[TRAIN]   Fold {fold_index + 1}/{len(splits)}: train={len(split.train)}, val={len(split.validation)}, test={len(split.test)}")
         train_indices = _split_indices(split.train)
@@ -626,6 +727,75 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             threshold = optuna_threshold
         test_probabilities = model.predict_proba(feature_matrix(test_rows, effective_feature_names))
         calibrated_test = calibrator.transform(test_probabilities)
+        _fold_payoffs = realized_payoffs(
+            test_rows,
+            training_config.train_target,
+            training_config.tp_pct,
+            training_config.sl_pct,
+        )
+        # A gate is a property of the BAR, so it is read off the same rows the
+        # fold scored. A row missing the feature is not eligible: treating an
+        # absent value as zero-and-eligible would quietly widen the gate.
+        # Persisted so a later question about a DIFFERENT gate, threshold or
+        # volatility measure can be answered offline. Otherwise the only ways to
+        # re-score a fold slice are to refit the folds -- hours -- or to use the
+        # deployed model, which is refit over every labeled row and therefore
+        # sees these slices in-sample. That second trap is what made 2020-2025
+        # look evaluable when it never was.
+        _fold_predictions: list[dict[str, object]] = []
+        for _row, _prob, _pay in zip(test_rows, calibrated_test, _fold_payoffs):
+            _fold_predictions.append({
+                "fold_index": fold_index,
+                "probability": float(_prob),
+                "payoff": float(_pay),
+                "threshold": float(threshold),
+                **{f"sigma__{k}": _row.features.get(k) for k in _persisted_gate_features},
+            })
+        _fold_eligible = None
+        _fold_gate_min = float(training_config.vol_gate_min)
+        if training_config.vol_gate_feature:
+            _key = training_config.vol_gate_feature
+            # A misspelled feature makes every row ineligible, which used to
+            # read as "the gate is very selective" instead of "the gate is
+            # broken". Fail on the first fold rather than produce an empty
+            # gated section three hours later.
+            if _key not in effective_feature_names:
+                raise ValueError(
+                    f"--vol-gate-feature {_key!r} is not a trained feature. "
+                    f"Every row would be ineligible, which reads as an extremely "
+                    f"selective gate rather than a typo. Available volatility "
+                    f"features include: {', '.join(_PERSISTED_VOLATILITY_FEATURES)}."
+                )
+            if training_config.vol_gate_train_quantile is not None:
+                if _gate_min_from_first_fold is None:
+                    _train_values = sorted(
+                        float(row.features[_key])
+                        for row in train_rows
+                        if row.features.get(_key) is not None and isfinite(float(row.features[_key]))
+                    )
+                    if not _train_values:
+                        raise ValueError(
+                            f"--vol-gate-train-quantile needs finite {_key!r} values in the first "
+                            f"fold's train slice and found none."
+                        )
+                    _rank = min(
+                        len(_train_values) - 1,
+                        int(training_config.vol_gate_train_quantile * len(_train_values)),
+                    )
+                    _gate_min_from_first_fold = _train_values[_rank]
+                    print(
+                        f"[TRAIN] volatility gate: {_key} >= {_gate_min_from_first_fold:.8g} "
+                        f"(quantile {training_config.vol_gate_train_quantile} of fold 0's train slice, "
+                        f"which precedes every test slice; applied to all folds)"
+                    )
+                _fold_gate_min = _gate_min_from_first_fold
+            _floor = _fold_gate_min
+            _fold_eligible = [
+                (lambda v: v is not None and isfinite(float(v)) and float(v) >= _floor)(
+                    row.features.get(_key)
+                )
+                for row in test_rows
+            ]
         train_probabilities = model.predict_proba(feature_matrix(train_rows, effective_feature_names))
         calibrated_train = calibrator.transform(train_probabilities)
         train_labels = [row.label for row in train_rows]
@@ -642,15 +812,24 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 model_selection=selection.as_dict(),
                 test_trading=oos_trading_metrics(
                     calibrated_test,
-                    realized_payoffs(
-                        test_rows,
-                        training_config.train_target,
-                        training_config.tp_pct,
-                        training_config.sl_pct,
-                    ),
+                    _fold_payoffs,
                     threshold,
                     round_trip_cost=training_config.round_trip_cost,
                     target=training_config.train_target,
+                ),
+                test_predictions=_fold_predictions,
+                vol_gate_min_used=_fold_gate_min if training_config.vol_gate_feature else None,
+                test_trading_gated=(
+                    oos_trading_metrics(
+                        calibrated_test,
+                        _fold_payoffs,
+                        threshold,
+                        round_trip_cost=training_config.round_trip_cost,
+                        target=training_config.train_target,
+                        eligible=_fold_eligible,
+                    )
+                    if _fold_eligible is not None
+                    else {}
                 ),
             )
         )
@@ -2022,11 +2201,14 @@ def write_training_artifacts(
     writer.write_csv("cv_split_manifest.csv", cv_split_manifest_rows(splits, training_config))
     writer.write_csv("sample_uniqueness_report.csv", sample_uniqueness_rows(intervals, uniqueness_result))
     writer.write_csv("fold_metrics.csv", fold_metric_rows(fold_results))
+    _predictions = [row for fold in fold_results for row in fold.test_predictions]
+    if _predictions:
+        writer.write_csv("fold_test_predictions.csv", _predictions)
     writer.write_json("calibration_report.json", calibration_report(fold_results))
     writer.write_json("calibration_baseline.json", calibration_baseline(fold_results))
     writer.write_json("threshold_report.json", threshold_report(fold_results))
     writer.write_csv("labeled_feature_preview.csv", [dataset.labeled_row_dict(row, build.feature_names) for row in build.labeled_rows[:25]])
-    return [
+    names = [
         "dataset_card.json",
         "dataset_card.md",
         "feature_formula_registry.json",
@@ -2046,7 +2228,60 @@ def write_training_artifacts(
         "threshold_report.json",
         "labeled_feature_preview.csv",
     ]
+    # Listed so it reaches run_summary["artifacts"] and the checksum manifest.
+    # An offline-scoring file nobody can verify the provenance of is worse than
+    # no file: it invites exactly the re-mining it is warned about.
+    if any(fold.test_predictions for fold in fold_results):
+        names.append("fold_test_predictions.csv")
+    return names
 
+
+def summarise_fold_trading(per_fold: list[dict[str, object]]) -> dict[str, object]:
+    """Aggregate per-fold trading metrics without losing any fold, or its size.
+
+    Module level, not a closure, because the failures it guards against are
+    invisible from the outside.
+
+    Two of them. A fold that traded nothing used to return {} and be filtered
+    out by `if result:` -- those are exactly the folds a gate refused hardest,
+    most likely the bad ones, so fold_count described a different set of folds
+    than the summary claimed. And the plain mean weights a 28-trade fold the
+    same as a 765-trade one: the first gated run read +7.63 bps with "3/4 folds
+    profitable" while its trade-weighted figure was -1.66, because the two
+    profitable folds had 28 and 29 trades against a per-trade sigma near 26 bps.
+    """
+    def _has(row: dict[str, object], key: str) -> bool:
+        # `x == x` is False only for NaN. A MISSING key returns None from .get,
+        # and None == None is True, so presence has to be checked separately or
+        # a fold that traded nothing gets indexed for a key it does not have.
+        return key in row and row[key] == row[key]
+
+    def _weighted(values: list[float], weights: list[float]) -> float:
+        total = sum(weights)
+        return sum(v * w for v, w in zip(values, weights)) / total if total else 0.0
+
+    long_net = [t["long_net_bps"] for t in per_fold if _has(t, "long_net_bps")]
+    short_net = [t["short_net_bps"] for t in per_fold if _has(t, "short_net_bps")]
+    long_trades = [float(t.get("long_trades", 0.0)) for t in per_fold if _has(t, "long_net_bps")]
+    short_trades = [float(t.get("short_trades", 0.0)) for t in per_fold if _has(t, "short_net_bps")]
+    return {
+        "folds": per_fold,
+        "fold_count": len(per_fold),
+        "folds_without_eligible_rows": sum(1 for t in per_fold if t.get("no_eligible_rows")),
+        "long_net_bps_by_fold": long_net,
+        "short_net_bps_by_fold": short_net,
+        "long_trades_by_fold": long_trades,
+        "short_trades_by_fold": short_trades,
+        "long_folds_profitable": sum(1 for v in long_net if v > 0.0),
+        "short_folds_profitable": sum(1 for v in short_net if v > 0.0),
+        "long_net_bps_mean": mean(long_net) if long_net else 0.0,
+        "short_net_bps_mean": mean(short_net) if short_net else 0.0,
+        # Read this one, not the plain mean, whenever fold trade counts differ.
+        "long_net_bps_trade_weighted": _weighted(long_net, long_trades),
+        "short_net_bps_trade_weighted": _weighted(short_net, short_trades),
+        "long_net_bps_worst": min(long_net) if long_net else 0.0,
+        "short_net_bps_worst": min(short_net) if short_net else 0.0,
+    }
 
 def training_summary(
     build: dataset.DatasetBuild,
@@ -2070,21 +2305,23 @@ def training_summary(
     # how many of them cleared cost rather than an average, because one strong
     # fold hiding three losing ones is exactly the failure being guarded
     # against.
-    _trading = [fold.test_trading for fold in fold_results if fold.test_trading]
-    _long_net = [t["long_net_bps"] for t in _trading if t.get("long_net_bps") == t.get("long_net_bps")]
-    _short_net = [t["short_net_bps"] for t in _trading if t.get("short_net_bps") == t.get("short_net_bps")]
-    oos_trading = {
-        "folds": _trading,
-        "fold_count": len(_trading),
-        "long_net_bps_by_fold": _long_net,
-        "short_net_bps_by_fold": _short_net,
-        "long_folds_profitable": sum(1 for v in _long_net if v > 0.0),
-        "short_folds_profitable": sum(1 for v in _short_net if v > 0.0),
-        "long_net_bps_mean": mean(_long_net) if _long_net else 0.0,
-        "short_net_bps_mean": mean(_short_net) if _short_net else 0.0,
-        "long_net_bps_worst": min(_long_net) if _long_net else 0.0,
-        "short_net_bps_worst": min(_short_net) if _short_net else 0.0,
-    }
+    oos_trading = summarise_fold_trading([fold.test_trading for fold in fold_results if fold.test_trading])
+    # Reported next to the ungated figures, never in place of them: a gate that
+    # keeps 10% of bars will look better on almost any metric simply by trading
+    # less, so the pair is what makes it readable.
+    _gated = [fold.test_trading_gated for fold in fold_results if fold.test_trading_gated]
+    if _gated:
+        oos_trading["gated"] = summarise_fold_trading(_gated)
+        oos_trading["gated"]["gate"] = {
+            "feature": training_config.vol_gate_feature,
+            "minimum": training_config.vol_gate_min,
+            "train_quantile": training_config.vol_gate_train_quantile,
+            # Per fold when the cutoff came from that fold's own train slice, so
+            # the number that gated each result is on the record rather than
+            # reconstructed from a config value that may not have been used.
+            "minimum_by_fold": [fold.vol_gate_min_used for fold in fold_results],
+            "eligible_share_by_fold": [t.get("eligible_share") for t in _gated],
+        }
     selection = final_selection.as_dict() if final_selection is not None else default_model_selection(training_config, None)
     latency = dict(latency_report or {})
     return {

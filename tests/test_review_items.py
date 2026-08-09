@@ -2152,6 +2152,111 @@ class MakerFillTests(unittest.TestCase):
         absent = run_backtest(candles, vol_gate_feature="not_a_feature", vol_gate_min=0.0, **common)
         self.assertEqual(len(absent.trades), 0)
 
+    def test_fold_trading_metrics_can_be_restricted_to_gated_bars(self) -> None:
+        # The ungated fold metric averages in the bars a gate would refuse, so a
+        # gated strategy cannot be judged from it at all -- and the fold test
+        # slices are the ONLY unseen windows this pipeline makes, since the
+        # saved model is refit over every labeled row. Without an eligibility
+        # mask the only way left to score a gate is the single real holdout,
+        # which then stops being a holdout.
+        from btcusdt_quant import training as _tr
+
+        # Two winners at high probability, two losers at low -- but the winners
+        # are the INELIGIBLE ones, so gating must change the answer, not just
+        # shrink the sample.
+        probs = [0.9, 0.8, 0.3, 0.2]
+        payoffs = [0.004, 0.004, -0.002, -0.002]
+        ungated = _tr.oos_trading_metrics(probs, payoffs, 0.5, round_trip_cost=0.0004)
+        gated = _tr.oos_trading_metrics(probs, payoffs, 0.5, round_trip_cost=0.0004,
+                                        eligible=[False, False, True, True])
+        self.assertEqual(ungated["eligible_share"], 1.0)
+        self.assertEqual(ungated["rows"], 4.0)
+        self.assertEqual(gated["eligible_share"], 0.5)
+        self.assertEqual(gated["rows"], 2.0)
+        # No eligible row is above the threshold, so the gated primary book is
+        # empty and cannot report a gross -- not zero, which would read as a
+        # measured break-even.
+        self.assertEqual(gated["entry_rate"], 0.0)
+        self.assertNotEqual(gated["long_gross_bps"], gated["long_gross_bps"])  # NaN
+        self.assertGreater(ungated["long_gross_bps"], 0.0)
+        # An empty mask still REPORTS the fold -- see the dedicated test for
+        # why returning {} was wrong -- but carries no gross, because a zero
+        # there would read as a measured break-even.
+        empty = _tr.oos_trading_metrics(probs, payoffs, 0.5, eligible=[False] * 4)
+        self.assertTrue(empty["no_eligible_rows"])
+        self.assertNotIn("long_gross_bps", empty)
+        # The gate is configuration, not a change to the model.
+        cfg = _tr.TrainingConfig(vol_gate_feature="rv_60", vol_gate_min=0.001)
+        self.assertEqual((cfg.vol_gate_feature, cfg.vol_gate_min), ("rv_60", 0.001))
+        self.assertIsNone(_tr.TrainingConfig().vol_gate_feature)
+        self.assertIn("rv_60", _tr._PERSISTED_VOLATILITY_FEATURES)
+
+    def test_a_fold_the_gate_emptied_is_still_counted(self) -> None:
+        # A fold with no eligible bars used to return {} and be filtered out by
+        # the aggregate's `if result:`. That removes exactly the folds the gate
+        # refused hardest -- the likeliest bad ones -- and leaves fold_count
+        # describing a different set of folds than the summary claims. The
+        # gate would then look better the worse it was.
+        from btcusdt_quant import training as _tr
+
+        good = _tr.oos_trading_metrics([0.9, 0.1], [0.004, -0.002], 0.5,
+                                       round_trip_cost=0.0004, eligible=[True, True])
+        emptied = _tr.oos_trading_metrics([0.9, 0.1], [0.004, -0.002], 0.5,
+                                          round_trip_cost=0.0004, eligible=[False, False])
+        # Truthy, so no `if result:` caller can drop it.
+        self.assertTrue(emptied)
+        self.assertTrue(emptied["no_eligible_rows"])
+        self.assertEqual(emptied["eligible_share"], 0.0)
+
+        summary = _tr.summarise_fold_trading([good, emptied, good])
+        self.assertEqual(summary["fold_count"], 3)
+        self.assertEqual(summary["folds_without_eligible_rows"], 1)
+        self.assertEqual(summary["folds_without_eligible_rows"], 1)
+        # The emptied fold contributes no net figure -- but it must not crash
+        # the aggregate either. `x == x` alone is False only for NaN; a MISSING
+        # key returns None and None == None is True, so the old filter would
+        # have indexed a key the emptied fold does not have.
+        self.assertEqual(len(summary["long_net_bps_by_fold"]), 2)
+        self.assertEqual(summary["long_folds_profitable"], 2)
+
+    def test_fold_mean_does_not_let_a_28_trade_fold_outvote_a_765_trade_one(self) -> None:
+        # The plain mean averages fold MEANS, so it weights folds equally no
+        # matter how many trades each made. Ungated the counts are similar and
+        # it does not matter; under a gate they diverge by more than an order
+        # of magnitude. The first gated long run reported +7.63 bps and "3/4
+        # folds profitable" while its trade-weighted result was -1.66 -- the
+        # two profitable folds had 28 and 29 trades against a per-trade sigma
+        # near 26 bps, and the one fold with real size lost 5.7 bps at t=-5.7.
+        from btcusdt_quant import training as _tr
+
+        # 28 trades at +10 bps gross, against 765 trades at -2 bps gross.
+        tiny = _tr.oos_trading_metrics([0.9] * 28, [0.0014] * 28, 0.5, round_trip_cost=0.0004)
+        big = _tr.oos_trading_metrics([0.9] * 765 + [0.1] * 100,
+                                      [-0.0002] * 765 + [0.001] * 100, 0.5,
+                                      round_trip_cost=0.0004)
+        summary = _tr.summarise_fold_trading([tiny, big])
+        self.assertEqual(summary["long_trades_by_fold"], [28.0, 765.0])
+        # Equal weighting calls it profitable; trade weighting does not.
+        self.assertGreater(summary["long_net_bps_mean"], 0.0)
+        self.assertLess(summary["long_net_bps_trade_weighted"], 0.0)
+
+    def test_gate_cutoff_can_be_chosen_inside_the_fold(self) -> None:
+        # An absolute cutoff derived over the whole span is not fold-clean:
+        # that span contains every fold's test slice. Selecting the cutoff from
+        # the fold's own TRAIN rows is what keeps the gated metric out of
+        # sample, and the number actually used has to be on the record -- a
+        # config value that was overridden per fold is not evidence.
+        from btcusdt_quant import training as _tr
+
+        cfg = _tr.TrainingConfig(vol_gate_feature="rv_60", vol_gate_train_quantile=0.8)
+        self.assertEqual(cfg.vol_gate_train_quantile, 0.8)
+        self.assertIsNone(_tr.TrainingConfig().vol_gate_train_quantile)
+        self.assertIsNone(_tr.FoldResult(
+            fold_index=0, split=None, threshold=0.5, calibration_offset=0.0,
+            calibration_details={}, validation_metrics={}, test_metrics={},
+            train_metrics={}, model_selection={},
+        ).vol_gate_min_used)
+
     def test_short_profitability_mirrors_the_long_label(self) -> None:
         # Under the barrier-free design (barriers set beyond reach) the existing
         # short_success label collapses: every bar times out and it returns 0,

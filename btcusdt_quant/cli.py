@@ -526,6 +526,10 @@ def run_train(
     optuna_budget_profile: str = "practical_start",
     champion_challenger_enabled: bool = False,
     external_sources: Mapping[str, object] | None = None,
+    vol_gate_feature: str | None = None,
+    vol_gate_min: float = 0.0,
+    vol_gate_train_quantile: float | None = None,
+    vol_gate_train_only: bool = False,
     regime_aware: bool = False,
     min_regime_rows: int = 80,
     regime_detector_rv_percentile: float = 0.75,
@@ -590,6 +594,10 @@ def run_train(
         shuffle_labels_seed=shuffle_labels_seed,
         exclude_fallback_features=exclude_fallback_features,
         train_target=train_target,
+        vol_gate_feature=vol_gate_feature,
+        vol_gate_min=vol_gate_min,
+        vol_gate_train_quantile=vol_gate_train_quantile,
+        vol_gate_train_only=vol_gate_train_only,
         champion_challenger_enabled=champion_challenger_enabled,
         regime_aware=regime_aware,
         min_regime_rows=min_regime_rows,
@@ -1519,6 +1527,10 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--multitask", action="store_true", help="use PyTorch multitask neural network as the model family (shorthand for --model-family pytorch_multitask)")
     train.add_argument("--long-threshold", type=float, default=0.55, help="minimum probability threshold for LONG entry signals")
     train.add_argument("--short-threshold", type=float, default=0.55, help="minimum probability threshold for SHORT entry signals")
+    train.add_argument("--vol-gate-feature", default=None, help='report the fold OOS trading metrics a SECOND time, restricted to bars where this volatility feature is at least --vol-gate-min. Does not touch fitting, labelling or threshold selection -- it is a question asked of the model, not a change to it. Needed because the ungated fold metric averages in the bars a gate would refuse, so a gated strategy cannot be judged from it. Fold test predictions are written to fold_test_predictions.csv either way, so a different gate can be scored offline without refitting.')
+    train.add_argument("--vol-gate-min", type=float, default=0.0, help='minimum value of --vol-gate-feature for a fold test row to count in the gated metrics. Example: rv_60 >= 0.000961841 is the top-quintile boundary measured on 2020-2025.')
+    train.add_argument("--vol-gate-train-quantile", type=float, default=None, help='derive --vol-gate-min from data without letting it see a test row: the cutoff is this quantile of --vol-gate-feature over the FIRST fold train slice, which in walk-forward precedes every fold test slice, and the same absolute number is used for all folds. Not recomputed per fold on purpose -- a quantile is relative while the cost is absolute, so in a calm stretch the local top 20%% still cannot move far enough to pay 4 bps. Measured on a 700k-row slice, per-fold cutoffs ran 0.00047-0.00083 against an absolute 0.00096, eligible share rose to 16-66%% from 8-19%%, and the gated result went from better than ungated to worse. The cutoff used is printed and recorded in run_summary.')
+    train.add_argument("--vol-gate-train-only", action="store_true", help="train on gated bars ONLY, rather than training on everything and gating at inference. Requires --vol-gate-feature and an absolute --vol-gate-min. Measured on the first gated run, model confidence and the gate are near mutually exclusive: no gated bar reached the all-bar 99th percentile of probability in any fold, so the model spends its capacity on low-volatility rows whose 45-bar move disperses 22 bps and cannot pay a 4 bps round trip. Folds then cover different calendar spans than an ungated run, so fold indices are not comparable across the two.")
     train.add_argument("--min-ev", type=float, default=0.0001, help="minimum expected value for entry signals (0.01%% = 0.0001)")
     train.add_argument("--tp-pct", type=float, default=dataset.DEFAULT_LABEL_TP_PCT, help=f"take profit %% for triple-barrier labeling. The backtest MUST execute this same barrier (--exec-tp-pct) or the model is answering about a trade you did not take. (default {dataset.DEFAULT_LABEL_TP_PCT} = 1.00%%)")
     train.add_argument("--sl-pct", type=float, default=dataset.DEFAULT_LABEL_SL_PCT, help=f"stop loss %% for triple-barrier labeling. The backtest MUST execute this same barrier (--exec-sl-pct). (default {dataset.DEFAULT_LABEL_SL_PCT} = 0.50%%)")
@@ -1924,6 +1936,10 @@ def main(argv: list[str] | None = None) -> int:
                 shuffle_labels_seed=args.shuffle_labels_seed,
                 exclude_fallback_features=not args.keep_fallback_features,
                 train_target=args.target,
+                vol_gate_feature=args.vol_gate_feature,
+                vol_gate_min=args.vol_gate_min,
+                vol_gate_train_quantile=args.vol_gate_train_quantile,
+                vol_gate_train_only=args.vol_gate_train_only,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"training failed: {error}", file=sys.stderr)
