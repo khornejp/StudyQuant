@@ -310,10 +310,7 @@ def drop_fallback_features(build: "dataset.DatasetBuild") -> tuple["dataset.Data
 # regime", never as "independent".
 MIN_ENTRIES_FOR_AN_INDEPENDENT_YEAR = 200
 
-# Splitters whose test windows cannot overlap by construction. Everything
-# else re-scores shared rows, so its fold vote is not a count of
-# confirmations no matter what the entry-level overlap works out to.
-_CV_MODES_WITH_DISJOINT_TEST_WINDOWS = frozenset({"walk_forward"})
+
 
 _PERSISTED_VOLATILITY_FEATURES: tuple[str, ...] = ("rv_15", "rv_30", "rv_60", "rv_120", "atr_pct")
 
@@ -2310,7 +2307,7 @@ def write_training_artifacts(
     return names
 
 
-def summarise_fold_trading(per_fold: list[dict[str, object]], cv_mode: str | None = None) -> dict[str, object]:
+def summarise_fold_trading(per_fold: list[dict[str, object]], splits: Sequence[object] | None = None) -> dict[str, object]:
     """Aggregate per-fold trading metrics without losing any fold, or its size.
 
     Module level, not a closure, because the failures it guards against are
@@ -2339,6 +2336,22 @@ def summarise_fold_trading(per_fold: list[dict[str, object]], cv_mode: str | Non
     # stretch can carry every fold: 12-of-15-positive was one 2021 counted
     # fifteen times, with 2022 contributing nothing. Reported next to the vote
     # so the vote cannot be read alone.
+    # Do the fold test windows actually overlap? Intersecting the index sets
+    # answers it for any splitter, present or future, and cannot be talked out
+    # of by a mislabelled mode. Absent splits means unknown, and unknown is not
+    # independent.
+    test_windows_disjoint = False
+    shared_test_rows = 0
+    if splits:
+        seen: set[int] = set()
+        total_test_rows = 0
+        for split in splits:
+            indices = set(_split_indices(getattr(split, "test", ()) or ()))
+            total_test_rows += len(indices)
+            shared_test_rows += len(indices & seen)
+            seen |= indices
+        test_windows_disjoint = bool(seen) and shared_test_rows == 0 and total_test_rows == len(seen)
+
     entries_total = 0
     unique_keys: set[int] = set()
     for row in per_fold:
@@ -2399,16 +2412,17 @@ def summarise_fold_trading(per_fold: list[dict[str, object]], cv_mode: str | Non
         "independent_years": independent_years,
         "min_entries_for_an_independent_year": MIN_ENTRIES_FOR_AN_INDEPENDENT_YEAR,
         "largest_year_share": largest_year_share,
-        "cv_mode": cv_mode,
-        # Topology first, then the data. Entry overlap alone is not enough: CPCV
-        # folds can share most of their test rows and still SELECT disjoint
-        # entries, which lands overlap_factor near 1.0 and would have certified
-        # a correlated vote. Only a scheme whose test windows are disjoint by
-        # construction can produce True here, and walk-forward is the only one
-        # this repo has. Anything else -- combinatorial, or an unnamed mode --
-        # is False regardless of how the numbers look.
+        "test_windows_disjoint": test_windows_disjoint,
+        "shared_test_rows": shared_test_rows,
+        # Topology first, then the data, and topology is MEASURED rather than
+        # declared. Entry overlap alone is not enough -- CPCV folds can share
+        # most of their test rows and still select disjoint entries, landing
+        # overlap_factor near 1.0 -- and a cv_mode string is not enough either,
+        # because a caller can label CPCV metrics "walk_forward" and the
+        # function has no way to know. So the splits themselves are intersected.
+        # No splits, no certification.
         "fold_vote_is_independent_evidence": (
-            cv_mode in _CV_MODES_WITH_DISJOINT_TEST_WINDOWS
+            test_windows_disjoint
             and independent_years >= 2
             and largest_year_share <= 0.75
             and overlap_factor <= 1.05
@@ -2448,14 +2462,14 @@ def training_summary(
     # against.
     oos_trading = summarise_fold_trading(
         [fold.test_trading for fold in fold_results if fold.test_trading],
-        cv_mode=training_config.cv_mode,
+        splits=splits,
     )
     # Reported next to the ungated figures, never in place of them: a gate that
     # keeps 10% of bars will look better on almost any metric simply by trading
     # less, so the pair is what makes it readable.
     _gated = [fold.test_trading_gated for fold in fold_results if fold.test_trading_gated]
     if _gated:
-        oos_trading["gated"] = summarise_fold_trading(_gated, cv_mode=training_config.cv_mode)
+        oos_trading["gated"] = summarise_fold_trading(_gated, splits=splits)
         oos_trading["gated"]["gate"] = {
             "feature": training_config.vol_gate_feature,
             "minimum": training_config.vol_gate_min,

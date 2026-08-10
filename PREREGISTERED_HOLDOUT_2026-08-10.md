@@ -82,15 +82,25 @@ Evaluation:
 --long-only
 ```
 
-`--long-only` was added to the codebase after this document was first written
-and before any holdout number was read. It is plumbing, not a parameter: the
-single-model branch resolved its cutoffs inline and never consulted the rolling
-quantile, and the CLI refused `--entry-quantile` without a two-sided model at
-all. Both were guarding a real hazard -- on that branch a short fires because
-the single score is LOW, so a top-fraction (high) quantile gates it backwards
--- but they also blocked the long-only configuration frozen above. The flag
-removes the short side instead of gating it wrongly. No value in this document
-changed, and the first holdout result had not been produced when it was made.
+`--long-only` was added after this document was written and before any result
+was read. **It is a material change to the traded strategy, not plumbing.** An
+earlier revision called it plumbing; that was wrong and is retracted here.
+
+What actually happened: the frozen command would not execute. The single-model
+branch resolved its cutoffs inline and never consulted the rolling quantile,
+and the CLI refused `--entry-quantile` without a two-sided model. Both guarded
+a real hazard -- on that branch a short fires because the single score is LOW,
+so a top-fraction (high) quantile gates it backwards.
+
+But the repair changes what gets traded: every low-score SELL is removed, and a
+dynamic cutoff with a warmup now decides entries on a path that previously used
+a fixed one. Different bars trade. That is a selection rule.
+
+So this does not restore evidentiary validity, and adding it cannot: the
+configuration frozen above was never executable as written, which means no
+version of this run tests a strategy that was fully specified before the
+evaluation period was available. It is one more reason the exercise is a
+post-selection check rather than a holdout -- not a repair that makes it one.
 
 ### The short side is DEFERRED, not dropped
 
@@ -156,13 +166,20 @@ so an uptrend is the window that can actually falsify it.
 Read the **trade-weighted** mean net bps over the whole 18 months, and the
 per-half-year breakdown. Not the plain fold mean, and not the total return.
 
-- **ACCEPT** — net > 0 over the full window, AND 2025 H1 positive, AND no
-  half-year worse than −2 bps. This means "survived an engineering check on a
-  post-selection period". It is not evidence of edge and must not be quoted as
-  one; see "What this can and cannot show".
-- **REJECT** — net ≤ 0 over the full holdout.
-- **INCONCLUSIVE** — fewer than 100 entries. The apparatus, not the edge, is
-  what failed; report it as such and do not reinterpret the number.
+Evaluate in this order. The first branch that matches wins; earlier revisions
+left INCONCLUSIVE and REJECT both matching a sparse losing run, which would
+have let the reading be chosen after the fact -- exactly where sparse data
+makes it most tempting.
+
+1. **INCONCLUSIVE** — fewer than 100 entries, *checked first and regardless of
+   sign*. The apparatus failed, not the edge. Report it as such and do not
+   reinterpret the number in either direction. A sparse loss is not a
+   falsification any more than a sparse win is a confirmation.
+2. **ACCEPT** — at least 100 entries, net > 0 over the full window, 2025 H1
+   positive, and no half-year worse than −2 bps. This means "survived an
+   engineering check on a post-selection period". It is not evidence of edge
+   and must not be quoted as one; see "What this can and cannot show".
+3. **REJECT** — everything else at 100 entries or more.
 
 A result between these is REJECT. There is no fourth branch, and no rerun with
 a different quantile, gate, or window: re-running until a configuration passes
