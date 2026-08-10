@@ -2361,6 +2361,57 @@ class MakerFillTests(unittest.TestCase):
         self.assertEqual(off.signal_counts, unfiltered.signal_counts)
         self.assertEqual(len(off.trades), len(unfiltered.trades))
 
+    def test_a_fold_vote_reports_whether_its_folds_are_independent(self) -> None:
+        # "12 of 15 folds positive" reads as fifteen confirmations. In CPCV the
+        # same rows recur across test combinations, and the first gated run put
+        # 86% of its entries in calendar 2021 with none at all in 2022 -- one
+        # regime counted fifteen times. The vote cannot be read alone, so the
+        # numbers that qualify it ship beside it.
+        from datetime import datetime, timezone as _tz
+        from btcusdt_quant import training as _tr
+
+        stamps = [datetime(2021, 3, 1, tzinfo=_tz.utc)] * 3 + [datetime(2022, 7, 1, tzinfo=_tz.utc)]
+        metrics = _tr.oos_trading_metrics(
+            [0.9, 0.9, 0.1, 0.9], [0.004, -0.002, 0.004, 0.004], 0.5,
+            round_trip_cost=0.0004, row_times=stamps,
+        )
+        self.assertEqual(metrics["coverage"]["entries_by_year"], {2021: 2, 2022: 1})
+        self.assertEqual(metrics["coverage"]["unique_months"], 2)
+        # Coverage is additional, not a replacement: the payoff figures survive.
+        self.assertGreater(metrics["long_gross_bps"], 0.0)
+        self.assertEqual(metrics["long_trades"], 3.0)
+        # Under a gate the timestamps must follow the SURVIVING rows, not the
+        # original positions -- an off-by-one here would attribute entries to
+        # the wrong year and the independence check would pass on noise.
+        gated = _tr.oos_trading_metrics(
+            [0.9, 0.9, 0.1, 0.9], [0.004, -0.002, 0.004, 0.004], 0.5,
+            round_trip_cost=0.0004, eligible=[False, False, True, True], row_times=stamps,
+        )
+        self.assertEqual(gated["coverage"]["entries_by_year"], {2022: 1})
+
+        def _fold(net, trades, years):
+            return {"long_net_bps": net, "long_trades": trades,
+                    "coverage": {"entries_by_year": years}}
+
+        # The real shape: a strong vote resting on one year.
+        one_year = [_fold(1.0, 900, {2021: 900})] * 12 + [_fold(-1.0, 100, {2021: 100})] * 3
+        summary = _tr.summarise_fold_trading(one_year)
+        self.assertEqual(summary["long_folds_profitable"], 12)
+        self.assertEqual(summary["fold_count"], 15)
+        self.assertEqual(summary["independent_years"], 1)
+        self.assertEqual(summary["largest_year_share"], 1.0)
+        self.assertFalse(summary["fold_vote_is_independent_evidence"])
+
+        # Spread across two years with enough entries in each, it qualifies.
+        spread = [_fold(1.0, 500, {2021: 250, 2022: 250})] * 4
+        wide = _tr.summarise_fold_trading(spread)
+        self.assertEqual(wide["independent_years"], 2)
+        self.assertTrue(wide["fold_vote_is_independent_evidence"])
+        # A year carrying only a handful of trades is not its own evidence.
+        thin = _tr.summarise_fold_trading([_fold(1.0, 500, {2021: 900, 2022: 5})] * 3)
+        self.assertEqual(thin["independent_years"], 1)
+        self.assertFalse(thin["fold_vote_is_independent_evidence"])
+
     def test_short_profitability_mirrors_the_long_label(self) -> None:
         # Under the barrier-free design (barriers set beyond reach) the existing
         # short_success label collapses: every bar times out and it returns 0,

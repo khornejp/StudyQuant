@@ -299,6 +299,10 @@ def drop_fallback_features(build: "dataset.DatasetBuild") -> tuple["dataset.Data
 # Volatility measures saved beside every fold prediction. Cheap to store, and
 # the difference between answering "what if the gate used rv_30 instead" in
 # seconds and answering it by refitting the folds for hours.
+# Entries a calendar year needs before it counts as its own evidence rather
+# than a handful of trades riding on another year's result.
+MIN_ENTRIES_FOR_AN_INDEPENDENT_YEAR = 200
+
 _PERSISTED_VOLATILITY_FEATURES: tuple[str, ...] = ("rv_15", "rv_30", "rv_60", "rv_120", "atr_pct")
 
 _TRAIN_TARGET_KEYS: tuple[str, ...] = ("profitability", "long_success", "short_success", "short_profitability", "direction")
@@ -345,6 +349,7 @@ def oos_trading_metrics(
     round_trip_cost: float = DEFAULT_ROUND_TRIP_COST,
     target: str = "profitability",
     eligible: Sequence[bool] | None = None,
+    row_times: Sequence[object] | None = None,
 ) -> dict[str, object]:
     """What a fold's model would have EARNED on its own test slice.
 
@@ -385,6 +390,7 @@ def oos_trading_metrics(
     # judged here at all: the metric would average the bars the gate refuses
     # into the result it is supposed to measure.
     eligible_share = 1.0
+    keep_index: list[int] = []
     if eligible is not None:
         keep = [i for i in range(n) if bool(eligible[i])]
         eligible_share = len(keep) / n
@@ -402,6 +408,7 @@ def oos_trading_metrics(
                 "cost_bps": 1e4 * float(round_trip_cost),
                 "no_eligible_rows": True,
             }
+        keep_index = keep
         p = [p[i] for i in keep]
         r = [r[i] for i in keep]
         n = len(keep)
@@ -410,7 +417,32 @@ def oos_trading_metrics(
     def _mean_bps(values: Sequence[float]) -> float:
         return 1e4 * sum(values) / len(values) if values else float("nan")
 
-    longs = [r[i] for i in range(n) if p[i] >= threshold]
+    entered = [i for i in range(n) if p[i] >= threshold]
+    longs = [r[i] for i in entered]
+    # WHEN the entries happened, not just how many. A fold vote reads as
+    # independent confirmation until you notice every fold is scoring the same
+    # calendar stretch: the first gated CPCV run put 86% of its entries in 2021
+    # and none at all in 2022, so "12 of 15 folds positive" was one regime
+    # counted fifteen times.
+    coverage: dict[str, object] = {}
+    if row_times is not None:
+        times = [
+            row_times[keep_index[i]] if eligible is not None else row_times[i]
+            for i in entered
+        ]
+        times = [when for when in times if when is not None]
+        years: dict[int, int] = {}
+        months: set[tuple[int, int]] = set()
+        for when in times:
+            years[when.year] = years.get(when.year, 0) + 1
+            months.add((when.year, when.month))
+        coverage = {
+            "entries_by_year": dict(sorted(years.items())),
+            "unique_months": len(months),
+            "first_entry": min(times).isoformat() if times else None,
+            "last_entry": max(times).isoformat() if times else None,
+        }
+
     order = sorted(range(n), key=lambda i: p[i])
     k = max(1, n // 10)
     bottom = [r[i] for i in order[:k]]
@@ -425,6 +457,7 @@ def oos_trading_metrics(
         "target": target,
         "rows": float(n),
         "eligible_share": eligible_share,
+        "coverage": coverage,
         "threshold": float(threshold),
         "cost_bps": cost_bps,
         "entry_rate": len(longs) / n,
@@ -739,6 +772,10 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             threshold = optuna_threshold
         test_probabilities = model.predict_proba(feature_matrix(test_rows, effective_feature_names))
         calibrated_test = calibrator.transform(test_probabilities)
+        # Entry timestamps, so a fold can report WHEN it traded and not only
+        # how much. Without it a fold vote reads as independent confirmation
+        # even when every fold is scoring the same calendar stretch.
+        _fold_times = [getattr(row, "open_time", None) for row in test_rows]
         _fold_payoffs = realized_payoffs(
             test_rows,
             training_config.train_target,
@@ -828,6 +865,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                     threshold,
                     round_trip_cost=training_config.round_trip_cost,
                     target=training_config.train_target,
+                    row_times=_fold_times,
                 ),
                 test_predictions=_fold_predictions,
                 vol_gate_min_used=_fold_gate_min if training_config.vol_gate_feature else None,
@@ -839,6 +877,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                         round_trip_cost=training_config.round_trip_cost,
                         target=training_config.train_target,
                         eligible=_fold_eligible,
+                        row_times=_fold_times,
                     )
                     if _fold_eligible is not None
                     else {}
@@ -2272,6 +2311,20 @@ def summarise_fold_trading(per_fold: list[dict[str, object]]) -> dict[str, objec
         total = sum(weights)
         return sum(v * w for v, w in zip(values, weights)) / total if total else 0.0
 
+    # Whether the folds are independent enough for a vote over them to mean
+    # anything. CPCV reuses rows across test combinations, so the same calendar
+    # stretch can carry every fold: 12-of-15-positive was one 2021 counted
+    # fifteen times, with 2022 contributing nothing. Reported next to the vote
+    # so the vote cannot be read alone.
+    entries_by_year: dict[int, int] = {}
+    for row in per_fold:
+        cov = row.get("coverage") or {}
+        for year, count in (cov.get("entries_by_year") or {}).items():
+            entries_by_year[int(year)] = entries_by_year.get(int(year), 0) + int(count)
+    independent_years = sum(1 for n in entries_by_year.values() if n >= MIN_ENTRIES_FOR_AN_INDEPENDENT_YEAR)
+    total_entries = sum(entries_by_year.values())
+    largest_year_share = (max(entries_by_year.values()) / total_entries) if total_entries else 0.0
+
     long_net = [t["long_net_bps"] for t in per_fold if _has(t, "long_net_bps")]
     short_net = [t["short_net_bps"] for t in per_fold if _has(t, "short_net_bps")]
     long_trades = [float(t.get("long_trades", 0.0)) for t in per_fold if _has(t, "long_net_bps")]
@@ -2284,6 +2337,11 @@ def summarise_fold_trading(per_fold: list[dict[str, object]]) -> dict[str, objec
         "short_net_bps_by_fold": short_net,
         "long_trades_by_fold": long_trades,
         "short_trades_by_fold": short_trades,
+        # Read these BEFORE the fold vote below.
+        "entries_by_year": dict(sorted(entries_by_year.items())),
+        "independent_years": independent_years,
+        "largest_year_share": largest_year_share,
+        "fold_vote_is_independent_evidence": independent_years >= 2 and largest_year_share <= 0.75,
         "long_folds_profitable": sum(1 for v in long_net if v > 0.0),
         "short_folds_profitable": sum(1 for v in short_net if v > 0.0),
         "long_net_bps_mean": mean(long_net) if long_net else 0.0,
