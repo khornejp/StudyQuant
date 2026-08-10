@@ -2197,6 +2197,27 @@ def main(argv: list[str] | None = None) -> int:
                 # A model trained on a LONG target scores P(long wins); read as
                 # a short probability it is exactly backwards, and the run would
                 # look like a working two-sided strategy the whole way through.
+                # Both slots, not just the short one. Nothing stops a short
+                # artifact being passed as --model-artifact, and there it becomes
+                # the LONG probability: P(short wins) would drive BUY signals on
+                # the bars most likely to fall, while the run prints a reassuring
+                # "two-sided" line. The asymmetry was the bug -- only the short
+                # slot was ever checked.
+                long_target = backtest.model_train_target(model)
+                if long_target is not None and backtest.model_is_short_sided(model):
+                    raise SystemExit(
+                        f"--model-artifact was trained on target '{long_target}', which scores the SHORT "
+                        "side, but it occupies the long slot. Its P(short wins) would be read as the long "
+                        "probability, so every BUY would fire on the bars the model expects to fall. Swap "
+                        "the two artifacts."
+                    )
+                if long_target is None:
+                    print(
+                        "WARNING: --model-artifact predates train_target in model.json, so the long slot's "
+                        "side cannot be verified. Confirm it was trained with --target profitability or "
+                        "long_success -- a short-target model here buys exactly where it says to sell.",
+                        file=sys.stderr,
+                    )
                 short_target = backtest.model_train_target(short_model)
                 if short_target is not None and not backtest.model_is_short_sided(short_model):
                     raise SystemExit(

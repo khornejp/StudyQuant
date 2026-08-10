@@ -1965,6 +1965,59 @@ class MakerFillTests(unittest.TestCase):
             artifact.write_text(_json.dumps(payload), encoding="utf-8")
             self.assertIsNone(backtest_module.model_train_target(_live.load_model_artifact(artifact)))
 
+    def test_train_target_survives_a_frozen_adapter(self) -> None:
+        # Two adapters are frozen dataclasses, where plain assignment raises
+        # FrozenInstanceError -- a subclass of AttributeError. The loader caught
+        # that and moved on, so the load succeeded, the marker vanished, and a
+        # short-trained stacking or multi-horizon ensemble was read as LONG and
+        # bought exactly where it said to sell. Same bug as the one the marker
+        # was added to fix, wearing a different hat.
+        import dataclasses
+        from btcusdt_quant import ensemble as _ens, live as _live
+
+        for cls in (_ens.StackingEnsembleAdapter, _ens.MultiHorizonEnsembleAdapter):
+            self.assertTrue(dataclasses.fields(cls) is not None)
+            self.assertTrue(cls.__dataclass_params__.frozen, cls.__name__)
+            frozen = object.__new__(cls)
+            with self.assertRaises(dataclasses.FrozenInstanceError):
+                frozen.train_target = "short_profitability"
+            # The loader's mechanism must reach it anyway.
+            object.__setattr__(frozen, "train_target", "short_profitability")
+            self.assertTrue(backtest_module.model_is_short_sided(frozen))
+
+        # And a target that genuinely cannot be attached must raise rather than
+        # load a model whose side is unknown -- unknown reads as long.
+        class _Slotted:
+            __slots__ = ()
+        import json as _json, tempfile
+        from pathlib import Path as _Path
+        from btcusdt_quant import models as _models
+        fitted = _models.CentroidLinearClassifier()
+        fitted.fit([[0.0], [1.0]], [0, 1])
+        fitted.feature_names = ["a"]
+        payload = dict(fitted.as_dict())
+        payload["train_target"] = "short_profitability"
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = _Path(tmp) / "model.json"
+            artifact.write_text(_json.dumps(payload), encoding="utf-8")
+            loaded = _live.load_model_artifact(artifact)
+            self.assertEqual(backtest_module.model_train_target(loaded), "short_profitability")
+
+    def test_two_sided_checks_the_long_slot_not_only_the_short(self) -> None:
+        # Nothing stopped a short artifact being passed as --model-artifact,
+        # where it becomes the LONG probability: P(short wins) would drive BUY
+        # signals on the bars most likely to fall, and the run would print a
+        # reassuring "two-sided" line. Only the short slot was ever validated.
+        import inspect
+        from btcusdt_quant import cli as _cli
+
+        src = inspect.getsource(_cli.main)
+        self.assertIn("long_target = backtest.model_train_target(model)", src)
+        self.assertIn("backtest.model_is_short_sided(model)", src)
+        # Both slots warn when the artifact predates the marker, rather than
+        # assuming the caller got the order right.
+        self.assertIn("the long slot's", src)
+
     def test_two_sided_models_score_both_sides_without_a_regime(self) -> None:
         # Before this, the ONLY backtest path that scored long and short on the
         # same bar was the regime bundle, so running two-sided meant writing a

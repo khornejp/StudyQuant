@@ -204,6 +204,18 @@ class TrainingConfig:
     def __post_init__(self) -> None:
         if self.cv_mode not in {"walk_forward", "combinatorial_purged"}:
             raise ValueError("cv_mode must be 'walk_forward' or 'combinatorial_purged'")
+        if self.vol_gate_train_quantile is not None and self.cv_mode != "walk_forward":
+            # The cutoff is measured on fold 0's train slice and reused for every
+            # fold. That is only clean under walk-forward, where fold 0's train
+            # precedes every test slice. Under CPCV the groups are combinatorial,
+            # so fold 0's train overlaps other folds' test windows and the gate
+            # would be fitted on rows it is later scored against. Pass an
+            # absolute vol_gate_min instead.
+            raise ValueError(
+                "vol_gate_train_quantile is only sound under walk_forward: it reads fold 0's "
+                "train slice, which under combinatorial_purged is not earlier than the other "
+                "folds' test slices. Pass an absolute vol_gate_min."
+            )
         if self.embargo_size < 0:
             raise ValueError("embargo_size must be non-negative")
         if self.n_groups <= 0:

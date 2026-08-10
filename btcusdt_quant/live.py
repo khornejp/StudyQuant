@@ -1550,13 +1550,27 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> models.Model
         traded backwards, which is the bug recording the field was meant to
         close. Attached here, at the one place every family is constructed,
         rather than in seven from_dicts.
+
+        Two of the adapters (StackingEnsembleAdapter, MultiHorizonEnsembleAdapter)
+        are frozen dataclasses, where plain assignment raises FrozenInstanceError
+        -- a subclass of AttributeError. Swallowing that was the same bug wearing
+        a different hat: the load succeeded, the marker vanished, and a
+        short-trained ensemble was read as long. object.__setattr__ is what
+        frozen dataclasses use internally and reaches them all; anything it
+        cannot reach raises, because a model whose side cannot be established is
+        not safe to trade in either direction.
         """
         target = payload.get("train_target")
         if adapter is not None and target is not None:
             try:
-                adapter.train_target = str(target)
-            except AttributeError:  # a frozen or slotted adapter keeps its own
-                pass
+                object.__setattr__(adapter, "train_target", str(target))
+            except AttributeError as error:
+                raise ValueError(
+                    f"model artifact records train_target={target!r} but it could not be "
+                    f"attached to a {type(adapter).__name__}: {error}. Refusing to load, "
+                    f"because a model whose side is unknown is read as LONG and a "
+                    f"short-trained one would be bought exactly where it says to sell."
+                ) from error
         return adapter
 
     try:
