@@ -1606,6 +1606,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--entry-quantile", type=float, default=None, help='enter the top FRACTION of bars by model probability instead of using a fixed cutoff -- 0.05 means the most confident 5%% of bars. The cutoff is recomputed every bar from the probabilities seen BEFORE it (strictly past-only), so it holds selectivity constant while the score distribution moves. A fixed number does the opposite: on 2026 H1 the horizon-return model kept its ranking (top 2%% still separated from top 10%%) while the level drifted, so the same 0.51 cutoff selected a different slice than it did in training. Requires a two-sided/bundle model: on the single-model path --short-threshold is a LOW cutoff on the same score, where a high-side quantile would be backwards. Cannot be combined with an explicit --long-threshold/--short-threshold.')
     backtest_parser.add_argument("--entry-quantile-window", type=int, default=0, help='bars of history the --entry-quantile cutoff is measured over. 0 = expanding (all history), which is causal but nearly inert here: 2.65M rows are already banked from 2020-2025, so 2026 H1 barely moves the quantile and expanding reproduces a fixed threshold at greater cost. A finite window is what tracks the shift -- e.g. 129600 is 90 days of 1m bars. The length is a free parameter: choose it before looking at the evaluation window, and report it, because sweeping it against the result is threshold fitting under another name.')
     backtest_parser.add_argument("--entry-quantile-warmup", type=int, default=None, help="observations the --entry-quantile estimator needs before it will trade. Default scales as 200/min(q,1-q) so the selected tail holds ~200 samples, which assumes a long stream: behind a volatility gate the estimator only sees the bars the gate passes, and on 2026 H1 that was 11,318 bars against a derived warmup of 10,000, so the run made zero trades and looked like a filter working perfectly. The fold analysis used 1000. A run that never leaves warmup now warns.")
+    backtest_parser.add_argument("--long-only", action="store_true", help="never emit a SELL on the single-model path, where a short fires because the one score is LOW rather than because a short model rated the bar. Required to combine --entry-quantile with a single model: a top-fraction quantile is a HIGH cutoff and would gate that low-side short backwards. Also refuses a short-target model, since there a high score already means SELL.")
     backtest_parser.add_argument("--vol-gate-feature", default=None, help='refuse entries on bars where this volatility feature is below --vol-gate-min. Not a filter on which bar looks best -- a refusal to trade where the horizon has too little dispersion for any realistic IC to pay the round trip, because edge ~ IC * sigma_H while cost is flat. Measured on 2020-2025 the std of the 45-bar forward return runs 22 bps in the lowest rv_60 quintile against 100 bps in the highest, so the bottom quintile needs IC 0.18 to clear 4 bps and the top needs 0.04. Gated bars are never shown to the model, so they are not HOLDs it chose. Pick the feature and minimum from the TRAINING period; deriving them from the evaluation window fits the gate to what it is judged on.')
     backtest_parser.add_argument("--vol-gate-min", type=float, default=0.0, help='minimum value of --vol-gate-feature for a bar to be eligible. Example: rv_60 >= 0.000961841 is the top quintile boundary measured on 2020-2025.')
     backtest_parser.add_argument("--trend-filter-sma", type=int, default=0, dest="trend_filter_sma_bars", help="require close > SMA(N bars) for a LONG entry and close < it for a SHORT one; 0 disables. N is in 1m bars, so 288000 is 200 daily bars. Measured on the gated fold test slices, this removed the entire -41%% crash fold (1021 causal top-2%% entries became 0) and took the pooled long result from +0.18 bps per trade at t=+0.34 to +1.98 at t=+2.47. It is not free: one uptrend fold fell from +2.55 to +0.79, so the filter cuts good trades along with the bad. Bars before the window fills are refused rather than waved through -- an unknown trend is not an uptrend. Only the long side was measured; the short rule is its mirror.")
@@ -2248,11 +2249,13 @@ def main(argv: list[str] | None = None) -> int:
                         "--long-threshold/--short-threshold. Pass one or the other; passing both would leave "
                         "which mechanism gated the run unreadable from the flags."
                     )
-                if models_by_regime is None:
+                if models_by_regime is None and not args.long_only:
                     raise SystemExit(
-                        "--entry-quantile needs a two-sided or regime-bundle model (--short-model-artifact, "
-                        "or a bundle --model-artifact). On the single-model path --short-threshold is a LOW "
-                        "cutoff on the same score, so a top-fraction quantile would gate shorts backwards."
+                        "--entry-quantile needs a two-sided or regime-bundle model "
+                        "(--short-model-artifact, or a bundle --model-artifact), or --long-only. On the "
+                        "single-model path --short-threshold is a LOW cutoff on the same score, so a "
+                        "top-fraction quantile would gate shorts backwards; --long-only removes that side "
+                        "instead of gating it wrongly."
                     )
                 if args.threshold_floor > 0.0:
                     print(
@@ -2404,6 +2407,7 @@ def main(argv: list[str] | None = None) -> int:
                 vol_gate_feature=args.vol_gate_feature,
                 vol_gate_min=args.vol_gate_min,
                 trend_filter_sma_bars=args.trend_filter_sma_bars,
+                long_only=args.long_only,
                 label_horizon=args.horizon,
                 precomputed_routing_diagnostics=shared_routing_diag,
                 regime_detector=regime_detector,

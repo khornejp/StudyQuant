@@ -299,9 +299,21 @@ def drop_fallback_features(build: "dataset.DatasetBuild") -> tuple["dataset.Data
 # Volatility measures saved beside every fold prediction. Cheap to store, and
 # the difference between answering "what if the gate used rv_30 instead" in
 # seconds and answering it by refitting the folds for hours.
-# Entries a calendar year needs before it counts as its own evidence rather
-# than a handful of trades riding on another year's result.
+# Distinct entries a calendar year needs before this code will call it its own
+# evidence rather than a handful of trades riding on another year's result.
+#
+# It is a REPORTING FLOOR, not a statistical guarantee, and it was chosen by the
+# same apparatus it judges -- so it cannot certify anything on its own. What it
+# does is make the composition visible: entries_by_year, entries_unique and
+# overlap_factor are published beside it precisely so a reader can apply their
+# own bar. Treat fold_vote_is_independent_evidence=True as "not obviously one
+# regime", never as "independent".
 MIN_ENTRIES_FOR_AN_INDEPENDENT_YEAR = 200
+
+# Splitters whose test windows cannot overlap by construction. Everything
+# else re-scores shared rows, so its fold vote is not a count of
+# confirmations no matter what the entry-level overlap works out to.
+_CV_MODES_WITH_DISJOINT_TEST_WINDOWS = frozenset({"walk_forward"})
 
 _PERSISTED_VOLATILITY_FEATURES: tuple[str, ...] = ("rv_15", "rv_30", "rv_60", "rv_120", "atr_pct")
 
@@ -441,6 +453,12 @@ def oos_trading_metrics(
             "unique_months": len(months),
             "first_entry": min(times).isoformat() if times else None,
             "last_entry": max(times).isoformat() if times else None,
+            # The identities themselves, so the aggregate can tell 2000 distinct
+            # entries from the same 500 counted four times. Under CPCV a row
+            # recurs in several test combinations, and summing per-fold counts
+            # would let duplicates alone push a year past any threshold.
+            # Stripped before the summary is written; see summarise_fold_trading.
+            "entry_keys": [int(when.timestamp() // 60) for when in times],
         }
 
     order = sorted(range(n), key=lambda i: p[i])
@@ -795,6 +813,11 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         for _row, _prob, _pay in zip(test_rows, calibrated_test, _fold_payoffs):
             _fold_predictions.append({
                 "fold_index": fold_index,
+                # The entry identity. Without it nobody can rebuild
+                # entries_unique or overlap_factor from the artifacts, and a
+                # faulty key derivation leaves a plausible but unverifiable
+                # independence claim.
+                "entry_time": _row.open_time.isoformat() if getattr(_row, "open_time", None) else "",
                 "probability": float(_prob),
                 "payoff": float(_pay),
                 "threshold": float(threshold),
@@ -2287,7 +2310,7 @@ def write_training_artifacts(
     return names
 
 
-def summarise_fold_trading(per_fold: list[dict[str, object]]) -> dict[str, object]:
+def summarise_fold_trading(per_fold: list[dict[str, object]], cv_mode: str | None = None) -> dict[str, object]:
     """Aggregate per-fold trading metrics without losing any fold, or its size.
 
     Module level, not a closure, because the failures it guards against are
@@ -2316,32 +2339,80 @@ def summarise_fold_trading(per_fold: list[dict[str, object]]) -> dict[str, objec
     # stretch can carry every fold: 12-of-15-positive was one 2021 counted
     # fifteen times, with 2022 contributing nothing. Reported next to the vote
     # so the vote cannot be read alone.
-    entries_by_year: dict[int, int] = {}
+    entries_total = 0
+    unique_keys: set[int] = set()
     for row in per_fold:
         cov = row.get("coverage") or {}
-        for year, count in (cov.get("entries_by_year") or {}).items():
-            entries_by_year[int(year)] = entries_by_year.get(int(year), 0) + int(count)
-    independent_years = sum(1 for n in entries_by_year.values() if n >= MIN_ENTRIES_FOR_AN_INDEPENDENT_YEAR)
-    total_entries = sum(entries_by_year.values())
-    largest_year_share = (max(entries_by_year.values()) / total_entries) if total_entries else 0.0
+        keys = cov.get("entry_keys")
+        if keys is None:
+            # Pre-coverage fold, or a caller that supplied only counts. Counting
+            # it as unique would overstate independence, so it contributes to
+            # the total and not to the unique set, which drags overlap up.
+            entries_total += sum(int(v) for v in (cov.get("entries_by_year") or {}).values())
+            continue
+        entries_total += len(keys)
+        unique_keys.update(int(k) for k in keys)
+    unique_by_year: dict[int, int] = {}
+    for key in unique_keys:
+        year = datetime.fromtimestamp(key * 60, tz=timezone.utc).year
+        unique_by_year[year] = unique_by_year.get(year, 0) + 1
+    entries_unique = len(unique_keys)
+    # >1 means folds share rows, so a fold vote is not that many confirmations.
+    overlap_factor = (entries_total / entries_unique) if entries_unique else 0.0
+    independent_years = sum(
+        1 for n in unique_by_year.values() if n >= MIN_ENTRIES_FOR_AN_INDEPENDENT_YEAR
+    )
+    largest_year_share = (max(unique_by_year.values()) / entries_unique) if entries_unique else 0.0
 
     long_net = [t["long_net_bps"] for t in per_fold if _has(t, "long_net_bps")]
     short_net = [t["short_net_bps"] for t in per_fold if _has(t, "short_net_bps")]
     long_trades = [float(t.get("long_trades", 0.0)) for t in per_fold if _has(t, "long_net_bps")]
     short_trades = [float(t.get("short_trades", 0.0)) for t in per_fold if _has(t, "short_net_bps")]
+    # Copy the identities out of the reported folds rather than deleting them
+    # from the caller's data. Popping in place made this function destructive:
+    # a second call on the same list saw no keys, computed overlap 0.0 and
+    # reported different numbers than the first. Tens of thousands of integers
+    # still have no business in run_summary.json, so they are dropped from the
+    # COPY. fold_test_predictions.csv carries entry_time for anyone who wants
+    # to recompute this.
+    reported_folds = []
+    for row in per_fold:
+        cov = row.get("coverage")
+        if isinstance(cov, dict) and "entry_keys" in cov:
+            row = {**row, "coverage": {k: v for k, v in cov.items() if k != "entry_keys"}}
+        reported_folds.append(row)
     return {
-        "folds": per_fold,
+        "folds": reported_folds,
         "fold_count": len(per_fold),
         "folds_without_eligible_rows": sum(1 for t in per_fold if t.get("no_eligible_rows")),
         "long_net_bps_by_fold": long_net,
         "short_net_bps_by_fold": short_net,
         "long_trades_by_fold": long_trades,
         "short_trades_by_fold": short_trades,
-        # Read these BEFORE the fold vote below.
-        "entries_by_year": dict(sorted(entries_by_year.items())),
+        # Read these BEFORE the fold vote below. All year figures are over
+        # DEDUPLICATED entries: a row that appears in four CPCV folds counts
+        # once here and four times in entries_total.
+        "entries_by_year": dict(sorted(unique_by_year.items())),
+        "entries_total": entries_total,
+        "entries_unique": entries_unique,
+        "overlap_factor": overlap_factor,
         "independent_years": independent_years,
+        "min_entries_for_an_independent_year": MIN_ENTRIES_FOR_AN_INDEPENDENT_YEAR,
         "largest_year_share": largest_year_share,
-        "fold_vote_is_independent_evidence": independent_years >= 2 and largest_year_share <= 0.75,
+        "cv_mode": cv_mode,
+        # Topology first, then the data. Entry overlap alone is not enough: CPCV
+        # folds can share most of their test rows and still SELECT disjoint
+        # entries, which lands overlap_factor near 1.0 and would have certified
+        # a correlated vote. Only a scheme whose test windows are disjoint by
+        # construction can produce True here, and walk-forward is the only one
+        # this repo has. Anything else -- combinatorial, or an unnamed mode --
+        # is False regardless of how the numbers look.
+        "fold_vote_is_independent_evidence": (
+            cv_mode in _CV_MODES_WITH_DISJOINT_TEST_WINDOWS
+            and independent_years >= 2
+            and largest_year_share <= 0.75
+            and overlap_factor <= 1.05
+        ),
         "long_folds_profitable": sum(1 for v in long_net if v > 0.0),
         "short_folds_profitable": sum(1 for v in short_net if v > 0.0),
         "long_net_bps_mean": mean(long_net) if long_net else 0.0,
@@ -2375,13 +2446,16 @@ def training_summary(
     # how many of them cleared cost rather than an average, because one strong
     # fold hiding three losing ones is exactly the failure being guarded
     # against.
-    oos_trading = summarise_fold_trading([fold.test_trading for fold in fold_results if fold.test_trading])
+    oos_trading = summarise_fold_trading(
+        [fold.test_trading for fold in fold_results if fold.test_trading],
+        cv_mode=training_config.cv_mode,
+    )
     # Reported next to the ungated figures, never in place of them: a gate that
     # keeps 10% of bars will look better on almost any metric simply by trading
     # less, so the pair is what makes it readable.
     _gated = [fold.test_trading_gated for fold in fold_results if fold.test_trading_gated]
     if _gated:
-        oos_trading["gated"] = summarise_fold_trading(_gated)
+        oos_trading["gated"] = summarise_fold_trading(_gated, cv_mode=training_config.cv_mode)
         oos_trading["gated"]["gate"] = {
             "feature": training_config.vol_gate_feature,
             "minimum": training_config.vol_gate_min,

@@ -1,8 +1,17 @@
-# Preregistered holdout evaluation — frozen 2026-08-10
+# Post-selection temporal backtest — frozen 2026-08-10, reclassified 2026-08-11
 
-Written **before** the model is retrained and before any of the holdout is
-scored. Nothing below may be changed after the first result is read. If it is
-changed, this document is void and the holdout is spent.
+**This is not a holdout verdict.** It was written as one; an adversarial review
+established it is not, and the title now says so. What it is: a temporal
+backtest of a model whose training stops at 2024-12-31, evaluated over
+2025-01-01..2026-06-30, where the *configuration* was partly selected using
+knowledge of that same period. Read the "What this can and cannot show"
+section before the numbers.
+
+Written before the model was retrained and before any result was read. The
+values below did not change afterwards. Two things did, and both are recorded
+here rather than quietly absorbed: `--long-only` was added to the codebase
+because the frozen command would not execute, and the classification of the
+whole exercise was downgraded.
 
 ## Why this exists
 
@@ -18,7 +27,31 @@ positive, but 86% of the filtered entries fall in calendar 2021 and 2022
 contributes none, so the folds reuse one regime. `summarise_fold_trading` now
 reports `fold_vote_is_independent_evidence`, which is `False` for that run.
 
-2020–2025 is therefore spent. This is the one evaluation left.
+2020–2025 is therefore spent.
+
+## What this can and cannot show
+
+**Can**: the model is genuinely out of sample at the model-fitting level.
+Training stops at 2024-12-31 and the evaluation starts the next day, so no
+labelled row from the evaluation period reached the estimator. A collapse here
+is real evidence against the candidate, and that asymmetry is worth having.
+
+**Cannot**: it cannot establish an edge. Fold-3 test payoffs covering
+2025-02-28..2025-10-16 were read *before* the trend filter and the entry
+quantile were chosen, and 2025 H1 — the uptrend this evaluation leans on — sits
+inside that window. A researcher who already knows the period rewards a
+directional long filter is not testing that filter when applying it there. So:
+
+- A negative result is informative. A positive one is not proof of edge.
+- ACCEPT below means "survived an engineering check", never "has an edge".
+- The claim of an edge needs a window untouched at BOTH levels — model and
+  researcher. No such window exists in the current data. It has to be future
+  data.
+
+`--long-only` deepens this. It removes every low-score SELL and routes the
+rolling quantile through a single-model path the CLI had refused outright.
+That is a change to the traded strategy and its selection rule, not only to
+the plumbing that runs it, whatever the original text below says.
 
 ## The frozen configuration
 
@@ -46,7 +79,18 @@ Evaluation:
 --entry-quantile 0.02 --entry-quantile-warmup 1000
 --trend-filter-sma 288000
 --position-size 0.1
+--long-only
 ```
+
+`--long-only` was added to the codebase after this document was first written
+and before any holdout number was read. It is plumbing, not a parameter: the
+single-model branch resolved its cutoffs inline and never consulted the rolling
+quantile, and the CLI refused `--entry-quantile` without a two-sided model at
+all. Both were guarding a real hazard -- on that branch a short fires because
+the single score is LOW, so a top-fraction (high) quantile gates it backwards
+-- but they also blocked the long-only configuration frozen above. The flag
+removes the short side instead of gating it wrongly. No value in this document
+changed, and the first holdout result had not been produced when it was made.
 
 ### The short side is DEFERRED, not dropped
 
@@ -83,7 +127,7 @@ freeze -- not by adding a short leg to whatever this run produces.
 | `SMA 288000` (200 daily bars) | a convention, fixed before measuring. Two alternatives (a -20% drawdown cap, and both combined) were computed afterwards and are NOT used |
 | `cost 4 bps` | 2 × 0.02% maker, limit-only premise, no slippage |
 
-## Holdout composition
+## Evaluation-window composition
 
 | window | move | bars passing gate **and** trend filter |
 |---|---:|---:|
@@ -112,15 +156,18 @@ so an uptrend is the window that can actually falsify it.
 Read the **trade-weighted** mean net bps over the whole 18 months, and the
 per-half-year breakdown. Not the plain fold mean, and not the total return.
 
-- **ACCEPT** — net > 0 over the full holdout, AND 2025 H1 positive, AND no
-  half-year worse than −2 bps. Verdict is "promising, not proven": n ≈ 200 is
-  one window, not a track record.
+- **ACCEPT** — net > 0 over the full window, AND 2025 H1 positive, AND no
+  half-year worse than −2 bps. This means "survived an engineering check on a
+  post-selection period". It is not evidence of edge and must not be quoted as
+  one; see "What this can and cannot show".
 - **REJECT** — net ≤ 0 over the full holdout.
 - **INCONCLUSIVE** — fewer than 100 entries. The apparatus, not the edge, is
   what failed; report it as such and do not reinterpret the number.
 
 A result between these is REJECT. There is no fourth branch, and no rerun with
-a different quantile, gate, or window — that is what spending a holdout means.
+a different quantile, gate, or window: re-running until a configuration passes
+is the failure mode this document exists to prevent, and it applies just as
+much to a post-selection check as to a real holdout.
 
 ## What is NOT permitted after reading the result
 

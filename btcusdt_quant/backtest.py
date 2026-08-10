@@ -915,6 +915,7 @@ def run_backtest(
     vol_gate_feature: str | None = None,
     vol_gate_min: float = 0.0,
     trend_filter_sma_bars: int = 0,
+    long_only: bool = False,
     precomputed_routing_diagnostics: dict | None = None,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
     maker_fee_rate_per_side: float = DEFAULT_MAKER_FEE_RATE_PER_SIDE,
@@ -1059,13 +1060,22 @@ def run_backtest(
         print(
             f"[BACKTEST] volatility gate: entries only where {vol_gate_feature} >= {vol_gate_min:.6g}"
         )
+    if long_only and _short_sided:
+        raise ValueError(
+            "long_only was requested but the model's train_target scores the SHORT side, "
+            "where a high probability means SELL. The two cannot both hold."
+        )
     quantile_thresholds = None
     if entry_quantile is not None:
+        # No short estimator in a long-only run: the short cutoff would be
+        # maintained, reported and never used, and on the single-model path it
+        # is a LOW cutoff on the same score, where a top-fraction quantile
+        # gates backwards.
         quantile_thresholds = QuantileEntryThresholds(
             long=RollingQuantileThreshold(1.0 - entry_quantile, window=entry_quantile_window,
                                           warmup=entry_quantile_warmup),
-            short=RollingQuantileThreshold(1.0 - entry_quantile, window=entry_quantile_window,
-                                           warmup=entry_quantile_warmup),
+            short=None if long_only else RollingQuantileThreshold(
+                1.0 - entry_quantile, window=entry_quantile_window, warmup=entry_quantile_warmup),
         )
         print(
             f"[BACKTEST] entry threshold: rolling quantile, top {entry_quantile:.4g} of past "
@@ -1570,11 +1580,19 @@ def run_backtest(
             prob = model.probability(features_dict)
             lt = long_threshold if long_threshold is not None else strategy.long_threshold
             st = short_threshold if short_threshold is not None else strategy.short_threshold
+            # This branch resolved its cutoffs inline and so never saw the
+            # rolling quantile, which the bundle paths do consult. A long-only
+            # run has one score and one side, so the quantile is well defined
+            # here; warmup puts it out of reach rather than falling back to the
+            # fixed cutoff it was passed to replace.
+            if quantile_thresholds is not None and quantile_thresholds.long is not None:
+                _q = quantile_thresholds.long.resolve(prob)
+                lt = max(_q, threshold_floor) if _q is not None else _UNREACHABLE_THRESHOLD
             _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = None, prob, prob, lt, st
             _ctx_genuine_sides.add("long")
             if prob > lt:
                 signal = "SELL" if _short_sided else "BUY"
-            elif prob < st:
+            elif prob < st and not long_only:
                 signal = "BUY" if _short_sided else "SELL"
             else:
                 signal = "HOLD"

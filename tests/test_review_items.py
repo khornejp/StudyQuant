@@ -2367,7 +2367,7 @@ class MakerFillTests(unittest.TestCase):
         # 86% of its entries in calendar 2021 with none at all in 2022 -- one
         # regime counted fifteen times. The vote cannot be read alone, so the
         # numbers that qualify it ship beside it.
-        from datetime import datetime, timezone as _tz
+        from datetime import datetime, timedelta, timezone as _tz
         from btcusdt_quant import training as _tr
 
         stamps = [datetime(2021, 3, 1, tzinfo=_tz.utc)] * 3 + [datetime(2022, 7, 1, tzinfo=_tz.utc)]
@@ -2389,28 +2389,130 @@ class MakerFillTests(unittest.TestCase):
         )
         self.assertEqual(gated["coverage"]["entries_by_year"], {2022: 1})
 
-        def _fold(net, trades, years):
-            return {"long_net_bps": net, "long_trades": trades,
-                    "coverage": {"entries_by_year": years}}
+        def _at(year, count, start_minute=0):
+            base = datetime(year, 1, 1, tzinfo=_tz.utc)
+            return [base + timedelta(minutes=start_minute + i) for i in range(count)]
 
-        # The real shape: a strong vote resting on one year.
-        one_year = [_fold(1.0, 900, {2021: 900})] * 12 + [_fold(-1.0, 100, {2021: 100})] * 3
-        summary = _tr.summarise_fold_trading(one_year)
-        self.assertEqual(summary["long_folds_profitable"], 12)
-        self.assertEqual(summary["fold_count"], 15)
-        self.assertEqual(summary["independent_years"], 1)
-        self.assertEqual(summary["largest_year_share"], 1.0)
-        self.assertFalse(summary["fold_vote_is_independent_evidence"])
+        def _fold(times):
+            return _tr.oos_trading_metrics(
+                [0.9] * len(times), [0.004] * len(times), 0.5,
+                round_trip_cost=0.0004, row_times=times,
+            )
 
-        # Spread across two years with enough entries in each, it qualifies.
-        spread = [_fold(1.0, 500, {2021: 250, 2022: 250})] * 4
-        wide = _tr.summarise_fold_trading(spread)
-        self.assertEqual(wide["independent_years"], 2)
-        self.assertTrue(wide["fold_vote_is_independent_evidence"])
-        # A year carrying only a handful of trades is not its own evidence.
-        thin = _tr.summarise_fold_trading([_fold(1.0, 500, {2021: 900, 2022: 5})] * 3)
-        self.assertEqual(thin["independent_years"], 1)
-        self.assertFalse(thin["fold_vote_is_independent_evidence"])
+        # The hazard: ONE set of 500 entries replicated across four CPCV folds.
+        # Summing per-fold counts saw 2000 entries and two years past any
+        # threshold, and certified duplicates as independent evidence.
+        shared = _at(2021, 250) + _at(2022, 250)
+        duplicated = _tr.summarise_fold_trading(
+            [_fold(shared) for _ in range(4)], cv_mode="walk_forward")
+        self.assertEqual(duplicated["entries_total"], 2000)
+        self.assertEqual(duplicated["entries_unique"], 500)
+        self.assertEqual(duplicated["overlap_factor"], 4.0)
+        # Both years clear the entry floor on the deduplicated count, so the
+        # calendar looks fine -- and the vote is still four re-scorings of one
+        # set of rows. Overlap has to be part of the flag or the name lies.
+        self.assertEqual(duplicated["independent_years"], 2)
+        self.assertFalse(duplicated["fold_vote_is_independent_evidence"])
+
+        # Genuinely distinct entries over the same two years do qualify.
+        distinct = _tr.summarise_fold_trading([
+            _fold(_at(2021, 125) + _at(2022, 125)),
+            _fold(_at(2021, 125, 125) + _at(2022, 125, 125)),
+        ], cv_mode="walk_forward")
+        self.assertEqual(distinct["entries_total"], 500)
+        self.assertEqual(distinct["entries_unique"], 500)
+        self.assertEqual(distinct["overlap_factor"], 1.0)
+        self.assertEqual(distinct["independent_years"], 2)
+        self.assertTrue(distinct["fold_vote_is_independent_evidence"])
+
+        # One year carrying almost everything is not two years of evidence.
+        lopsided = _tr.summarise_fold_trading(
+            [_fold(_at(2021, 900) + _at(2022, 5))], cv_mode="walk_forward")
+        self.assertEqual(lopsided["independent_years"], 1)
+        self.assertFalse(lopsided["fold_vote_is_independent_evidence"])
+
+        # Topology decides first. The same folds under a combinatorial splitter
+        # cannot be independent evidence however clean their entry overlap
+        # looks: CPCV folds can share most of their test rows and still select
+        # disjoint entries, which lands overlap_factor at 1.0 and would have
+        # certified a correlated vote.
+        cpcv = _tr.summarise_fold_trading([
+            _fold(_at(2021, 125) + _at(2022, 125)),
+            _fold(_at(2021, 125, 125) + _at(2022, 125, 125)),
+        ], cv_mode="combinatorial_purged")
+        self.assertEqual(cpcv["overlap_factor"], 1.0)
+        self.assertEqual(cpcv["independent_years"], 2)
+        self.assertFalse(cpcv["fold_vote_is_independent_evidence"])
+        self.assertEqual(cpcv["cv_mode"], "combinatorial_purged")
+        # An unnamed splitter is not assumed safe either.
+        self.assertFalse(_tr.summarise_fold_trading(
+            [_fold(_at(2021, 250)), _fold(_at(2022, 250, 250))]
+        )["fold_vote_is_independent_evidence"])
+
+        # Summarising must not consume its input. Popping entry_keys in place
+        # made a second call see no identities, compute overlap 0.0, and report
+        # different numbers than the first.
+        again = _tr.summarise_fold_trading([
+            _fold(_at(2021, 125) + _at(2022, 125)),
+            _fold(_at(2021, 125, 125) + _at(2022, 125, 125)),
+        ], cv_mode="walk_forward")
+        twice = _tr.summarise_fold_trading(again["folds"], cv_mode="walk_forward")
+        self.assertEqual(again["entries_unique"], 500)
+        # The reported copy has no identities, so a re-summary of it cannot
+        # invent independence out of nothing.
+        self.assertNotIn("entry_keys", again["folds"][0]["coverage"])
+        self.assertFalse(twice["fold_vote_is_independent_evidence"])
+        # The floor is published, because it is a reporting choice and not a
+        # statistical guarantee.
+        self.assertEqual(distinct["min_entries_for_an_independent_year"],
+                         _tr.MIN_ENTRIES_FOR_AN_INDEPENDENT_YEAR)
+
+    def test_long_only_lets_a_single_model_use_the_entry_quantile(self) -> None:
+        # The single-model branch resolved its cutoffs inline and never saw the
+        # rolling quantile the bundle paths consult, and the CLI refused the
+        # combination outright. Both were right about the danger -- a short
+        # there fires because the ONE score is low, so a top-fraction (high)
+        # quantile gates it backwards -- and both were too broad: long-only is a
+        # legitimate configuration with one score and one side.
+        class _Rising:
+            train_target = None
+            def __init__(self) -> None:
+                self._n = 0
+            def probability(self, values) -> float:
+                self._n += 1
+                return min(0.99, 0.30 + self._n * 0.01)
+
+        specs = [(100.0 + i * 0.1, 100.5 + i * 0.1, 99.5 + i * 0.1, 100.0 + i * 0.1) for i in range(60)]
+        candles = _ohlc_candles(specs)
+        common = dict(position_size=0.1, label_horizon=10, cooldown_bars=0)
+
+        # Without long_only the low-side short still fires on a rising score.
+        two_way = run_backtest(candles, model=_Rising(), long_threshold=0.9,
+                               short_threshold=0.5, **common)
+        self.assertGreater(two_way.signal_counts["SELL"], 0)
+        # long_only removes that side rather than gating it wrongly.
+        one_way = run_backtest(candles, model=_Rising(), long_threshold=0.9,
+                               short_threshold=0.5, long_only=True, **common)
+        self.assertEqual(one_way.signal_counts["SELL"], 0)
+
+        # And the quantile now reaches this branch: with warmup unmet nothing
+        # trades, which is the "no basis yet" contract, not a fallback to the
+        # fixed cutoff the flag replaced.
+        cold = run_backtest(candles, model=_Rising(), entry_quantile=0.02,
+                            long_only=True, **common)
+        self.assertEqual(cold.signal_counts["BUY"], 0)
+        self.assertEqual(cold.signal_counts["SELL"], 0)
+        warm = run_backtest(candles, model=_Rising(), entry_quantile=0.5,
+                            entry_quantile_warmup=5, long_only=True, **common)
+        self.assertGreater(warm.signal_counts["BUY"], 0)
+
+        # A short-target model cannot be long-only: there a high score is a SELL.
+        class _ShortModel:
+            train_target = "short_profitability"
+            def probability(self, values) -> float:
+                return 0.9
+        with self.assertRaises(ValueError):
+            run_backtest(candles, model=_ShortModel(), long_only=True, **common)
 
     def test_short_profitability_mirrors_the_long_label(self) -> None:
         # Under the barrier-free design (barriers set beyond reach) the existing
