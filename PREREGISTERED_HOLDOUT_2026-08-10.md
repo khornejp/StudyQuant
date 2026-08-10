@@ -48,8 +48,29 @@ Evaluation:
 --position-size 0.1
 ```
 
-Long side only. The short side is not evaluated: five attempts, five failures,
-most recently 0 of 4 folds at a pooled -2.08 bps (t=-3.75).
+### The short side is DEFERRED, not dropped
+
+This evaluation scores the long side alone, but the intended system trades both
+directions. The short side is held back because five successive short models
+have failed -- most recently 0 of 4 folds at a pooled -2.08 bps (t=-3.75),
+losing even in the fold covering a -41% crash -- and putting a known-losing
+book into a holdout would spend the window on a question already answered.
+
+What that means for reading the result:
+
+- A long-only ACCEPT does **not** clear the system for live trading. It clears
+  one leg of it. The short leg remains unsolved and is the larger open problem,
+  because the long edge is directional and stands aside in downtrends: without a
+  working short, the strategy is flat for months at a time (2026 H1: zero
+  entries) and the equity curve is not what a two-sided system would produce.
+- Sizing, exposure and drawdown figures from a long-only run understate a
+  two-sided system and must not be quoted as if they described one.
+- The short side needs its own preregistered holdout when a candidate exists.
+  This document does not authorise reusing 2025-2026 H1 for it: that window is
+  spent by the long evaluation below, whatever its outcome.
+
+Short-side work resumes after this evaluation, on its own data and its own
+freeze -- not by adding a short leg to whatever this run produces.
 
 ### Where each number came from, and why it is not fitted to the holdout
 
@@ -105,7 +126,9 @@ a different quantile, gate, or window — that is what spending a holdout means.
 
 - Changing any value in the frozen configuration and re-running on this window
 - Reporting a subset of the holdout that looks better than the whole
-- Adding the short side back because the long side underperformed
+- Adding the short side back because the long side underperformed. The short
+  side is deferred on its own evidence, and reintroducing it to rescue a weak
+  long result would be fitting the direction mix to this window
 - Treating "2026 H1 lost nothing" as evidence of anything: zero trades is the
   filter working, not the strategy earning
 
