@@ -2307,7 +2307,11 @@ def write_training_artifacts(
     return names
 
 
-def summarise_fold_trading(per_fold: list[dict[str, object]], splits: Sequence[object] | None = None) -> dict[str, object]:
+def summarise_fold_trading(
+    per_fold: list[dict[str, object]],
+    splits: Sequence[object] | None = None,
+    label_horizon: int | None = None,
+) -> dict[str, object]:
     """Aggregate per-fold trading metrics without losing any fold, or its size.
 
     Module level, not a closure, because the failures it guards against are
@@ -2342,15 +2346,39 @@ def summarise_fold_trading(per_fold: list[dict[str, object]], splits: Sequence[o
     # independent.
     test_windows_disjoint = False
     shared_test_rows = 0
+    min_window_gap: int | None = None
     if splits:
         seen: set[int] = set()
         total_test_rows = 0
+        spans: list[tuple[int, int]] = []
         for split in splits:
             indices = set(_split_indices(getattr(split, "test", ()) or ()))
             total_test_rows += len(indices)
             shared_test_rows += len(indices & seen)
             seen |= indices
-        test_windows_disjoint = bool(seen) and shared_test_rows == 0 and total_test_rows == len(seen)
+            if indices:
+                spans.append((min(indices), max(indices)))
+        rows_disjoint = bool(seen) and shared_test_rows == 0 and total_test_rows == len(seen)
+        # Disjoint ROWS is not disjoint EVIDENCE. Walk-forward advances each
+        # test range by exactly test_size, so neighbouring ranges share no index
+        # and still touch at the boundary -- and with a 45-bar horizon the last
+        # 45 labels of one range resolve on the same future bars as the first
+        # labels of the next. That is the dependency purge and embargo exist to
+        # remove, and an index intersection cannot see it. Require the ranges to
+        # sit at least a horizon apart.
+        if len(spans) > 1:
+            ordered = sorted(spans)
+            min_window_gap = min(
+                nxt[0] - cur[1] - 1 for cur, nxt in zip(ordered, ordered[1:])
+            )
+        horizon = int(label_horizon) if label_horizon else 0
+        if horizon <= 0:
+            # An unknown horizon cannot be shown to be cleared.
+            test_windows_disjoint = False
+        else:
+            test_windows_disjoint = rows_disjoint and (
+                min_window_gap is None or min_window_gap >= horizon
+            )
 
     entries_total = 0
     unique_keys: set[int] = set()
@@ -2414,6 +2442,10 @@ def summarise_fold_trading(per_fold: list[dict[str, object]], splits: Sequence[o
         "largest_year_share": largest_year_share,
         "test_windows_disjoint": test_windows_disjoint,
         "shared_test_rows": shared_test_rows,
+        # Bars between the closest pair of test ranges. Must be >= the label
+        # horizon, or their outcomes are computed from overlapping futures.
+        "min_test_window_gap_bars": min_window_gap,
+        "label_horizon": label_horizon,
         # Topology first, then the data, and topology is MEASURED rather than
         # declared. Entry overlap alone is not enough -- CPCV folds can share
         # most of their test rows and still select disjoint entries, landing
@@ -2463,13 +2495,15 @@ def training_summary(
     oos_trading = summarise_fold_trading(
         [fold.test_trading for fold in fold_results if fold.test_trading],
         splits=splits,
+        label_horizon=training_config.label_horizon,
     )
     # Reported next to the ungated figures, never in place of them: a gate that
     # keeps 10% of bars will look better on almost any metric simply by trading
     # less, so the pair is what makes it readable.
     _gated = [fold.test_trading_gated for fold in fold_results if fold.test_trading_gated]
     if _gated:
-        oos_trading["gated"] = summarise_fold_trading(_gated, splits=splits)
+        oos_trading["gated"] = summarise_fold_trading(
+            _gated, splits=splits, label_horizon=training_config.label_horizon)
         oos_trading["gated"]["gate"] = {
             "feature": training_config.vol_gate_feature,
             "minimum": training_config.vol_gate_min,

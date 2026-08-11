@@ -2394,7 +2394,9 @@ class MakerFillTests(unittest.TestCase):
                 self.test = test
 
         def _disjoint(n):
-            return [_Split(range(i * 1000, (i + 1) * 1000)) for i in range(n)]
+            # Separated by more than any horizon used below, so these fixtures
+            # test the entry-level logic rather than the topology gate.
+            return [_Split(range(i * 3000, i * 3000 + 1000)) for i in range(n)]
 
         def _overlapping(n):
             # What CPCV produces: test windows that share rows.
@@ -2415,7 +2417,7 @@ class MakerFillTests(unittest.TestCase):
         # threshold, and certified duplicates as independent evidence.
         shared = _at(2021, 250) + _at(2022, 250)
         duplicated = _tr.summarise_fold_trading(
-            [_fold(shared) for _ in range(4)], splits=_disjoint(2))
+            [_fold(shared) for _ in range(4)], splits=_disjoint(2), label_horizon=45)
         self.assertEqual(duplicated["entries_total"], 2000)
         self.assertEqual(duplicated["entries_unique"], 500)
         self.assertEqual(duplicated["overlap_factor"], 4.0)
@@ -2429,7 +2431,7 @@ class MakerFillTests(unittest.TestCase):
         distinct = _tr.summarise_fold_trading([
             _fold(_at(2021, 125) + _at(2022, 125)),
             _fold(_at(2021, 125, 125) + _at(2022, 125, 125)),
-        ], splits=_disjoint(2))
+        ], splits=_disjoint(2), label_horizon=45)
         self.assertEqual(distinct["entries_total"], 500)
         self.assertEqual(distinct["entries_unique"], 500)
         self.assertEqual(distinct["overlap_factor"], 1.0)
@@ -2438,7 +2440,7 @@ class MakerFillTests(unittest.TestCase):
 
         # One year carrying almost everything is not two years of evidence.
         lopsided = _tr.summarise_fold_trading(
-            [_fold(_at(2021, 900) + _at(2022, 5))], splits=_disjoint(2))
+            [_fold(_at(2021, 900) + _at(2022, 5))], splits=_disjoint(2), label_horizon=45)
         self.assertEqual(lopsided["independent_years"], 1)
         self.assertFalse(lopsided["fold_vote_is_independent_evidence"])
 
@@ -2455,6 +2457,34 @@ class MakerFillTests(unittest.TestCase):
         self.assertEqual(cpcv["independent_years"], 2)
         self.assertFalse(cpcv["fold_vote_is_independent_evidence"])
         self.assertGreater(cpcv["shared_test_rows"], 0)
+
+        # Disjoint ROWS is not disjoint EVIDENCE. Walk-forward advances each
+        # test range by exactly test_size, so neighbouring ranges share no index
+        # and still touch at the boundary -- and over a 45-bar horizon the last
+        # 45 labels of one range resolve on the same future bars as the first
+        # labels of the next. These are the real spans from an h45 manifest.
+        touching = [_Split(range(105943, 134812)), _Split(range(134812, 163681))]
+        adjacent = _tr.summarise_fold_trading(
+            [_fold(_at(2021, 125) + _at(2022, 125)),
+             _fold(_at(2021, 125, 125) + _at(2022, 125, 125))],
+            splits=touching, label_horizon=45,
+        )
+        self.assertEqual(adjacent["shared_test_rows"], 0)
+        self.assertEqual(adjacent["min_test_window_gap_bars"], 0)
+        self.assertFalse(adjacent["fold_vote_is_independent_evidence"])
+        # A gap of at least the horizon clears it.
+        parted = _tr.summarise_fold_trading(
+            [_fold(_at(2021, 125) + _at(2022, 125)),
+             _fold(_at(2021, 125, 125) + _at(2022, 125, 125))],
+            splits=[_Split(range(0, 1000)), _Split(range(1100, 2100))], label_horizon=45,
+        )
+        self.assertTrue(parted["fold_vote_is_independent_evidence"])
+        # An unknown horizon cannot be shown to be cleared.
+        self.assertFalse(_tr.summarise_fold_trading(
+            [_fold(_at(2021, 125) + _at(2022, 125)),
+             _fold(_at(2021, 125, 125) + _at(2022, 125, 125))],
+            splits=[_Split(range(0, 1000)), _Split(range(1100, 2100))],
+        )["fold_vote_is_independent_evidence"])
         # Topology is MEASURED, not declared. An earlier version took a cv_mode
         # string, so a caller could hand it CPCV metrics labelled walk_forward
         # and be certified -- the function had no way to check. Now the split
@@ -2470,8 +2500,8 @@ class MakerFillTests(unittest.TestCase):
         again = _tr.summarise_fold_trading([
             _fold(_at(2021, 125) + _at(2022, 125)),
             _fold(_at(2021, 125, 125) + _at(2022, 125, 125)),
-        ], splits=_disjoint(2))
-        twice = _tr.summarise_fold_trading(again["folds"], splits=_disjoint(2))
+        ], splits=_disjoint(2), label_horizon=45)
+        twice = _tr.summarise_fold_trading(again["folds"], splits=_disjoint(2), label_horizon=45)
         self.assertEqual(again["entries_unique"], 500)
         # The reported copy has no identities, so a re-summary of it cannot
         # invent independence out of nothing.

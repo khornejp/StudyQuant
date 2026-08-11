@@ -42,7 +42,17 @@ quantile were chosen, and 2025 H1 — the uptrend this evaluation leans on — s
 inside that window. A researcher who already knows the period rewards a
 directional long filter is not testing that filter when applying it there. So:
 
-- A negative result is informative. A positive one is not proof of edge.
+- A negative result says **this configuration failed**. That is narrower than
+  it sounds, and an earlier revision of this document overstated it. I argued a
+  negative would falsify the broader edge claim while a positive proved
+  nothing; an adversarial review rejected the asymmetry and it is retracted.
+  A negative obtained under a configuration selected with knowledge of part of
+  the period tells you about that configuration. If it then motivates the next
+  configuration on the same window, that is re-mining under another name.
+- **Therefore: whatever this returns, it does not license another attempt on
+  2025-01-01..2026-06-30.** A successor candidate needs future data that
+  neither the model nor the researcher has seen. That is the only remaining
+  path to an edge claim, and no amount of care with this window substitutes.
 - ACCEPT below means "survived an engineering check", never "has an edge".
 - The claim of an edge needs a window untouched at BOTH levels — model and
   researcher. No such window exists in the current data. It has to be future
