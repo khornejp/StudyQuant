@@ -2341,63 +2341,46 @@ def main(argv: list[str] | None = None) -> int:
                 f"slippage={resolved_slippage} | taker round_trip={2.0 * (resolved_fee + resolved_slippage)}"
                 + (f", maker-entry round_trip={_maker_rt}" if args.maker_fill_window > 0 else "")
             )
-            # The three profiles differ only in entry thresholds, tp_pct and
-            # min_reward_risk. Every option below overrides the entry decision
-            # for all of them alike -- a quantile cutoff, a volatility gate, a
-            # trend filter and long-only apply identically to aggressive,
-            # balanced and conservative -- so the arms would trade the same bars
-            # and the "winner" would be a tie dressed as a choice. Worse,
-            # compare_strategies does not take these options at all, so it would
-            # quietly evaluate UNGATED, UNFILTERED variants and print a
-            # best_strategy for a run nobody made.
-            _entry_overrides = [
-                name for name, active in (
-                    ("--entry-quantile", args.entry_quantile is not None),
-                    ("--vol-gate-feature", bool(args.vol_gate_feature)),
-                    ("--trend-filter-sma", args.trend_filter_sma_bars > 0),
-                    ("--long-only", args.long_only),
-                ) if active
-            ]
-            if _entry_overrides:
-                comparison = {
-                    "available": False,
-                    "reason": (
-                        "strategy comparison skipped: "
-                        + ", ".join(_entry_overrides)
-                        + " override the entry decision for every profile alike, so the arms "
-                        "cannot differ, and compare_strategies does not accept these options -- "
-                        "it would have scored ungated, unfiltered variants and named a winner "
-                        "for a configuration this run did not execute."
-                    ),
-                    "entry_overrides_active": _entry_overrides,
-                }
-                print(f"[BACKTEST] {comparison['reason']}", file=sys.stderr)
-            else:
-                comparison = backtest.compare_strategies(
-                    candles,
-                    model,
-                    strategies,
-                    position_size=args.position_size,
-                    range_gate_edge=args.range_gate_edge,
-                    fee_rate_per_side=resolved_fee,
-                    maker_fee_rate_per_side=resolved_maker_fee,
-                    maker_exit_outcomes=resolve_maker_exit_outcomes(args),
-                    slippage_rate_per_side=resolved_slippage,
-                    models_by_regime=models_by_regime,
-                    user_regime_periods=user_regime_periods,
-                    default_regime=resolved_default_regime,
-                    start_date=args.backtest_start,
-                    end_date=args.backtest_end,
-                    regime_detector=regime_detector,
-                    regime_classifier_model=regime_classifier_model,
-                    multi_feature_regime_detector=multi_feature_regime_detector,
-                    exec_tp_pct=args.exec_tp_pct,
-                    exec_sl_pct=args.exec_sl_pct,
-                    threshold_floor=args.threshold_floor,
-                    label_horizon=args.horizon,
-                    feature_rows=shared_feature_rows,
-                    allow_barrier_mismatch=args.allow_barrier_mismatch,
-                )
+            comparison = backtest.compare_strategies(
+                candles,
+                model,
+                strategies,
+                position_size=args.position_size,
+                range_gate_edge=args.range_gate_edge,
+                fee_rate_per_side=resolved_fee,
+                maker_fee_rate_per_side=resolved_maker_fee,
+                maker_exit_outcomes=resolve_maker_exit_outcomes(args),
+                slippage_rate_per_side=resolved_slippage,
+                models_by_regime=models_by_regime,
+                user_regime_periods=user_regime_periods,
+                default_regime=resolved_default_regime,
+                start_date=args.backtest_start,
+                end_date=args.backtest_end,
+                regime_detector=regime_detector,
+                regime_classifier_model=regime_classifier_model,
+                multi_feature_regime_detector=multi_feature_regime_detector,
+                exec_tp_pct=args.exec_tp_pct,
+                exec_sl_pct=args.exec_sl_pct,
+                threshold_floor=args.threshold_floor,
+                label_horizon=args.horizon,
+                feature_rows=shared_feature_rows,
+                allow_barrier_mismatch=args.allow_barrier_mismatch,
+                # Forwarded, not dropped. Without these the comparison scored
+                # ungated, unfiltered variants and named a best_strategy for a
+                # configuration this run never executed. Whether the profiles
+                # can still differ under them is decided by
+                # indistinguishable_profiles, which measures execution
+                # fingerprints -- an entry quantile equalises the thresholds but
+                # each profile keeps its own tp/sl, and those drive both the EV
+                # calculation and the exits.
+                entry_quantile=args.entry_quantile,
+                entry_quantile_window=args.entry_quantile_window,
+                entry_quantile_warmup=args.entry_quantile_warmup,
+                vol_gate_feature=args.vol_gate_feature,
+                vol_gate_min=args.vol_gate_min,
+                trend_filter_sma_bars=args.trend_filter_sma_bars,
+                long_only=args.long_only,
+            )
             kelly_config = None
             if args.kelly_sizing:
                 from . import risk as _risk
@@ -2476,9 +2459,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"trades={result.trade_count}")
             print(f"total_return={result.total_return:.4f}")
             print(f"win_rate={result.win_rate:.4f}")
-            if comparison.get("available") is False:
-                print(f"strategy_comparison=SKIPPED ({comparison['reason']})")
-            elif comparison.get("indistinguishable_profiles"):
+            if comparison.get("indistinguishable_profiles"):
                 # Not a winner, not even a tie: the arms were the same run.
                 print(f"strategy_comparison=SKIPPED ({comparison['indistinguishable_reason']})")
             else:

@@ -276,6 +276,7 @@ def _execution_fingerprint(
     long_threshold: float | None,
     short_threshold: float | None,
     threshold_floor: float,
+    entry_quantile: float | None = None,
 ) -> tuple:
     """Everything about a profile that can still change a trading decision.
 
@@ -297,6 +298,14 @@ def _execution_fingerprint(
         strategy.atr_multiplier_tp if strategy.use_atr_pricing else None,
         strategy.atr_multiplier_sl if strategy.use_atr_pricing else None,
     )
+    if entry_quantile is not None:
+        # A rolling quantile replaces the entry cutoff for every profile alike,
+        # so the threshold half of the fingerprint collapses. The BARRIER half
+        # does not: each profile still hands its own tp/sl to
+        # evaluate_entry_signal, which recomputes EV from them, and exits on
+        # them. Profiles can therefore still differ under a quantile, and
+        # whether they do is measured here rather than assumed.
+        return ("entry_quantile", float(entry_quantile), barrier)
     if not models_by_regime:
         # Single-model (or no-model) run: the profile's own thresholds are the
         # gate unless the CLI overrode them.
@@ -324,6 +333,7 @@ def indistinguishable_profiles(
     long_threshold: float | None = None,
     short_threshold: float | None = None,
     threshold_floor: float = 0.0,
+    entry_quantile: float | None = None,
 ) -> str | None:
     """Reason the profiles cannot differ in this run, or None if they can.
 
@@ -348,6 +358,7 @@ def indistinguishable_profiles(
             long_threshold,
             short_threshold,
             threshold_floor,
+            entry_quantile,
         )
         for name, strategy in strategies.items()
     }
@@ -1976,8 +1987,19 @@ def compare_strategies(
     maker_exit_outcomes: Sequence[str] | None = None,
     range_gate_edge: float = DEFAULT_RANGE_GATE_EDGE,
     allow_barrier_mismatch: bool = False,
+    entry_quantile: float | None = None,
+    entry_quantile_window: int = 0,
+    entry_quantile_warmup: int | None = None,
+    vol_gate_feature: str | None = None,
+    vol_gate_min: float = 0.0,
+    trend_filter_sma_bars: int = 0,
+    long_only: bool = False,
 ) -> dict[str, object]:
-    """Backtest multiple strategies and return comparison."""
+    """Backtest multiple strategies and return comparison.
+
+    The entry-affecting options are taken and forwarded, not ignored. Skipping
+    them scored ungated, unfiltered variants and then named a best_strategy for
+    a configuration the caller never ran."""
     if strategies is None:
         strategies = {
             "balanced": live.strategy_for_regime(None, "balanced"),
@@ -2054,6 +2076,7 @@ def compare_strategies(
         exec_tp_pct=exec_tp_pct,
         exec_sl_pct=exec_sl_pct,
         threshold_floor=threshold_floor,
+        entry_quantile=entry_quantile,
     )
     evaluated = strategies
     if degenerate is not None:
@@ -2071,6 +2094,13 @@ def compare_strategies(
             strategy,
             initial_equity,
             position_size,
+            entry_quantile=entry_quantile,
+            entry_quantile_window=entry_quantile_window,
+            entry_quantile_warmup=entry_quantile_warmup,
+            vol_gate_feature=vol_gate_feature,
+            vol_gate_min=vol_gate_min,
+            trend_filter_sma_bars=trend_filter_sma_bars,
+            long_only=long_only,
             fee_rate_per_side=fee_rate_per_side,
             maker_fee_rate_per_side=maker_fee_rate_per_side,
             maker_exit_outcomes=maker_exit_outcomes,

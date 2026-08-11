@@ -9,12 +9,14 @@ from __future__ import annotations
 import copy
 import json
 import math
+import dataclasses
 import random
 import unittest
 from typing import Mapping
 from unittest import mock
 
 from btcusdt_quant import backtest as backtest_module
+from btcusdt_quant import live
 from btcusdt_quant import features, risk, training
 from btcusdt_quant.backtest import (
     BacktestResult,
@@ -2559,27 +2561,57 @@ class MakerFillTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run_backtest(candles, model=_ShortModel(), long_only=True, **common)
 
-    def test_entry_overrides_skip_the_strategy_comparison(self) -> None:
-        # compare_strategies takes none of the entry-affecting options, so with
-        # a gate, a quantile, a trend filter or long-only active it scored
+    def test_strategy_comparison_uses_the_options_the_run_uses(self) -> None:
+        # compare_strategies took none of the entry-affecting options, so with a
+        # gate, a quantile, a trend filter or long-only active it scored
         # UNGATED, UNFILTERED variants and the summary printed a best_strategy
-        # for a configuration the run never executed. The three profiles differ
-        # only in entry thresholds, tp_pct and min_reward_risk, and every one of
-        # those options overrides the entry decision for all three alike, so
-        # there is no comparison left to make either.
+        # for a configuration the run never executed. Skipping the comparison
+        # outright was the first fix and it was too blunt: an entry quantile
+        # equalises the THRESHOLDS but each profile keeps its own tp/sl, which
+        # drive both the EV calculation and the exits, so the profiles can still
+        # differ. Forward the options, then MEASURE whether they differ.
         import inspect
         from btcusdt_quant import backtest as _bt, cli as _cli
 
         accepted = inspect.signature(_bt.compare_strategies).parameters
-        for option in ("entry_quantile", "vol_gate_feature", "trend_filter_sma_bars", "long_only"):
-            self.assertNotIn(option, accepted, f"{option} reached compare_strategies")
-
+        for option in ("entry_quantile", "vol_gate_feature", "trend_filter_sma_bars",
+                       "long_only", "entry_quantile_warmup"):
+            self.assertIn(option, accepted, f"{option} never reaches compare_strategies")
         src = inspect.getsource(_cli.main)
-        self.assertIn("_entry_overrides", src)
-        for flag in ("--entry-quantile", "--vol-gate-feature", "--trend-filter-sma", "--long-only"):
-            self.assertIn(flag, src)
-        # The skip is reported, not silent, and best_strategy is not printed.
-        self.assertIn('comparison.get("available") is False', src)
+        for arg in ("entry_quantile=args.entry_quantile", "vol_gate_feature=args.vol_gate_feature",
+                    "trend_filter_sma_bars=args.trend_filter_sma_bars", "long_only=args.long_only"):
+            self.assertIn(arg, src)
+
+        # Every requested arm gets the complete entry configuration.  Stub the
+        # costly runner: this checks the orchestration, not market outcomes.
+        with mock.patch.object(_bt, "run_backtest", return_value=BacktestResult()) as runner:
+            _bt.compare_strategies(
+                _linear_candles(240), self._AlwaysLong(),
+                entry_quantile=0.02, entry_quantile_window=80,
+                entry_quantile_warmup=40, vol_gate_feature="rv_15",
+                vol_gate_min=0.001, trend_filter_sma_bars=30, long_only=True,
+            )
+        self.assertEqual(runner.call_count, 3)
+        for call in runner.call_args_list:
+            self.assertEqual(call.kwargs["entry_quantile"], 0.02)
+            self.assertEqual(call.kwargs["entry_quantile_window"], 80)
+            self.assertEqual(call.kwargs["entry_quantile_warmup"], 40)
+            self.assertEqual(call.kwargs["vol_gate_feature"], "rv_15")
+            self.assertEqual(call.kwargs["vol_gate_min"], 0.001)
+            self.assertEqual(call.kwargs["trend_filter_sma_bars"], 30)
+            self.assertTrue(call.kwargs["long_only"])
+
+        # Under a quantile the thresholds collapse, so profiles differing ONLY
+        # in threshold are indistinguishable...
+        same_barrier = live.strategy_for_regime(None, "balanced")
+        other = dataclasses.replace(same_barrier, long_threshold=same_barrier.long_threshold + 0.1)
+        self.assertIsNotNone(_bt.indistinguishable_profiles(
+            {"a": same_barrier, "b": other}, entry_quantile=0.02))
+        # ...while profiles differing in BARRIER are not, because tp/sl still
+        # reach evaluate_entry_signal and the exits.
+        wider = dataclasses.replace(same_barrier, min_tp_floor_pct=same_barrier.min_tp_floor_pct * 2)
+        self.assertIsNone(_bt.indistinguishable_profiles(
+            {"a": same_barrier, "b": wider}, entry_quantile=0.02))
 
     def test_gated_training_gates_its_external_evaluation_too(self) -> None:
         # full_labeled_rows is snapshotted before the train-only volatility
@@ -2598,6 +2630,11 @@ class MakerFillTests(unittest.TestCase):
         self.assertIn("isfinite", src)
         # And it says how many rows it dropped rather than doing it silently.
         self.assertIn("excluded", src)
+        # Stateful routing consumes the complete sequence; the gate chooses
+        # rows only after that sequence has produced its regimes.
+        self.assertIn("for row in eval_source_rows", src)
+        self.assertIn("zip(eval_source_rows, _all_smoothed)", src)
+        self.assertIn("zip(eval_source_rows, _all_regimes)", src)
 
     def test_short_profitability_mirrors_the_long_label(self) -> None:
         # Under the barrier-free design (barriers set beyond reach) the existing

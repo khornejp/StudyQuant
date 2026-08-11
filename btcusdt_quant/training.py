@@ -1240,32 +1240,38 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
     # training_end (the common case).
     test_period_metrics: dict[str, object] | None = None
     if training_config.test_start is not None or training_config.test_end is not None:
+        # Stays UNGATED and complete: it is the routing sequence. The rule
+        # detector and the classifier smoother are both stateful (hysteresis,
+        # min-hold), so feeding them only the surviving bars assigns different
+        # regimes than backtest and live, which route the whole series and
+        # merely suppress entries. Gating here would score a gated strategy
+        # with the wrong side model and the result would not reproduce.
         eval_source_rows = list(full_labeled_rows) if full_labeled_rows is not None else list(build.labeled_rows)
-        if training_config.vol_gate_train_only and training_config.vol_gate_feature:
-            # full_labeled_rows is snapshotted BEFORE the train-only volatility
-            # filter, on purpose: it carries the post-cutoff rows the external
-            # test period needs. But it also carries the bars the gate excludes,
-            # and scoring a gated strategy on them reports a holdout the
-            # strategy would never have traded. Same predicate, same rows.
-            _key = training_config.vol_gate_feature
-            _floor = float(training_config.vol_gate_min)
-            _before = len(eval_source_rows)
-            eval_source_rows = [
-                row for row in eval_source_rows
-                if row.features.get(_key) is not None
-                and isfinite(float(row.features[_key]))
-                and float(row.features[_key]) >= _floor
-            ]
-            print(
-                f"[TRAIN] external evaluation rows gated the same way as training: "
-                f"{len(eval_source_rows):,} of {_before:,} have {_key} >= {_floor:.8g} "
-                f"({_before - len(eval_source_rows):,} excluded)"
+
+        def _passes_vol_gate(row: dataset.LabeledRow) -> bool:
+            if not (training_config.vol_gate_train_only and training_config.vol_gate_feature):
+                return True
+            value = row.features.get(training_config.vol_gate_feature)
+            return (
+                value is not None
+                and isfinite(float(value))
+                and float(value) >= float(training_config.vol_gate_min)
             )
-        test_rows = [
+
+        # The gate applies to WHAT IS SCORED, after routing has seen everything.
+        _in_window = [
             row for row in eval_source_rows
             if (training_config.test_start is None or row.open_time >= training_config.test_start)
             and (training_config.test_end is None or row.open_time <= training_config.test_end)
         ]
+        test_rows = [row for row in _in_window if _passes_vol_gate(row)]
+        if training_config.vol_gate_train_only and training_config.vol_gate_feature:
+            print(
+                f"[TRAIN] external evaluation gated like training: {len(test_rows):,} of "
+                f"{len(_in_window):,} test-period rows have {training_config.vol_gate_feature} >= "
+                f"{float(training_config.vol_gate_min):.8g} ({len(_in_window) - len(test_rows):,} "
+                f"excluded from scoring; routing still ran over the full series)"
+            )
         if test_rows:
             print(f"[TRAIN] Evaluating on test period: {len(test_rows):,} rows ({training_config.test_start} to {training_config.test_end})")
             # Regime routing for these future rows: use the SAME source that
@@ -1273,19 +1279,28 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
             # side) so the multi-feature rule detector's causal hysteresis runs
             # over the full eval series exactly like backtest/live routing.
             if regime_source == "regime_classifier":
+                # Smoothed over the FULL eval series for the same reason the
+                # rule detector is: the smoother carries state, so running it on
+                # a gated subset assigns different regimes than backtest and
+                # live. Look each test row up by time afterwards.
                 row_probs = [
                     {
                         "up": float(row.features.get("regime_prob_up", 0.0)),
                         "range": float(row.features.get("regime_prob_range", 0.0)),
                         "down": float(row.features.get("regime_prob_down", 0.0)),
                     }
-                    for row in test_rows
+                    for row in eval_source_rows
                 ]
                 if all(p["up"] == p["range"] == p["down"] == 0.0 for p in row_probs):
                     row_regimes = [None] * len(test_rows)  # F18 not on these rows
                 else:
                     from btcusdt_quant import regime_classifier as _rc
-                    _, row_regimes = _rc.smooth_regime_probabilities(row_probs)
+                    _, _all_smoothed = _rc.smooth_regime_probabilities(row_probs)
+                    _smoothed_by_time = {
+                        row.open_time: regime
+                        for row, regime in zip(eval_source_rows, _all_smoothed)
+                    }
+                    row_regimes = [_smoothed_by_time.get(row.open_time) for row in test_rows]
             elif regime_source == "multi_feature_rule":
                 # Route with the SAME fitted rule detector used for bucketing,
                 # over the FULL eval series (correct hysteresis/min-hold state),
