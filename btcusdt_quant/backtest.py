@@ -505,6 +505,14 @@ apply_range_mean_reversion_gate = live.apply_range_mean_reversion_gate
 DEFAULT_RANGE_GATE_EDGE = live.DEFAULT_RANGE_GATE_EDGE
 
 
+@dataclass(frozen=True)
+class CandidateIdentity:
+    """Stable signal identity shared by every funnel transition."""
+
+    bar_index: int
+    side: str
+
+
 @dataclass
 class BacktestTrade:
     entry_time: str
@@ -533,6 +541,8 @@ class BacktestTrade:
     used_threshold: float | None = None
     model_side: str | None = None          # "long" | "short"
     entry_probability: float | None = None  # probability of the ENTERED side
+    entry_probability_genuine: bool = False
+    candidate_identity: CandidateIdentity | None = None
     # Equity fraction this trade was actually sized at. None means the
     # backtest's constant position_size was used (Kelly sizing off).
     position_size_used: float | None = None
@@ -548,6 +558,23 @@ class BacktestTrade:
     # population is adversely selected (the bars that ran away are the missed
     # ones counted in maker_fill_diagnostics.unfilled).
     entry_maker: bool = False
+
+
+# Ten equal-width bins are deliberately reported as strings: JSON object keys
+# must be stable across consumers, while float formatting is not.
+PROBABILITY_BUCKETS = 10
+
+
+@dataclass
+class CounterfactualCandidate:
+    """An eligible signal rejected solely by the single-position scheduler."""
+
+    bar_index: int
+    timestamp: str
+    predicted_probability: float | None
+    rejection_reason: str
+    side: str
+    outcome: str
 
 
 @dataclass
@@ -623,6 +650,19 @@ class BacktestResult:
     # fill rate and how many signals were lost to unfilled limits -- the
     # missed trades that erode a maker strategy's edge.
     maker_fill_diagnostics: dict[str, object] = field(default_factory=dict)
+    # Candidate populations remaining after each execution filter. This is
+    # separate from aggregate ECE because a resting maker order selects bars
+    # that first moved adversely before it can fill.
+    execution_funnel: dict[str, object] = field(default_factory=dict)
+    # Empty and never allocated by run_backtest unless counterfactual logging is
+    # explicitly requested; large 1m runs otherwise pay no rejected-signal cost.
+    counterfactual_candidates: list[CounterfactualCandidate] | None = None
+    counterfactual_summary: dict[str, object] = field(default_factory=dict)
+    stage_transition_evidence_counts: dict[str, int] = field(default_factory=dict)
+    # Calibration applies to every filled trade only when each entered side had
+    # a genuine side-specific probability.  Keep the count beside the funnel so
+    # unavailable calibration cannot be mistaken for a result on all fills.
+    calibration_coverage: dict[str, object] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -671,6 +711,10 @@ class BacktestResult:
             "missing_side_models": self.missing_side_models,
             "barrier_warnings": self.barrier_warnings,
             "maker_fill_diagnostics": self.maker_fill_diagnostics,
+            "execution_funnel": self.execution_funnel,
+            "counterfactual_summary": self.counterfactual_summary,
+            "stage_transition_evidence_counts": self.stage_transition_evidence_counts,
+            "calibration_coverage": self.calibration_coverage,
             "trades": [
                 {
                     "entry_time": t.entry_time,
@@ -697,6 +741,10 @@ class BacktestResult:
                     "used_threshold": t.used_threshold,
                     "model_side": t.model_side,
                     "entry_probability": t.entry_probability,
+                    "entry_probability_genuine": t.entry_probability_genuine,
+                    "candidate_identity": None if t.candidate_identity is None else {
+                        "bar_index": t.candidate_identity.bar_index, "side": t.candidate_identity.side,
+                    },
                     "position_size_used": t.position_size_used,
                     "trade_return_pct": t.trade_return_pct,
                     "gross_trade_return_pct": t.gross_trade_return_pct,
@@ -704,7 +752,167 @@ class BacktestResult:
                 }
                 for t in self.trades
             ],
+            "counterfactual_candidates": [] if self.counterfactual_candidates is None else [
+                {
+                    "bar_index": c.bar_index, "timestamp": c.timestamp,
+                    "predicted_probability": c.predicted_probability,
+                    "rejection_reason": c.rejection_reason, "side": c.side,
+                    "outcome": c.outcome,
+                }
+                for c in self.counterfactual_candidates
+            ],
         }
+
+
+def _resolve_execution_outcome(
+    candle: data.Candle, side: str, tp_price: float, sl_price: float,
+    bar_count: int, min_hold_bars: int, label_horizon: int,
+) -> tuple[str, float] | None:
+    """The one OHLC barrier/tie/timeout decision used by execution and reports."""
+    hit_tp = candle.high >= tp_price if side == "BUY" else candle.low <= tp_price
+    hit_sl = candle.low <= sl_price if side == "BUY" else candle.high >= sl_price
+    can_exit_for_barrier = bar_count >= min_hold_bars
+    if not ((can_exit_for_barrier and (hit_tp or hit_sl)) or bar_count >= label_horizon):
+        return None
+    if hit_tp and hit_sl and can_exit_for_barrier:
+        # Keep the strict comparisons from the authoritative long/short
+        # labelers: a doji is ambiguous for long and SL-first for short.
+        tp_first = candle.close > candle.open if side == "BUY" else candle.close < candle.open
+        return ("TP", tp_price) if tp_first else ("SL", sl_price)
+    if hit_tp and can_exit_for_barrier:
+        return "TP", tp_price
+    if hit_sl and can_exit_for_barrier:
+        return "SL", sl_price
+    return "TIMEOUT", candle.close
+
+
+def _barrier_outcome_after_run(
+    candles: Sequence[data.Candle],
+    entry_index: int,
+    side: str,
+    tp_price: float,
+    sl_price: float,
+    horizon: int,
+    min_hold_bars: int,
+) -> tuple[str, float] | None:
+    """Return the completed label outcome and gross return, else censor it."""
+    final_index = entry_index + horizon
+    if final_index >= len(candles):
+        return None
+    for bar_count, candle in enumerate(candles[entry_index + 1:final_index + 1], start=1):
+        resolved = _resolve_execution_outcome(candle, side, tp_price, sl_price, bar_count, min_hold_bars, horizon)
+        if resolved is not None:
+            outcome, price = resolved
+            return outcome, ((price / candles[entry_index].close) - 1.0) * (1.0 if side == "BUY" else -1.0)
+    raise AssertionError("completed horizon did not resolve")
+
+
+def _counterfactual_barrier_outcome(
+    candles: Sequence[data.Candle], entry_index: int, side: str,
+    tp_price: float, sl_price: float, horizon: int, min_hold_bars: int,
+) -> str:
+    """Label a rejected candidate only in the opt-in artifact path."""
+    labelled = _barrier_outcome_after_run(candles, entry_index, side, tp_price, sl_price, horizon, min_hold_bars)
+    return "CENSORED" if labelled is None else labelled[0]
+
+
+def _probability_bucket(probability: float | None) -> str:
+    if probability is None:
+        return "unknown"
+    index = min(PROBABILITY_BUCKETS - 1, max(0, int(probability * PROBABILITY_BUCKETS)))
+    return f"{index / PROBABILITY_BUCKETS:.1f}-{(index + 1) / PROBABILITY_BUCKETS:.1f}"
+
+
+def _summarise_execution_population(
+    observations: Sequence[dict[str, object]],
+    break_even_cost_pct: float,
+    labels_available: bool = True,
+) -> dict[str, object]:
+    """Keep funnel arithmetic in one place so summary and API cannot diverge."""
+    def one(items: Sequence[dict[str, object]]) -> dict[str, object]:
+        if not labels_available:
+            # An opted-out forward label is not a censored label: the data edge
+            # was never consulted. Publishing it as censoring would turn an
+            # absent measurement into a false statement about the sample.
+            return {"label_status": "unavailable", "candidate_count": len(items),
+                    "count": None, "censored_count": None, "tp_share": None,
+                    "break_even_tp_share": None, "mean_gross_bps": None,
+                    "mean_net_bps": None, "mean_predicted_probability": None,
+                    "observed_minus_predicted": None}
+        measured = [item for item in items if item.get("outcome") is not None]
+        count = len(measured)
+        if not count:
+            return {"label_status": "measured", "candidate_count": len(items), "count": 0, "censored_count": len(items), "tp_share": None, "break_even_tp_share": None,
+                    "mean_gross_bps": None, "mean_net_bps": None,
+                    "mean_predicted_probability": None, "observed_minus_predicted": None}
+        tp_share = sum(item["outcome"] == "TP" for item in measured) / count
+        calibrated = [item for item in measured if item.get("probability") is not None]
+        mean_probability = (
+            sum(float(item["probability"]) for item in calibrated) / len(calibrated)
+            if calibrated else None
+        )
+        tp = sum(float(item["tp_pct"]) for item in measured) / count
+        sl = sum(float(item["sl_pct"]) for item in measured) / count
+        gross = sum(float(item["gross_pct"]) for item in measured) / count
+        net = sum(float(item["net_pct"]) for item in measured) / count
+        return {
+            "label_status": "measured", "candidate_count": len(items), "count": count, "censored_count": len(items) - count, "tp_share": tp_share,
+            "break_even_tp_share": (sl + break_even_cost_pct) / (tp + sl) if tp + sl else None,
+            "mean_gross_bps": gross * 1e4, "mean_net_bps": net * 1e4,
+            "calibration_status": "measured" if len(calibrated) == count else ("partial" if calibrated else "unavailable"),
+            "mean_predicted_probability": mean_probability,
+            "observed_minus_predicted": None if mean_probability is None else (
+                sum(item["outcome"] == "TP" for item in calibrated) / len(calibrated) - mean_probability
+            ),
+        }
+    buckets: dict[str, list[dict[str, object]]] = {}
+    for item in observations:
+        buckets.setdefault(_probability_bucket(item.get("probability")), []).append(item)
+    overall = one(observations)
+    bucket_summaries = {key: one(value) for key, value in buckets.items()}
+    # A subset calibration is not calibration for the reported population.
+    # Clear every calibration number, including a genuine-only bucket, when
+    # any measured observation lacks an entered-side probability; otherwise a
+    # summary reader can mistake the subset statistic for the whole population.
+    if overall.get("calibration_status") != "measured":
+        for summary in (overall, *bucket_summaries.values()):
+            summary["mean_predicted_probability"] = None
+            summary["observed_minus_predicted"] = None
+    return {"overall": overall, "probability_buckets": bucket_summaries}
+
+
+def _validate_stage_transitions(
+    transitions: Mapping[str, Mapping[CandidateIdentity, bool]],
+    candidates: Mapping[str, Sequence[dict[str, object]]],
+    filled_identities: Sequence[CandidateIdentity],
+) -> None:
+    """Reject a funnel transition that lacks the same admitted identity."""
+    stages = ("volatility_gate", "entry_quantile", "trend_filter", "admission")
+    prior: set[CandidateIdentity] | None = None
+    for stage in stages:
+        identities = {item["identity"] for item in candidates[stage]}
+        if any(not isinstance(identity, CandidateIdentity) for identity in identities):
+            raise AssertionError(f"execution funnel has non-canonical {stage} identity")
+        if prior is not None and not identities.issubset(prior):
+            raise AssertionError(f"execution funnel is not nested: {stage} escapes its upstream identity set")
+        affirmed = {identity for identity, accepted in transitions[stage].items() if accepted}
+        if identities != affirmed:
+            if affirmed - identities:
+                raise AssertionError(f"execution funnel {stage} accepted identity is missing from stage candidates")
+            raise AssertionError(f"execution funnel lacks {stage} predicate evidence")
+        prior = identities
+    admission = {item["identity"] for item in candidates["admission"]}
+    fills = set(filled_identities)
+    if not fills.issubset(admission):
+        raise AssertionError("execution funnel maker_fill identity lacks admission")
+    # Unlike admission, a maker order can expire without a fill.  The ledger
+    # records this stage only at the actual fill decision, so its affirmative
+    # identities must equal the realised-trade identities exactly.
+    maker_fills = {identity for identity, accepted in transitions["maker_fill"].items() if accepted}
+    if fills != maker_fills:
+        if maker_fills - fills:
+            raise AssertionError("execution funnel maker_fill accepted identity is missing from realised trades")
+        raise AssertionError("execution funnel lacks maker_fill predicate evidence")
 
 
 def _validate_cost_rates(
@@ -947,6 +1155,7 @@ def run_backtest(
     maker_fill_window: int = DEFAULT_MAKER_FILL_WINDOW,
     maker_fill_penetration: float = 0.0,
     maker_exit_outcomes: Sequence[str] | None = None,
+    record_counterfactual_candidates: bool = False,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -1040,6 +1249,8 @@ def run_backtest(
     _short_sided = model_is_short_sided(model)
     if _short_sided:
         print("[BACKTEST] model train_target is short-sided: a HIGH score is a SELL")
+        if kelly_config is not None:
+            print("[BACKTEST] Kelly provenance: direct high-score SELLs are sizeable; inverse low-score BUYs are refused")
     # A rolling-quantile cutoff needs its own state per side, built once and
     # advanced bar by bar. Only the two-sided/bundle path gets one: on the
     # single-model path `short_threshold` is a LOW cutoff on the same score
@@ -1092,7 +1303,9 @@ def run_backtest(
             f"[BACKTEST] entry threshold: rolling quantile, top {entry_quantile:.4g} of past "
             f"probabilities, window={'expanding' if entry_quantile_window <= 0 else entry_quantile_window}"
         )
-    result = BacktestResult()
+    result = BacktestResult(
+        counterfactual_candidates=[] if record_counterfactual_candidates else None,
+    )
     result.barrier_warnings = barrier_warnings
     result.fee_rate_per_side = fee_rate_per_side
     result.maker_fee_rate_per_side = maker_fee_rate_per_side
@@ -1141,6 +1354,7 @@ def run_backtest(
         "maker_fill_window": maker_fill_window,
         "maker_exit_outcomes": sorted(maker_exit_set),
         "maker_fill_penetration": maker_fill_penetration,
+        "record_counterfactual_candidates": record_counterfactual_candidates,
         "kelly_enabled": kelly_config is not None,
         "kelly_multiplier": kelly_config.kelly_multiplier if kelly_config else None,
         "kelly_lookback_bars": kelly_config.variance_lookback_bars if kelly_config else None,
@@ -1178,6 +1392,56 @@ def run_backtest(
     # order is a dict {side, limit, expiry, features, ctx}; counters feed
     # maker_fill_diagnostics.
     pending_order: dict[str, object] | None = None
+    # These compact dicts are reporting data, not scheduler state. They retain
+    # the population at each gate so selection from a resting maker fill is not
+    # hidden behind aggregate, all-row calibration.
+    funnel_candidates: dict[str, list[dict[str, object]]] = {
+        "volatility_gate": [], "entry_quantile": [], "trend_filter": [], "admission": [],
+    }
+    # A stage is reportable only after its predicate has explicitly produced a
+    # verdict. This ledger makes a misplaced survivor capture observable at
+    # materialisation instead of relying on population sizes to reveal it.
+    stage_transitions: dict[str, dict[CandidateIdentity, bool]] = {
+        "volatility_gate": {}, "entry_quantile": {}, "trend_filter": {},
+        "admission": {}, "maker_fill": {},
+    }
+    # Candidate identity is created once per bar/side and then carried through
+    # every reporting transition and the eventual trade.  The cache keeps the
+    # fill join and all stage membership checks on one canonical value.
+    candidate_identities: dict[tuple[int, str], CandidateIdentity] = {}
+    # Hold only signal-time facts in the decision loop. Label-horizon scans run
+    # after execution finishes, where they cannot accidentally become inputs to
+    # a trading decision.
+    counterfactual_pending: list[tuple[CounterfactualCandidate, float, float]] | None = (
+        [] if record_counterfactual_candidates else None
+    )
+
+    def _candidate_identity(index: int, side: str) -> CandidateIdentity:
+        return candidate_identities.setdefault((index, side), CandidateIdentity(index, side))
+
+    def _funnel_candidate(index: int, candle: data.Candle, side: str, probability: float | None) -> dict[str, object]:
+        feats = feature_rows[index].features if index < len(feature_rows) else {}
+        tp_price, sl_price, _ = live.optimized_tp_sl(candle.close, side, feats, strategy)
+        return {
+            "bar_index": index, "side": side,
+            "identity": _candidate_identity(index, side),
+            "probability": None if probability is None else float(probability),
+            "tp_pct": abs(tp_price / candle.close - 1.0), "sl_pct": abs(sl_price / candle.close - 1.0),
+            "entry_price": candle.close, "tp_price": tp_price, "sl_price": sl_price,
+        }
+
+    def _record_stage_predicate(stage: str, identity: CandidateIdentity, accepted: bool) -> None:
+        if stage not in stage_transitions:
+            raise AssertionError(f"unregistered funnel stage {stage}")
+        stage_transitions[stage][identity] = accepted
+
+    def _record_filter_survivor(stage: str, candidate: dict[str, object] | None) -> None:
+        """Record only after the named filter has left a candidate eligible."""
+        if candidate is None:
+            raise AssertionError(f"{stage} cannot retain a missing candidate")
+        if stage_transitions[stage].get(candidate["identity"]) is not True:
+            raise AssertionError(f"{stage} retained a candidate without affirmative predicate evidence")
+        funnel_candidates[stage].append(candidate)
     maker_orders_placed = 0
     maker_orders_filled = 0
     # Expiries and Kelly refusals are counted apart: an expiry is the book
@@ -1357,7 +1621,7 @@ def run_backtest(
             if prev_close > 0.0:
                 bar_returns[j] = (candles[j].close - prev_close) / prev_close
 
-    def _open_trade(side, entry_price, entry_time_iso, features, ctx, entry_maker):
+    def _open_trade(side, entry_price, entry_time_iso, features, ctx, entry_maker, candidate_identity=None):
         """Build a BacktestTrade (or None if Kelly refuses). ctx is the
         signal-time (regime, long_prob, short_prob, lt, st, genuine_sides).
         Reads the loop's current `i` for the Kelly variance window."""
@@ -1393,6 +1657,8 @@ def run_backtest(
             used_threshold=lt_ if side == "BUY" else st_,
             model_side="long" if side == "BUY" else "short",
             entry_probability=lprob if side == "BUY" else sprob,
+            entry_probability_genuine=("long" if side == "BUY" else "short") in genuine,
+            candidate_identity=candidate_identity,
             position_size_used=trade_size, entry_maker=entry_maker,
         )
 
@@ -1525,7 +1791,7 @@ def run_backtest(
                     # One model, one score: P(long_success)-like. A SELL here
                     # fires because that value is LOW, which is not a short
                     # win probability, so "short" is never genuine.
-                    _ctx_genuine_sides.add("long")
+                    _ctx_genuine_sides.add("short" if _short_sided else "long")
                     # Resolved lt/st (override > learned > strategy, floored) are
                     # the ONLY gate now; the old extra hard gate (prob>=0.55 /
                     # prob<=0.45) silently overrode threshold experiments on the
@@ -1579,7 +1845,7 @@ def run_backtest(
                     prob = active_model.probability(features_dict)
                     lt, st = _resolve_backtest_thresholds(regime_bundle, default_regime, long_threshold, short_threshold, strategy, threshold_floor)
                     _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = default_regime, prob, prob, lt, st
-                    _ctx_genuine_sides.add("long")
+                    _ctx_genuine_sides.add("short" if _short_sided else "long")
                     if prob > lt:
                         signal = "SELL" if _short_sided else "BUY"
                     elif prob < st:
@@ -1600,13 +1866,42 @@ def run_backtest(
                 _q = quantile_thresholds.long.resolve(prob)
                 lt = max(_q, threshold_floor) if _q is not None else _UNREACHABLE_THRESHOLD
             _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = None, prob, prob, lt, st
-            _ctx_genuine_sides.add("long")
+            _ctx_genuine_sides.add("short" if _short_sided else "long")
             if prob > lt:
                 signal = "SELL" if _short_sided else "BUY"
             elif prob < st and not long_only:
                 signal = "BUY" if _short_sided else "SELL"
             else:
                 signal = "HOLD"
+
+        # Scores are available only after the volatility gate admits a bar;
+        # retain every scored side before its threshold/quantile turns it into
+        # BUY/SELL/HOLD. This is the denominator the entry selector receives.
+        if not _vol_gated:
+            if "long" in _ctx_genuine_sides and _ctx_long_prob is not None:
+                _vol_candidate = _funnel_candidate(i, candle, "BUY", _ctx_long_prob)
+                _record_stage_predicate("volatility_gate", _vol_candidate["identity"], True)
+                _record_filter_survivor("volatility_gate", _vol_candidate)
+            if "short" in _ctx_genuine_sides and _ctx_short_prob is not None:
+                _vol_candidate = _funnel_candidate(i, candle, "SELL", _ctx_short_prob)
+                _record_stage_predicate("volatility_gate", _vol_candidate["identity"], True)
+                _record_filter_survivor("volatility_gate", _vol_candidate)
+
+        candidate_observation: dict[str, object] | None = None
+        probability: float | None = None
+        if signal in {"BUY", "SELL"}:
+            _entered_side = "long" if signal == "BUY" else "short"
+            probability = (_ctx_long_prob if signal == "BUY" else _ctx_short_prob) if _entered_side in _ctx_genuine_sides else None
+            candidate_observation = _funnel_candidate(i, candle, signal, probability)
+            # A single-model inverse signal has no genuine side probability,
+            # but it did pass volatility before its low score selected the
+            # inverse side.  Retain that same side-aware identity so the entry
+            # stage cannot claim a volatility predecessor for the other side.
+            if candidate_observation["identity"] not in stage_transitions["volatility_gate"]:
+                _record_stage_predicate("volatility_gate", candidate_observation["identity"], True)
+                _record_filter_survivor("volatility_gate", candidate_observation)
+            _record_stage_predicate("entry_quantile", candidate_observation["identity"], True)
+            _record_filter_survivor("entry_quantile", candidate_observation)
 
         # Direction filter, applied to the SIGNAL rather than before inference:
         # both sides may have been scored and only one is out of line with the
@@ -1623,6 +1918,10 @@ def run_backtest(
             if not _aligned:
                 trend_filter_blocked += 1
                 signal = "HOLD"
+
+        if signal in {"BUY", "SELL"}:
+            _record_stage_predicate("trend_filter", candidate_observation["identity"], True)
+            _record_filter_survivor("trend_filter", candidate_observation)
 
         result.signal_counts[signal] += 1
 
@@ -1663,11 +1962,12 @@ def run_backtest(
                 if hit:
                     opened = _open_trade(
                         pside, lp, candle.open_time.isoformat(),
-                        pending_order["features"], pending_order["ctx"], True,
+                        pending_order["features"], pending_order["ctx"], True, pending_order["identity"],
                     )
                     pending_order = None
                     if opened is not None:
                         active_trade = opened
+                        _record_stage_predicate("maker_fill", opened.candidate_identity, True)
                         bar_count = 0
                         maker_orders_filled += 1
                     else:
@@ -1679,48 +1979,12 @@ def run_backtest(
         # Exit active trade if SL/TP hit or horizon exceeded
         if active_trade is not None:
             bar_count += 1
-            exit_price = candle.close
-            hit_tp = False
-            hit_sl = False
-            if active_trade.side == "BUY":
-                hit_tp = candle.high >= active_trade.tp_price
-                hit_sl = candle.low <= active_trade.sl_price
-            else:
-                hit_tp = candle.low <= active_trade.tp_price
-                hit_sl = candle.high >= active_trade.sl_price
-
-            can_exit_for_barrier = bar_count >= min_hold_bars
-            if (can_exit_for_barrier and (hit_tp or hit_sl)) or bar_count >= label_horizon:
-                # When BOTH barriers are touched in the same candle, we cannot
-                # know from OHLC which came first. Mirror the labeling rule in
-                # dataset.triple_barrier_label_* (which decides via candle
-                # direction: close>open => TP first, else SL first) so the
-                # backtest resolves ties the SAME way the model was trained.
-                # Previously the backtest always assumed TP first, an
-                # optimistic bias that inflated win rate vs the labels.
-                both_hit = hit_tp and hit_sl and can_exit_for_barrier
-                if both_hit:
-                    # Side-specific tie-break matching the labeler:
-                    #   long  (BUY):  close > open  => TP first
-                    #   short (SELL): close < open  => TP first
-                    if active_trade.side == "BUY":
-                        tp_first = candle.close > candle.open
-                    else:
-                        tp_first = candle.close < candle.open
-                    if tp_first:
-                        exit_price = active_trade.tp_price
-                        outcome = "TP"
-                    else:
-                        exit_price = active_trade.sl_price
-                        outcome = "SL"
-                elif hit_tp and can_exit_for_barrier:
-                    exit_price = active_trade.tp_price
-                    outcome = "TP"
-                elif hit_sl and can_exit_for_barrier:
-                    exit_price = active_trade.sl_price
-                    outcome = "SL"
-                else:
-                    outcome = "TIMEOUT"
+            resolved = _resolve_execution_outcome(
+                candle, active_trade.side, active_trade.tp_price, active_trade.sl_price,
+                bar_count, min_hold_bars, label_horizon,
+            )
+            if resolved is not None:
+                outcome, exit_price = resolved
 
                 equity, gross_equity, _ = _close_trade(
                     active_trade,
@@ -1750,25 +2014,51 @@ def run_backtest(
         if maker_fill_window <= 0:
             # Default: instant taker fill at the signal-bar close.
             if active_trade is None and signal in {"BUY", "SELL"} and i >= next_entry_index:
+                _record_stage_predicate("admission", candidate_observation["identity"], True)
+                _record_filter_survivor("admission", candidate_observation)
                 ctx = (_ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st, set(_ctx_genuine_sides))
                 feats = feature_rows[i].features if i < len(feature_rows) else {}
-                opened = _open_trade(signal, candle.close, candle.open_time.isoformat(), feats, ctx, False)
+                opened = _open_trade(
+                    signal,
+                    candle.close,
+                    candle.open_time.isoformat(),
+                    feats,
+                    ctx,
+                    False,
+                    candidate_observation["identity"],
+                )
                 if opened is not None:
                     active_trade = opened
+                    _record_stage_predicate("maker_fill", opened.candidate_identity, True)
                     bar_count = 0
+            elif signal in {"BUY", "SELL"} and record_counterfactual_candidates:
+                reason = "active_trade" if active_trade is not None else "cooldown"
+                candidate = CounterfactualCandidate(i, candle.open_time.isoformat(), probability, reason, signal, "")
+                result.counterfactual_candidates.append(candidate)
+                counterfactual_pending.append((candidate, float(candidate_observation["tp_price"]), float(candidate_observation["sl_price"])))
         else:
             # Maker resting-limit model, part 2: place a limit on a fresh
             # signal. Part 1 (filling an order placed on an EARLIER bar) runs
             # ABOVE the exit block -- see the note there for why.
             if active_trade is None and pending_order is None and signal in {"BUY", "SELL"} and i >= next_entry_index:
+                _record_stage_predicate("admission", candidate_observation["identity"], True)
+                _record_filter_survivor("admission", candidate_observation)
                 pending_order = {
                     "side": signal,
                     "limit": candle.close,
                     "expiry": i + maker_fill_window,
                     "features": feature_rows[i].features if i < len(feature_rows) else {},
                     "ctx": (_ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st, set(_ctx_genuine_sides)),
+                    "identity": candidate_observation["identity"],
                 }
                 maker_orders_placed += 1
+            elif signal in {"BUY", "SELL"} and record_counterfactual_candidates:
+                reason = "active_trade" if active_trade is not None else (
+                    "pending_order" if pending_order is not None else "cooldown"
+                )
+                candidate = CounterfactualCandidate(i, candle.open_time.isoformat(), probability, reason, signal, "")
+                result.counterfactual_candidates.append(candidate)
+                counterfactual_pending.append((candidate, float(candidate_observation["tp_price"]), float(candidate_observation["sl_price"])))
 
     # An order still resting when the window closed never got its verdict.
     # Counting it keeps placed == filled + expired + kelly_refused, so a reader
@@ -1801,6 +2091,105 @@ def run_backtest(
         peak_equity = max(peak_equity, equity)
         max_drawdown_pct = max(max_drawdown_pct, 1.0 - equity / peak_equity if peak_equity > 0 else 0.0)
         result.trades.append(active_trade)
+
+    def _materialise_funnel(observations: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+        """Attach label outcomes only after the execution loop has ended."""
+        materialised: list[dict[str, object]] = []
+        for observation in observations:
+            labelled = _barrier_outcome_after_run(
+                candles, int(observation["bar_index"]), str(observation["side"]),
+                float(observation["tp_price"]), float(observation["sl_price"]), label_horizon, min_hold_bars,
+            ) if record_counterfactual_candidates else None
+            outcome, gross_pct = (None, None) if labelled is None else labelled
+            exit_maker = outcome in maker_exit_set if outcome is not None else False
+            candidate_cost = (
+                (maker_fee_rate_per_side if maker_fill_window > 0 else fee_rate_per_side)
+                + (maker_fee_rate_per_side if exit_maker else fee_rate_per_side)
+                + (0.0 if maker_fill_window > 0 else slippage_rate_per_side)
+                + (0.0 if exit_maker else slippage_rate_per_side)
+            )
+            materialised.append({
+                "probability": observation["probability"], "outcome": outcome,
+                "tp_pct": observation["tp_pct"], "sl_pct": observation["sl_pct"],
+                "gross_pct": gross_pct, "net_pct": None if gross_pct is None else gross_pct - candidate_cost,
+            })
+        return materialised
+
+    # Filled and admitted populations must use realised trades, including the
+    # fill-bar selection and the outcome-specific fee/slippage this run paid.
+    filled_observations = [
+        {
+            "probability": t.entry_probability if t.entry_probability_genuine else None,
+            # OPEN_AT_END is harness liquidation, not a completed horizon
+            # observation; retain the trade itself but exclude it from calibration.
+            "outcome": None if t.outcome == "OPEN_AT_END" else t.outcome,
+            "tp_pct": abs(t.tp_price / t.entry_price - 1.0),
+            "sl_pct": abs(t.sl_price / t.entry_price - 1.0),
+            "gross_pct": None if t.outcome == "OPEN_AT_END" else t.gross_pnl_pct,
+            "net_pct": None if t.outcome == "OPEN_AT_END" else t.pnl_pct,
+        }
+        for t in result.trades
+    ]
+    actual_cost_pct = (
+        sum(t.cost_pct for t in result.trades) / len(result.trades)
+        if result.trades else result.round_trip_cost_pct
+    )
+    materialised_funnel = {stage: _materialise_funnel(items) for stage, items in funnel_candidates.items()}
+    filled_identities: list[CandidateIdentity] = []
+    for trade in result.trades:
+        if trade.candidate_identity is None:
+            raise AssertionError("execution funnel maker_fill trade lacks candidate identity")
+        filled_identities.append(trade.candidate_identity)
+    _validate_stage_transitions(
+        stage_transitions, funnel_candidates, filled_identities,
+    )
+    result.stage_transition_evidence_counts = {
+        stage: len(events) for stage, events in stage_transitions.items()
+    }
+    inverse_side_fill_count = sum(
+        not trade.entry_probability_genuine for trade in result.trades
+    )
+    result.calibration_coverage = {
+        "inverse_side_fill_count": inverse_side_fill_count,
+        "has_inverse_side_fills": inverse_side_fill_count > 0,
+        "calibration_population_complete": inverse_side_fill_count == 0,
+        "warning": (
+            "inverse-side fills lack an entered-side predicted probability; "
+            "do not interpret calibration as applying to every traded fill"
+            if inverse_side_fill_count else None
+        ),
+    }
+    if inverse_side_fill_count:
+        print(
+            "[BACKTEST] WARNING: "
+            f"{inverse_side_fill_count} inverse-side fills lack an entered-side probability; "
+            "calibration is not representative of every traded fill"
+        )
+    if counterfactual_pending is not None:
+        for candidate, tp_price, sl_price in counterfactual_pending:
+            candidate.outcome = _counterfactual_barrier_outcome(
+                candles, candidate.bar_index, candidate.side, tp_price, sl_price, label_horizon, min_hold_bars,
+            )
+    result.execution_funnel = {
+        "break_even_cost_pct": actual_cost_pct,
+        "volatility_gate": _summarise_execution_population(materialised_funnel["volatility_gate"], actual_cost_pct, record_counterfactual_candidates),
+        "entry_quantile": _summarise_execution_population(materialised_funnel["entry_quantile"], actual_cost_pct, record_counterfactual_candidates),
+        "trend_filter": _summarise_execution_population(materialised_funnel["trend_filter"], actual_cost_pct, record_counterfactual_candidates),
+        "maker_fill": _summarise_execution_population(filled_observations, actual_cost_pct),
+        "cooldown_single_position_admission": _summarise_execution_population(materialised_funnel["admission"], actual_cost_pct, record_counterfactual_candidates),
+    }
+    if result.counterfactual_candidates is not None:
+        by_reason: dict[str, int] = {}
+        by_outcome: dict[str, int] = {}
+        for candidate in result.counterfactual_candidates:
+            by_reason[candidate.rejection_reason] = by_reason.get(candidate.rejection_reason, 0) + 1
+            by_outcome[candidate.outcome] = by_outcome.get(candidate.outcome, 0) + 1
+        result.counterfactual_summary = {
+            "enabled": True, "count": len(result.counterfactual_candidates),
+            "by_rejection_reason": by_reason, "by_counterfactual_outcome": by_outcome,
+        }
+    else:
+        result.counterfactual_summary = {"enabled": False, "count": 0}
 
     # Compute metrics
     result.total_return = (equity - initial_equity) / initial_equity

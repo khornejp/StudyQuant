@@ -1807,6 +1807,7 @@ class MakerFillTests(unittest.TestCase):
         self.assertAlmostEqual(first.slippage_pct, 1.0 * result.slippage_rate_per_side)
         self.assertGreaterEqual(result.maker_fill_diagnostics["orders_filled"], 1)
 
+
     def test_maker_unfilled_when_price_runs_away(self) -> None:
         # Monotonic ramp: every later low is above every prior close, so no
         # resting BUY limit is ever touched -> no trade, all orders unfilled.
@@ -3059,6 +3060,374 @@ class MakerFillTests(unittest.TestCase):
         blocked = self._run(specs, window=5, penetration=0.0005)  # 5 bps
         self.assertGreaterEqual(touched.maker_fill_diagnostics["orders_filled"], 1)
         self.assertEqual(blocked.maker_fill_diagnostics["orders_filled"], 0)
+
+
+class ExecutionInstrumentationTests(unittest.TestCase):
+    class _AlwaysLong:
+        def probability(self, values) -> float:
+            return 0.9
+
+    def _run(self, **kwargs):
+        specs = [(100.0, 100.2, 99.8, 100.0)] * 18
+        return run_backtest(
+            _ohlc_candles(specs), model=self._AlwaysLong(), label_horizon=6,
+            cooldown_bars=2, long_threshold=0.6, short_threshold=0.01,
+            maker_fill_window=0, maker_exit_outcomes=[], **kwargs,
+        )
+
+    def test_execution_funnel_reports_filled_calibration_and_actual_cost(self) -> None:
+        result = self._run(record_counterfactual_candidates=True)
+        funnel = result.execution_funnel
+        self.assertEqual(funnel["maker_fill"]["overall"]["count"], result.trade_count)
+        self.assertIn("observed_minus_predicted", funnel["maker_fill"]["overall"])
+        expected_cost = sum(t.cost_pct for t in result.trades) / len(result.trades)
+        self.assertAlmostEqual(funnel["break_even_cost_pct"], expected_cost)
+        self.assertTrue(funnel["maker_fill"]["probability_buckets"])
+        self.assertIn("execution_funnel", result.as_dict())
+
+    def test_quantile_funnel_keeps_all_scored_bars_before_selection(self) -> None:
+        class AlternatingScore:
+            def __init__(self):
+                self.calls = 0
+            def probability(self, values) -> float:
+                self.calls += 1
+                return min(0.95, 0.1 + 0.05 * self.calls)
+
+        specs = [(100.0, 100.2, 99.8, 100.0)] * 18
+        result = run_backtest(
+            _ohlc_candles(specs), model=AlternatingScore(), label_horizon=4,
+            cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            entry_quantile=0.5, entry_quantile_warmup=2, long_only=True,
+            maker_fill_window=0, maker_exit_outcomes=[], record_counterfactual_candidates=True,
+        )
+        funnel = result.execution_funnel
+        self.assertEqual(funnel["volatility_gate"]["overall"]["count"], 14)
+        self.assertGreater(funnel["entry_quantile"]["overall"]["count"], 0)
+        self.assertLess(funnel["entry_quantile"]["overall"]["count"], funnel["volatility_gate"]["overall"]["count"])
+
+    def test_trend_funnel_records_only_sma_survivors(self) -> None:
+        # Every score wants BUY, while the falling closes make every long fail
+        # the SMA alignment test (including its unknown-SMA warmup bars).
+        specs = [(100.0 - i, 100.1 - i, 99.8 - i, 100.0 - i) for i in range(18)]
+        result = run_backtest(
+            _ohlc_candles(specs), model=self._AlwaysLong(), label_horizon=4,
+            cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            trend_filter_sma_bars=3, maker_fill_window=0, maker_exit_outcomes=[],
+            record_counterfactual_candidates=True,
+        )
+        funnel = result.execution_funnel
+        upstream = funnel["entry_quantile"]["overall"]
+        trend = funnel["trend_filter"]["overall"]
+        self.assertGreater(upstream["candidate_count"], 0)
+        self.assertEqual(trend["label_status"], "measured")
+        self.assertEqual(trend["candidate_count"], 0)
+        self.assertEqual(trend["count"], 0)
+        self.assertEqual(trend["censored_count"], 0)
+        self.assertIsNone(trend["tp_share"])
+
+    def test_volatility_gate_funnel_precedes_all_downstream_stages(self) -> None:
+        import dataclasses as _dc
+        candles = _ohlc_candles([(100.0, 100.2, 99.8, 100.0)] * 12)
+        rows = backtest_module.dataset.build_feature_rows(candles)
+        rows = [_dc.replace(row, features={**row.features, "test_gate": float(index % 2)}) for index, row in enumerate(rows)]
+        result = run_backtest(
+            candles, model=self._AlwaysLong(), feature_rows=rows, label_horizon=4,
+            cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            vol_gate_feature="test_gate", vol_gate_min=1.0, maker_fill_window=0,
+            maker_exit_outcomes=[], record_counterfactual_candidates=True,
+        )
+        funnel = result.execution_funnel
+        self.assertEqual(funnel["volatility_gate"]["overall"]["candidate_count"], 6)
+        self.assertLessEqual(funnel["entry_quantile"]["overall"]["candidate_count"], 6)
+
+    def test_inverse_single_model_short_keeps_payoff_but_not_calibration(self) -> None:
+        class LowLongScore:
+            def probability(self, values) -> float:
+                return 0.1
+
+        result = run_backtest(
+            _ohlc_candles([(100.0, 100.2, 99.8, 100.0)] * 12), model=LowLongScore(),
+            label_horizon=3, cooldown_bars=0, long_threshold=0.9, short_threshold=0.2,
+            maker_fill_window=0, maker_exit_outcomes=[],
+        )
+        self.assertGreater(result.trade_count, 0)
+        self.assertTrue(all(t.side == "SELL" and not t.entry_probability_genuine for t in result.trades))
+        filled = result.execution_funnel["maker_fill"]["overall"]
+        self.assertIsNotNone(filled["tp_share"])
+        self.assertEqual(filled["calibration_status"], "unavailable")
+        self.assertIsNone(filled["mean_predicted_probability"])
+        self.assertIsNone(filled["observed_minus_predicted"])
+
+    def test_partial_filled_calibration_serializes_no_calibration_numbers(self) -> None:
+        class AlternatingLongScore:
+            def __init__(self) -> None:
+                self._calls = 0
+
+            def probability(self, values) -> float:
+                self._calls += 1
+                return 0.9 if self._calls % 2 else 0.1
+
+        result = run_backtest(
+            _ohlc_candles([(100.0, 100.2, 99.8, 100.0)] * 12),
+            model=AlternatingLongScore(), label_horizon=1, cooldown_bars=0,
+            long_threshold=0.6, short_threshold=0.2, maker_fill_window=0,
+            maker_exit_outcomes=[],
+        )
+        filled = result.as_dict()["execution_funnel"]["maker_fill"]
+        overall = filled["overall"]
+        self.assertEqual(overall["calibration_status"], "partial")
+        self.assertIsNotNone(overall["tp_share"])
+        self.assertIsNone(overall["mean_predicted_probability"])
+        self.assertIsNone(overall["observed_minus_predicted"])
+        for bucket in filled["probability_buckets"].values():
+            self.assertIsNone(bucket["mean_predicted_probability"])
+            self.assertIsNone(bucket["observed_minus_predicted"])
+
+    def test_short_target_direct_and_inverse_provenance_controls_calibration_and_kelly(self) -> None:
+        class ShortTarget:
+            train_target = "short_success"
+            def __init__(self, probability):
+                self._probability = probability
+            def probability(self, values) -> float:
+                return self._probability
+
+        candles = _ohlc_candles([(100.0 + (i % 2), 101.5 + (i % 2), 98.5 + (i % 2), 100.0 + ((i + 1) % 2)) for i in range(16)])
+        common = dict(label_horizon=3, cooldown_bars=0, long_threshold=0.6, short_threshold=0.2,
+                      maker_fill_window=0, maker_exit_outcomes=[])
+        direct = run_backtest(candles, model=ShortTarget(0.9), record_counterfactual_candidates=True, **common)
+        inverse = run_backtest(candles, model=ShortTarget(0.1), record_counterfactual_candidates=True, **common)
+        self.assertTrue(all(t.side == "SELL" and t.entry_probability_genuine for t in direct.trades))
+        self.assertTrue(all(t.side == "BUY" and not t.entry_probability_genuine for t in inverse.trades))
+        self.assertEqual(direct.execution_funnel["maker_fill"]["overall"]["calibration_status"], "measured")
+        self.assertEqual(inverse.execution_funnel["maker_fill"]["overall"]["calibration_status"], "unavailable")
+        for stage_name in ("entry_quantile", "trend_filter", "cooldown_single_position_admission"):
+            stage = inverse.execution_funnel[stage_name]["overall"]
+            self.assertEqual(stage["calibration_status"], "unavailable")
+            self.assertIn("unknown", inverse.execution_funnel[stage_name]["probability_buckets"])
+
+    def test_kelly_sizes_direct_short_target_and_refuses_inverse(self) -> None:
+        class ShortTarget:
+            train_target = "short_success"
+            def __init__(self, probability): self._probability = probability
+            def probability(self, values) -> float: return self._probability
+
+        candles = _ohlc_candles([(100.0 + (i % 2) * 2, 101.0 + (i % 2) * 2, 99.0 + (i % 2) * 2, 101.0 - (i % 2) * 2) for i in range(20)])
+        kelly = risk.KellySizingConfig(variance_lookback_bars=3, holding_period_bars=3)
+        common = dict(label_horizon=3, cooldown_bars=0, long_threshold=0.6, short_threshold=0.2,
+                      maker_fill_window=0, maker_exit_outcomes=[], kelly_config=kelly)
+        direct = run_backtest(candles, model=ShortTarget(0.9), **common)
+        inverse = run_backtest(candles, model=ShortTarget(0.1), **common)
+        self.assertGreater(direct.trade_count, 0)
+        self.assertTrue(all(t.side == "SELL" and t.position_size_used is not None for t in direct.trades))
+        self.assertEqual(inverse.trade_count, 0)
+        self.assertGreater(inverse.kelly_sizing["longs_skipped_no_long_model"], 0)
+
+    def test_maker_fill_evidence_is_recorded_at_resting_fill_site(self) -> None:
+        specs = [(100.0, 100.2, 99.8, 100.0), (100.1, 100.4, 99.0, 100.2)]
+        specs += [(100.2, 100.4, 100.0, 100.2)] * 8
+        result = run_backtest(
+            _ohlc_candles(specs), model=self._AlwaysLong(), label_horizon=4,
+            cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            maker_fill_window=3, maker_exit_outcomes=[],
+        )
+        self.assertGreater(result.trade_count, 0)
+        self.assertTrue(result.trades[0].entry_maker)
+        self.assertEqual(result.stage_transition_evidence_counts["maker_fill"], result.trade_count)
+
+    def test_maker_fill_evidence_is_recorded_at_taker_open_site(self) -> None:
+        result = self._run()
+        self.assertGreater(result.trade_count, 0)
+        self.assertFalse(result.trades[0].entry_maker)
+        self.assertEqual(result.stage_transition_evidence_counts["maker_fill"], result.trade_count)
+
+    def test_transition_audit_rejects_inverse_buy_without_matching_volatility_identity(self) -> None:
+        """A same-bar SELL cannot certify an inverse BUY at the next stage."""
+        sell = backtest_module.CandidateIdentity(7, "SELL")
+        inverse_buy = backtest_module.CandidateIdentity(7, "BUY")
+        transitions = {
+            "volatility_gate": {sell: True},
+            "entry_quantile": {inverse_buy: True},
+            "trend_filter": {inverse_buy: True},
+            "admission": {inverse_buy: True},
+            "maker_fill": {},
+        }
+        candidates = {
+            "volatility_gate": [{"identity": sell}],
+            "entry_quantile": [{"identity": inverse_buy}],
+            "trend_filter": [{"identity": inverse_buy}],
+            "admission": [{"identity": inverse_buy}],
+        }
+        with self.assertRaisesRegex(AssertionError, "entry_quantile escapes its upstream identity set"):
+            backtest_module._validate_stage_transitions(transitions, candidates, [])
+
+    def test_transition_audit_rejects_fill_without_its_admission_identity(self) -> None:
+        """A realised trade may only be reported as a fill of its own order."""
+        filled = backtest_module.CandidateIdentity(11, "BUY")
+        transitions = {
+            "volatility_gate": {}, "entry_quantile": {}, "trend_filter": {},
+            "admission": {}, "maker_fill": {filled: True},
+        }
+        candidates = {
+            "volatility_gate": [], "entry_quantile": [], "trend_filter": [], "admission": [],
+        }
+        with self.assertRaisesRegex(AssertionError, "maker_fill identity lacks admission"):
+            backtest_module._validate_stage_transitions(transitions, candidates, [filled])
+
+    def test_transition_audit_rejects_affirmed_identity_missing_from_stage(self) -> None:
+        """An accepted gate verdict must appear in that stage's population."""
+        accepted = backtest_module.CandidateIdentity(13, "BUY")
+        transitions = {
+            "volatility_gate": {accepted: True},
+            "entry_quantile": {}, "trend_filter": {}, "admission": {}, "maker_fill": {},
+        }
+        candidates = {
+            "volatility_gate": [], "entry_quantile": [], "trend_filter": [], "admission": [],
+        }
+        with self.assertRaisesRegex(AssertionError, "volatility_gate accepted identity is missing from stage candidates"):
+            backtest_module._validate_stage_transitions(transitions, candidates, [])
+
+    def test_transition_audit_rejects_unrealised_maker_fill_evidence(self) -> None:
+        """A maker-fill verdict is valid only when its order became a trade."""
+        admitted = backtest_module.CandidateIdentity(14, "BUY")
+        transitions = {
+            "volatility_gate": {admitted: True},
+            "entry_quantile": {admitted: True},
+            "trend_filter": {admitted: True},
+            "admission": {admitted: True},
+            "maker_fill": {admitted: True},
+        }
+        candidates = {
+            "volatility_gate": [{"identity": admitted}],
+            "entry_quantile": [{"identity": admitted}],
+            "trend_filter": [{"identity": admitted}],
+            "admission": [{"identity": admitted}],
+        }
+        with self.assertRaisesRegex(AssertionError, "maker_fill accepted identity is missing from realised trades"):
+            backtest_module._validate_stage_transitions(transitions, candidates, [])
+
+    def test_inverse_side_fills_are_explicitly_flagged_for_calibration_reading(self) -> None:
+        class LowLongScore:
+            def probability(self, values) -> float:
+                return 0.1
+
+        result = run_backtest(
+            _ohlc_candles([(100.0, 100.2, 99.8, 100.0)] * 12), model=LowLongScore(),
+            label_horizon=3, cooldown_bars=0, long_threshold=0.9, short_threshold=0.2,
+            maker_fill_window=0, maker_exit_outcomes=[],
+        )
+        coverage = result.as_dict()["calibration_coverage"]
+        self.assertTrue(coverage["has_inverse_side_fills"])
+        self.assertEqual(coverage["inverse_side_fill_count"], result.trade_count)
+        self.assertFalse(coverage["calibration_population_complete"])
+
+    def test_counterfactual_log_is_opt_in_and_disabled_path_allocates_nothing(self) -> None:
+        with mock.patch.object(backtest_module, "CounterfactualCandidate", side_effect=AssertionError):
+            disabled = self._run()
+        self.assertIsNone(disabled.counterfactual_candidates)
+        self.assertEqual(disabled.counterfactual_summary, {"enabled": False, "count": 0})
+        enabled = self._run(record_counterfactual_candidates=True)
+        self.assertGreater(len(enabled.counterfactual_candidates), 0)
+        first = enabled.counterfactual_candidates[0]
+        self.assertIn(first.rejection_reason, {"active_trade", "pending_order", "cooldown"})
+        self.assertIn(first.outcome, {"TP", "SL", "TIMEOUT"})
+        self.assertEqual(enabled.counterfactual_summary["count"], len(enabled.counterfactual_candidates))
+
+    def test_counterfactual_lookahead_function_is_not_called_when_disabled(self) -> None:
+        with mock.patch.object(backtest_module, "_barrier_outcome_after_run", wraps=backtest_module._barrier_outcome_after_run) as spy:
+            self._run()
+        self.assertEqual(spy.call_count, 0)
+
+    def test_prefill_funnel_labels_distinguish_unavailable_from_measured(self) -> None:
+        unavailable = self._run()
+        stage = unavailable.execution_funnel["volatility_gate"]["overall"]
+        self.assertEqual(stage["label_status"], "unavailable")
+        self.assertGreater(stage["candidate_count"], 0)
+        self.assertIsNone(stage["count"])
+        self.assertIsNone(stage["censored_count"])
+
+        measured = self._run(record_counterfactual_candidates=True)
+        labelled_stage = measured.execution_funnel["volatility_gate"]["overall"]
+        self.assertEqual(labelled_stage["label_status"], "measured")
+        self.assertGreater(labelled_stage["count"], 0)
+
+    def test_incomplete_label_horizons_are_censored_not_timeouts(self) -> None:
+        result = run_backtest(
+            _ohlc_candles([(100.0, 100.1, 99.9, 100.0)] * 8), model=self._AlwaysLong(),
+            label_horizon=6, cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            maker_fill_window=0, maker_exit_outcomes=[], record_counterfactual_candidates=True,
+        )
+        overall = result.execution_funnel["volatility_gate"]["overall"]
+        # With bars numbered 0..7 and horizon 6, only entries 0 and 1 have a
+        # full future [entry + 1, entry + 6]; entries 2..7 are censored.
+        self.assertEqual(overall["count"], 2)
+        self.assertEqual(overall["censored_count"], 6)
+
+    def test_barrier_on_exact_horizon_bar_is_not_censored(self) -> None:
+        specs = [(100.0, 100.1, 99.9, 100.0)] * 7
+        specs[6] = (100.0, 101.5, 99.9, 101.0)
+        result = run_backtest(
+            _ohlc_candles(specs), model=self._AlwaysLong(), label_horizon=6,
+            cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            exec_tp_pct=0.01, exec_sl_pct=0.01, maker_fill_window=0,
+            maker_exit_outcomes=[], record_counterfactual_candidates=True,
+        )
+        overall = result.execution_funnel["volatility_gate"]["overall"]
+        self.assertEqual(overall["count"], 1)
+        self.assertEqual(overall["censored_count"], 6)
+        self.assertEqual(overall["tp_share"], 1.0)
+
+    def test_min_hold_funnel_outcome_matches_executed_timeout(self) -> None:
+        specs = [(100.0, 100.1, 99.9, 100.0), (100.0, 102.0, 99.9, 101.0), (101.0, 100.8, 100.4, 100.5)]
+        result = run_backtest(
+            _ohlc_candles(specs), model=self._AlwaysLong(), label_horizon=2, min_hold_bars=2,
+            cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            exec_tp_pct=0.01, exec_sl_pct=0.01, maker_fill_window=0,
+            maker_exit_outcomes=[], record_counterfactual_candidates=True,
+        )
+        self.assertEqual(result.trades[0].outcome, "TIMEOUT")
+        overall = result.execution_funnel["volatility_gate"]["overall"]
+        self.assertEqual(overall["tp_share"], 0.0)
+        self.assertAlmostEqual(overall["mean_gross_bps"], result.trades[0].gross_pnl_pct * 1e4)
+
+    def test_open_at_end_trade_is_censored_from_filled_calibration(self) -> None:
+        result = run_backtest(
+            _ohlc_candles([(100.0, 100.1, 99.9, 100.0)] * 3), model=self._AlwaysLong(),
+            label_horizon=10, cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            maker_fill_window=0, maker_exit_outcomes=[],
+        )
+        self.assertEqual(result.trades[0].outcome, "OPEN_AT_END")
+        overall = result.execution_funnel["maker_fill"]["overall"]
+        self.assertEqual(overall["count"], 0)
+        self.assertEqual(overall["censored_count"], 1)
+
+    def test_execution_both_barrier_ties_match_long_and_short_labellers(self) -> None:
+        # The labellers use strict close comparisons, so the doji belongs to
+        # the loss side for BOTH directions. Keep execution coupled to those
+        # labels rather than encoding a second prose version of the rule.
+        for close in (99.8, 100.0, 100.2):
+            candles = _ohlc_candles([(100.0, 100.1, 99.9, 100.0), (100.0, 101.2, 98.8, close)])
+            long_label, _ = backtest_module.dataset.triple_barrier_label(
+                0, candles, 1, 0.0, 0.01, 0.005, 0.0,
+            )
+            short_label, _ = backtest_module.dataset.triple_barrier_label_short(0, candles, 1, 0.01, 0.005)
+            _, long_price = backtest_module._resolve_execution_outcome(
+                candles[1], "BUY", 101.0, 99.5, 1, 0, 1,
+            )
+            _, short_price = backtest_module._resolve_execution_outcome(
+                candles[1], "SELL", 99.0, 100.5, 1, 0, 1,
+            )
+            self.assertEqual(long_price, 101.0 if long_label else 99.5)
+            self.assertEqual(short_price, 99.0 if short_label else 100.5)
+
+    def test_maker_admission_includes_expired_orders_before_fill(self) -> None:
+        specs = [(100.0 + i, 101.0 + i, 99.9 + i, 100.0 + i) for i in range(14)]
+        result = run_backtest(
+            _ohlc_candles(specs), model=self._AlwaysLong(), label_horizon=4,
+            cooldown_bars=0, long_threshold=0.6, short_threshold=0.01,
+            maker_fill_window=2, maker_exit_outcomes=[], record_counterfactual_candidates=True,
+        )
+        funnel = result.execution_funnel
+        self.assertGreater(funnel["cooldown_single_position_admission"]["overall"]["count"], funnel["maker_fill"]["overall"]["count"])
 
 
 if __name__ == "__main__":
