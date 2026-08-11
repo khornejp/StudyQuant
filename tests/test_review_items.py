@@ -2559,6 +2559,46 @@ class MakerFillTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run_backtest(candles, model=_ShortModel(), long_only=True, **common)
 
+    def test_entry_overrides_skip_the_strategy_comparison(self) -> None:
+        # compare_strategies takes none of the entry-affecting options, so with
+        # a gate, a quantile, a trend filter or long-only active it scored
+        # UNGATED, UNFILTERED variants and the summary printed a best_strategy
+        # for a configuration the run never executed. The three profiles differ
+        # only in entry thresholds, tp_pct and min_reward_risk, and every one of
+        # those options overrides the entry decision for all three alike, so
+        # there is no comparison left to make either.
+        import inspect
+        from btcusdt_quant import backtest as _bt, cli as _cli
+
+        accepted = inspect.signature(_bt.compare_strategies).parameters
+        for option in ("entry_quantile", "vol_gate_feature", "trend_filter_sma_bars", "long_only"):
+            self.assertNotIn(option, accepted, f"{option} reached compare_strategies")
+
+        src = inspect.getsource(_cli.main)
+        self.assertIn("_entry_overrides", src)
+        for flag in ("--entry-quantile", "--vol-gate-feature", "--trend-filter-sma", "--long-only"):
+            self.assertIn(flag, src)
+        # The skip is reported, not silent, and best_strategy is not printed.
+        self.assertIn('comparison.get("available") is False', src)
+
+    def test_gated_training_gates_its_external_evaluation_too(self) -> None:
+        # full_labeled_rows is snapshotted before the train-only volatility
+        # filter so the regime path can reach post-cutoff rows for an external
+        # test period. It also carries the bars the gate excludes, and scoring a
+        # gated strategy on them reports a holdout the strategy would never
+        # have traded -- a gated model looking validated on ungated data.
+        import inspect
+        from btcusdt_quant import training as _tr
+
+        src = inspect.getsource(_tr.run_regime_aware_training)
+        self.assertIn("eval_source_rows", src)
+        self.assertIn("vol_gate_train_only", src)
+        # The same predicate as the training filter: present, finite, >= floor.
+        self.assertIn("vol_gate_min", src)
+        self.assertIn("isfinite", src)
+        # And it says how many rows it dropped rather than doing it silently.
+        self.assertIn("excluded", src)
+
     def test_short_profitability_mirrors_the_long_label(self) -> None:
         # Under the barrier-free design (barriers set beyond reach) the existing
         # short_success label collapses: every bar times out and it returns 0,

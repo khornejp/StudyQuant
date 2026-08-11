@@ -1241,6 +1241,26 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
     test_period_metrics: dict[str, object] | None = None
     if training_config.test_start is not None or training_config.test_end is not None:
         eval_source_rows = list(full_labeled_rows) if full_labeled_rows is not None else list(build.labeled_rows)
+        if training_config.vol_gate_train_only and training_config.vol_gate_feature:
+            # full_labeled_rows is snapshotted BEFORE the train-only volatility
+            # filter, on purpose: it carries the post-cutoff rows the external
+            # test period needs. But it also carries the bars the gate excludes,
+            # and scoring a gated strategy on them reports a holdout the
+            # strategy would never have traded. Same predicate, same rows.
+            _key = training_config.vol_gate_feature
+            _floor = float(training_config.vol_gate_min)
+            _before = len(eval_source_rows)
+            eval_source_rows = [
+                row for row in eval_source_rows
+                if row.features.get(_key) is not None
+                and isfinite(float(row.features[_key]))
+                and float(row.features[_key]) >= _floor
+            ]
+            print(
+                f"[TRAIN] external evaluation rows gated the same way as training: "
+                f"{len(eval_source_rows):,} of {_before:,} have {_key} >= {_floor:.8g} "
+                f"({_before - len(eval_source_rows):,} excluded)"
+            )
         test_rows = [
             row for row in eval_source_rows
             if (training_config.test_start is None or row.open_time >= training_config.test_start)
