@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping, Sequence
 
-from . import backtest, data, dataset, exchange, features, governance, live, secrets, training
+from . import backtest, barrier_screen, data, dataset, exchange, features, governance, live, secrets, training
 
 if TYPE_CHECKING:
     from btcusdt_quant import regime_classifier
@@ -1790,6 +1790,15 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser.add_argument("--maker-exit", action="store_true", help="shorthand for --maker-exit-outcomes tp,sl,timeout,open_at_end; see the backtest's --maker-exit")
     ev_parser.add_argument("--maker-exit-outcomes", default=None, help="exit outcomes priced as resting limits, matching a backtest run with the same flag. Match the backtest: exit cost is roughly half the round trip, so cost-stressing a taker exit says nothing about a strategy that rests its TP/SL. See the backtest's --maker-exit-outcomes for what each outcome assumes")
     ev_parser.add_argument("--maker-fee-rate-per-side", type=float, default=None, help="base per-side MAKER fee fraction (defaults to backtest.DEFAULT_MAKER_FEE_RATE_PER_SIDE = 0.0002, Bitget VIP0); stress runs multiply it just like the taker rate, so a both-legs-maker strategy is actually stressed rather than passing 2x untouched")
+    barrier_parser = subparsers.add_parser("barrier-screen", help="screen long TP/SL geometry on training bars only, using the production labeller")
+    barrier_parser.add_argument("--input", required=True, help="candle CSV or Parquet")
+    barrier_parser.add_argument("--output", default="artifacts/barrier_screen", help="output directory for barrier_screen_report.json")
+    barrier_parser.add_argument("--training-start", required=True, help="inclusive ISO training start")
+    barrier_parser.add_argument("--training-end", required=True, help="inclusive ISO training end; no barrier may walk beyond it")
+    barrier_parser.add_argument("--gate-feature", required=True, help="volatility feature used by the gate (no implicit default)")
+    barrier_parser.add_argument("--gate-quantile", type=float, required=True, help="training-only lower cutoff quantile; 0.8 is the top quintile")
+    barrier_parser.add_argument("--horizon", type=int, required=True, help="triple-barrier time horizon in bars")
+    barrier_parser.add_argument("--candidates", default=None, help="optional comma-separated tp:sl fractions; default is the ten historical root-cause candidates")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -1853,6 +1862,22 @@ def main(argv: list[str] | None = None) -> int:
         if rows:
             print(f"coverage={rows[0].funding_time.date()} -> {rows[-1].funding_time.date()}")
         print(f"output={output}")
+        return 0
+    if args.command == "barrier-screen":
+        try:
+            report = barrier_screen.run(
+                Path(args.input), Path(args.output),
+                training_start=datetime.fromisoformat(args.training_start).replace(tzinfo=timezone.utc),
+                training_end=_parse_end_date_exclusive(args.training_end),
+                gate_feature=args.gate_feature, gate_quantile=args.gate_quantile,
+                horizon=args.horizon, candidates=barrier_screen.parse_candidates(args.candidates),
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"barrier screen failed: {error}", file=sys.stderr)
+            return 1
+        print("Barrier screen complete (training bars only; production long labeller)")
+        print(f"gate={report['gate']['feature']} >= {report['gate']['cutoff']:.8g}; rows={report['gate']['eligible_rows']}")
+        print(f"report={Path(args.output) / 'barrier_screen_report.json'}")
         return 0
     if args.command == "collect-premium-index":
         output = Path(args.output)

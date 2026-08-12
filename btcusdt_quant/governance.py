@@ -17,6 +17,9 @@ from typing import Iterable, Mapping, Sequence
 from . import parity, sources
 
 
+UNTRACKED_CONTENT_MAX_BYTES = 1024 * 1024
+
+
 PIPELINE_STAGES = [
     "RAW_SNAPSHOT",
     "SCHEMA_VALIDATION",
@@ -392,6 +395,13 @@ def _untracked_snapshot(repository_dir: Path) -> tuple[str, str | None]:
             raw = _read_stable_bytes(path)
         except OSError as exc:
             return "", f"untracked_snapshot_failed:{exc.__class__.__name__}"
+        if len(raw) > UNTRACKED_CONTENT_MAX_BYTES:
+            snapshots.append(
+                f"# untracked file (hash-only; content omitted because size exceeds "
+                f"{UNTRACKED_CONTENT_MAX_BYTES} bytes): {relative_name}\n"
+                f"# size_bytes: {len(raw)}\n# sha256: {hashlib.sha256(raw).hexdigest()}\n"
+            )
+            continue
         content = base64.b64encode(raw).decode("ascii")
         snapshots.append(f"# untracked file (base64): {relative_name}\n{content}\n")
     return "".join(snapshots), None

@@ -278,6 +278,20 @@ class ArtifactProvenanceTests(unittest.TestCase):
         self.assertEqual(revision["diff_sha256"], governance.sha256_text(patch_text or ""))
         self.assertIn("git diff --binary HEAD", patch_text or "")
 
+    def test_provenance_hashes_large_untracked_files_without_embedding_content(self) -> None:
+        temporary, root, _ = self._git_repo()
+        with temporary:
+            large_file = root / "large.pdf"
+            large_file.write_bytes(b"x" * (governance.UNTRACKED_CONTENT_MAX_BYTES + 1))
+            expected_hash = governance.sha256_file(large_file)
+            provenance, patch_text = governance.capture_provenance(
+                resolved_config={"mode": "test"}, repository_dir=root,
+            )
+        self.assertEqual(provenance["source_revision"]["working_tree"], governance.PROVENANCE_DIRTY)
+        self.assertIn("hash-only; content omitted", patch_text or "")
+        self.assertIn(expected_hash, patch_text or "")
+        self.assertNotIn("eHh4eHh4eHh4", patch_text or "")
+
     def test_provenance_marks_no_git_and_fingerprint_failure_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
