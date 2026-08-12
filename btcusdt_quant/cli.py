@@ -530,6 +530,8 @@ def run_train(
     vol_gate_feature: str | None = None,
     vol_gate_min: float = 0.0,
     vol_gate_train_quantile: float | None = None,
+    vol_gate_screen_reference_report: str | None = None,
+    walk_forward_test_gap: int = 0,
     vol_gate_train_only: bool = False,
     regime_aware: bool = False,
     min_regime_rows: int = 80,
@@ -582,6 +584,7 @@ def run_train(
     config = training.TrainingConfig(
         cv_mode=cv_mode,
         embargo_size=embargo_size,
+        walk_forward_test_gap=walk_forward_test_gap,
         n_groups=n_groups,
         test_group_count=test_group_count,
         model_family=model_family,
@@ -598,6 +601,7 @@ def run_train(
         vol_gate_feature=vol_gate_feature,
         vol_gate_min=vol_gate_min,
         vol_gate_train_quantile=vol_gate_train_quantile,
+        vol_gate_screen_reference_report=vol_gate_screen_reference_report,
         vol_gate_train_only=vol_gate_train_only,
         champion_challenger_enabled=champion_challenger_enabled,
         regime_aware=regime_aware,
@@ -1599,6 +1603,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--model-family", default="auto", help="model family selector; auto tries lightgbm/catboost/pytorch_multitask first if installed")
     train.add_argument("--cv-mode", choices=("walk_forward", "combinatorial_purged"), default="walk_forward", help="cross-validation splitter mode")
     train.add_argument("--embargo-size", type=int, default=0, help="bars to embargo after combinatorial test windows")
+    train.add_argument("--walk-forward-test-gap", type=int, default=0, help="bars omitted between consecutive walk-forward TEST windows; set to --horizon to prevent forward-label overlap. Does not apply to combinatorial_purged.")
     train.add_argument("--n-groups", type=int, default=5, help="sequential groups for combinatorial purged CV")
     train.add_argument("--test-group-count", type=int, default=1, help="number of groups selected for each combinatorial test fold")
     train.add_argument("--no-model-fallback", action="store_true", help="disable optional model fallback and fail if the requested family is unavailable")
@@ -1638,6 +1643,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--vol-gate-feature", default=None, help='report the fold OOS trading metrics a SECOND time, restricted to bars where this volatility feature is at least --vol-gate-min. Does not touch fitting, labelling or threshold selection -- it is a question asked of the model, not a change to it. Needed because the ungated fold metric averages in the bars a gate would refuse, so a gated strategy cannot be judged from it. Fold test predictions are written to fold_test_predictions.csv either way, so a different gate can be scored offline without refitting.')
     train.add_argument("--vol-gate-min", type=float, default=0.0, help='minimum value of --vol-gate-feature for a fold test row to count in the gated metrics. Example: rv_60 >= 0.000961841 is the top-quintile boundary measured on 2020-2025.')
     train.add_argument("--vol-gate-train-quantile", type=float, default=None, help='derive --vol-gate-min from data without letting it see a test row: the cutoff is this quantile of --vol-gate-feature over the FIRST fold train slice, which in walk-forward precedes every fold test slice, and the same absolute number is used for all folds. Not recomputed per fold on purpose -- a quantile is relative while the cost is absolute, so in a calm stretch the local top 20%% still cannot move far enough to pay 4 bps. Measured on a 700k-row slice, per-fold cutoffs ran 0.00047-0.00083 against an absolute 0.00096, eligible share rose to 16-66%% from 8-19%%, and the gated result went from better than ungated to worse. The cutoff used is printed and recorded in run_summary.')
+    train.add_argument("--vol-gate-screen-reference-report", default=None, help="path to a provenance-captured barrier_screen_report.json. Its gate.cutoff is recorded descriptively beside the fold-derived cutoff and its SHA-256 is captured as an input; it NEVER gates fitting, validation, threshold selection, or fold metrics.")
     train.add_argument("--vol-gate-train-only", action="store_true", help="train on gated bars ONLY, rather than training on everything and gating at inference. Requires --vol-gate-feature and an absolute --vol-gate-min. Measured on the first gated run, model confidence and the gate are near mutually exclusive: no gated bar reached the all-bar 99th percentile of probability in any fold, so the model spends its capacity on low-volatility rows whose 45-bar move disperses 22 bps and cannot pay a 4 bps round trip. Folds then cover different calendar spans than an ungated run, so fold indices are not comparable across the two.")
     train.add_argument("--min-ev", type=float, default=0.0001, help="minimum expected value for entry signals (0.01%% = 0.0001)")
     train.add_argument("--tp-pct", type=float, default=dataset.DEFAULT_LABEL_TP_PCT, help=f"take profit %% for triple-barrier labeling. The backtest MUST execute this same barrier (--exec-tp-pct) or the model is answering about a trade you did not take. (default {dataset.DEFAULT_LABEL_TP_PCT} = 1.00%%)")
@@ -2104,6 +2110,8 @@ def main(argv: list[str] | None = None) -> int:
                 vol_gate_feature=args.vol_gate_feature,
                 vol_gate_min=args.vol_gate_min,
                 vol_gate_train_quantile=args.vol_gate_train_quantile,
+                vol_gate_screen_reference_report=args.vol_gate_screen_reference_report,
+                walk_forward_test_gap=args.walk_forward_test_gap,
                 vol_gate_train_only=args.vol_gate_train_only,
             )
         except (OSError, RuntimeError, ValueError) as error:

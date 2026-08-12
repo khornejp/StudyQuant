@@ -71,6 +71,9 @@ def sides_for_regime(regime_name: str) -> tuple[tuple[str, str], ...]:
 class TrainingConfig:
     cv_mode: str = "walk_forward"
     embargo_size: int = 0
+    # Rows omitted between walk-forward TEST windows.  Set equal to the label
+    # horizon to prevent forward-label overlap across fold boundaries.
+    walk_forward_test_gap: int = 0
     n_groups: int = 5
     test_group_count: int = 1
     model_family: str = "auto"
@@ -116,6 +119,11 @@ class TrainingConfig:
     # absolute 0.00096, eligible share rose to 16-66% from 8-19%, and the gated
     # result went from better than ungated to worse.
     vol_gate_train_quantile: float | None = None
+    # Resolved only from vol_gate_screen_reference_report; descriptive only.
+    vol_gate_screen_reference_min: float | None = None
+    # A provenance-captured barrier screen report. Its gate.cutoff is recorded
+    # beside the fold-clean cutoff, and the report itself is fingerprinted.
+    vol_gate_screen_reference_report: str | None = None
     # Train on gated bars ONLY, instead of training on everything and gating at
     # inference. Measured on the first gated run, the model's confidence and the
     # gate are close to mutually exclusive: no gated bar reached the all-bar 99th
@@ -216,8 +224,15 @@ class TrainingConfig:
                 "train slice, which under combinatorial_purged is not earlier than the other "
                 "folds' test slices. Pass an absolute vol_gate_min."
             )
+        if self.vol_gate_screen_reference_min is not None:
+            if not self.vol_gate_feature:
+                raise ValueError("vol_gate_screen_reference_min requires vol_gate_feature")
+            if not isfinite(float(self.vol_gate_screen_reference_min)) or self.vol_gate_screen_reference_min < 0.0:
+                raise ValueError("vol_gate_screen_reference_min must be a finite non-negative number")
         if self.embargo_size < 0:
             raise ValueError("embargo_size must be non-negative")
+        if self.walk_forward_test_gap < 0:
+            raise ValueError("walk_forward_test_gap must be non-negative")
         if self.n_groups <= 0:
             raise ValueError("n_groups must be positive")
         if self.test_group_count <= 0:
@@ -233,6 +248,31 @@ class TrainingConfig:
             raise ValueError("threshold_objective must be 'precision_recall' or 'trading_pnl'")
         if self.threshold_min_trades is not None and self.threshold_min_trades < 0:
             raise ValueError("threshold_min_trades must be non-negative")
+
+
+def resolve_screen_reference(config: TrainingConfig) -> TrainingConfig:
+    """Load the descriptive screen cutoff from a provenance-captured report."""
+    if config.vol_gate_screen_reference_report is None:
+        return config
+    report_path = Path(config.vol_gate_screen_reference_report)
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+        gate = payload["gate"]
+        cutoff = float(gate["cutoff"])
+        feature = str(gate["feature"])
+        provenance = payload["provenance"]
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid vol_gate_screen_reference_report {report_path}: {exc}") from exc
+    if not isfinite(cutoff) or cutoff < 0.0:
+        raise ValueError("vol_gate_screen_reference_report gate.cutoff must be finite and non-negative")
+    if config.vol_gate_feature != feature:
+        raise ValueError(
+            f"vol_gate_screen_reference_report gate.feature={feature!r} does not match "
+            f"vol_gate_feature={config.vol_gate_feature!r}"
+        )
+    if not isinstance(provenance, Mapping) or provenance.get("state") != governance.PROVENANCE_RECORDED:
+        raise ValueError("vol_gate_screen_reference_report must contain provenance.state=RECORDED")
+    return replace(config, vol_gate_screen_reference_min=cutoff)
 
 
 @dataclass(frozen=True)
@@ -538,12 +578,16 @@ def shuffle_labeled_row_targets(rows: Sequence[dataset.LabeledRow], seed: int) -
 
 
 def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None, external_source_paths: Sequence[Path] | None = None, prebuilt_dataset: dataset.DatasetBuild | None = None, user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None) -> TrainingResult:
-    training_config = config or TrainingConfig()
+    training_config = resolve_screen_reference(config or TrainingConfig())
     source_path = input_path if input_path is not None else (
         Path(prebuilt_dataset.source) if prebuilt_dataset is not None else None
     )
     provenance_inputs = [
-        path for path in (source_path, archive_dir, *(external_source_paths or ()))
+        path for path in (
+            source_path, archive_dir, *(external_source_paths or ()),
+            Path(training_config.vol_gate_screen_reference_report)
+            if training_config.vol_gate_screen_reference_report is not None else None,
+        )
         if path is not None
     ]
     captured_provenance = governance.capture_provenance(
@@ -1999,11 +2043,11 @@ def _default_regime_by_rows(trained_regimes: Mapping[str, Mapping[str, object]])
     return max(trained_regimes, key=lambda regime: int(trained_regimes[regime].get("row_count", 0)))
 
 
-def default_splits(n_rows: int, purge_gap: int) -> list[features.Split]:
+def default_splits(n_rows: int, purge_gap: int, test_gap: int = 0) -> list[features.Split]:
     train_size = max(60, n_rows // 3)
     validation_size = max(20, n_rows // 8)
     test_size = max(20, n_rows // 8)
-    return features.PurgedWalkForwardSplit().split(n_rows, train_size, validation_size, test_size, purge_gap)
+    return features.PurgedWalkForwardSplit().split(n_rows, train_size, validation_size, test_size, purge_gap, test_gap)
 
 
 def configured_splits(n_rows: int, label_horizon: int, config: TrainingConfig, sample_intervals: Sequence[cv.SampleInterval]) -> list[object]:
@@ -2013,6 +2057,7 @@ def configured_splits(n_rows: int, label_horizon: int, config: TrainingConfig, s
         label_horizon=label_horizon,
         cv_mode=config.cv_mode,
         embargo_size=config.embargo_size,
+        walk_forward_test_gap=config.walk_forward_test_gap,
         n_groups=config.n_groups,
         test_group_count=config.test_group_count,
         sample_intervals=sample_intervals,
@@ -2567,12 +2612,28 @@ def training_summary(
             _gated, splits=splits, label_horizon=training_config.label_horizon)
         oos_trading["gated"]["gate"] = {
             "feature": training_config.vol_gate_feature,
+            # This is provenance from the barrier screen, not an operational
+            # floor.  Keeping the names distinct prevents a whole-span screen
+            # cutoff from being mistaken for the fold-clean cutoff below.
+            "screen_reference_minimum": training_config.vol_gate_screen_reference_min,
+            "screen_reference": {
+                "role": "descriptive_only_never_used_for_gating",
+                "report_path": training_config.vol_gate_screen_reference_report,
+            },
+            # ``minimum`` is retained for artifact compatibility; it is merely
+            # the CLI's absolute fallback (normally 0.0 for a quantile run).
+            # Consumers comparing this retrain must use the explicitly named
+            # fold-derived value, not infer it from that fallback.
             "minimum": training_config.vol_gate_min,
+            "configured_minimum": training_config.vol_gate_min,
             "train_quantile": training_config.vol_gate_train_quantile,
             # Per fold when the cutoff came from that fold's own train slice, so
             # the number that gated each result is on the record rather than
             # reconstructed from a config value that may not have been used.
             "minimum_by_fold": [fold.vol_gate_min_used for fold in fold_results],
+            "fold_derived_minimum": (
+                fold_results[0].vol_gate_min_used if fold_results else None
+            ),
             "eligible_share_by_fold": [t.get("eligible_share") for t in _gated],
         }
     selection = final_selection.as_dict() if final_selection is not None else default_model_selection(training_config, None)
@@ -2673,6 +2734,7 @@ def cv_split_manifest_rows(splits: Sequence[object], config: TrainingConfig) -> 
             "test_start": _min_index(test),
             "test_stop_exclusive": _stop_exclusive(test),
             "embargo_size": config.embargo_size,
+            "walk_forward_test_gap": config.walk_forward_test_gap,
         }
         if isinstance(split, cv.CombinatorialPurgedSplit):
             row.update(

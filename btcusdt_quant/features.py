@@ -339,12 +339,14 @@ class Split:
 
 
 class PurgedWalkForwardSplit:
-    def split(self, n_rows: int, train_size: int, validation_size: int, test_size: int, purge_gap: int) -> list[Split]:
-        if min(n_rows, train_size, validation_size, test_size) <= 0 or purge_gap < 0:
+    def split(self, n_rows: int, train_size: int, validation_size: int, test_size: int, purge_gap: int, test_gap: int = 0) -> list[Split]:
+        if min(n_rows, train_size, validation_size, test_size) <= 0 or purge_gap < 0 or test_gap < 0:
             raise ValueError("invalid split input")
         splits: list[Split] = []
         start = 0
-        stride = test_size
+        # This is separate from the train/validation purge: it prevents the
+        # final label in one TEST window from sharing future bars with the next.
+        stride = test_size + test_gap
         while start + train_size + purge_gap + validation_size + purge_gap + test_size <= n_rows:
             train_end = start + train_size
             validation_start = train_end + purge_gap

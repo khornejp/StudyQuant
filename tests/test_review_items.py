@@ -2313,6 +2313,98 @@ class MakerFillTests(unittest.TestCase):
             train_metrics={}, model_selection={},
         ).vol_gate_min_used)
 
+    def test_gate_summary_reads_a_descriptive_screen_reference_report(self) -> None:
+        from btcusdt_quant import training as _tr
+        from btcusdt_quant.cli import build_parser
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary) / "barrier_screen_report.json"
+            report.write_text(json.dumps({
+                "gate": {"feature": "rv_60", "cutoff": 0.0009614995797164738},
+                "provenance": {"state": "RECORDED"},
+            }), encoding="utf-8")
+            args = build_parser().parse_args([
+                "train", "--vol-gate-feature", "rv_60",
+                "--vol-gate-screen-reference-report", str(report),
+            ])
+            config = _tr.resolve_screen_reference(_tr.TrainingConfig(
+                vol_gate_feature="rv_60",
+                vol_gate_train_quantile=0.8,
+                vol_gate_screen_reference_report=str(args.vol_gate_screen_reference_report),
+            ))
+        self.assertEqual(config.vol_gate_screen_reference_min, 0.0009614995797164738)
+        self.assertEqual(config.vol_gate_screen_reference_report, str(report))
+        trading = _tr.oos_trading_metrics(
+            [0.9, 0.1], [0.004, -0.004], 0.5, eligible=[True, False],
+        )
+        fold = _tr.FoldResult(
+            fold_index=0, split=None, threshold=0.5, calibration_offset=0.0,
+            calibration_details={}, validation_metrics={"f1": 0.0, "accuracy": 0.0, "ece": 0.0, "brier": 0.0},
+            test_metrics={"f1": 0.0, "accuracy": 0.0, "ece": 0.0, "brier": 0.0},
+            train_metrics={}, model_selection={}, test_trading=trading,
+            test_trading_gated=trading, vol_gate_min_used=0.0013057422,
+        )
+        build = type("Build", (), {
+            "source": "test", "canonical": [], "labeled_rows": [], "feature_names": (),
+        })()
+        summary = _tr.training_summary(build, [], [fold], [], config=config)
+        gate = summary["oos_trading"]["gated"]["gate"]
+        self.assertEqual(gate["screen_reference_minimum"], 0.0009614995797164738)
+        self.assertEqual(gate["screen_reference"]["role"], "descriptive_only_never_used_for_gating")
+        self.assertEqual(gate["screen_reference"]["report_path"], str(report))
+        self.assertEqual(gate["configured_minimum"], 0.0)
+        self.assertEqual(gate["fold_derived_minimum"], 0.0013057422)
+        self.assertEqual(gate["minimum_by_fold"], [0.0013057422])
+
+    def test_walk_forward_test_gap_separates_each_boundary_without_changing_test_size(self) -> None:
+        from btcusdt_quant import cv as _cv
+        from btcusdt_quant import training as _tr
+
+        config = _tr.TrainingConfig(cv_mode="walk_forward", walk_forward_test_gap=45)
+        splits = _cv.SplitManager().get_splits(
+            1_300_000, label_horizon=45, cv_mode=config.cv_mode,
+            walk_forward_test_gap=config.walk_forward_test_gap,
+        )
+        self.assertGreaterEqual(len(splits), 4)
+        first_four = splits[:4]
+        self.assertEqual([len(split.test) for split in first_four], [162_500] * 4)
+        self.assertEqual(
+            [next_split.test.start - split.test.stop for split, next_split in zip(first_four, first_four[1:])],
+            [45, 45, 45],
+        )
+        self.assertEqual(sum(next_split.test.start - split.test.stop for split, next_split in zip(first_four, first_four[1:])), 135)
+
+    def test_screen_reference_report_is_fingerprinted_as_a_training_input(self) -> None:
+        from unittest.mock import patch
+        from btcusdt_quant import governance
+        from btcusdt_quant import training as _tr
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            input_path = root / "candles.csv"
+            input_path.write_text("timestamp,close\n", encoding="utf-8")
+            report = root / "barrier_screen_report.json"
+            report.write_text(json.dumps({
+                "gate": {"feature": "rv_60", "cutoff": 0.0009614995797164738},
+                "provenance": {"state": "RECORDED"},
+            }), encoding="utf-8")
+            build = type("Build", (), {
+                "source": str(input_path), "canonical": [], "labeled_rows": [], "feature_names": (),
+            })()
+            config = _tr.TrainingConfig(
+                only_build=True, vol_gate_feature="rv_60",
+                vol_gate_screen_reference_report=str(report),
+            )
+            with patch("btcusdt_quant.training.governance.capture_provenance", wraps=governance.capture_provenance) as captured:
+                _tr.run_training(None, root / "output", config=config, prebuilt_dataset=build)
+            self.assertIn(report, captured.call_args.kwargs["input_paths"])
+
     def test_trend_filter_blocks_entries_against_the_trend(self) -> None:
         # The gated long edge is directional, not universal: on the fold test
         # slices it paid +2.55 and +2.38 bps in the two uptrend folds and gave

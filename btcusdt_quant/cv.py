@@ -212,6 +212,7 @@ class SplitManager:
         label_horizon: int = 0,
         cv_mode: str = "walk_forward",
         embargo_size: int = 0,
+        walk_forward_test_gap: int = 0,
         n_groups: int = 5,
         test_group_count: int = 1,
         train_size: int | None = None,
@@ -228,6 +229,7 @@ class SplitManager:
             n_samples,
             label_horizon,
             embargo_size,
+            walk_forward_test_gap,
             n_groups,
             test_group_count,
             train_size,
@@ -242,6 +244,7 @@ class SplitManager:
                 label_horizon,
                 cv_mode,
                 embargo_size,
+                walk_forward_test_gap,
                 n_groups,
                 test_group_count,
                 train_size,
@@ -276,6 +279,7 @@ class SplitManager:
         label_horizon: int,
         cv_mode: str,
         embargo_size: int,
+        walk_forward_test_gap: int,
         n_groups: int,
         test_group_count: int,
         train_size: int | None,
@@ -291,7 +295,10 @@ class SplitManager:
             effective_validation_size = validation_size if validation_size is not None else max(20, n_samples // 8)
             effective_test_size = test_size if test_size is not None else max(20, n_samples // 8)
             effective_purge_gap = purge_gap if purge_gap is not None else label_horizon
-            return list(features.PurgedWalkForwardSplit().split(n_samples, effective_train_size, effective_validation_size, effective_test_size, effective_purge_gap))
+            return list(features.PurgedWalkForwardSplit().split(
+                n_samples, effective_train_size, effective_validation_size,
+                effective_test_size, effective_purge_gap, walk_forward_test_gap,
+            ))
         if cv_mode == "combinatorial_purged":
             intervals = list(sample_intervals) if sample_intervals is not None else [SampleInterval(index, index, index + label_horizon) for index in range(n_samples)]
             return list(CombinatorialPurgedCV(n_groups, test_group_count, embargo_size).split(intervals))
