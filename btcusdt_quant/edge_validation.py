@@ -81,6 +81,10 @@ def trading_metrics(result: "_bt.BacktestResult") -> dict[str, object]:
         "total_fees": payload.get("total_fees"),
         "total_slippage": payload.get("total_slippage"),
         "round_trip_cost_pct": payload.get("round_trip_cost_pct"),
+        # Validation reports are quoted independently of their source
+        # backtest, so retain the same provenance rather than asking readers to
+        # infer which executable run supplied each metric row.
+        "provenance": payload.get("provenance"),
         "long_trades": long_trades,
         "short_trades": short_trades,
     }

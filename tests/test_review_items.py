@@ -2730,6 +2730,53 @@ class MakerFillTests(unittest.TestCase):
         self.assertEqual(len(parsed), 1)
         self.assertAlmostEqual(parsed[0].funding_rate, 0.0001)
 
+    def test_premium_index_archive_uses_only_finalized_minutes(self) -> None:
+        # Unlike settled funding, a premium kline is a one-minute aggregation.
+        # Its close is not knowable at the opening timestamp named by the
+        # feature row, so seeing the same-minute close would be look-ahead.
+        from datetime import datetime, timedelta, timezone as _tz
+        from btcusdt_quant import premium_index_source as ps
+        base = datetime(2026, 1, 1, tzinfo=_tz.utc)
+        row = ps.PremiumIndexRow(
+            base,
+            base + timedelta(minutes=1) - timedelta(milliseconds=1),
+            0.0001, 0.0003, -0.0001, 0.0002,
+        )
+        minutes = [base, base + timedelta(minutes=1), base + timedelta(minutes=2)]
+        aligned = ps.premium_index_to_minutes([row], minutes)
+        self.assertNotIn(base, aligned)
+        self.assertEqual(aligned[minutes[1]]["premium_index"], 0.0002)
+        self.assertEqual(aligned[minutes[2]]["premium_index"], 0.0002)
+        parsed = ps.parse_premium_index_csv_text(
+            "open_time,open,high,low,close,ignore,close_time\n"
+            "1767225600000,0.1,0.2,-0.1,0.05,0,1767225659999\n"
+        )
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].close, 0.05)
+        with self.assertRaises(ps.PremiumIndexValidationError):
+            ps.parse_premium_index_csv_text("1767225600000,0.1,broken\n")
+        import tempfile
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as tmp:
+            (_P(tmp) / "BTCUSDT-premiumIndexKlines-1m-2026-01-01.zip").write_bytes(b"not a zip")
+            with self.assertRaises(ps.PremiumIndexDownloadError):
+                ps.load_premium_index_dir(_P(tmp))
+            self.assertEqual(ps.load_premium_index_dir(_P(tmp), strict=False), [])
+
+    def test_premium_archive_payload_matches_its_registered_source(self) -> None:
+        # Availability is per SOURCE.  premium_index must therefore read the
+        # same premium_index_1m payload that the archive merge writes, never
+        # the adjacent mark_price_1m source.
+        from btcusdt_quant import dataset as _ds
+        self.assertEqual(
+            _ds._premium_index_value({"premium_index_1m": {"premium_index": 0.00015}}),
+            0.00015,
+        )
+        self.assertEqual(
+            _ds._premium_index_value({"mark_price_1m": {"premium_index": 0.00015}}),
+            0.0,
+        )
+
     def test_execution_defaults_to_limit_only(self) -> None:
         # This account never crosses the spread, so a run that forgets the flags
         # must model the execution it actually performs. The defaults were the

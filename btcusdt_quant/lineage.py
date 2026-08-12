@@ -24,6 +24,7 @@ class LineageBinding:
     data_hash: str | None = None
     git_commit: str | None = None
     dvc_metadata: Mapping[str, object] = field(default_factory=dict)
+    provenance: Mapping[str, object] = field(default_factory=dict)
     experiment_name: str = "btcusdt_quant_offline_training"
     model_name: str = "offline_btcusdt_centroid_linear"
 
@@ -108,6 +109,7 @@ class DVCLineageAdapter:
             "git_commit": git_commit,
             "dvc_version": str(getattr(dvc, "__version__", "unknown")),
             "dvc_metadata": dict(binding.dvc_metadata),
+            "provenance": dict(binding.provenance),
         }
         relative_path = "lineage/dvc_metadata.json"
         _write_json(binding.output_dir, relative_path, metadata)
@@ -160,6 +162,7 @@ def _binding_for_output_dir(binding: LineageBinding, output_dir: Path) -> Lineag
         data_hash=binding.data_hash,
         git_commit=binding.git_commit,
         dvc_metadata=binding.dvc_metadata,
+        provenance=binding.provenance,
         experiment_name=binding.experiment_name,
         model_name=binding.model_name,
     )
@@ -179,6 +182,7 @@ def _binding_payload(binding: LineageBinding) -> dict[str, object]:
         "data_hash": binding.data_hash,
         "git_commit": binding.git_commit,
         "dvc_metadata": dict(binding.dvc_metadata),
+        "provenance": dict(binding.provenance),
     }
 
 

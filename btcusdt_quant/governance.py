@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import csv
+import base64
 import hashlib
 import importlib.util
+import importlib.metadata
 import json
+import platform
+import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +43,11 @@ FALLBACK_ACTION_CHAIN: tuple[str, ...] = (
     "hard_kill",
 )
 FALLBACK_ACTIONS: tuple[str, ...] = ("allow",) + FALLBACK_ACTION_CHAIN
+PROVENANCE_UNKNOWN = "UNKNOWN"
+PROVENANCE_RECORDED = "RECORDED"
+PROVENANCE_CLEAN = "CLEAN"
+PROVENANCE_DIRTY = "DIRTY"
+PROVENANCE_SCHEMA_VERSION = 1
 
 
 class PipelineStageError(RuntimeError):
@@ -179,6 +189,326 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def capture_provenance(
+    *,
+    resolved_config: Mapping[str, object],
+    input_paths: Sequence[Path] = (),
+    argv: Sequence[str] | None = None,
+    repository_dir: Path | None = None,
+) -> tuple[dict[str, object], str | None]:
+    """Capture evidence needed to distinguish a reproducible run from an unknown one.
+
+    A missing git executable or unreadable input is evidence of an unknown
+    provenance state, never evidence that the tree or data were clean.
+    """
+    try:
+        repository = repository_dir or Path.cwd()
+        source_revision, diff_patch = _capture_source_revision(repository)
+    except Exception as exc:
+        # Deliberately do not catch BaseException: operator interrupts and
+        # process termination must retain their normal control-flow semantics.
+        source_revision, diff_patch = _unknown_source_revision(_capture_failure_reason(exc)), None
+    invocation = _capture_invocation(resolved_config, argv)
+    inputs, input_fingerprints = _capture_input_fingerprints(input_paths)
+    runtime = _capture_runtime()
+    state = PROVENANCE_RECORDED
+    if any(part["state"] == PROVENANCE_UNKNOWN for part in (source_revision, invocation, input_fingerprints, runtime)):
+        state = PROVENANCE_UNKNOWN
+    return {
+        "schema_version": PROVENANCE_SCHEMA_VERSION,
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "state": state,
+        "source_revision": source_revision,
+        "invocation": invocation,
+        "inputs": inputs,
+        "input_fingerprints": input_fingerprints,
+        "runtime": runtime,
+    }, diff_patch
+
+
+def _capture_failure_reason(exc: Exception) -> str:
+    return f"capture_failed:{exc.__class__.__name__}:{exc}"
+
+
+def _capture_invocation(
+    resolved_config: Mapping[str, object], argv: Sequence[str] | None,
+) -> dict[str, object]:
+    """Capture caller-supplied run evidence independently of Git and inputs."""
+    try:
+        return {
+            "state": PROVENANCE_RECORDED,
+            "reason": None,
+            "argv": list(sys.argv if argv is None else argv),
+            "resolved_config": _provenance_json_value(resolved_config),
+        }
+    except Exception as exc:
+        return {
+            "state": PROVENANCE_UNKNOWN,
+            "reason": _capture_failure_reason(exc),
+            "argv": PROVENANCE_UNKNOWN,
+            "resolved_config": PROVENANCE_UNKNOWN,
+        }
+
+
+def _capture_runtime() -> dict[str, object]:
+    """Record only runtime details that can change numerical results.
+
+    Package versions are intentionally limited to libraries that are already
+    imported by this process; importing an optional learner just to fingerprint
+    it would itself change the run environment.
+    """
+    try:
+        packages: dict[str, str] = {}
+        for module_name, distribution in (
+            ("numpy", "numpy"), ("pandas", "pandas"), ("lightgbm", "lightgbm"),
+            ("catboost", "catboost"), ("sklearn", "scikit-learn"), ("torch", "torch"),
+        ):
+            if module_name in sys.modules:
+                packages[distribution] = importlib.metadata.version(distribution)
+        return {
+            "state": PROVENANCE_RECORDED,
+            "reason": None,
+            "interpreter": sys.version,
+            "platform": platform.platform(),
+            "packages": packages,
+        }
+    except Exception as exc:
+        return {
+            "state": PROVENANCE_UNKNOWN,
+            "reason": _capture_failure_reason(exc),
+            "interpreter": PROVENANCE_UNKNOWN,
+            "platform": PROVENANCE_UNKNOWN,
+            "packages": PROVENANCE_UNKNOWN,
+        }
+def _capture_input_fingerprints(
+    input_paths: Sequence[Path],
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    try:
+        inputs = [
+            fingerprint
+            for path in input_paths
+            for fingerprint in _fingerprint_path_or_directory(path)
+        ]
+    except Exception as exc:
+        return [], {"state": PROVENANCE_UNKNOWN, "reason": _capture_failure_reason(exc)}
+    unknown = next((item for item in inputs if item["state"] == PROVENANCE_UNKNOWN), None)
+    return inputs, {
+        "state": PROVENANCE_UNKNOWN if unknown is not None else PROVENANCE_RECORDED,
+        "reason": unknown.get("reason") if unknown is not None else None,
+    }
+
+
+def _capture_source_revision(repository_dir: Path) -> tuple[dict[str, object], str | None]:
+    try:
+        commit = _git(repository_dir, "rev-parse", "HEAD")
+        status = _git(repository_dir, "status", "--porcelain=v1", "--untracked-files=all")
+    except FileNotFoundError:
+        return _unknown_source_revision("git_binary_unavailable"), None
+    except subprocess.TimeoutExpired:
+        return _unknown_source_revision("git_command_timed_out"), None
+    except OSError as exc:
+        return _unknown_source_revision(f"git_command_failed:{exc.__class__.__name__}"), None
+    if commit.returncode != 0 or status.returncode != 0 or not commit.stdout.strip():
+        return _unknown_source_revision("not_a_git_repository"), None
+    submodule_reason = _dirty_submodule_reason(repository_dir)
+    if submodule_reason is not None:
+        return _unknown_source_revision(submodule_reason), None
+    dirty = bool(status.stdout.strip())
+    patch: str | None = None
+    digest = None
+    if dirty:
+        try:
+            diff = _git(repository_dir, "diff", "--binary", "HEAD")
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+            return _unknown_source_revision(f"git_diff_unavailable:{exc.__class__.__name__}"), None
+        if diff.returncode != 0:
+            return _unknown_source_revision("git_diff_failed"), None
+        untracked, unknown_reason = _untracked_snapshot(repository_dir)
+        if unknown_reason is not None:
+            return _unknown_source_revision(unknown_reason), None
+        # A status listing alone cannot identify code in an untracked module.
+        # Store its bytes alongside Git's binary patch so the digest covers the
+        # whole dirty tree, not only modifications to already tracked files.
+        patch = (
+            f"# git status --porcelain=v1 --untracked-files=all\n{status.stdout}\n"
+            f"# git diff --binary HEAD\n{diff.stdout}{untracked}"
+        )
+        digest = sha256_text(patch)
+        # Re-capture all evidence, rather than only porcelain text.  A status
+        # race can otherwise retain the same names while the actual patch or an
+        # untracked module changes underneath this snapshot.
+        try:
+            final_diff = _git(repository_dir, "diff", "--binary", "HEAD")
+            final_untracked, final_unknown_reason = _untracked_snapshot(repository_dir)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+            return _unknown_source_revision(f"git_evidence_recheck_unavailable:{exc.__class__.__name__}"), None
+        if final_diff.returncode != 0 or final_unknown_reason is not None:
+            return _unknown_source_revision("working_tree_evidence_recheck_failed"), None
+        final_patch = (
+            f"# git status --porcelain=v1 --untracked-files=all\n{status.stdout}\n"
+            f"# git diff --binary HEAD\n{final_diff.stdout}{final_untracked}"
+        )
+        if sha256_text(final_patch) != digest:
+            return _unknown_source_revision("working_tree_changed_during_capture"), None
+    return {
+        "state": PROVENANCE_RECORDED,
+        "reason": None,
+        "git_commit": commit.stdout.strip(),
+        "working_tree": PROVENANCE_DIRTY if dirty else PROVENANCE_CLEAN,
+        "diff_sha256": digest,
+    }, patch
+
+
+def _unknown_source_revision(reason: str) -> dict[str, object]:
+    return {
+        "state": PROVENANCE_UNKNOWN,
+        "reason": reason,
+        "git_commit": PROVENANCE_UNKNOWN,
+        "working_tree": PROVENANCE_UNKNOWN,
+        "diff_sha256": PROVENANCE_UNKNOWN,
+    }
+
+
+def _git(repository_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=str(repository_dir), capture_output=True,
+        text=True, check=False, timeout=5,
+    )
+
+
+def _untracked_snapshot(repository_dir: Path) -> tuple[str, str | None]:
+    try:
+        result = _git(repository_dir, "ls-files", "--others", "--exclude-standard", "-z")
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        return "", f"untracked_snapshot_unavailable:{exc.__class__.__name__}"
+    if result.returncode != 0:
+        return "", "untracked_snapshot_failed"
+    snapshots: list[str] = []
+    for relative_name in result.stdout.split("\0"):
+        if not relative_name:
+            continue
+        path = repository_dir / relative_name
+        try:
+            raw = _read_stable_bytes(path)
+        except OSError as exc:
+            return "", f"untracked_snapshot_failed:{exc.__class__.__name__}"
+        content = base64.b64encode(raw).decode("ascii")
+        snapshots.append(f"# untracked file (base64): {relative_name}\n{content}\n")
+    return "".join(snapshots), None
+
+
+def _fingerprint_input(path: Path) -> dict[str, object]:
+    try:
+        before = _file_identity(path)
+        digest = sha256_file(path)
+        after = _file_identity(path)
+        if before != after:
+            return {
+                "path": str(path), "state": PROVENANCE_UNKNOWN,
+                "sha256": PROVENANCE_UNKNOWN, "reason": "fingerprint_failed:file_changed_during_capture",
+            }
+        return {"path": str(path), "state": PROVENANCE_RECORDED, "sha256": digest}
+    except OSError as exc:
+        return {
+            "path": str(path), "state": PROVENANCE_UNKNOWN,
+            "sha256": PROVENANCE_UNKNOWN,
+            "reason": f"fingerprint_failed:{exc.__class__.__name__}",
+        }
+
+
+def _fingerprint_path_or_directory(path: Path) -> list[dict[str, object]]:
+    """Fingerprint every material file named by a provenance input.
+
+    A model bundle and a market-data archive are directories, not single
+    inputs.  Recording only their directory names would make a changed model
+    or omitted archive member invisible, so expand them deterministically.
+    """
+    try:
+        if not path.is_dir():
+            return [_fingerprint_input(path)]
+        before = _directory_file_identities(path)
+        files = [Path(name) for name in sorted(before)]
+    except OSError as exc:
+        return [{
+            "path": str(path), "state": PROVENANCE_UNKNOWN,
+            "sha256": PROVENANCE_UNKNOWN,
+            "reason": f"fingerprint_failed:{exc.__class__.__name__}",
+        }]
+    if not files:
+        return [{
+            "path": str(path), "state": PROVENANCE_UNKNOWN,
+            "sha256": PROVENANCE_UNKNOWN,
+            "reason": "fingerprint_failed:directory_has_no_files",
+        }]
+    fingerprints = [_fingerprint_input(item) for item in files]
+    try:
+        after = _directory_file_identities(path)
+    except OSError as exc:
+        return [{"path": str(path), "state": PROVENANCE_UNKNOWN, "sha256": PROVENANCE_UNKNOWN,
+                 "reason": f"fingerprint_failed:{exc.__class__.__name__}"}]
+    if before != after:
+        return [{"path": str(path), "state": PROVENANCE_UNKNOWN, "sha256": PROVENANCE_UNKNOWN,
+                 "reason": "fingerprint_failed:directory_changed_during_capture"}]
+    return fingerprints
+
+
+def _file_identity(path: Path) -> tuple[int, int, int, int]:
+    stat = path.stat()
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def _read_stable_bytes(path: Path) -> bytes:
+    """Read one evidence file only if its identity remains stable."""
+    before = _file_identity(path)
+    with path.open("rb") as handle:
+        content = handle.read()
+    if before != _file_identity(path):
+        raise OSError("file_changed_during_capture")
+    return content
+
+
+def _directory_file_identities(path: Path) -> dict[str, tuple[int, int, int, int]]:
+    return {str(item): _file_identity(item) for item in path.rglob("*") if item.is_file()}
+
+
+def _dirty_submodule_reason(repository_dir: Path) -> str | None:
+    """Cheap guard for a future repository that gains submodules."""
+    gitmodules = repository_dir / ".gitmodules"
+    if not gitmodules.is_file():
+        return None
+    try:
+        listed = _git(repository_dir, "submodule", "status", "--recursive")
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        return f"submodule_guard_unavailable:{exc.__class__.__name__}"
+    if listed.returncode != 0:
+        return "submodule_guard_failed"
+    for line in listed.stdout.splitlines():
+        if line[:1] in {"+", "-", "U"}:
+            return "dirty_submodule"
+        parts = line.strip().split()
+        if len(parts) < 2:
+            continue
+        try:
+            child = _git(repository_dir / parts[1], "status", "--porcelain=v1", "--untracked-files=all")
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+            return f"submodule_guard_unavailable:{exc.__class__.__name__}"
+        if child.returncode != 0 or child.stdout.strip():
+            return "dirty_submodule"
+    return None
+
+
+def _provenance_json_value(value: object) -> object:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _provenance_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_provenance_json_value(item) for item in value]
+    return str(value)
+
+
 @dataclass(frozen=True)
 class Artifact:
     path: str
@@ -214,6 +544,30 @@ class ArtifactWriter:
                 writer.writerow(row)
         return path
 
+    def write_provenance(
+        self,
+        *,
+        resolved_config: Mapping[str, object],
+        input_paths: Sequence[Path] = (),
+        argv: Sequence[str] | None = None,
+        repository_dir: Path | None = None,
+        captured: tuple[dict[str, object], str | None] | None = None,
+    ) -> dict[str, object]:
+        """Write run provenance before result files make a run quotable."""
+        if captured is None:
+            provenance, diff_patch = capture_provenance(
+                resolved_config=resolved_config,
+                input_paths=input_paths,
+                argv=argv,
+                repository_dir=repository_dir,
+            )
+        else:
+            provenance, diff_patch = captured
+        self.write_json("provenance.json", provenance)
+        if diff_patch is not None:
+            self.write_text("provenance/git_diff.patch", diff_patch)
+        return provenance
+
     def create_approval_package(
         self,
         run_summary: Mapping[str, object],
@@ -226,6 +580,9 @@ class ArtifactWriter:
     ) -> list[Path]:
         from . import dataset, features
 
+        provenance = self.write_provenance(
+            resolved_config={"approval_package": True, "run_summary": dict(run_summary)},
+        )
         dataset_card = dataset.dataset_card(dataset_build) if isinstance(dataset_build, dataset.DatasetBuild) else self._default_dataset_card(run_summary)
         feature_registry = dataset.feature_formula_registry()
         feature_names = list(dataset_build.feature_names) if isinstance(dataset_build, dataset.DatasetBuild) else list(dataset.FEATURE_NAMES)
@@ -315,7 +672,10 @@ class ArtifactWriter:
             self.write_csv("latency_slo_report.csv", [{"metric": "decision_latency_ms", "value": 0, "action": "allow"}]),
             self.write_csv("exchange_anomaly_report.csv", [{"metric": "http_418_detected", "value": False, "action": "allow"}]),
             self.write_text("grade_c_cache_forward_plan.yaml", self._grade_c_cache_forward_plan_yaml(source_report)),
-            self.write_json("lineage_manifest.json", {"lineage": ["local_fixture", "features", "offline_model", "local_order_adapter", "artifacts"]}),
+            self.write_json("lineage_manifest.json", {
+                "lineage": ["local_fixture", "features", "offline_model", "local_order_adapter", "artifacts"],
+                "provenance": provenance,
+            }),
             self.write_text("serving_runtime_contract.yaml", "runtime_type: local_offline_adapter\nfallback_runtime: none\nhot_reload_allowed: false\n"),
             self.write_csv("feature_clip_report.csv", clip_report),
             self.write_csv("pipeline_stage_manifest.csv", stage_rows),

@@ -526,6 +526,7 @@ def run_train(
     optuna_budget_profile: str = "practical_start",
     champion_challenger_enabled: bool = False,
     external_sources: Mapping[str, object] | None = None,
+    external_source_paths: Sequence[Path] | None = None,
     vol_gate_feature: str | None = None,
     vol_gate_min: float = 0.0,
     vol_gate_train_quantile: float | None = None,
@@ -632,7 +633,10 @@ def run_train(
     if input_path is not None and input_path.is_dir():
         archive_dir = input_path
         input_path = None
-    result = training.run_training(input_path, output, config, archive_dir=archive_dir, external_sources=external_sources)
+    result = training.run_training(
+        input_path, output, config, archive_dir=archive_dir,
+        external_sources=external_sources, external_source_paths=external_source_paths,
+    )
     summary = dict(result.run_summary)
     summary["requested_model_family"] = model_family
     return summary
@@ -1250,6 +1254,72 @@ def build_feature_rows_cached(
     dataset.save_feature_rows_cache(entry, rows, names)
     print(f"[FEATURE] cache WRITE {entry} ({len(rows):,} rows)")
     return rows
+
+
+def persist_backtest_provenance_patch(output: Path, result: backtest.BacktestResult) -> None:
+    """Persist dirty-tree evidence or honestly downgrade the result."""
+    if result.provenance_patch is None:
+        return
+    try:
+        (output / "provenance").mkdir(parents=True, exist_ok=True)
+        (output / "provenance" / "git_diff.patch").write_text(
+            result.provenance_patch, encoding="utf-8",
+        )
+    except OSError as exc:
+        result.provenance["state"] = governance.PROVENANCE_UNKNOWN
+        result.provenance["source_revision"] = {
+            **dict(result.provenance.get("source_revision", {})),
+            "state": governance.PROVENANCE_UNKNOWN,
+            "reason": f"git_diff_persistence_failed:{exc.__class__.__name__}",
+            "diff_sha256": governance.PROVENANCE_UNKNOWN,
+        }
+
+
+def backtest_provenance_input_paths(
+    args: argparse.Namespace, input_path: Path, candles: Sequence[object],
+) -> list[Path]:
+    """Resolve backtest evidence before any external input is read."""
+    cache_entry = None
+    cache_artifact = None
+    if args.feature_cache:
+        cache_key = _feature_cache_key(
+            input_path, candles, args.metrics_dir, args.user_regime_file,
+            args.funding_dir, args.premium_index_dir,
+        )
+        cache_entry = Path(args.feature_cache) / cache_key
+        candidate = cache_entry / dataset.DATASET_CACHE_FEATURE_ROWS_FILE
+        try:
+            candidate.stat()
+        except FileNotFoundError:
+            # A cache miss builds exclusively from the separately fingerprinted
+            # sources below, then writes this artifact after capture.
+            pass
+        except OSError:
+            # Preserve a possibly unreadable hit for capture_provenance so it
+            # records UNKNOWN rather than silently omitting the cache evidence.
+            cache_artifact = candidate
+        else:
+            cache_artifact = candidate
+    return [
+        path for path in (
+            input_path,
+            Path(args.model_artifact) if args.model_artifact else None,
+            Path(args.short_model_artifact) if args.short_model_artifact else None,
+            Path(args.user_regime_file) if args.user_regime_file else None,
+            Path(args.regime_classifier_dir) if args.regime_classifier_dir else None,
+            Path(args.metrics_dir) if args.metrics_dir else None,
+            Path(args.funding_dir) if args.funding_dir else None,
+            Path(args.premium_index_dir) if args.premium_index_dir else None,
+            cache_artifact,
+        ) if path is not None
+    ]
+
+
+def backtest_provenance_feature_cache_record(args: argparse.Namespace) -> dict[str, str] | None:
+    """Record use of a feature-cache directory without hashing every entry in it."""
+    if not args.feature_cache:
+        return None
+    return {"path": str(Path(args.feature_cache))}
 
 
 def resolve_maker_exit_outcomes(args: argparse.Namespace) -> tuple[str, ...]:
@@ -1952,6 +2022,14 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"WARNING: {model_path} not found; falling back to trend_slope_30-only regime detection for bucket assignment. Re-run train-regime-classifier with the current code to get a saved model.", file=sys.stderr)
         try:
+            external_source_paths = [
+                path for path in (
+                    Path(args.metrics_dir) if args.metrics_dir else None,
+                    Path(args.funding_dir) if args.funding_dir else None,
+                    Path(args.premium_index_dir) if args.premium_index_dir else None,
+                    Path(args.regime_classifier_dir) if args.regime_classifier_dir else None,
+                ) if path is not None
+            ]
             summary = run_train(
                 output, input_path, args.model_family, args.cv_mode, args.embargo_size, args.n_groups, args.test_group_count,
                 not args.no_model_fallback,
@@ -1961,6 +2039,7 @@ def main(argv: list[str] | None = None) -> int:
                 optuna_budget_profile=args.optuna_budget,
                 champion_challenger_enabled=args.champion_challenger,
                 external_sources=external_sources,
+                external_source_paths=external_source_paths,
                 regime_aware=args.regime_aware,
                 min_regime_rows=args.min_regime_rows,
                 regime_detector_rv_percentile=args.regime_rv_percentile,
@@ -2344,6 +2423,18 @@ def main(argv: list[str] | None = None) -> int:
                 strategies = overridden
                 print(f"[BACKTEST] TP/SL floor override: tp={args.tp_floor}, sl={args.sl_floor}, fixed={args.fixed_tp_sl}")
             resolved_default_regime = regime_bundle.default_regime if regime_bundle is not None else None
+            # Capture every file-backed decision input before external archives
+            # or a cached feature matrix are read.  The cache key is available
+            # without reading the cache, so a hit records both its directory
+            # and the exact feature artifact it is about to consume.
+            provenance_input_paths = backtest_provenance_input_paths(args, input_path, candles)
+            captured_backtest_provenance = governance.capture_provenance(
+                resolved_config={"command": "backtest", "arguments": vars(args)},
+                input_paths=provenance_input_paths,
+            )
+            feature_cache_record = backtest_provenance_feature_cache_record(args)
+            if feature_cache_record is not None:
+                captured_backtest_provenance[0]["feature_cache"] = feature_cache_record
             # Build feature rows ONCE and share across compare_strategies and
             # run_backtest. Both would otherwise call build_feature_rows on the
             # full candle set independently (minutes of duplicated feature
@@ -2496,6 +2587,8 @@ def main(argv: list[str] | None = None) -> int:
                 maker_fill_window=args.maker_fill_window,
                 maker_fill_penetration=args.maker_fill_penetration_bps / 1e4,
                 record_counterfactual_candidates=args.record_counterfactual_candidates,
+                provenance_input_paths=provenance_input_paths,
+                captured_provenance=captured_backtest_provenance,
             )
             for _warning in result.barrier_warnings:
                 print(f"[BACKTEST] WARNING: {_warning}")
@@ -2511,6 +2604,7 @@ def main(argv: list[str] | None = None) -> int:
                 "label_horizon": args.horizon,
             }
             output.mkdir(parents=True, exist_ok=True)
+            persist_backtest_provenance_patch(output, result)
             # Trade identities are an artifact in their own right; keeping this
             # beside the opt-in rejected-candidate log makes arrival-order
             # admission auditable without changing how admission works.

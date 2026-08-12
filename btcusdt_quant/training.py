@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from math import exp, isfinite, log, sqrt
 from pathlib import Path
@@ -537,8 +537,28 @@ def shuffle_labeled_row_targets(rows: Sequence[dataset.LabeledRow], seed: int) -
     return shuffled
 
 
-def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None, prebuilt_dataset: dataset.DatasetBuild | None = None, user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None) -> TrainingResult:
+def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None, external_source_paths: Sequence[Path] | None = None, prebuilt_dataset: dataset.DatasetBuild | None = None, user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None) -> TrainingResult:
     training_config = config or TrainingConfig()
+    source_path = input_path if input_path is not None else (
+        Path(prebuilt_dataset.source) if prebuilt_dataset is not None else None
+    )
+    provenance_inputs = [
+        path for path in (source_path, archive_dir, *(external_source_paths or ()))
+        if path is not None
+    ]
+    captured_provenance = governance.capture_provenance(
+        resolved_config=asdict(training_config),
+        input_paths=provenance_inputs,
+    )
+    # `external_sources` is a material, already-resolved input.  A caller that
+    # supplies it without the source files leaves no reproducible evidence, so
+    # retain the successful components but make that limitation explicit.
+    if external_sources is not None and not external_source_paths:
+        captured_provenance[0]["state"] = governance.PROVENANCE_UNKNOWN
+        captured_provenance[0]["input_fingerprints"] = {
+            "state": governance.PROVENANCE_UNKNOWN,
+            "reason": "external_sources_not_fingerprinted",
+        }
     if prebuilt_dataset is not None:
         build = prebuilt_dataset
     else:
@@ -914,7 +934,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     final_indices = list(range(len(build.labeled_rows)))
     final_selection = fit_model_adapter(build.labeled_rows, effective_feature_names, training_config, _weights_for_indices(uniqueness, final_indices))
     latency_report = inference_latency_report(final_selection.adapter, feature_matrix(build.labeled_rows, effective_feature_names))
-    artifacts = write_training_artifacts(output_dir, build, splits, fold_results, final_selection.adapter, training_config, sample_intervals, uniqueness, final_selection, latency_report)
+    artifacts = write_training_artifacts(output_dir, build, splits, fold_results, final_selection.adapter, training_config, sample_intervals, uniqueness, final_selection, latency_report, captured_provenance)
     run_summary = training_summary(build, splits, fold_results, artifacts, training_config, uniqueness, final_selection, latency_report)
     print(f"[TRAIN] Training complete: {len(build.labeled_rows):,} rows, {len(splits)} folds, test_f1={run_summary.get('mean_test_f1', 0.0):.4f}")
     model_metadata = model_version_metadata(build, final_selection.adapter, training_config, final_selection)
@@ -2276,6 +2296,7 @@ def write_training_artifacts(
     uniqueness: cv.UniquenessWeightResult | None = None,
     final_selection: models.ModelSelection | None = None,
     latency_report: Mapping[str, object] | None = None,
+    captured_provenance: tuple[dict[str, object], str | None] | None = None,
 ) -> list[str]:
     training_config = config or TrainingConfig()
     intervals = list(sample_intervals) if sample_intervals is not None else cv.sample_intervals_from_labeled_rows(build.labeled_rows, build.label_horizon)
@@ -2293,6 +2314,10 @@ def write_training_artifacts(
     # file is named short_model.json.
     model_payload["train_target"] = training_config.train_target
     writer = governance.ArtifactWriter(output_dir)
+    writer.write_provenance(
+        resolved_config=asdict(training_config),
+        captured=captured_provenance,
+    )
     writer.write_json("dataset_card.json", dataset.dataset_card(build))
     writer.write_text("dataset_card.md", dataset_card_markdown(build))
     writer.write_json("feature_formula_registry.json", dataset.feature_formula_registry())
@@ -2315,6 +2340,7 @@ def write_training_artifacts(
     writer.write_json("threshold_report.json", threshold_report(fold_results))
     writer.write_csv("labeled_feature_preview.csv", [dataset.labeled_row_dict(row, build.feature_names) for row in build.labeled_rows[:25]])
     names = [
+        "provenance.json",
         "dataset_card.json",
         "dataset_card.md",
         "feature_formula_registry.json",
@@ -2943,6 +2969,10 @@ def write_lineage_metadata(
     }
     metric_keys = ("mean_test_f1", "mean_test_accuracy", "mean_test_ece", "mean_test_brier", "inference_latency_p50_ms", "inference_latency_p95_ms", "inference_latency_p99_ms")
     metrics_payload = {key: float(run_summary[key]) for key in metric_keys if isinstance(run_summary.get(key), (float, int))}
+    provenance = _read_provenance(output_dir)
+    source_revision = provenance.get("source_revision", {})
+    revision = source_revision if isinstance(source_revision, Mapping) else {}
+    git_commit = revision.get("git_commit", governance.PROVENANCE_UNKNOWN)
     binding = lineage.LineageBinding(
         output_dir=output_dir,
         run_id=str(run_summary.get("run_id", "offline_btcusdt_training_v1")),
@@ -2951,10 +2981,25 @@ def write_lineage_metadata(
         artifacts=tuple(artifacts),
         model_metadata=dict(model_metadata),
         data_hash=data_hash,
+        git_commit=str(git_commit),
         dvc_metadata={"source": build.source, "source_hashes": source_hash_map, "artifact_count": len(artifacts)},
         model_name=str(model_metadata.get("model_id", "offline_btcusdt_model_v1")),
+        provenance=provenance,
     )
     return lineage.LineageWriter(output_dir, enabled=config.lineage_enabled).write(binding)
+
+
+def _read_provenance(output_dir: Path) -> dict[str, object]:
+    path = output_dir / "provenance.json"
+    if not path.is_file():
+        return {"state": governance.PROVENANCE_UNKNOWN, "reason": "provenance_file_missing"}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"state": governance.PROVENANCE_UNKNOWN, "reason": f"provenance_file_unreadable:{exc.__class__.__name__}"}
+    if isinstance(payload, Mapping):
+        return dict(payload)
+    return {"state": governance.PROVENANCE_UNKNOWN, "reason": "provenance_file_invalid"}
 
 
 def model_card(

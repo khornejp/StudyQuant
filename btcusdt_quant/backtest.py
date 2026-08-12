@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import sys
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from math import isfinite
+from pathlib import Path
 from typing import Mapping, Sequence
 
-from . import data, dataset, live, risk
+from . import data, dataset, governance, live, risk
 
 
 def _parse_end_exclusive(value: str):
@@ -663,6 +665,13 @@ class BacktestResult:
     # a genuine side-specific probability.  Keep the count beside the funnel so
     # unavailable calibration cannot be mistaken for a result on all fills.
     calibration_coverage: dict[str, object] = field(default_factory=dict)
+    # The CLI serializes this result directly into backtest_summary.json, so
+    # provenance belongs on the result rather than in a second, easy-to-miss log.
+    provenance: dict[str, object] = field(default_factory=dict)
+    # Kept out of as_dict: the CLI persists this reconstructible dirty-tree
+    # evidence beside its summary, rather than embedding a potentially large
+    # patch in every consumer's result payload.
+    provenance_patch: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -715,6 +724,7 @@ class BacktestResult:
             "counterfactual_summary": self.counterfactual_summary,
             "stage_transition_evidence_counts": self.stage_transition_evidence_counts,
             "calibration_coverage": self.calibration_coverage,
+            "provenance": self.provenance,
             "trades": [
                 {
                     "entry_time": t.entry_time,
@@ -1113,6 +1123,24 @@ def _close_trade(
     return equity + net_trade_pnl, gross_equity + gross_trade_pnl, net_pnl_pct
 
 
+def _prepare_trend_sma(
+    candles: Sequence[data.Candle], trend_filter_sma_bars: int,
+) -> list[float | None]:
+    """Build the decision-time trend filter without changing its semantics."""
+    trend_sma: list[float | None] = []
+    if trend_filter_sma_bars > 0:
+        running_total = 0.0
+        for index, candle in enumerate(candles):
+            running_total += float(candle.close)
+            if index >= trend_filter_sma_bars:
+                running_total -= float(candles[index - trend_filter_sma_bars].close)
+            trend_sma.append(
+                running_total / trend_filter_sma_bars
+                if index + 1 >= trend_filter_sma_bars else None
+            )
+    return trend_sma
+
+
 def run_backtest(
     candles: Sequence[data.Candle],
     model: object | None = None,
@@ -1156,6 +1184,8 @@ def run_backtest(
     maker_fill_penetration: float = 0.0,
     maker_exit_outcomes: Sequence[str] | None = None,
     record_counterfactual_candidates: bool = False,
+    provenance_input_paths: Sequence[Path] = (),
+    captured_provenance: tuple[dict[str, object], str | None] | None = None,
 ) -> BacktestResult:
     """Run a simple backtest on historical candles.
 
@@ -1251,6 +1281,69 @@ def run_backtest(
         print("[BACKTEST] model train_target is short-sided: a HIGH score is a SELL")
         if kelly_config is not None:
             print("[BACKTEST] Kelly provenance: direct high-score SELLs are sizeable; inverse low-score BUYs are refused")
+    # Snapshot at run start, before the O(n) decision preparation below.  This
+    # intentionally remains the start state if the checkout changes while a
+    # long run is executing: it identifies the modules and inputs the process
+    # began with, whereas an end snapshot could describe code never executed.
+    run_config = {
+        "backtest_start": start_date,
+        "backtest_end": end_date,
+        "execution_horizon": label_horizon,
+        "exec_tp_pct": exec_tp_pct,
+        "exec_sl_pct": exec_sl_pct,
+        "strategy_config": strategy.as_dict(),
+        "position_size": position_size,
+        "initial_equity": initial_equity,
+        "tp_sl_method": tp_sl_method,
+        "long_threshold_override": long_threshold,
+        "short_threshold_override": short_threshold,
+        "range_gate_enabled": range_gate_enabled,
+        "range_gate_edge": range_gate_edge,
+        "vol_gate_feature": vol_gate_feature,
+        "trend_filter_sma_bars": trend_filter_sma_bars,
+        "vol_gate_min": vol_gate_min,
+        "entry_quantile": entry_quantile,
+        "entry_quantile_window": entry_quantile_window,
+        "fee_rate_per_side": fee_rate_per_side,
+        "maker_fee_rate_per_side": maker_fee_rate_per_side,
+        "slippage_rate_per_side": slippage_rate_per_side,
+        "maker_fill_window": maker_fill_window,
+        "maker_exit_outcomes": sorted(maker_exit_set),
+        "maker_fill_penetration": maker_fill_penetration,
+        "record_counterfactual_candidates": record_counterfactual_candidates,
+        "kelly_enabled": kelly_config is not None,
+        "kelly_multiplier": kelly_config.kelly_multiplier if kelly_config else None,
+        "kelly_lookback_bars": kelly_config.variance_lookback_bars if kelly_config else None,
+        "kelly_holding_period_bars": kelly_config.holding_period_bars if kelly_config else None,
+    }
+    if captured_provenance is None:
+        provenance, provenance_patch = governance.capture_provenance(
+            resolved_config=run_config, input_paths=provenance_input_paths,
+        )
+    else:
+        provenance, provenance_patch = captured_provenance
+    # The API accepts canonical candles, so retain a content fingerprint even
+    # for callers that did not originate from a file.  Stream it: materializing
+    # a second JSON list can exhaust memory on a multi-gigabyte minute series.
+    try:
+        digest = hashlib.sha256()
+        for candle in candles:
+            digest.update(governance.stable_json({
+                **asdict(candle), "open_time": candle.open_time.isoformat(),
+            }).encode("utf-8"))
+            digest.update(b"\n")
+        provenance["inputs"].append({
+            "path": "IN_MEMORY_CANDLES", "state": governance.PROVENANCE_RECORDED,
+            "sha256": digest.hexdigest(), "kind": "canonical_candle_series",
+        })
+    except Exception as exc:
+        provenance["state"] = governance.PROVENANCE_UNKNOWN
+        provenance["inputs"].append({
+            "path": "IN_MEMORY_CANDLES", "state": governance.PROVENANCE_UNKNOWN,
+            "sha256": governance.PROVENANCE_UNKNOWN,
+            "reason": f"fingerprint_failed:{exc.__class__.__name__}:{exc}",
+            "kind": "canonical_candle_series",
+        })
     # A rolling-quantile cutoff needs its own state per side, built once and
     # advanced bar by bar. Only the two-sided/bundle path gets one: on the
     # single-model path `short_threshold` is a LOW cutoff on the same score
@@ -1260,14 +1353,8 @@ def run_backtest(
     # with a running sum so a 200-day window over three million 1m bars stays
     # linear. Bars before the window fills get None and are refused, not waved
     # through: an unknown trend is not an uptrend.
-    trend_sma: list[float | None] = []
+    trend_sma = _prepare_trend_sma(candles, trend_filter_sma_bars)
     if trend_filter_sma_bars > 0:
-        _run = 0.0
-        for _n, _c in enumerate(candles):
-            _run += float(_c.close)
-            if _n >= trend_filter_sma_bars:
-                _run -= float(candles[_n - trend_filter_sma_bars].close)
-            trend_sma.append(_run / trend_filter_sma_bars if _n + 1 >= trend_filter_sma_bars else None)
         print(
             f"[BACKTEST] trend filter: long entries need close > SMA({trend_filter_sma_bars}), "
             f"short entries need close < it"
@@ -1326,40 +1413,9 @@ def run_backtest(
     # because atr_multiplier_*, the TP/SL floors and use_atr_pricing all change
     # the barrier actually executed -- recording only name/tp/sl would let two
     # runs with different execution look identical in the artifact.
-    result.run_config = {
-        "backtest_start": start_date,
-        "backtest_end": end_date,
-        "execution_horizon": label_horizon,
-        "exec_tp_pct": exec_tp_pct,
-        "exec_sl_pct": exec_sl_pct,
-        "strategy_config": strategy.as_dict(),
-        "position_size": position_size,
-        "initial_equity": initial_equity,
-        "tp_sl_method": tp_sl_method,
-        "long_threshold_override": long_threshold,
-        "short_threshold_override": short_threshold,
-        "range_gate_enabled": range_gate_enabled,
-        "range_gate_edge": range_gate_edge,
-        "vol_gate_feature": vol_gate_feature,
-        "trend_filter_sma_bars": trend_filter_sma_bars,
-        "vol_gate_min": vol_gate_min,
-        "entry_quantile": entry_quantile,
-        "entry_quantile_window": entry_quantile_window,
-        # Both rates, because a run's net is only interpretable against the fee
-        # tier it assumed -- and this project has already published numbers that
-        # silently used the maker rate for taker fills.
-        "fee_rate_per_side": fee_rate_per_side,
-        "maker_fee_rate_per_side": maker_fee_rate_per_side,
-        "slippage_rate_per_side": slippage_rate_per_side,
-        "maker_fill_window": maker_fill_window,
-        "maker_exit_outcomes": sorted(maker_exit_set),
-        "maker_fill_penetration": maker_fill_penetration,
-        "record_counterfactual_candidates": record_counterfactual_candidates,
-        "kelly_enabled": kelly_config is not None,
-        "kelly_multiplier": kelly_config.kelly_multiplier if kelly_config else None,
-        "kelly_lookback_bars": kelly_config.variance_lookback_bars if kelly_config else None,
-        "kelly_holding_period_bars": kelly_config.holding_period_bars if kelly_config else None,
-    }
+    result.run_config = run_config
+    result.provenance = provenance
+    result.provenance_patch = provenance_patch
     if precomputed_routing_diagnostics is not None:
         result.regime_routing_diagnostics = precomputed_routing_diagnostics
     # Record learned vs effective thresholds per regime (effective = what this
