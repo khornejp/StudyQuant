@@ -256,18 +256,31 @@ def _capture_invocation(
 def _capture_runtime() -> dict[str, object]:
     """Record only runtime details that can change numerical results.
 
-    Package versions are intentionally limited to libraries that are already
-    imported by this process; importing an optional learner just to fingerprint
-    it would itself change the run environment.
+    Distribution metadata is read without importing optional learners.  Each
+    tracked distribution is recorded even when absent, while ``imported``
+    preserves the separate fact of whether this process had loaded its module.
     """
     try:
-        packages: dict[str, str] = {}
+        packages: dict[str, dict[str, object]] = {}
         for module_name, distribution in (
             ("numpy", "numpy"), ("pandas", "pandas"), ("lightgbm", "lightgbm"),
             ("catboost", "catboost"), ("sklearn", "scikit-learn"), ("torch", "torch"),
         ):
-            if module_name in sys.modules:
-                packages[distribution] = importlib.metadata.version(distribution)
+            imported = module_name in sys.modules
+            try:
+                version = importlib.metadata.version(distribution)
+            except importlib.metadata.PackageNotFoundError:
+                packages[distribution] = {
+                    "installed": False,
+                    "version": None,
+                    "imported": imported,
+                }
+            else:
+                packages[distribution] = {
+                    "installed": True,
+                    "version": version,
+                    "imported": imported,
+                }
         return {
             "state": PROVENANCE_RECORDED,
             "reason": None,

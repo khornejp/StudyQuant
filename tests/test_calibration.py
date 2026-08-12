@@ -435,14 +435,60 @@ class ArtifactProvenanceTests(unittest.TestCase):
         self.assertEqual(provenance["source_revision"]["reason"], "working_tree_changed_during_capture")
         self.assertIsNone(patch_text)
 
-    def test_runtime_capture_records_imported_numeric_library_versions(self) -> None:
+    def test_runtime_capture_records_installed_and_imported_status_without_importing_learners(self) -> None:
         import sys
+        from importlib.metadata import PackageNotFoundError
 
-        with patch.dict(sys.modules, {"numpy": object()}), \
-             patch("btcusdt_quant.governance.importlib.metadata.version", return_value="1.26.4"):
+        versions = {"numpy": "2.4.2", "catboost": "1.2.10"}
+
+        def distribution_version(name: str) -> str:
+            if name in versions:
+                return versions[name]
+            raise PackageNotFoundError(name)
+
+        isolated_sys = type("IsolatedSys", (), {
+            "modules": {"numpy": object()}, "version": "isolated interpreter",
+        })()
+        with patch.object(governance, "sys", isolated_sys), \
+             patch("btcusdt_quant.governance.importlib.metadata.version", side_effect=distribution_version):
             runtime = governance._capture_runtime()
+            self.assertNotIn("catboost", isolated_sys.modules)
         self.assertEqual(runtime["state"], governance.PROVENANCE_RECORDED)
-        self.assertEqual(runtime["packages"]["numpy"], "1.26.4")
+        self.assertEqual(runtime["packages"]["numpy"], {
+            "installed": True, "version": "2.4.2", "imported": True,
+        })
+        self.assertEqual(runtime["packages"]["catboost"], {
+            "installed": True, "version": "1.2.10", "imported": False,
+        })
+        self.assertEqual(runtime["packages"]["scikit-learn"], {
+            "installed": False, "version": None, "imported": False,
+        })
+
+    def test_model_selection_artifact_preserves_fallback_attempts_and_unavailable_families(self) -> None:
+        from btcusdt_quant import models, training
+
+        adapter = models.CentroidLinearClassifier(feature_names=("feature",))
+        selection = models.ModelSelection(
+            adapter=adapter,
+            requested_family="catboost",
+            selected_family="pytorch_multitask",
+            fallback_allowed=True,
+            fallback_used=True,
+            fallback_reason="requested family 'catboost' unavailable; selected 'pytorch_multitask'",
+            attempted_families=("catboost", "pytorch_multitask"),
+            unavailable_families={"catboost": "optional dependency 'catboost' is not installed"},
+            model_params={},
+        )
+
+        report = training.model_selection_report(
+            training.TrainingConfig(model_family="catboost"), [], selection, adapter,
+        )
+
+        self.assertEqual(report["selected_family"], "pytorch_multitask")
+        self.assertEqual(report["final_model"]["attempted_families"], ["catboost", "pytorch_multitask"])
+        self.assertEqual(report["final_model"]["unavailable_families"], {
+            "catboost": "optional dependency 'catboost' is not installed",
+        })
 
     def test_training_external_sources_without_paths_downgrades_provenance(self) -> None:
         from btcusdt_quant import training

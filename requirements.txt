@@ -1,22 +1,20 @@
 # btcusdt_quant v7.18 Core Requirements
-# Python 3.10, NumPy 1.26.4 (LightGBM/CatBoost compatibility)
+# Python >=3.10. NumPy range is the intersection of CatBoost 1.2.10
+# (>=1.16.0,<3.0) and LightGBM 4.6.0 (>=1.17.0) declared requirements.
 
 # Data & I/O
-numpy==1.26.4
+numpy>=1.17.0,<3.0
 pandas>=2.0.0
 pyarrow>=14.0.0
 
 # ML & Statistics
-scikit-learn>=1.3.0
 scipy>=1.11.0
 
 # ML Models (optional but recommended)
 lightgbm>=4.0.0
 catboost>=1.2.0
+# Required whenever --optuna is used (including run_full_pipeline's tuned arms).
 optuna>=3.0.0
-
-# Data Balancing
-imbalanced-learn>=0.11.0
 
 # Visualization
 matplotlib>=3.7.0
