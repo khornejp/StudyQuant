@@ -1115,12 +1115,42 @@ def merge_funding_external_sources(
     return merged
 
 
+def merge_premium_index_external_sources(
+    premium_index_dir: Path,
+    candles: "list[data.Candle]",
+    external_sources: dict | None,
+) -> dict:
+    """Merge finalized premium-index archive values under their own source.
+
+    ``premium_index`` is registered with source ``premium_index_1m``.  Keeping
+    the archive payload under that exact key is essential: source availability
+    is resolved per source, so putting the value in ``mark_price_1m`` would
+    either drop a populated premium feature or mark an empty one available.
+    The archive module owns the finalized-minute causality rule; this helper
+    only packs its already-aligned values for train/backtest parity.
+    """
+    from btcusdt_quant import premium_index_source
+    rows = premium_index_source.load_premium_index_dir(premium_index_dir)
+    minute_times = [c.open_time for c in candles]
+    by_minute = premium_index_source.premium_index_to_minutes(rows, minute_times)
+    print(f"Loaded premium index: {len(rows)} klines -> {len(by_minute)} aligned minutes")
+    if not by_minute:
+        print(f"WARNING: no premium-index rows aligned to the candle window from {premium_index_dir}; premium_index stays at fallback.", file=sys.stderr)
+    merged = dict(external_sources or {})
+    for minute, values in by_minute.items():
+        entry = dict(merged.get(minute, {}))
+        entry["premium_index_1m"] = values
+        merged[minute] = entry
+    return merged
+
+
 def _feature_cache_key(
     input_path: Path | None,
     candles: Sequence[object],
     metrics_dir: str | None,
     user_regime_file: str | None,
     funding_dir: str | None = None,
+    premium_index_dir: str | None = None,
 ) -> str:
     """Fingerprint of everything the feature matrix depends on.
 
@@ -1157,7 +1187,7 @@ def _feature_cache_key(
     # which meant a matrix built without it could be served to a run that asked
     # for it -- a cache hit delivering the wrong features, which is the failure
     # mode this key exists to prevent.
-    for label, directory in (("metrics", metrics_dir), ("funding", funding_dir)):
+    for label, directory in (("metrics", metrics_dir), ("funding", funding_dir), ("premium_index", premium_index_dir)):
         if not directory:
             parts.append(f"{label}=<none>")
             continue
@@ -1188,6 +1218,7 @@ def build_feature_rows_cached(
     metrics_dir: str | None = None,
     user_regime_file: str | None = None,
     funding_dir: str | None = None,
+    premium_index_dir: str | None = None,
     **build_kwargs: object,
 ) -> list[object]:
     """build_feature_rows, reusing a parquet of a previous identical build.
@@ -1202,7 +1233,7 @@ def build_feature_rows_cached(
     """
     if not cache_dir:
         return dataset.build_feature_rows(candles, **build_kwargs)  # type: ignore[arg-type]
-    key = _feature_cache_key(input_path, candles, metrics_dir, user_regime_file, funding_dir)
+    key = _feature_cache_key(input_path, candles, metrics_dir, user_regime_file, funding_dir, premium_index_dir)
     entry = Path(cache_dir) / key
     if (entry / dataset.DATASET_CACHE_FEATURE_ROWS_FILE).exists():
         rows = dataset.load_feature_rows_cache(entry)
@@ -1476,6 +1507,12 @@ def build_parser() -> argparse.ArgumentParser:
     collect_funding.add_argument("--output", default="artifacts/funding", help="funding archive output directory")
     collect_funding.add_argument("--allow-public-network", action="store_true", help="opt in to public Binance funding download")
     collect_funding.add_argument("--force", action="store_true", help="re-download even if the monthly zip already exists on disk")
+    collect_premium = subparsers.add_parser("collect-premium-index", help="collect Binance USDT-M premiumIndexKlines archive (daily 1m)")
+    collect_premium.add_argument("--start", required=True, help="inclusive start date YYYY-MM-DD")
+    collect_premium.add_argument("--end", required=True, help="inclusive end date YYYY-MM-DD")
+    collect_premium.add_argument("--output", default="artifacts/premium_index", help="premium-index archive output directory")
+    collect_premium.add_argument("--allow-public-network", action="store_true", help="opt in to public Binance premium-index download")
+    collect_premium.add_argument("--force", action="store_true", help="re-download even if the daily zip already exists on disk")
     train_regime_classifier = subparsers.add_parser("train-regime-classifier", help="Stage 2 of the multi-timeframe regime work: train a leakage-safe (walk-forward OOF) up/range/down probability classifier on F17 multi-timeframe features, for use as F18 features in the entry (long/short) models.")
     train_regime_classifier.add_argument("--input", required=True, help="path to candle Parquet or CSV")
     train_regime_classifier.add_argument("--regime-file", required=True, help="regimes.json with hand-labeled up/down/range periods (the classifier's training target)")
@@ -1503,6 +1540,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--collect-external-sources", action="store_true", help="collect real F11/F12 external sources (funding rate, mark price) from Binance API for training")
     train.add_argument("--metrics-dir", default=None, help="directory of downloaded Binance metrics archive (collect-metrics output). When set, F16 derivatives-metrics features (open interest, long/short, taker) are computed from it and merged into training. Without it those features degrade to 0.")
     train.add_argument("--funding-dir", default=None, help="directory of downloaded funding-rate archives (collect-funding output). Funding is the only model input that is NOT a transform of OHLCV -- every other feature rearranges the same price series -- so it is the one axis that adds information rather than reshuffling it. Measured 2020-2026H1 its correlation with the forward return is negative in every window and horizon (crowded longs precede weaker returns), small but sign-stable, and strongest exactly where the price features collapsed. Pass the SAME directory to train and to backtest: training with funding and backtesting without it feeds the model fallback constants it never saw (train/serve skew), which is the same trap --metrics-dir carries.")
+    train.add_argument("--premium-index-dir", default=None, help="directory of downloaded premiumIndexKlines archives. Values are aligned only after their 1m kline closes and populate premium_index under source premium_index_1m; pass the same directory to backtest for parity.")
     train.add_argument("--regime-classifier-dir", default=None, help="output directory from train-regime-classifier (contains regime_probabilities.json and regime_classifier_model.cbm). When set: (1) F18 regime probability features (regime_prob_up/range/down) are merged into training as inputs, AND (2) training bucket assignment (which regime's model a row's data trains) uses the argmax of those SAME walk-forward-OOF-safe F18 values -- NOT a fresh prediction from the .cbm file (re-predicting on training rows with a classifier fit on the complete span would leak later rows' influence into earlier rows' bucket assignment). The .cbm file itself is used at backtest/live time instead, where classifying genuinely unseen rows is safe -- pass the SAME directory to backtest's --regime-classifier-dir. Without --regime-classifier-dir, training falls back to trend_slope_30-only detection and F18 features degrade to 0. Ignored if --multi-feature-regime is given.")
     train.add_argument("--multi-feature-regime", action="store_true", help="assign regime buckets with the multi-feature rule-based detector (regime_rules.MultiFeatureRegimeDetector: trend/vol/range/breakout scores over F17, hysteresis + min-hold) instead of the learned classifier or single-slope detector. Takes priority over --regime-classifier-dir. The fitted detector is saved to regime_run_summary.json; pass --multi-feature-regime to backtest/live so routing matches. Entry models MUST be (re)trained with this flag for the buckets to match serving.")
     train.add_argument("--rule-regime-config", default=None, help="path to a JSON file of MultiFeatureRegimeConfig overrides (trend_enter, fast_exit, min_hold_bars, switch_confirm_bars, allow_direct_reversal, trend_weights, fast_trend_weights, ...). Only used with --multi-feature-regime. The fitted detector embeds these overrides and is saved to the artifact, so backtest/live inherit them automatically. Missing keys fall back to defaults.")
@@ -1596,6 +1634,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--backtest-end", default=None, help="inclusive end date (YYYY-MM-DD) of the trading window. Without it the backtest silently trades from --backtest-start to the END OF FILE, so a parquet extended past 2025 would silently widen the traded span. Routing diagnostics are sliced to the same window.")
     backtest_parser.add_argument("--metrics-dir", default=None, help="directory of downloaded Binance metrics archive (collect-metrics output) -- pass the SAME directory used for training's --metrics-dir. Training with metrics and backtesting without them feeds the model F16 derivatives-metrics features (open interest change rates/z-scores, long/short ratios, taker ratio) as 0.0 -- inputs it never saw in training (train/serve feature skew). Without this flag those features are 0 in the backtest.")
     backtest_parser.add_argument("--funding-dir", default=None, help="directory of downloaded funding-rate archives (collect-funding output). Funding is the only model input that is NOT a transform of OHLCV -- every other feature rearranges the same price series -- so it is the one axis that adds information rather than reshuffling it. Measured 2020-2026H1 its correlation with the forward return is negative in every window and horizon (crowded longs precede weaker returns), small but sign-stable, and strongest exactly where the price features collapsed. Pass the SAME directory to train and to backtest: training with funding and backtesting without it feeds the model fallback constants it never saw (train/serve skew), which is the same trap --metrics-dir carries.")
+    backtest_parser.add_argument("--premium-index-dir", default=None, help="directory of downloaded premiumIndexKlines archives used during training; align and merge under premium_index_1m for backtest feature parity.")
     backtest_parser.add_argument("--fee-rate-per-side", type=float, default=None, help="override the per-side TAKER fee fraction (default 0.0006 = 0.06%%, Bitget USDT-M VIP0 -- the real account). This is what an immediate fill pays, and the exit is modeled taker on every path. Together with --slippage-rate-per-side this sets the executed round-trip cost; keep 2*(fee+slippage) equal to training's --round-trip-cost so the threshold objective and execution share one cost basis.")
     backtest_parser.add_argument("--maker-exit", action="store_true", help="shorthand for --maker-exit-outcomes tp,sl,timeout,open_at_end: price EVERY exit as a resting limit. The most generous assumption available; prefer naming the outcomes you actually believe rest.")
     backtest_parser.add_argument("--maker-exit-outcomes", default=None, help="comma-separated exit outcomes priced as resting limits (maker fee, no slippage) instead of immediate fills: any of tp,sl,timeout,open_at_end. Default: none, every exit is taker. Bitget lets TP/SL be attached as limit orders at open, so a resting exit is representable -- but the outcomes are not equally credible. tp is honest (price reached your level, your limit was resting there). sl is optimistic in the tail: a resting limit fills only if someone crosses it, and the fast one-way move that triggers a stop is exactly the one that blows through the level, leaving you still in and losing more than sl_pct. timeout is a horizon market-close unless the strategy deliberately rests a limit near the horizon -- that is a different strategy, not a cost setting. On the 30m long the mix is TP 13.4%%/SL 29.8%%/TIMEOUT 56.8%% and break-even needs ~44%% resting, so this flag decides the verdict rather than trimming it. Report which outcomes you assumed.")
@@ -1745,6 +1784,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"coverage={rows[0].funding_time.date()} -> {rows[-1].funding_time.date()}")
         print(f"output={output}")
         return 0
+    if args.command == "collect-premium-index":
+        output = Path(args.output)
+        try:
+            if not args.allow_public_network:
+                raise RuntimeError("premium-index collection requires --allow-public-network")
+            from btcusdt_quant import premium_index_source
+            rows = premium_index_source.BinancePremiumIndexDownloader().download_range(args.start, args.end, output, force=args.force)
+        except Exception as error:
+            print(f"premium-index collection failed: {error}", file=sys.stderr)
+            return 1
+        print("BTCUSDT premium-index collection complete")
+        print(f"klines={len(rows)}")
+        if rows:
+            print(f"coverage={rows[0].open_time.date()} -> {rows[-1].open_time.date()}")
+        print(f"output={output}")
+        return 0
     if args.command == "collect-metrics":
         output = Path(args.output)
         try:
@@ -1837,9 +1892,9 @@ def main(argv: list[str] | None = None) -> int:
         # archive. Computed offline (no network): load rows, derive causal
         # features on the 5m grid, forward-fill onto each candle's 1m clock,
         # and pack as external_sources[candle_time]["metrics"] = {feat: value}.
-        if args.metrics_dir or args.funding_dir:
+        if args.metrics_dir or args.funding_dir or args.premium_index_dir:
             if input_path is None:
-                print("--metrics-dir/--funding-dir require --input to specify candle data", file=sys.stderr)
+                print("--metrics-dir/--funding-dir/--premium-index-dir require --input to specify candle data", file=sys.stderr)
                 return 1
             # Load the candle clock once: both external sources align onto the
             # same 1m timeline, and reading the parquet twice for a multi-year
@@ -1849,6 +1904,8 @@ def main(argv: list[str] | None = None) -> int:
                 external_sources = merge_metrics_external_sources(Path(args.metrics_dir), source_candles, external_sources)
             if args.funding_dir:
                 external_sources = merge_funding_external_sources(Path(args.funding_dir), source_candles, external_sources)
+            if args.premium_index_dir:
+                external_sources = merge_premium_index_external_sources(Path(args.premium_index_dir), source_candles, external_sources)
         # Merge regime probability features (F18) from a train-regime-classifier
         # run. regime_probabilities.json maps ISO timestamp -> {regime_prob_up,
         # regime_prob_range, regime_prob_down}, already leakage-safe
@@ -2302,10 +2359,13 @@ def main(argv: list[str] | None = None) -> int:
                 backtest_external_sources = merge_metrics_external_sources(Path(args.metrics_dir), candles, None)
             if args.funding_dir:
                 backtest_external_sources = merge_funding_external_sources(Path(args.funding_dir), candles, backtest_external_sources)
+            if args.premium_index_dir:
+                backtest_external_sources = merge_premium_index_external_sources(Path(args.premium_index_dir), candles, backtest_external_sources)
             shared_feature_rows = build_feature_rows_cached(
                 candles, args.feature_cache,
                 input_path=input_path, metrics_dir=args.metrics_dir,
                 funding_dir=args.funding_dir,
+                premium_index_dir=args.premium_index_dir,
                 user_regime_file=args.user_regime_file,
                 user_regime_periods=user_regime_periods,
                 external_sources=backtest_external_sources,

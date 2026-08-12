@@ -3589,9 +3589,9 @@ def _mark_price_basis_value(external_sources: Mapping[str, object] | None, close
 def _premium_index_value(external_sources: Mapping[str, object] | None) -> float:
     if external_sources is None:
         return 0.0
-    mark = external_sources.get("mark_price_1m")
-    if isinstance(mark, Mapping):
-        return float(mark.get("premium_index", 0.0))
+    premium = external_sources.get("premium_index_1m")
+    if isinstance(premium, Mapping):
+        return float(premium.get("premium_index", 0.0))
     return 0.0
 
 
@@ -3746,7 +3746,7 @@ class ExternalSourcesCollector:
                 limit=1000,
             )
             mark_price_by_time: dict[int, dict[str, object]] = {
-                int(row["open_time"]): {"mark_price": row["close"], "premium_index": 0.0}
+                int(row["open_time"]): {"mark_price": row["close"]}
                 for row in mark_price_history
             }
         except (urllib.error.URLError, ValueError) as e:
@@ -3786,12 +3786,13 @@ class ExternalSourcesCollector:
             mark_data = mark_price_by_time.get(candle_time_ms)
             if mark_data:
                 mark_price = float(mark_data["mark_price"])
-                premium_index = premium_index_by_time.get(candle_time_ms, 0.0)
                 sources["mark_price_1m"] = {
                     "mark_price": mark_price,
-                    "premium_index": float(premium_index),
                 }
             else:
-                sources["mark_price_1m"] = {"mark_price": candle.close * 1.0002, "premium_index": 0.0002}
+                sources["mark_price_1m"] = {"mark_price": candle.close * 1.0002}
+            premium_index = premium_index_by_time.get(candle_time_ms)
+            if premium_index is not None:
+                sources["premium_index_1m"] = {"premium_index": float(premium_index)}
             external_sources[candle.open_time] = sources
         return external_sources
