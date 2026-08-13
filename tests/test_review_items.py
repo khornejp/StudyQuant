@@ -2273,7 +2273,8 @@ class MakerFillTests(unittest.TestCase):
         # key returns None and None == None is True, so the old filter would
         # have indexed a key the emptied fold does not have.
         self.assertEqual(len(summary["long_net_bps_by_fold"]), 2)
-        self.assertEqual(summary["long_folds_profitable"], 2)
+        self.assertEqual(summary["long_folds_with_no_trades"], 1)
+        self.assertAlmostEqual(summary["long_profitable_trade_share"], 1.0)
 
     def test_fold_mean_does_not_let_a_28_trade_fold_outvote_a_765_trade_one(self) -> None:
         # The plain mean averages fold MEANS, so it weights folds equally no
@@ -2293,8 +2294,56 @@ class MakerFillTests(unittest.TestCase):
         summary = _tr.summarise_fold_trading([tiny, big])
         self.assertEqual(summary["long_trades_by_fold"], [28.0, 765.0])
         # Equal weighting calls it profitable; trade weighting does not.
-        self.assertGreater(summary["long_net_bps_mean"], 0.0)
-        self.assertLess(summary["long_net_bps_trade_weighted"], 0.0)
+        self.assertGreater(summary["long_net_bps_plain_fold_mean"], 0.0)
+        self.assertLess(summary["long_net_bps_trade_weighted_mean"], 0.0)
+
+    def test_trading_summary_makes_trade_weighted_result_primary_and_keeps_empty_fold_visible(self) -> None:
+        from btcusdt_quant import training as _tr
+
+        profitable = _tr.oos_trading_metrics([0.9] * 4, [0.004] * 4, 0.5,
+                                              round_trip_cost=0.0004)
+        empty_long = _tr.oos_trading_metrics([0.1] * 3, [0.004] * 3, 0.5,
+                                             round_trip_cost=0.0004)
+        losing = _tr.oos_trading_metrics([0.9] * 100, [-0.0002] * 100, 0.5,
+                                          round_trip_cost=0.0004)
+
+        summary = _tr.summarise_fold_trading([profitable, empty_long, losing])
+
+        self.assertEqual(summary["fold_count"], 3)
+        self.assertEqual(summary["long_folds_with_no_trades"], 1)
+        self.assertEqual(summary["long_trade_weighted_mean_folds_with_trades"], 2)
+        self.assertEqual(summary["long_plain_fold_mean_folds_with_trades"], 2)
+        self.assertLess(summary["long_net_bps_trade_weighted_mean"], 0.0)
+        self.assertGreater(summary["long_net_bps_plain_fold_mean"], 0.0)
+        self.assertAlmostEqual(summary["long_profitable_trade_share"], 4 / 104)
+
+    def test_metric_correction_derives_a_new_report_without_mutating_the_run(self) -> None:
+        from btcusdt_quant import derive_trading_metric_correction as correction
+        from btcusdt_quant import training as _tr
+        import tempfile
+        from pathlib import Path
+
+        profitable = _tr.oos_trading_metrics([0.9] * 4, [0.004] * 4, 0.5,
+                                              round_trip_cost=0.0004)
+        empty_long = _tr.oos_trading_metrics([0.1] * 3, [0.004] * 3, 0.5,
+                                             round_trip_cost=0.0004)
+        losing = _tr.oos_trading_metrics([0.9] * 100, [-0.0002] * 100, 0.5,
+                                          round_trip_cost=0.0004)
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "run_summary.json"
+            output = Path(temporary) / "trade_weighted_metric_correction__example.json"
+            source.write_text(json.dumps({"oos_trading": {
+                "folds": [profitable, empty_long, losing],
+                "gated": {"folds": [profitable, empty_long, losing]},
+            }}), encoding="utf-8")
+            before = source.read_bytes()
+
+            report = correction.derive(source, output)
+
+            self.assertEqual(source.read_bytes(), before)
+            self.assertTrue(output.exists())
+            self.assertEqual(report["gated"]["long_folds_with_no_trades"], 1)
+            self.assertLess(report["gated"]["long_net_bps_trade_weighted_mean"], 0.0)
 
     def test_gate_cutoff_can_be_chosen_inside_the_fold(self) -> None:
         # An absolute cutoff derived over the whole span is not fold-clean:

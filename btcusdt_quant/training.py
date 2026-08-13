@@ -2511,10 +2511,15 @@ def summarise_fold_trading(
     )
     largest_year_share = (max(unique_by_year.values()) / entries_unique) if entries_unique else 0.0
 
-    long_net = [t["long_net_bps"] for t in per_fold if _has(t, "long_net_bps")]
-    short_net = [t["short_net_bps"] for t in per_fold if _has(t, "short_net_bps")]
-    long_trades = [float(t.get("long_trades", 0.0)) for t in per_fold if _has(t, "long_net_bps")]
-    short_trades = [float(t.get("short_trades", 0.0)) for t in per_fold if _has(t, "short_net_bps")]
+    # A net bps figure is a measurement only when that side traded. Keep the
+    # zero-trade fold in ``folds`` and count it below, but do not manufacture a
+    # zero observation for either mean.
+    long_rows = [t for t in per_fold if _has(t, "long_net_bps") and float(t.get("long_trades", 0.0)) > 0.0]
+    short_rows = [t for t in per_fold if _has(t, "short_net_bps") and float(t.get("short_trades", 0.0)) > 0.0]
+    long_net = [float(t["long_net_bps"]) for t in long_rows]
+    short_net = [float(t["short_net_bps"]) for t in short_rows]
+    long_trades = [float(t.get("long_trades", 0.0)) for t in long_rows]
+    short_trades = [float(t.get("short_trades", 0.0)) for t in short_rows]
     # Copy the identities out of the reported folds rather than deleting them
     # from the caller's data. Popping in place made this function destructive:
     # a second call on the same list saw no keys, computed overlap 0.0 and
@@ -2565,13 +2570,28 @@ def summarise_fold_trading(
             and largest_year_share <= 0.75
             and overlap_factor <= 1.05
         ),
-        "long_folds_profitable": sum(1 for v in long_net if v > 0.0),
-        "short_folds_profitable": sum(1 for v in short_net if v > 0.0),
-        "long_net_bps_mean": mean(long_net) if long_net else 0.0,
-        "short_net_bps_mean": mean(short_net) if short_net else 0.0,
-        # Read this one, not the plain mean, whenever fold trade counts differ.
-        "long_net_bps_trade_weighted": _weighted(long_net, long_trades),
-        "short_net_bps_trade_weighted": _weighted(short_net, short_trades),
+        # The trade-weighted figure is the decision metric. The plain fold mean
+        # remains descriptive only, with its equal-fold weighting made explicit.
+        "long_net_bps_trade_weighted_mean": _weighted(long_net, long_trades),
+        "short_net_bps_trade_weighted_mean": _weighted(short_net, short_trades),
+        "long_net_bps_plain_fold_mean": mean(long_net) if long_net else 0.0,
+        "short_net_bps_plain_fold_mean": mean(short_net) if short_net else 0.0,
+        "long_trade_weighted_mean_folds_with_trades": len(long_rows),
+        "short_trade_weighted_mean_folds_with_trades": len(short_rows),
+        "long_plain_fold_mean_folds_with_trades": len(long_rows),
+        "short_plain_fold_mean_folds_with_trades": len(short_rows),
+        "long_folds_with_no_trades": len(per_fold) - len(long_rows),
+        "short_folds_with_no_trades": len(per_fold) - len(short_rows),
+        # A profitable-fold count gives a tiny fold the same vote as a large
+        # fold. Report the profitable share of trades instead.
+        "long_profitable_trade_share": (
+            sum(w for v, w in zip(long_net, long_trades) if v > 0.0) / sum(long_trades)
+            if long_trades else 0.0
+        ),
+        "short_profitable_trade_share": (
+            sum(w for v, w in zip(short_net, short_trades) if v > 0.0) / sum(short_trades)
+            if short_trades else 0.0
+        ),
         "long_net_bps_worst": min(long_net) if long_net else 0.0,
         "short_net_bps_worst": min(short_net) if short_net else 0.0,
     }
