@@ -766,6 +766,30 @@ def _source_value(source_name: str, source_bundle: MarketSourceBundle | None, ex
     return _MISSING
 
 
+def source_availability_snapshot(external_sources: Mapping[object, object] | None) -> dict[str, object] | None:
+    """Reduce direct or per-minute external inputs to source-presence evidence.
+
+    Archive merges are keyed by candle time. Inspecting only their first minute
+    is invalid: a finalized 1m source correctly has no value at its first open
+    time, yet is available for the rest of the history. This helper is only
+    for availability reporting; feature builders retain the full timeline.
+    """
+    if external_sources is None:
+        return None
+    snapshots: dict[str, object] = {
+        name: external_sources[name]
+        for name in SOURCE_DEFINITIONS
+        if name in external_sources
+    }
+    for value in external_sources.values():
+        if not isinstance(value, Mapping):
+            continue
+        for name in SOURCE_DEFINITIONS:
+            if name not in snapshots and name in value:
+                snapshots[name] = value[name]
+    return snapshots
+
+
 def _snapshot_available(snapshot: object | None) -> bool:
     if snapshot is None or snapshot is _MISSING:
         return False

@@ -1397,6 +1397,11 @@ def collect_candles(
         candles = expanded_fixture(rows)
         source = "offline_expanded_fixture"
         network_used = False
+    if not candles:
+        raise RuntimeError(
+            f"candle collection returned zero rows (requested={rows}, fetched=0, missing={rows}); "
+            "this is a failure; investigate source coverage or network access"
+        )
     if format == "parquet":
         write_candles_parquet(output_path, candles)
     else:
@@ -1510,13 +1515,10 @@ def build_dataset(
     canonical = data.CanonicalTimelineBuilder().build(raw)
     gap_report = summarize_gaps(len(raw), canonical)
     resolved_source_bundle = source_bundle or sources.bundle_from_candles(canonical, source=source)
-    # Handle per-candle external_sources: extract first entry for source report
-    source_report_external_sources: Mapping[str, object] | None = None
-    if external_sources is not None and any(isinstance(key, datetime) for key in external_sources.keys()):
-        first_key = next(iter(external_sources.keys()))
-        source_report_external_sources = external_sources[first_key]  # type: ignore[index]
-    else:
-        source_report_external_sources = external_sources
+    # Availability is source-level evidence across the complete timeline, not
+    # the first bar. A finalized 1m source correctly has no value at its first
+    # open time and must not be misreported as fallback for the full dataset.
+    source_report_external_sources = sources.source_availability_snapshot(external_sources)
     feature_rows = build_feature_rows(canonical, source_bundle=resolved_source_bundle, external_sources=external_sources, user_regime_periods=user_regime_periods)
     labeled_rows = attach_labels(
         feature_rows,
@@ -1599,7 +1601,7 @@ def build_feature_rows(
     source_report = sources.train_live_feature_parity_report(
         FEATURE_NAMES,
         source_bundle=resolved_source_bundle,
-        external_sources=external_sources,
+        external_sources=sources.source_availability_snapshot(external_sources),
         feature_registry=feature_formula_registry()["features"],
     )
     source_availability_status = _source_availability_status(source_report)

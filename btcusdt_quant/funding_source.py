@@ -63,6 +63,15 @@ class FundingDownloadError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class FundingDownloadCoverage:
+    """Archive availability observed during one requested range."""
+
+    requested: int
+    fetched: int
+    missing_dates: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class FundingRow:
     funding_time: datetime
     funding_rate: float
@@ -138,6 +147,7 @@ class BinanceFundingDownloader:
         self.urlopen = urlopen or urllib.request.urlopen
         self.sleep = sleep or time.sleep
         self.request_interval_seconds = request_interval_seconds
+        self.last_coverage = FundingDownloadCoverage(0, 0, ())
 
     def _month_url(self, year: int, month: int) -> tuple[str, str]:
         name = f"{self.symbol}-fundingRate-{year:04d}-{month:02d}.zip"
@@ -172,12 +182,22 @@ class BinanceFundingDownloader:
     def download_range(self, start: str | date, end: str | date, output_dir: Path, force: bool = False) -> list[FundingRow]:
         first, last = _as_date(start), _as_date(end)
         rows: list[FundingRow] = []
+        requested = 0
+        fetched = 0
+        missing_dates: list[str] = []
         year, month = first.year, first.month
         while (year, month) <= (last.year, last.month):
-            rows.extend(self.download_month(year, month, Path(output_dir), force=force))
+            requested += 1
+            month_rows = self.download_month(year, month, Path(output_dir), force=force)
+            if month_rows:
+                fetched += 1
+                rows.extend(month_rows)
+            else:
+                missing_dates.append(f"{year:04d}-{month:02d}")
             month += 1
             if month > 12:
                 year, month = year + 1, 1
+        self.last_coverage = FundingDownloadCoverage(requested, fetched, tuple(missing_dates))
         return dedup_funding_rows(rows)
 
 

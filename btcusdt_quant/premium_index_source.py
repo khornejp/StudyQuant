@@ -66,6 +66,15 @@ class PremiumIndexValidationError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class PremiumIndexDownloadCoverage:
+    """Archive availability observed during one requested range."""
+
+    requested: int
+    fetched: int
+    missing_dates: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class PremiumIndexRow:
     """One finalized premium-index kline, all timestamps UTC."""
 
@@ -151,9 +160,12 @@ class BinancePremiumIndexDownloader:
         self.timeout_seconds, self.max_retries = timeout_seconds, max_retries
         self.urlopen, self.sleep = urlopen or urllib.request.urlopen, sleep or time.sleep
         self.request_interval_seconds = request_interval_seconds
+        self.last_coverage = PremiumIndexDownloadCoverage(0, 0, ())
 
     def _day_url(self, day: date) -> tuple[str, str]:
-        name = f"{self.symbol}-premiumIndexKlines-1m-{day.isoformat()}.zip"
+        # ``premiumIndexKlines`` is the directory type; the archive name uses
+        # the regular SYMBOL-INTERVAL-DATE convention.
+        name = f"{self.symbol}-1m-{day.isoformat()}.zip"
         return f"{self.base_url}/{name}", name
 
     def download_day(self, day: date, output_dir: Path | str, force: bool = False) -> list[PremiumIndexRow]:
@@ -190,10 +202,22 @@ class BinancePremiumIndexDownloader:
         if first > last:
             raise ValueError("start must be on or before end")
         rows: list[PremiumIndexRow] = []
+        fetched = 0
+        missing_dates: list[str] = []
         current = first
         while current <= last:
-            rows.extend(self.download_day(current, output_dir, force))
+            day_rows = self.download_day(current, output_dir, force)
+            if day_rows:
+                fetched += 1
+                rows.extend(day_rows)
+            else:
+                missing_dates.append(current.isoformat())
             current += timedelta(days=1)
+        self.last_coverage = PremiumIndexDownloadCoverage(
+            requested=(last - first).days + 1,
+            fetched=fetched,
+            missing_dates=tuple(missing_dates),
+        )
         return dedup_premium_index_rows(rows)
 
 

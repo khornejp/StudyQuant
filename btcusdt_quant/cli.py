@@ -658,6 +658,32 @@ def run_collect(output: Path, rows: int, allow_public_network: bool = False, for
     }
 
 
+def _download_coverage_values(coverage: object) -> tuple[int, int, tuple[str, ...]]:
+    """Extract the common per-run archive coverage contract."""
+    requested = int(getattr(coverage, "requested"))
+    fetched = int(getattr(coverage, "fetched"))
+    missing_dates = tuple(str(value) for value in getattr(coverage, "missing_dates"))
+    return requested, fetched, missing_dates
+
+
+def _print_download_coverage(coverage: object) -> None:
+    requested, fetched, missing_dates = _download_coverage_values(coverage)
+    print(f"requested={requested}")
+    print(f"fetched={fetched}")
+    print(f"missing={len(missing_dates)}")
+    if missing_dates:
+        print(f"first_missing={', '.join(missing_dates[:5])}")
+
+
+def _zero_rows_collection_message(name: str, coverage: object) -> str:
+    requested, fetched, missing_dates = _download_coverage_values(coverage)
+    return (
+        f"{name} collection returned zero rows (requested={requested}, fetched={fetched}, "
+        f"missing={len(missing_dates)}, first_missing={', '.join(missing_dates[:5]) or 'none'}); "
+        "this is a failure; investigate source coverage or network access"
+    )
+
+
 def run_collect_metrics(start: str, end: str, output: Path, allow_public_network: bool = False, force: bool = False) -> dict[str, object]:
     """Download the Binance futures metrics archive (open interest, long/short
     ratios, taker buy/sell) for the given date range.
@@ -672,6 +698,9 @@ def run_collect_metrics(start: str, end: str, output: Path, allow_public_network
     from btcusdt_quant import metrics_source
     downloader = metrics_source.BinanceMetricsDownloader()
     rows = downloader.download_range(start, end, output, force=force)
+    coverage = downloader.last_coverage
+    if not rows:
+        raise RuntimeError(_zero_rows_collection_message("metrics", coverage))
     report = {
         "start_date": start,
         "end_date": end,
@@ -682,6 +711,7 @@ def run_collect_metrics(start: str, end: str, output: Path, allow_public_network
     }
     print("BTCUSDT metrics collection complete")
     print(f"metrics_rows={len(rows)}")
+    _print_download_coverage(coverage)
     if rows:
         print(f"coverage={rows[0].create_time.date()} -> {rows[-1].create_time.date()}")
     print(f"output={output}")
@@ -902,6 +932,14 @@ def run_collect_archive(start: str, end: str, output: Path, checkpoint: Path | N
     summary = dataset.BinanceArchiveDownloader().download_range(start, end, output, checkpoint)
     coverage = dataset.archive_date_coverage(output)
     raw_rows = coverage["raw_rows"]
+    if raw_rows == 0:
+        missing_dates = tuple(summary.failed_dates)
+        raise RuntimeError(
+            "archive collection returned zero rows "
+            f"(requested={summary.total_days}, fetched={summary.downloaded_days}, missing={len(missing_dates)}, "
+            f"first_missing={', '.join(missing_dates[:5]) or 'none'}); "
+            "this is a failure; investigate source coverage or network access"
+        )
     min_rows_passed = True
     if min_rows > 0 and raw_rows < min_rows:
         print(f"warning: archive raw_rows ({raw_rows}) below min_rows threshold ({min_rows})")
@@ -1845,8 +1883,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"archive collection failed: {error}", file=sys.stderr)
             return 1
         print("BTCUSDT archive collection complete")
-        print(f"downloaded={summary['downloaded_days']}/{summary['total_days']} days")
-        print(f"failed={summary['failed_days']} days")
+        print(f"requested={summary['total_days']}")
+        print(f"fetched={summary['downloaded_days']}")
+        print(f"missing={summary['failed_days']}")
+        if summary["failed_dates"]:
+            print(f"first_missing={', '.join(summary['failed_dates'][:5])}")
         print(f"last_completed_date={summary['last_completed_date']}")
         print(f"checkpoint={summary['checkpoint_file']}")
         print(f"output={summary['output_dir']}")
@@ -1859,12 +1900,17 @@ def main(argv: list[str] | None = None) -> int:
             if not args.allow_public_network:
                 raise RuntimeError("funding collection requires --allow-public-network")
             from btcusdt_quant import funding_source
-            rows = funding_source.BinanceFundingDownloader().download_range(args.start, args.end, output, force=args.force)
+            downloader = funding_source.BinanceFundingDownloader()
+            rows = downloader.download_range(args.start, args.end, output, force=args.force)
+            coverage = downloader.last_coverage
+            if not rows:
+                raise RuntimeError(_zero_rows_collection_message("funding", coverage))
         except Exception as error:
             print(f"funding collection failed: {error}", file=sys.stderr)
             return 1
         print("BTCUSDT funding collection complete")
         print(f"settlements={len(rows)}")
+        _print_download_coverage(coverage)
         if rows:
             print(f"coverage={rows[0].funding_time.date()} -> {rows[-1].funding_time.date()}")
         print(f"output={output}")
@@ -1891,12 +1937,17 @@ def main(argv: list[str] | None = None) -> int:
             if not args.allow_public_network:
                 raise RuntimeError("premium-index collection requires --allow-public-network")
             from btcusdt_quant import premium_index_source
-            rows = premium_index_source.BinancePremiumIndexDownloader().download_range(args.start, args.end, output, force=args.force)
+            downloader = premium_index_source.BinancePremiumIndexDownloader()
+            rows = downloader.download_range(args.start, args.end, output, force=args.force)
+            coverage = downloader.last_coverage
+            if not rows:
+                raise RuntimeError(_zero_rows_collection_message("premium-index", coverage))
         except Exception as error:
             print(f"premium-index collection failed: {error}", file=sys.stderr)
             return 1
         print("BTCUSDT premium-index collection complete")
         print(f"klines={len(rows)}")
+        _print_download_coverage(coverage)
         if rows:
             print(f"coverage={rows[0].open_time.date()} -> {rows[-1].open_time.date()}")
         print(f"output={output}")

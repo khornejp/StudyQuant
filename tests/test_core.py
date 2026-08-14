@@ -439,12 +439,17 @@ class ArchiveDownloaderTests(unittest.TestCase):
         class FakeDownloader:
             def download_range(self, start_date: str, end_date: str, output_dir: Path, checkpoint_file: Path | None = None) -> dataset.ArchiveDownloadSummary:
                 output_dir.mkdir(parents=True, exist_ok=True)
+                # A success response must include usable candle data; an empty
+                # archive is now deliberately rejected by the CLI.
+                (output_dir / f"BTCUSDT-1m-{end_date}.csv").write_text(
+                    make_archive_csv(day=end_date, rows=1), encoding="utf-8"
+                )
                 checkpoint = checkpoint_file or output_dir / "checkpoint.json"
                 checkpoint.write_text(
-                    json.dumps({"last_completed_date": end_date, "downloaded_files": [f"{end_date}_BTCUSDT-1m.zip"], "failed_dates": []}),
+                    json.dumps({"last_completed_date": end_date, "downloaded_files": [f"BTCUSDT-1m-{end_date}.zip"], "failed_dates": []}),
                     encoding="utf-8",
                 )
-                return dataset.ArchiveDownloadSummary(output_dir, checkpoint, start_date, end_date, 1, 1, 0, end_date, (f"{end_date}_BTCUSDT-1m.zip",), ())
+                return dataset.ArchiveDownloadSummary(output_dir, checkpoint, start_date, end_date, 1, 1, 0, end_date, (f"BTCUSDT-1m-{end_date}.zip",), ())
 
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch("btcusdt_quant.cli.dataset.BinanceArchiveDownloader", return_value=FakeDownloader()):

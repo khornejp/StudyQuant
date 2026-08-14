@@ -7,6 +7,8 @@ leakage heuristics + fold-wise IC (ic_diagnostic.py), OU half-life
 from __future__ import annotations
 
 import copy
+import contextlib
+import io
 import json
 import math
 import dataclasses
@@ -2904,6 +2906,37 @@ class MakerFillTests(unittest.TestCase):
                 ps.load_premium_index_dir(_P(tmp))
             self.assertEqual(ps.load_premium_index_dir(_P(tmp), strict=False), [])
 
+    def test_premium_index_archive_filename_and_zero_row_cli_failure(self) -> None:
+        """A missing archive range must fail without printing a success banner."""
+        from datetime import date
+        from pathlib import Path as _P
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
+        from btcusdt_quant import premium_index_source as ps
+        from btcusdt_quant import cli as _cli
+
+        downloader = ps.BinancePremiumIndexDownloader(sleep=lambda _: None)
+        url, filename = downloader._day_url(date(2025, 12, 31))
+        self.assertEqual(filename, "BTCUSDT-1m-2025-12-31.zip")
+        self.assertTrue(url.endswith("/BTCUSDT-1m-2025-12-31.zip"))
+
+        failed = SimpleNamespace(
+            last_coverage=SimpleNamespace(requested=2, fetched=0, missing_dates=("2025-12-30", "2025-12-31")),
+            download_range=lambda *args, **kwargs: [],
+        )
+        stderr = io.StringIO()
+        with TemporaryDirectory() as tmp, \
+             mock.patch("btcusdt_quant.premium_index_source.BinancePremiumIndexDownloader", return_value=failed), \
+             contextlib.redirect_stderr(stderr):
+            code = _cli.main([
+                "collect-premium-index", "--start", "2025-12-30", "--end", "2025-12-31",
+                "--output", str(_P(tmp)), "--allow-public-network",
+            ])
+        self.assertEqual(code, 1)
+        self.assertIn("returned zero rows", stderr.getvalue())
+        self.assertIn("requested=2, fetched=0, missing=2", stderr.getvalue())
+        self.assertNotIn("complete", stderr.getvalue())
+
     def test_premium_archive_payload_matches_its_registered_source(self) -> None:
         # Availability is per SOURCE.  premium_index must therefore read the
         # same premium_index_1m payload that the archive merge writes, never
@@ -2917,6 +2950,28 @@ class MakerFillTests(unittest.TestCase):
             _ds._premium_index_value({"mark_price_1m": {"premium_index": 0.00015}}),
             0.0,
         )
+
+    def test_timeline_source_availability_does_not_depend_on_first_bar(self) -> None:
+        # A finalized 1m archive first becomes observable one minute after its
+        # first open. Reporting only the first timeline entry would therefore
+        # incorrectly drop premium_index from a fully collected run.
+        from datetime import datetime, timedelta, timezone as _tz
+        from btcusdt_quant import sources as _sources
+
+        start = datetime(2026, 1, 1, tzinfo=_tz.utc)
+        timeline = {
+            start: {"funding_rate": {"current_rate": 0.0001}},
+            start + timedelta(minutes=1): {
+                "funding_rate": {"current_rate": 0.0001},
+                "premium_index_1m": {"premium_index": 0.0002},
+            },
+        }
+        evidence = _sources.source_availability_snapshot(timeline)
+        self.assertEqual(evidence["premium_index_1m"], {"premium_index": 0.0002})
+        report = _sources.train_live_feature_parity_report(
+            ("funding_rate", "premium_index"), external_sources=evidence,
+        )
+        self.assertEqual(report["fallback_features"], ())
 
     def test_execution_defaults_to_limit_only(self) -> None:
         # This account never crosses the spread, so a run that forgets the flags

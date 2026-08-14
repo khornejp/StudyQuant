@@ -70,6 +70,15 @@ class MetricsValidationError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class MetricsDownloadCoverage:
+    """Archive availability observed during one requested range."""
+
+    requested: int
+    fetched: int
+    missing_dates: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class MetricsRow:
     """One metrics observation at a specific create_time (UTC)."""
 
@@ -224,6 +233,7 @@ class BinanceMetricsDownloader:
         self.urlopen = urlopen or urllib.request.urlopen
         self.sleep = sleep or time.sleep
         self.request_interval_seconds = request_interval_seconds
+        self.last_coverage = MetricsDownloadCoverage(0, 0, ())
 
     def _day_url(self, day: date) -> tuple[str, str]:
         # metrics archive layout: BTCUSDT-metrics-YYYY-MM-DD.zip (no interval).
@@ -298,21 +308,31 @@ class BinanceMetricsDownloader:
         cached_days = 0
         downloaded_days = 0
         skipped_days = 0
+        fetched_days = 0
+        missing_dates: list[str] = []
         day = start
         while day <= end:
             _, zip_name = self._day_url(day)
             was_cached = (destination / zip_name).exists() and not force
             try:
-                all_rows.extend(self.download_day(day, destination, force=force))
-                if was_cached:
-                    cached_days += 1
+                day_rows = self.download_day(day, destination, force=force)
+                if day_rows:
+                    all_rows.extend(day_rows)
+                    fetched_days += 1
+                    if was_cached:
+                        cached_days += 1
+                    else:
+                        downloaded_days += 1
                 else:
-                    downloaded_days += 1
+                    skipped_days += 1
+                    missing_dates.append(day.isoformat())
             except MetricsDownloadError as error:
                 skipped_days += 1
+                missing_dates.append(day.isoformat())
                 print(f"[METRICS] skipping {day.isoformat()}: {error}")
             day = day + timedelta(days=1)
         print(f"[METRICS] reused {cached_days} cached, downloaded {downloaded_days} new, skipped {skipped_days} missing")
+        self.last_coverage = MetricsDownloadCoverage((end - start).days + 1, fetched_days, tuple(missing_dates))
         return dedup_metrics_rows(all_rows)
 
 
