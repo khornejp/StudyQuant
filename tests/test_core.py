@@ -4,6 +4,7 @@ import csv
 import io
 import importlib.util
 import json
+import os
 import threading
 import tempfile
 import unittest
@@ -1561,6 +1562,52 @@ class TestDatasetCacheParquet(unittest.TestCase):
             cache_dir = dataset.dataset_cache_dir(cache_path)
         cache_dir_str = str(cache_dir).replace("\\", "/").rstrip("/")
         self.assertTrue(cache_dir_str.endswith(".parquet_cache"))
+
+
+class CatBoostRuntimeSafetyTests(unittest.TestCase):
+    def test_gpu_fallback_is_recorded_with_actual_cpu_device_and_elapsed_time(self) -> None:
+        class FakeClassifier:
+            def __init__(self, **params: object) -> None:
+                self.params = params
+
+            def fit(self, *_args: object, **_kwargs: object) -> None:
+                if self.params.get("task_type") == "GPU":
+                    raise RuntimeError("CUDA unavailable")
+
+        class FakeCatBoost:
+            CatBoostClassifier = FakeClassifier
+
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime_path = Path(temporary) / "training_runtime.jsonl"
+            lock_path = Path(temporary) / "gpu.lock"
+            with mock.patch.object(models, "_RUNTIME_ARTIFACT", runtime_path), \
+                 mock.patch.object(models, "_GPU_LOCK_PATH", lock_path), \
+                 mock.patch.object(models, "_GPU_LOCK_FD", None), \
+                 mock.patch.object(models, "_GPU_LOCK_OWNER", None), \
+                 mock.patch.object(models, "_import_optional_module", return_value=FakeCatBoost):
+                adapter = models.CatBoostAdapter(feature_names=["x"])
+                adapter.fit([[1.0], [2.0]], [0, 1])
+            events = [json.loads(line)["event"] for line in runtime_path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(events[0]["type"], "gpu_lease_acquired")
+        self.assertEqual(events[1]["requested_device"], "GPU:0")
+        self.assertEqual(events[2]["type"], "gpu_fallback")
+        self.assertEqual(events[2]["to_device"], "CPU")
+        self.assertEqual(events[3]["actual_device"], "CPU")
+        self.assertIn("wall_clock_seconds", events[3])
+
+    def test_live_gpu_lease_refuses_before_a_model_can_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            lock_path = Path(temporary) / "gpu.lock"
+            lock_path.write_text(json.dumps({"pid": os.getpid(), "device": "0"}), encoding="utf-8")
+            with mock.patch.object(models, "_GPU_LOCK_PATH", lock_path), \
+                 mock.patch.object(models, "_GPU_LOCK_FD", None), \
+                 mock.patch.object(models, "_GPU_LOCK_OWNER", None):
+                with self.assertRaisesRegex(models.GPUDeviceBusyError, "Refusing to start"):
+                    models.CatBoostAdapter(feature_names=["x"]).fit([[1.0], [2.0]], [0, 1])
+
+    def test_gpu_thread_count_default_is_unchanged_and_watchdog_is_production_scale(self) -> None:
+        self.assertEqual(models.CatBoostAdapter.DEFAULT_PARAMS["thread_count"], -1)
+        self.assertEqual(models.CATBOOST_FIT_TIMEOUT_SECONDS, 90 * 60)
 
 
 if __name__ == "__main__":

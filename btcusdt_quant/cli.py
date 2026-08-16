@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping, Sequence
 
-from . import backtest, barrier_screen, data, dataset, exchange, features, governance, live, secrets, training
+from . import backtest, barrier_screen, data, dataset, exchange, features, governance, live, models, secrets, training
 
 if TYPE_CHECKING:
     from btcusdt_quant import regime_classifier
@@ -2774,6 +2774,9 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("--threshold-horizon must be a positive number of bars")
             input_path = Path(args.input)
             output = Path(args.output)
+            # Stage-3 regime training constructs CatBoostAdapter directly, so
+            # it bypasses training.run_training's artifact setup.
+            models.start_training_runtime_artifact(output)
 
             print(f"[MH] loading candles from {input_path} ...")
             candles = dataset.load_parquet_candles(input_path) if input_path.suffix.lower() == ".parquet" else dataset.load_csv_candles(input_path)

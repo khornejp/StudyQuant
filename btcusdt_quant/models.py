@@ -5,13 +5,163 @@ import contextlib
 import importlib
 import importlib.util
 import io
+import json
 import math
+import os
+from pathlib import Path
+import tempfile
+import threading
+from time import perf_counter
 from dataclasses import dataclass
 from typing import Mapping, Protocol, Sequence, runtime_checkable
 
 
 FeatureMatrix = Sequence[Sequence[float]]
 _OPTIONAL_IMPORT_FAILURES: dict[str, str] = {}
+
+
+# CatBoost's GPU driver does not arbitrate competing Python processes reliably
+# enough for a long production run.  This lock is deliberately machine-wide,
+# not repository-wide: both processes address CUDA device 0.
+_GPU_LOCK_PATH = Path(tempfile.gettempdir()) / "studyquant-catboost-gpu-0.lock"
+_GPU_LOCK_MUTEX = threading.Lock()
+_GPU_LOCK_FD: int | None = None
+_GPU_LOCK_OWNER: dict[str, object] | None = None
+_RUNTIME_ARTIFACT: Path | None = None
+_RUNTIME_CONTEXT: dict[str, object] = {}
+CATBOOST_FIT_TIMEOUT_SECONDS = 90 * 60
+
+
+class GPUDeviceBusyError(RuntimeError):
+    """Raised before a second StudyQuant process can enter CatBoost GPU work."""
+
+
+def _runtime_event(event: Mapping[str, object]) -> None:
+    """Append concise, crash-surviving training observations.
+
+    This is intentionally a small JSONL log rather than a redirect of all
+    CatBoost iteration output. It records the decisions that explain a run
+    without turning a multi-hour artifact into thousands of progress lines.
+    """
+    if _RUNTIME_ARTIFACT is None:
+        return
+    payload = {"event": {**_RUNTIME_CONTEXT, **dict(event)}, "monotonic_seconds": perf_counter()}
+    try:
+        with _RUNTIME_ARTIFACT.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError:
+        # A test or failed run may already have removed its output directory.
+        # Runtime observability must never mask the actual training error.
+        return
+
+
+def start_training_runtime_artifact(output_dir: Path) -> Path:
+    """Begin an append-only per-run fit log beside provenance.json."""
+    global _RUNTIME_ARTIFACT
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _RUNTIME_ARTIFACT = output_dir / "training_runtime.jsonl"
+    _runtime_event({"type": "run_started"})
+    return _RUNTIME_ARTIFACT
+
+
+@contextlib.contextmanager
+def training_runtime_context(**context: object):
+    """Attach fold/refit identity to every fit event in a lexical scope."""
+    global _RUNTIME_CONTEXT
+    previous = _RUNTIME_CONTEXT
+    _RUNTIME_CONTEXT = {**previous, **context}
+    try:
+        yield
+    finally:
+        _RUNTIME_CONTEXT = previous
+
+
+def _pid_is_live(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _acquire_gpu_lease() -> None:
+    """Atomically reserve GPU 0 for this process, or refuse before CUDA.
+
+    We refuse rather than wait (which can consume an unattended run's entire
+    window) or silently fall back (which destroys device/runtime provenance).
+    A dead owner's lock is reclaimed only after its PID is confirmed dead.
+    """
+    global _GPU_LOCK_FD, _GPU_LOCK_OWNER
+    with _GPU_LOCK_MUTEX:
+        if _GPU_LOCK_FD is not None:
+            return
+        owner = {"pid": os.getpid(), "device": "0"}
+        for attempt in range(2):
+            try:
+                fd = os.open(str(_GPU_LOCK_PATH), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                try:
+                    existing = json.loads(_GPU_LOCK_PATH.read_text(encoding="utf-8"))
+                    existing_pid = int(existing.get("pid", -1))
+                except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                    existing = {"reason": "unreadable_lock"}
+                    existing_pid = -1
+                if existing_pid > 0 and not _pid_is_live(existing_pid) and attempt == 0:
+                    try:
+                        _GPU_LOCK_PATH.unlink()
+                    except OSError:
+                        pass
+                    continue
+                detail = json.dumps(existing, sort_keys=True, default=str)
+                _runtime_event({"type": "gpu_lease_refused", "owner": existing})
+                raise GPUDeviceBusyError(
+                    f"CatBoost GPU device 0 is reserved by another StudyQuant process: {detail}. "
+                    "Refusing to start rather than contend or silently fall back to CPU."
+                ) from None
+            else:
+                with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as handle:
+                    json.dump(owner, handle, sort_keys=True)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                _GPU_LOCK_FD = fd
+                _GPU_LOCK_OWNER = owner
+                _runtime_event({"type": "gpu_lease_acquired", "owner": owner})
+                return
+        raise AssertionError("unreachable GPU lease state")
+
+
+def _release_gpu_lease() -> None:
+    global _GPU_LOCK_FD, _GPU_LOCK_OWNER
+    with _GPU_LOCK_MUTEX:
+        if _GPU_LOCK_FD is None:
+            return
+        try:
+            os.close(_GPU_LOCK_FD)
+        finally:
+            _GPU_LOCK_FD = None
+            _GPU_LOCK_OWNER = None
+            try:
+                _GPU_LOCK_PATH.unlink()
+            except OSError:
+                pass
+        _runtime_event({"type": "gpu_lease_released"})
+
+
+def _fit_watchdog(timeout_seconds: int, event: Mapping[str, object]) -> threading.Timer:
+    """Terminate a native fit that exceeds the hard per-fit production bound."""
+    def _timeout() -> None:
+        import faulthandler
+        _runtime_event({"type": "fit_timeout", "timeout_seconds": timeout_seconds, **event})
+        print(f"[CatBoost] fit exceeded {timeout_seconds}s; terminating process to prevent a silent hang.", flush=True)
+        faulthandler.dump_traceback()
+        os._exit(124)
+
+    timer = threading.Timer(timeout_seconds, _timeout)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 class OptionalDependencyUnavailable(RuntimeError):
@@ -242,15 +392,42 @@ class CatBoostAdapter:
                     kwargs["use_best_model"] = True
             return kwargs
 
+        requested_device = "GPU:0" if model_params.get("task_type") == "GPU" else "CPU"
+        fit_event = {
+            "type": "fit_started",
+            "model_family": self.model_family,
+            "requested_device": requested_device,
+            "rows": len(rows),
+            "features": len(self.feature_names),
+        }
+        if requested_device == "GPU:0":
+            # This is outside the fallback handler. A held StudyQuant lease is
+            # an operational conflict, not a GPU capability failure; changing
+            # device in that situation would make a supposedly GPU run opaque.
+            _acquire_gpu_lease()
+        _runtime_event(fit_event)
+        started = perf_counter()
+        watchdog = _fit_watchdog(CATBOOST_FIT_TIMEOUT_SECONDS, fit_event)
         try:
             if class_weights is not None and "class_weights" not in model_params:
                 model_params["class_weights"] = class_weights
             model = catboost.CatBoostClassifier(**model_params)
             model.fit(rows, label_values, **_build_fit_kwargs())
             self.model = model
+            _runtime_event({
+                "type": "fit_completed", "model_family": self.model_family,
+                "actual_device": requested_device, "wall_clock_seconds": perf_counter() - started,
+            })
         except Exception as e:
             if self.model_params.get("task_type") == "GPU":
-                print(f"[CatBoost] GPU training failed ({e}), falling back to CPU...")
+                message = f"[CatBoost] GPU training failed ({e}), falling back to CPU..."
+                print(message)
+                _runtime_event({
+                    "type": "gpu_fallback", "model_family": self.model_family,
+                    "from_device": "GPU:0", "to_device": "CPU", "reason": str(e),
+                    "message": message,
+                    "wall_clock_seconds_before_fallback": perf_counter() - started,
+                })
                 cpu_params = dict(self.model_params)
                 cpu_params.pop("task_type", None)
                 cpu_params.pop("devices", None)
@@ -260,8 +437,22 @@ class CatBoostAdapter:
                 model = catboost.CatBoostClassifier(**cpu_params)
                 model.fit(rows, label_values, **_build_fit_kwargs())
                 self.model = model
+                _runtime_event({
+                    "type": "fit_completed", "model_family": self.model_family,
+                    "actual_device": "CPU", "wall_clock_seconds": perf_counter() - started,
+                    "fallback_used": True,
+                })
             else:
+                _runtime_event({
+                    "type": "fit_failed", "model_family": self.model_family,
+                    "actual_device": requested_device, "reason": str(e),
+                    "wall_clock_seconds": perf_counter() - started,
+                })
                 raise
+        finally:
+            watchdog.cancel()
+            if requested_device == "GPU:0":
+                _release_gpu_lease()
         return self
 
     def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
@@ -551,6 +742,10 @@ class ModelFactory:
                 adapter = self._adapter(candidate, feature_names, model_params)
                 adapter.fit(feature_matrix, labels, sample_weight=sample_weight)
                 return _selection(adapter, requested, candidate, fallback_allowed, attempted, unavailable, model_params)
+            except GPUDeviceBusyError:
+                # A live owner of device 0 is not an unavailable model family.
+                # Never turn this into a silent auto-family fallback.
+                raise
             except (OptionalDependencyUnavailable, ImportError, ModuleNotFoundError) as error:
                 unavailable[candidate] = str(error)
                 if not fallback_allowed:

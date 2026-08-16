@@ -579,6 +579,9 @@ def shuffle_labeled_row_targets(rows: Sequence[dataset.LabeledRow], seed: int) -
 
 def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None, external_source_paths: Sequence[Path] | None = None, prebuilt_dataset: dataset.DatasetBuild | None = None, user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None) -> TrainingResult:
     training_config = resolve_screen_reference(config or TrainingConfig())
+    # Append as fits happen, rather than attempting to reconstruct device use
+    # from a completed model. This survives a native-fit watchdog termination.
+    models.start_training_runtime_artifact(output_dir)
     source_path = input_path if input_path is not None else (
         Path(prebuilt_dataset.source) if prebuilt_dataset is not None else None
     )
@@ -826,12 +829,13 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         test_rows = [build.labeled_rows[index] for index in test_indices]
         validation_labels = [row.label for row in validation_rows]
         test_labels = [row.label for row in test_rows]
-        selection = fit_model_adapter(
-            train_rows,
-            effective_feature_names,
-            training_config,
-            _weights_for_indices(uniqueness, train_indices),
-        )
+        with models.training_runtime_context(fold_index=fold_index, fit_role="cv_fold"):
+            selection = fit_model_adapter(
+                train_rows,
+                effective_feature_names,
+                training_config,
+                _weights_for_indices(uniqueness, train_indices),
+            )
         model = selection.adapter
         validation_probabilities = model.predict_proba(feature_matrix(validation_rows, effective_feature_names))
         offset = calibration_offset(validation_probabilities, validation_labels)
@@ -976,7 +980,8 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 f"(cost {_tt['cost_bps']:.1f}bps, all-rows {_tt['all_rows_mean_bps']:+.2f}bps)"
             )
     final_indices = list(range(len(build.labeled_rows)))
-    final_selection = fit_model_adapter(build.labeled_rows, effective_feature_names, training_config, _weights_for_indices(uniqueness, final_indices))
+    with models.training_runtime_context(fit_role="final_refit"):
+        final_selection = fit_model_adapter(build.labeled_rows, effective_feature_names, training_config, _weights_for_indices(uniqueness, final_indices))
     latency_report = inference_latency_report(final_selection.adapter, feature_matrix(build.labeled_rows, effective_feature_names))
     artifacts = write_training_artifacts(output_dir, build, splits, fold_results, final_selection.adapter, training_config, sample_intervals, uniqueness, final_selection, latency_report, captured_provenance)
     run_summary = training_summary(build, splits, fold_results, artifacts, training_config, uniqueness, final_selection, latency_report)
@@ -1880,7 +1885,8 @@ def _train_single_regime(
                 feature_names=regime_build.feature_names,
                 model_params=long_params,
             )
-            long_model.fit(f_matrix, long_labels)
+            with models.training_runtime_context(regime=regime_name, side="long", fit_role="final_refit"):
+                long_model.fit(f_matrix, long_labels)
             writer = governance.ArtifactWriter(regime_output_dir)
             writer.write_json("long_model.json", long_model.as_dict())
             artifacts.append("long_model.json")
@@ -1899,7 +1905,8 @@ def _train_single_regime(
                 feature_names=regime_build.feature_names,
                 model_params=short_params,
             )
-            short_model.fit(f_matrix, short_labels)
+            with models.training_runtime_context(regime=regime_name, side="short", fit_role="final_refit"):
+                short_model.fit(f_matrix, short_labels)
             writer = governance.ArtifactWriter(regime_output_dir)
             writer.write_json("short_model.json", short_model.as_dict())
             artifacts.append("short_model.json")
@@ -1956,7 +1963,8 @@ def _train_single_regime(
                 feature_names=regime_build.feature_names,
                 model_params=dict(resolved_params),
             )
-            diagnostic_model.fit(prefix_matrix, prefix_labels)
+            with models.training_runtime_context(regime=regime_name, side=side, fit_role="holdout_diagnostic"):
+                diagnostic_model.fit(prefix_matrix, prefix_labels)
             probs = diagnostic_model.predict_proba(holdout_matrix)
             # Select the decision threshold on THIS holdout (never on training
             # rows, to avoid overfitting the cutoff) using the same objective
@@ -2363,6 +2371,8 @@ def write_training_artifacts(
         resolved_config=asdict(training_config),
         captured=captured_provenance,
     )
+    # Created before fitting and append-flushed per fit; list it so the normal
+    # artifact manifest covers the runtime evidence too.
     writer.write_json("dataset_card.json", dataset.dataset_card(build))
     writer.write_text("dataset_card.md", dataset_card_markdown(build))
     writer.write_json("feature_formula_registry.json", dataset.feature_formula_registry())
@@ -2386,6 +2396,7 @@ def write_training_artifacts(
     writer.write_csv("labeled_feature_preview.csv", [dataset.labeled_row_dict(row, build.feature_names) for row in build.labeled_rows[:25]])
     names = [
         "provenance.json",
+        "training_runtime.jsonl",
         "dataset_card.json",
         "dataset_card.md",
         "feature_formula_registry.json",
