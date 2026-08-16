@@ -16,7 +16,7 @@ from unittest import mock
 import warnings
 
 import btcusdt_quant.dataset as dataset
-from btcusdt_quant import data, features, governance, live, training
+from btcusdt_quant import data, features, governance, live, models, training
 from btcusdt_quant.cli import main, run_collect, run_demo, run_train
 
 
@@ -90,6 +90,44 @@ class FakeArchiveResponse:
 
     def read(self) -> bytes:
         return self.payload
+
+
+def _fit_fast_offline_test_model(
+    rows: list[dataset.LabeledRow],
+    feature_names: tuple[str, ...],
+    config: training.TrainingConfig,
+    sample_weights: list[float] | None = None,
+) -> models.ModelSelection:
+    """Deterministic in-process adapter for artifact-pipeline unit tests.
+
+    These tests cover the offline training orchestration and its artifacts, not
+    CatBoost itself.  Calling the optional native trainer here made a unit test
+    depend on GPU/CPU driver behaviour and could leave pytest consuming CPU for
+    hours.  Model-family integration remains covered independently; this helper
+    keeps the pipeline test offline, bounded, and deterministic.
+    """
+    adapter = models.CentroidLinearClassifier(feature_names)
+    adapter.fit(
+        training.feature_matrix(rows, feature_names),
+        [row.label for row in rows],
+        sample_weight=sample_weights,
+    )
+    return models.ModelSelection(
+        adapter=adapter,
+        requested_family=config.model_family,
+        selected_family=adapter.model_family,
+        fallback_allowed=config.fallback_allowed,
+        fallback_used=True,
+        fallback_reason="deterministic unit-test adapter",
+        attempted_families=(adapter.model_family,),
+        unavailable_families={},
+        model_params=dict(config.model_params),
+    )
+
+
+def _run_offline_training_test(output: Path) -> dict[str, object]:
+    with mock.patch("btcusdt_quant.training.fit_model_adapter", side_effect=_fit_fast_offline_test_model):
+        return run_train(output)
 
 
 class DataPipelineTests(unittest.TestCase):
@@ -1309,7 +1347,7 @@ class OfflineTrainingTests(unittest.TestCase):
     def test_training_run_generates_verifiable_offline_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp)
-            summary = run_train(output)
+            summary = _run_offline_training_test(output)
             self.assertFalse(summary["network_used"])
             self.assertFalse(summary["credentials_required"])
             self.assertFalse(summary["orders_enabled"])
@@ -1351,7 +1389,7 @@ class EndToEndArtifactRegressionTests(unittest.TestCase):
     def test_training_generates_data_driven_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp)
-            summary = run_train(output)
+            summary = _run_offline_training_test(output)
             fold_count_value = summary["fold_count"]
             if not isinstance(fold_count_value, (float, int, str)):
                 self.fail("fold_count must be numeric")
@@ -1391,7 +1429,7 @@ class EndToEndArtifactRegressionTests(unittest.TestCase):
             demo_output = root / "demo"
             training_output = root / "training"
             run_demo(demo_output)
-            run_train(training_output)
+            _run_offline_training_test(training_output)
             demo_ok, demo_errors = governance.verify_manifest(demo_output)
             train_ok, train_errors = governance.verify_manifest(training_output)
             self.assertTrue(demo_ok, demo_errors)
@@ -1407,7 +1445,7 @@ class EndToEndArtifactRegressionTests(unittest.TestCase):
     def test_cli_train_command_runs_without_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp)
-            summary = run_train(output)
+            summary = _run_offline_training_test(output)
             self.assertFalse(summary["network_used"])
             self.assertTrue((output / "artifact_manifest.json").exists())
 
