@@ -1605,9 +1605,33 @@ class CatBoostRuntimeSafetyTests(unittest.TestCase):
                 with self.assertRaisesRegex(models.GPUDeviceBusyError, "Refusing to start"):
                     models.CatBoostAdapter(feature_names=["x"]).fit([[1.0], [2.0]], [0, 1])
 
-    def test_gpu_thread_count_default_is_unchanged_and_watchdog_is_production_scale(self) -> None:
+    def test_gpu_thread_count_default_is_unchanged_and_watchdog_scales_by_fit_rows(self) -> None:
         self.assertEqual(models.CatBoostAdapter.DEFAULT_PARAMS["thread_count"], -1)
-        self.assertEqual(models.CATBOOST_FIT_TIMEOUT_SECONDS, 90 * 60)
+        # Slowest Stage-3 arm: 17,234 seconds over five fits totalling
+        # 6,189,120 rows, with 50% headroom. The final refit is capped at
+        # three hours so a native-extension hang remains bounded.
+        self.assertEqual(models.catboost_fit_timeout_seconds(884_160), 3_693)
+        self.assertEqual(models.catboost_fit_timeout_seconds(2_652_480), 3 * 60 * 60)
+
+    def test_fit_runtime_log_records_the_applied_watchdog_bound(self) -> None:
+        class FakeClassifier:
+            def __init__(self, **_params: object) -> None:
+                pass
+
+            def fit(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+        class FakeCatBoost:
+            CatBoostClassifier = FakeClassifier
+
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime_path = Path(temporary) / "training_runtime.jsonl"
+            with mock.patch.object(models, "_RUNTIME_ARTIFACT", runtime_path), \
+                 mock.patch.object(models, "_import_optional_module", return_value=FakeCatBoost):
+                models.CatBoostAdapter(feature_names=["x"]).fit([[1.0], [2.0]], [0, 1])
+            events = [json.loads(line)["event"] for line in runtime_path.read_text(encoding="utf-8").splitlines()]
+        started = next(event for event in events if event["type"] == "fit_started")
+        self.assertEqual(started["watchdog_timeout_seconds"], models.catboost_fit_timeout_seconds(2))
 
 
 if __name__ == "__main__":

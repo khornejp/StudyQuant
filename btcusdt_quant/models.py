@@ -29,7 +29,36 @@ _GPU_LOCK_FD: int | None = None
 _GPU_LOCK_OWNER: dict[str, object] | None = None
 _RUNTIME_ARTIFACT: Path | None = None
 _RUNTIME_CONTEXT: dict[str, object] = {}
-CATBOOST_FIT_TIMEOUT_SECONDS = 90 * 60
+
+# Stage 3 is the only comparable completed production measurement available
+# before Stage 4. Arm A took 11,782 seconds and arm B took 17,234 seconds for
+# five fits over 6,189,120 fit-rows (four 884,160-row folds and one
+# 2,652,480-row refit). The slower arm is deliberately used here. Its
+# end-to-end duration includes feature construction and artifact writing, so
+# using it as a fit-rate is already conservative; the further 50% multiplier
+# is explicit headroom for ordinary Stage-4 variation.
+CATBOOST_WATCHDOG_CALIBRATION_ROWS = 6_189_120
+CATBOOST_WATCHDOG_CALIBRATION_SECONDS = 17_234
+CATBOOST_WATCHDOG_HEADROOM = 1.50
+CATBOOST_WATCHDOG_MAX_SECONDS = 3 * 60 * 60
+
+
+def catboost_fit_timeout_seconds(rows: int) -> int:
+    """Return an auditable row-scaled hard limit for one CatBoost fit.
+
+    The three-hour ceiling preserves the watchdog's purpose: a native fit
+    that ignores Python interruption cannot run indefinitely. It does not
+    bind either known Stage-4 fit size (the full refit computes to about
+    3h05m before this operational ceiling).
+    """
+    if rows < 0:
+        raise ValueError("rows must be non-negative")
+    scaled_seconds = math.ceil(
+        rows * CATBOOST_WATCHDOG_CALIBRATION_SECONDS
+        / CATBOOST_WATCHDOG_CALIBRATION_ROWS
+        * CATBOOST_WATCHDOG_HEADROOM
+    )
+    return min(scaled_seconds, CATBOOST_WATCHDOG_MAX_SECONDS)
 
 
 class GPUDeviceBusyError(RuntimeError):
@@ -400,6 +429,8 @@ class CatBoostAdapter:
             "rows": len(rows),
             "features": len(self.feature_names),
         }
+        timeout_seconds = catboost_fit_timeout_seconds(len(rows))
+        fit_event["watchdog_timeout_seconds"] = timeout_seconds
         if requested_device == "GPU:0":
             # This is outside the fallback handler. A held StudyQuant lease is
             # an operational conflict, not a GPU capability failure; changing
@@ -407,7 +438,7 @@ class CatBoostAdapter:
             _acquire_gpu_lease()
         _runtime_event(fit_event)
         started = perf_counter()
-        watchdog = _fit_watchdog(CATBOOST_FIT_TIMEOUT_SECONDS, fit_event)
+        watchdog = _fit_watchdog(timeout_seconds, fit_event)
         try:
             if class_weights is not None and "class_weights" not in model_params:
                 model_params["class_weights"] = class_weights
