@@ -2,11 +2,59 @@ import hashlib
 import json
 from datetime import timedelta
 
-from btcusdt_quant import barrier_screen, data, dataset
+from btcusdt_quant import barrier_screen, cli, data, dataset
 
 
 def _candle(i, op, hi, lo, close):
     return data.Candle(data.utc_minute(2024, 1, 1, 0, 0) + timedelta(minutes=i), op, hi, lo, close, 1, 1, 1, 1, 1)
+
+
+def _write_cli_candles(path, count=240):
+    lines = ["open_time,open,high,low,close,volume"]
+    for i in range(count):
+        price = 100.0 + i * 0.02
+        lines.append(f"2024-01-01T00:{i // 60:02d}:{i % 60:02d}+00:00,{price},{price + 0.1},{price - 0.1},{price + 0.02},1")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_barrier_screen_cli_sweep_runs_from_argv_and_writes_report(tmp_path, capsys):
+    """Exercise the documented CLI route, not just the screen_horizons API."""
+    input_path = tmp_path / "candles.csv"
+    output = tmp_path / "horizon_screen"
+    _write_cli_candles(input_path)
+
+    code = cli.main([
+        "barrier-screen", "--input", str(input_path), "--output", str(output),
+        "--training-start", "2024-01-01", "--training-end", "2024-01-01",
+        "--gate-feature", "rv_60", "--gate-quantile", "0.8",
+        "--horizons",
+    ])
+
+    assert code == 0
+    report = json.loads((output / "barrier_screen_report.json").read_text(encoding="utf-8"))
+    assert report["screen_type"] == "training_barrier_horizon_sweep"
+    assert report["horizons"] == [15, 30, 45, 60, 90, 120, 180]
+    assert "Barrier screen complete" in capsys.readouterr().out
+
+
+def test_barrier_screen_cli_single_horizon_runs_from_argv_and_writes_report(tmp_path, capsys):
+    """Keep the historical --horizon 45 command covered at the CLI boundary."""
+    input_path = tmp_path / "candles.csv"
+    output = tmp_path / "single_horizon_screen"
+    _write_cli_candles(input_path)
+
+    code = cli.main([
+        "barrier-screen", "--input", str(input_path), "--output", str(output),
+        "--training-start", "2024-01-01", "--training-end", "2024-01-01",
+        "--gate-feature", "rv_60", "--gate-quantile", "0.8",
+        "--horizon", "45", "--candidates", "0.01:0.01",
+    ])
+
+    assert code == 0
+    report = json.loads((output / "barrier_screen_report.json").read_text(encoding="utf-8"))
+    assert report["screen_type"] == "training_barrier_geometry"
+    assert report["unresolved_reconciliation"]["horizon"] == 45
+    assert "Barrier screen complete" in capsys.readouterr().out
 
 
 def test_screen_uses_production_labeller_for_known_touch_order_and_same_bar_tie(monkeypatch):

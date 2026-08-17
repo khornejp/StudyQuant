@@ -1919,14 +1919,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "barrier-screen":
         try:
+            screen_kwargs = {
+                "training_start": datetime.fromisoformat(args.training_start).replace(tzinfo=timezone.utc),
+                "training_end": _parse_end_date_exclusive(args.training_end),
+                "gate_feature": args.gate_feature,
+                "gate_quantile": args.gate_quantile,
+                "candidates": barrier_screen.parse_candidates(args.candidates),
+            }
+            if args.horizons is None:
+                screen_kwargs["horizon"] = args.horizon
+            else:
+                screen_kwargs["horizons"] = barrier_screen.parse_horizons(args.horizons)
             report = barrier_screen.run(
-                Path(args.input), Path(args.output),
-                training_start=datetime.fromisoformat(args.training_start).replace(tzinfo=timezone.utc),
-                training_end=_parse_end_date_exclusive(args.training_end),
-                gate_feature=args.gate_feature, gate_quantile=args.gate_quantile,
-                horizon=args.horizon, horizons=(barrier_screen.parse_horizons(args.horizons)
-                                                if args.horizons is not None else None),
-                candidates=barrier_screen.parse_candidates(args.candidates),
+                Path(args.input), Path(args.output), **screen_kwargs,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"barrier screen failed: {error}", file=sys.stderr)
