@@ -22,6 +22,32 @@ from btcusdt_quant.calibration import (
 )
 
 
+class ThresholdSelectionArtifactTests(unittest.TestCase):
+    def test_persisted_inputs_rederive_selected_threshold_without_refit(self) -> None:
+        """The NPZ alone must replay the choice, including its payoff path."""
+        from btcusdt_quant import training
+
+        probabilities = [0.12, 0.31, 0.48, 0.51, 0.67, 0.74, 0.91] * 4
+        labels = [0, 0, 0, 1, 1, 1, 1] * 4
+        payoffs = [-0.0015, -0.0015, -0.0004, 0.003, 0.002, 0.003, 0.003] * 4
+        audit = training.threshold_selection_audit(
+            probabilities, labels, objective="trading_pnl", min_trades=2,
+            tp_pct=0.003, sl_pct=0.0015, round_trip_cost=0.0004,
+            realized_payoffs=payoffs,
+        )
+        record = training.ThresholdSelectionRecord(
+            selection_id="fold_0", probabilities=probabilities, labels=labels,
+            realized_payoffs=payoffs, audit=audit,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "threshold_selection_inputs.npz"
+            compressed_bytes = training.write_threshold_selection_artifact(path, [record])
+            replayed = training.rederive_thresholds_from_selection_artifact(path)
+
+        self.assertGreater(compressed_bytes, 0)
+        self.assertEqual(replayed, {"fold_0": audit["selected_threshold"]})
+
+
 class BreakevenProbabilityTests(unittest.TestCase):
     def test_matches_the_barrier_economics_in_the_handoff(self) -> None:
         # The barrier that could not win: tp 0.30% / sl 0.15%, 0.08% round trip.

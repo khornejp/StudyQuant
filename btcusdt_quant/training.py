@@ -300,6 +300,21 @@ class FoldResult:
     # The cutoff this fold's gate actually used. Differs per fold when it was
     # selected from the fold's own train slice.
     vol_gate_min_used: float | None = None
+    # The exact calibrated validation slice that chose ``threshold``.  This is
+    # deliberately retained only until artifact writing; the compressed audit
+    # file is the durable representation.
+    threshold_selection: "ThresholdSelectionRecord | None" = None
+
+
+@dataclass(frozen=True)
+class ThresholdSelectionRecord:
+    """Lossless inputs and outcome of one threshold-selection decision."""
+
+    selection_id: str
+    probabilities: Sequence[float]
+    labels: Sequence[int]
+    realized_payoffs: Sequence[float]
+    audit: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -841,22 +856,24 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         offset = calibration_offset(validation_probabilities, validation_labels)
         calibrator = features.CalibrationModule().fit(validation_probabilities, validation_labels, positive_samples=sum(validation_labels))
         calibrated_validation = calibrator.transform(validation_probabilities)
-        threshold = select_threshold(
-            calibrated_validation,
-            validation_labels,
+        _validation_payoffs = realized_payoffs(
+            validation_rows, training_config.train_target,
+            training_config.tp_pct, training_config.sl_pct,
+        )
+        _threshold_audit = threshold_selection_audit(
+            calibrated_validation, validation_labels,
             objective=training_config.threshold_objective,
             min_trades=training_config.threshold_min_trades,
-            tp_pct=training_config.tp_pct,
-            sl_pct=training_config.sl_pct,
+            tp_pct=training_config.tp_pct, sl_pct=training_config.sl_pct,
             round_trip_cost=training_config.round_trip_cost,
-            realized_payoffs=realized_payoffs(
-                validation_rows, training_config.train_target,
-                training_config.tp_pct, training_config.sl_pct,
-            ),
+            realized_payoffs=_validation_payoffs,
         )
+        threshold = float(_threshold_audit["selected_threshold"])
         # Override with Optuna best threshold if available (decision param, not model param)
         if optuna_threshold is not None:
             threshold = optuna_threshold
+            _threshold_audit["applied_threshold"] = threshold
+            _threshold_audit["selection_source"] = "optuna_override"
         test_probabilities = model.predict_proba(feature_matrix(test_rows, effective_feature_names))
         calibrated_test = calibrator.transform(test_probabilities)
         # Entry timestamps, so a fold can report WHEN it traded and not only
@@ -951,10 +968,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                     calibrated_validation, validation_labels, threshold,
                     tp_pct=training_config.tp_pct, sl_pct=training_config.sl_pct,
                     round_trip_cost=training_config.round_trip_cost,
-                    realized_payoffs=realized_payoffs(
-                        validation_rows, training_config.train_target,
-                        training_config.tp_pct, training_config.sl_pct,
-                    ),
+                    realized_payoffs=_validation_payoffs,
                 ),
                 test_metrics=metrics(
                     calibrated_test, test_labels, threshold,
@@ -985,6 +999,13 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 ),
                 test_predictions=_fold_predictions,
                 vol_gate_min_used=_fold_gate_min if training_config.vol_gate_feature else None,
+                threshold_selection=ThresholdSelectionRecord(
+                    selection_id=f"fold_{fold_index}",
+                    probabilities=calibrated_validation,
+                    labels=validation_labels,
+                    realized_payoffs=_validation_payoffs,
+                    audit=_threshold_audit,
+                ),
                 test_trading_gated=(
                     oos_trading_metrics(
                         calibrated_test,
@@ -1964,6 +1985,7 @@ def _train_single_regime(
     # solely to produce an honest holdout metric and threshold selection.
     regime_holdout_metrics: dict[str, dict[str, float]] = {}
     selected_thresholds: dict[str, float] = {}
+    threshold_selection_records: list[ThresholdSelectionRecord] = []
     # holdout_split/holdout_start were computed ONCE above (before Optuna) so
     # hyperparameter search could be restricted to the prefix; reuse them here
     # so the threshold/metric holdout is exactly the slice Optuna never saw.
@@ -2000,28 +2022,30 @@ def _train_single_regime(
             # to be where probability crosses into "profitable to trade" --
             # especially for "trading_pnl", which optimizes calmar/sharpe/f1
             # from simulated PnL rather than classification balance.
-            threshold = select_threshold(
-                probs, holdout_labels,
-                objective=training_config.threshold_objective,
-                min_trades=training_config.threshold_min_trades,
-                tp_pct=training_config.tp_pct,
-                sl_pct=training_config.sl_pct,
-                round_trip_cost=training_config.round_trip_cost,
-                realized_payoffs=realized_payoffs(
-                    regime_build.labeled_rows[holdout_start:], target_key,
-                    training_config.tp_pct, training_config.sl_pct,
-                ),
+            _holdout_payoffs = realized_payoffs(
+                regime_build.labeled_rows[holdout_start:], target_key,
+                training_config.tp_pct, training_config.sl_pct,
             )
+            _threshold_audit = threshold_selection_audit(
+                probs, holdout_labels, objective=training_config.threshold_objective,
+                min_trades=training_config.threshold_min_trades,
+                tp_pct=training_config.tp_pct, sl_pct=training_config.sl_pct,
+                round_trip_cost=training_config.round_trip_cost,
+                realized_payoffs=_holdout_payoffs,
+            )
+            threshold = float(_threshold_audit["selected_threshold"])
+            threshold_selection_records.append(ThresholdSelectionRecord(
+                selection_id=f"{regime_name}_{side}_holdout",
+                probabilities=probs, labels=holdout_labels,
+                realized_payoffs=_holdout_payoffs, audit=_threshold_audit,
+            ))
             selected_thresholds[side] = threshold
             m = metrics(
                 probs, holdout_labels, threshold,
                 tp_pct=training_config.tp_pct,
                 sl_pct=training_config.sl_pct,
                 round_trip_cost=training_config.round_trip_cost,
-                realized_payoffs=realized_payoffs(
-                    regime_build.labeled_rows[holdout_start:], target_key,
-                    training_config.tp_pct, training_config.sl_pct,
-                ),
+                realized_payoffs=_holdout_payoffs,
             )
             baseline = _baseline_logloss(holdout_labels)
             m["baseline_logloss"] = baseline
@@ -2038,6 +2062,21 @@ def _train_single_regime(
             )
     else:
         print(f"[TRAIN]   Regime holdout {regime_name}: skipped (too few rows: {n_regime_rows})")
+    if threshold_selection_records:
+        _selection_size = write_threshold_selection_artifact(
+            regime_output_dir / "threshold_selection_inputs.npz", threshold_selection_records,
+        )
+        governance.ArtifactWriter(regime_output_dir).write_json("threshold_selection_report.json", {
+            "format": "npz_compressed", "input_artifact": "threshold_selection_inputs.npz",
+            "compressed_bytes": _selection_size,
+            "selections": [
+                {"selection_id": record.selection_id,
+                 **{key: value for key, value in record.audit.items() if key != "candidate_scores"},
+                 "candidate_count": len(record.audit.get("candidate_scores", []))}
+                for record in threshold_selection_records
+            ],
+        })
+        artifacts.extend(["threshold_selection_inputs.npz", "threshold_selection_report.json"])
     
     # Create minimal TrainingResult
     holdout_f1_values = [m["f1"] for m in regime_holdout_metrics.values()]
@@ -2207,10 +2246,42 @@ def select_threshold(
     for the trading_pnl objective to avoid picking a degenerate threshold
     that almost never trades.
     """
+    return float(threshold_selection_audit(
+        probabilities, labels, objective=objective, min_trades=min_trades,
+        tp_pct=tp_pct, sl_pct=sl_pct, round_trip_cost=round_trip_cost,
+        realized_payoffs=realized_payoffs,
+    )["selected_threshold"])
+
+
+def threshold_selection_audit(
+    probabilities: Sequence[float],
+    labels: Sequence[int],
+    objective: str = "trading_pnl",
+    min_trades: int | None = None,
+    tp_pct: float = 0.003,
+    sl_pct: float = 0.0015,
+    round_trip_cost: float = DEFAULT_ROUND_TRIP_COST,
+    realized_payoffs: Sequence[float] | None = None,
+) -> dict[str, object]:
+    """Run the existing selector and retain every candidate's ranking score.
+
+    The returned structure is evidence, not an alternative selection policy.
+    Keeping it adjacent to the selector prevents an artifact report from
+    drifting away from the exact comparison that chose the live threshold.
+    """
+    parameters = {
+        "objective": objective, "min_trades": min_trades, "tp_pct": tp_pct,
+        "sl_pct": sl_pct, "round_trip_cost": round_trip_cost,
+    }
     if not probabilities or not labels:
-        return 0.5
+        return {
+            "parameters": parameters, "selected_threshold": 0.5,
+            "applied_threshold": 0.5, "selection_source": "selector",
+            "candidate_scores": [],
+        }
     candidates = {round(index / 20.0, 2) for index in range(1, 20)}
     candidates.update(round(value, 4) for value in probabilities)
+    candidate_scores: list[dict[str, object]] = []
 
     if objective == "trading_pnl":
         effective_min_trades = min_trades if min_trades is not None else max(1, len(labels) // 20)
@@ -2226,18 +2297,24 @@ def select_threshold(
                 round_trip_cost=round_trip_cost, realized_payoffs=realized_payoffs,
             )
             trade_count = int(round(current.get("predicted_positive_rate", 0.0) * len(labels)))
+            score = (
+                current.get("calmar", 0.0), current.get("sharpe", 0.0),
+                current.get("f1", 0.0), -abs(threshold - 0.5),
+            )
+            candidate_scores.append({
+                "threshold": threshold, "trade_count": trade_count,
+                "eligible": trade_count >= effective_min_trades, "score": score,
+            })
             if trade_count < effective_min_trades:
                 continue
-            score = (
-                current.get("calmar", 0.0),
-                current.get("sharpe", 0.0),
-                current.get("f1", 0.0),
-                -abs(threshold - 0.5),
-            )
             if score > best_score:
                 best_score = score
                 best_threshold = threshold
-        return best_threshold
+        return {
+            "parameters": parameters, "effective_min_trades": effective_min_trades,
+            "selected_threshold": best_threshold, "applied_threshold": best_threshold,
+            "selection_source": "selector", "candidate_scores": candidate_scores,
+        }
 
     # Default legacy path: precision-recall with recall>=0.3 floor.
     best_threshold = 0.5
@@ -2250,10 +2327,19 @@ def select_threshold(
             score = (current["precision"], current["f1"], -abs(threshold - 0.5))
         else:
             score = (current["f1"], current["accuracy"], -abs(threshold - 0.5))
+        candidate_scores.append({
+            "threshold": threshold,
+            "trade_count": int(round(current.get("predicted_positive_rate", 0.0) * len(labels))),
+            "eligible": True, "score": score,
+        })
         if score > best_score:
             best_score = score
             best_threshold = threshold
-    return best_threshold
+    return {
+        "parameters": parameters, "selected_threshold": best_threshold,
+        "applied_threshold": best_threshold, "selection_source": "selector",
+        "candidate_scores": candidate_scores,
+    }
 
 
 def _trading_pnl(
@@ -2451,6 +2537,24 @@ def write_training_artifacts(
     writer.write_json("calibration_report.json", calibration_report(fold_results))
     writer.write_json("calibration_baseline.json", calibration_baseline(fold_results))
     writer.write_json("threshold_report.json", threshold_report(fold_results))
+    _selection_records = [fold.threshold_selection for fold in fold_results if fold.threshold_selection is not None]
+    if _selection_records:
+        _selection_size = write_threshold_selection_artifact(
+            output_dir / "threshold_selection_inputs.npz", _selection_records,
+        )
+        writer.write_json("threshold_selection_report.json", {
+            "format": "npz_compressed",
+            "input_artifact": "threshold_selection_inputs.npz",
+            "compressed_bytes": _selection_size,
+            "selections": [
+                {
+                    "selection_id": record.selection_id,
+                    **{key: value for key, value in record.audit.items() if key != "candidate_scores"},
+                    "candidate_count": len(record.audit.get("candidate_scores", [])),
+                }
+                for record in _selection_records
+            ],
+        })
     writer.write_csv("labeled_feature_preview.csv", [dataset.labeled_row_dict(row, build.feature_names) for row in build.labeled_rows[:25]])
     names = [
         "provenance.json",
@@ -2474,12 +2578,97 @@ def write_training_artifacts(
         "threshold_report.json",
         "labeled_feature_preview.csv",
     ]
+    if _selection_records:
+        names.extend(["threshold_selection_inputs.npz", "threshold_selection_report.json"])
     # Listed so it reaches run_summary["artifacts"] and the checksum manifest.
     # An offline-scoring file nobody can verify the provenance of is worse than
     # no file: it invites exactly the re-mining it is warned about.
     if any(fold.test_predictions for fold in fold_results):
         names.append("fold_test_predictions.csv")
     return names
+
+
+def write_threshold_selection_artifact(path: Path, records: Sequence[ThresholdSelectionRecord]) -> int:
+    """Write compact, lossless threshold-selection evidence.
+
+    NPZ is used because it stores the three per-row inputs in native numeric
+    arrays and DEFLATE-compresses them. CSV would repeat decimal text and a
+    header on hundreds of thousands of rows, while a summary alone cannot tell
+    which rows crossed a candidate threshold. The JSON metadata in the same
+    NPZ records selector parameters and actual outcomes; candidate ranking
+    tuples are stored as numeric arrays alongside it.
+    """
+    import numpy as np
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    probabilities: list[float] = []
+    labels: list[int] = []
+    payoffs: list[float] = []
+    fold_ids: list[int] = []
+    candidate_ids: list[int] = []
+    candidate_thresholds: list[float] = []
+    candidate_trade_counts: list[int] = []
+    candidate_eligible: list[bool] = []
+    candidate_scores: list[tuple[float, ...]] = []
+    selections: list[dict[str, object]] = []
+    for record_index, record in enumerate(records):
+        if not (len(record.probabilities) == len(record.labels) == len(record.realized_payoffs)):
+            raise ValueError(f"threshold selection {record.selection_id!r} has mismatched input lengths")
+        start = len(probabilities)
+        probabilities.extend(float(value) for value in record.probabilities)
+        labels.extend(int(value) for value in record.labels)
+        payoffs.extend(float(value) for value in record.realized_payoffs)
+        fold_ids.extend([record_index] * (len(probabilities) - start))
+        selections.append({
+            "selection_id": record.selection_id, "row_start": start,
+            "row_stop": len(probabilities),
+            **{key: value for key, value in record.audit.items() if key != "candidate_scores"},
+        })
+        for candidate in record.audit.get("candidate_scores", []):
+            candidate_ids.append(record_index)
+            candidate_thresholds.append(float(candidate["threshold"]))
+            candidate_trade_counts.append(int(candidate["trade_count"]))
+            candidate_eligible.append(bool(candidate["eligible"]))
+            candidate_scores.append(tuple(float(value) for value in candidate["score"]))
+    score_width = len(candidate_scores[0]) if candidate_scores else 0
+    metadata = {"schema_version": 1, "selections": selections, "score_width": score_width}
+    np.savez_compressed(
+        path,
+        probabilities=np.asarray(probabilities, dtype=np.float64),
+        labels=np.asarray(labels, dtype=np.uint8),
+        realized_payoffs=np.asarray(payoffs, dtype=np.float64),
+        selection_index=np.asarray(fold_ids, dtype=np.uint16),
+        candidate_selection_index=np.asarray(candidate_ids, dtype=np.uint16),
+        candidate_thresholds=np.asarray(candidate_thresholds, dtype=np.float64),
+        candidate_trade_counts=np.asarray(candidate_trade_counts, dtype=np.uint32),
+        candidate_eligible=np.asarray(candidate_eligible, dtype=np.bool_),
+        candidate_scores=np.asarray(candidate_scores, dtype=np.float64).reshape((-1, score_width)),
+        metadata=np.asarray(json.dumps(metadata, sort_keys=True, separators=(",", ":"))),
+    )
+    return path.stat().st_size
+
+
+def rederive_thresholds_from_selection_artifact(path: Path) -> dict[str, float]:
+    """Recompute selector outcomes using only one persisted NPZ artifact."""
+    import numpy as np
+
+    with np.load(path, allow_pickle=False) as payload:
+        metadata = json.loads(str(payload["metadata"].item()))
+        probabilities = payload["probabilities"]
+        labels = payload["labels"]
+        payoffs = payload["realized_payoffs"]
+        outcomes: dict[str, float] = {}
+        for selection in metadata["selections"]:
+            parameters = selection["parameters"]
+            outcomes[str(selection["selection_id"])] = select_threshold(
+                probabilities[int(selection["row_start"]):int(selection["row_stop"])].tolist(),
+                labels[int(selection["row_start"]):int(selection["row_stop"])].tolist(),
+                objective=str(parameters["objective"]), min_trades=parameters["min_trades"],
+                tp_pct=float(parameters["tp_pct"]), sl_pct=float(parameters["sl_pct"]),
+                round_trip_cost=float(parameters["round_trip_cost"]),
+                realized_payoffs=payoffs[int(selection["row_start"]):int(selection["row_stop"])].tolist(),
+            )
+    return outcomes
 
 
 def summarise_fold_trading(
