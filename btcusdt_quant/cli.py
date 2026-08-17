@@ -1841,7 +1841,9 @@ def build_parser() -> argparse.ArgumentParser:
     barrier_parser.add_argument("--training-end", required=True, help="inclusive ISO training end; no barrier may walk beyond it")
     barrier_parser.add_argument("--gate-feature", required=True, help="volatility feature used by the gate (no implicit default)")
     barrier_parser.add_argument("--gate-quantile", type=float, required=True, help="training-only lower cutoff quantile; 0.8 is the top quintile")
-    barrier_parser.add_argument("--horizon", type=int, required=True, help="triple-barrier time horizon in bars")
+    barrier_horizons = barrier_parser.add_mutually_exclusive_group(required=True)
+    barrier_horizons.add_argument("--horizon", type=int, help="one triple-barrier time horizon in bars")
+    barrier_horizons.add_argument("--horizons", nargs="?", const="default", help="comma-separated horizon sweep; with no value uses 15,30,45,60,90,120,180")
     barrier_parser.add_argument("--candidates", default=None, help="optional comma-separated tp:sl fractions; default is the ten historical root-cause candidates")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
@@ -1922,13 +1924,18 @@ def main(argv: list[str] | None = None) -> int:
                 training_start=datetime.fromisoformat(args.training_start).replace(tzinfo=timezone.utc),
                 training_end=_parse_end_date_exclusive(args.training_end),
                 gate_feature=args.gate_feature, gate_quantile=args.gate_quantile,
-                horizon=args.horizon, candidates=barrier_screen.parse_candidates(args.candidates),
+                horizon=args.horizon, horizons=(barrier_screen.parse_horizons(args.horizons)
+                                                if args.horizons is not None else None),
+                candidates=barrier_screen.parse_candidates(args.candidates),
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"barrier screen failed: {error}", file=sys.stderr)
             return 1
         print("Barrier screen complete (training bars only; production long labeller)")
-        print(f"gate={report['gate']['feature']} >= {report['gate']['cutoff']:.8g}; rows={report['gate']['eligible_rows']}")
+        if args.horizons is None:
+            print(f"gate={report['gate']['feature']} >= {report['gate']['cutoff']:.8g}; rows={report['gate']['eligible_rows']}")
+        else:
+            print(f"horizons={','.join(str(horizon) for horizon in report['horizons'])}; per-horizon gate cutoffs and rows are in the report")
         print(f"report={Path(args.output) / 'barrier_screen_report.json'}")
         return 0
     if args.command == "collect-premium-index":

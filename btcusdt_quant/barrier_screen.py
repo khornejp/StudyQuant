@@ -23,6 +23,10 @@ DEFAULT_CANDIDATES = (
     (0.012, 0.006), (0.006, 0.006), (0.008, 0.008), (0.010, 0.010),
     (0.004, 0.004), (0.012, 0.012),
 )
+# This spans materially shorter and longer holds around the inherited 45 bars,
+# while keeping enough spacing that the sweep is interpretable despite the
+# increasing overlap between neighbouring labels at long horizons.
+DEFAULT_HORIZONS = (15, 30, 45, 60, 90, 120, 180)
 ROUND_TRIP_COST = 0.0004  # 4 bps: two 2-bps maker limit legs.
 RECONCILIATION_CANDIDATE = (0.008, 0.004)
 
@@ -42,6 +46,21 @@ def parse_candidates(value: str | None) -> tuple[tuple[float, float], ...]:
     if not pairs:
         raise ValueError("--candidates cannot be empty")
     return tuple(pairs)
+
+
+def parse_horizons(value: str) -> tuple[int, ...]:
+    """Parse an explicit horizon list, or the recommended sweep sentinel."""
+    if value == "default":
+        return DEFAULT_HORIZONS
+    try:
+        horizons = tuple(int(item) for item in value.split(","))
+    except ValueError as exc:
+        raise ValueError("--horizons must be comma-separated positive integers") from exc
+    if not horizons or any(horizon <= 0 for horizon in horizons):
+        raise ValueError("--horizons must contain at least one positive integer")
+    if len(set(horizons)) != len(horizons):
+        raise ValueError("--horizons cannot contain duplicates")
+    return horizons
 
 
 def _slice(candles: Sequence[data.Candle], start: datetime | None, end: datetime | None) -> tuple[int, int]:
@@ -97,6 +116,7 @@ def screen(
     candles: Sequence[data.Candle], *, training_start: datetime | None,
     training_end: datetime | None, gate_feature: str, gate_quantile: float,
     horizon: int, candidates: Sequence[tuple[float, float]],
+    _feature_rows: Sequence[object] | None = None,
 ) -> dict[str, object]:
     """Screen long barrier geometry without an (n, horizon) window matrix."""
     if not 0.0 <= gate_quantile < 1.0:
@@ -105,7 +125,7 @@ def screen(
         raise ValueError("--horizon must be positive")
     # Feature construction is one full-series pass so rolling gate values retain
     # pre-training warmup.  No feature cache is accepted or consulted here.
-    rows = dataset.build_feature_rows(candles)
+    rows = dataset.build_feature_rows(candles) if _feature_rows is None else _feature_rows
     lo, hi = _slice(candles, training_start, training_end)
     # Tail rows whose label walks beyond training-end are excluded: this is a
     # training-only screen, not a label that peeks into the evaluation period.
@@ -168,8 +188,9 @@ def screen(
             "resolution_metrics_note": (
                 "conditional_tp_share is TP rows divided by TP plus SL rows and is the primary skill comparison to "
                 "break_even_tp_share. whole_population_tp_share retains timeouts in its denominator and is reported "
-                "separately. Conditioning on resolution favors the nearer barrier under a time limit; that bias grows "
-                "with barrier width, so conditional_tp_share below random_walk_tp_share alone is not evidence of downward drift."
+                "separately. Conditioning on resolution favors the nearer barrier under a time limit. In a horizon "
+                "sweep that selection bias also changes as the time limit changes, so conditional_tp_share is not "
+                "directly comparable across horizons without its resolved share and nearer-barrier geometry."
             ),
             "training_slice": {"start_index": lo, "end_index_exclusive": hi, "label_end_index_exclusive": label_hi,
                                "start": candles[lo].open_time.isoformat(), "end_exclusive": candles[hi - 1].open_time.isoformat()},
@@ -200,11 +221,54 @@ def screen(
             }}
 
 
+def screen_horizons(
+    candles: Sequence[data.Candle], *, training_start: datetime | None,
+    training_end: datetime | None, gate_feature: str, gate_quantile: float,
+    horizons: Sequence[int], candidates: Sequence[tuple[float, float]],
+) -> dict[str, object]:
+    """Run the existing training-only screen once per horizon.
+
+    Features are constructed once, but each horizon derives its own tail-trimmed
+    training/gate population and calls the production labeller for every entry.
+    """
+    if not horizons:
+        raise ValueError("--horizons cannot be empty")
+    rows = dataset.build_feature_rows(candles)
+    reports = [screen(
+        candles, training_start=training_start, training_end=training_end,
+        gate_feature=gate_feature, gate_quantile=gate_quantile, horizon=horizon,
+        candidates=candidates, _feature_rows=rows,
+    ) for horizon in horizons]
+    return {
+        "screen_type": "training_barrier_horizon_sweep",
+        "direction": "long",
+        "touch_resolver": "dataset.triple_barrier_label_long",
+        "horizons": list(horizons),
+        "horizon_reports": reports,
+        "cross_horizon_note": (
+            "Every horizon has its own training-end tail trim and consequently its own gate population, cutoff, "
+            "fingerprint, and eligible-row count. rv_60 itself is candle-only, but its measured quantile cutoff can "
+            "change because the tail-trimmed population changes. Conditional TP share conditions on resolution; the "
+            "nearer-barrier selection bias changes with the time limit, so compare it across horizons only alongside "
+            "resolved share, whole-population TP share, and the fixed geometry."
+        ),
+    }
+
+
 def run(input_path: Path, output: Path, **kwargs: object) -> dict[str, object]:
     candles = dataset.load_parquet_candles(input_path) if input_path.suffix.lower() == ".parquet" else dataset.load_csv_candles(input_path)
-    report = screen(candles, **kwargs)  # type: ignore[arg-type]
-    resolved_config = {"input": str(input_path), **kwargs, "round_trip_cost": ROUND_TRIP_COST,
-                       "gate_input_fingerprint": report["gate"]["input_fingerprint"]}
+    horizons = kwargs.pop("horizons", None)
+    if horizons is None:
+        report = screen(candles, **kwargs)  # type: ignore[arg-type]
+        resolved_config = {"input": str(input_path), **kwargs, "round_trip_cost": ROUND_TRIP_COST,
+                           "gate_input_fingerprint": report["gate"]["input_fingerprint"]}
+    else:
+        report = screen_horizons(candles, horizons=horizons, **kwargs)  # type: ignore[arg-type]
+        resolved_config = {
+            "input": str(input_path), **kwargs, "horizons": horizons,
+            "round_trip_cost": ROUND_TRIP_COST,
+            "gate_input_fingerprints": [item["gate"]["input_fingerprint"] for item in report["horizon_reports"]],
+        }
     provenance, diff = governance.capture_provenance(resolved_config=resolved_config, input_paths=(input_path,))
     report["provenance"] = provenance
     output.mkdir(parents=True, exist_ok=True)

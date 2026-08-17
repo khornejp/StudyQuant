@@ -66,7 +66,7 @@ python -m btcusdt_quant collect --output artifacts/collected/btcusdt_1m.csv --al
 # Archive collection (Binance daily kline archives)
 python -m btcusdt_quant collect-archive --start 2024-01-01 --end 2024-01-31 --output artifacts/archive
 
-# Barrier-geometry screen: assumes the project's 45-bar time horizon.
+# Barrier-geometry screen: single inherited 45-bar horizon.
 # The default candidates are the ten historical root-cause pairs; results are training-only.
 python -m btcusdt_quant barrier-screen `
   --input artifacts/btcusdt_2020_2026h1.parquet `
@@ -75,6 +75,17 @@ python -m btcusdt_quant barrier-screen `
   --gate-feature rv_60 `
   --gate-quantile 0.8 `
   --horizon 45
+
+# Horizon screen: recommended sweep is 15,30,45,60,90,120,180 bars.
+# Each horizon gets its own training-end tail trim and training-only gate cutoff.
+python -m btcusdt_quant barrier-screen `
+  --input artifacts/btcusdt_2020_2026h1.parquet `
+  --output artifacts/barrier_horizon_screen `
+  --training-start 2020-01-01 `
+  --training-end 2025-12-31 `
+  --gate-feature rv_60 `
+  --gate-quantile 0.8 `
+  --horizons
 
 # Offline training (fixture or local CSV)
 python -m btcusdt_quant train --output artifacts/training

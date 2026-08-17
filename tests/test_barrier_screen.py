@@ -89,3 +89,44 @@ def test_gate_fingerprint_matches_the_pre_streaming_json_digest():
     }, separators=(",", ":"))
 
     assert barrier_screen._gate_input_fingerprint(feature, lo, label_hi, values) == hashlib.sha256(legacy_payload.encode("utf-8")).hexdigest()
+
+
+def test_horizon_sweep_uses_the_production_labeller_and_derives_each_tail_trimmed_gate(monkeypatch):
+    candles = [_candle(i, 100, 100, 100, 100) for i in range(7)]
+
+    class Row:
+        warmup_invalid = False
+        def __init__(self, value): self.features = {"rv_60": value}
+
+    calls = []
+    monkeypatch.setattr(dataset, "build_feature_rows", lambda _: [Row(float(i)) for i in range(len(candles))])
+    monkeypatch.setattr(dataset, "triple_barrier_label_long", lambda index, _, horizon, tp, sl: (
+        calls.append((index, horizon, tp, sl)) or (0, "long_timeout")))
+
+    report = barrier_screen.screen_horizons(
+        candles, training_start=None, training_end=None, gate_feature="rv_60",
+        gate_quantile=0.75, horizons=(1, 2), candidates=((.01, .01),),
+    )
+
+    first, second = report["horizon_reports"]
+    assert report["touch_resolver"] == "dataset.triple_barrier_label_long"
+    assert report["horizons"] == [1, 2]
+    assert first["training_slice"]["label_end_index_exclusive"] == 6
+    assert second["training_slice"]["label_end_index_exclusive"] == 5
+    assert first["gate"]["cutoff"] == 4.0
+    assert second["gate"]["cutoff"] == 3.0
+    assert first["results"][0]["unresolved_rows"] == first["results"][0]["screened_rows"]
+    assert second["results"][0]["unresolved_rows"] == second["results"][0]["screened_rows"]
+    assert {call[1] for call in calls} == {1, 2}
+    assert all(index < (6 if horizon == 1 else 5) for index, horizon, _, _ in calls)
+
+
+def test_parse_horizons_has_recommended_sweep_and_rejects_duplicates():
+    assert barrier_screen.parse_horizons("default") == (15, 30, 45, 60, 90, 120, 180)
+    assert barrier_screen.parse_horizons("30,45,90") == (30, 45, 90)
+    try:
+        barrier_screen.parse_horizons("45,45")
+    except ValueError as exc:
+        assert "duplicates" in str(exc)
+    else:
+        raise AssertionError("duplicate horizons must be rejected")
