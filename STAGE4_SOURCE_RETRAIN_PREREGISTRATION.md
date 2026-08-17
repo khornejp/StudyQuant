@@ -1,4 +1,15 @@
-# Stage 4 source retrain: frozen reading rule
+# SUPERSEDED — Stage 4 source retrain: frozen reading rule
+
+**Superseded on 2026-08-17 by
+`STAGE4_SOURCE_TIMEOUT_FIX_RERUN_PREREGISTRATION.md`.** Commit `5716d6b`
+corrected timeout settlement in production threshold selection: a horizon
+timeout had been scored as `-sl_pct` there while execution and both screens
+settled it at the horizon close. Consequently the Stage 3 threshold/EV figures
+and trade counts quoted below (`-3.2427` / `1,114` and `-2.6332` / `7,533`)
+were made on the contaminated selection path. They are retained as historical
+record only and **must not be quoted or used as comparators**. The replacement
+document preregisters corrected Stage 3 and Stage 4 reruns and keeps the source
+effect separate from the timeout-fix effect.
 
 Date frozen: 2026-08-16.  Stage 4 repeats the two already-selected 45-bar
 geometries over the same four walk-forward test windows as Stage 3, adding the
