@@ -185,6 +185,7 @@ def screen(
             "touch_resolver": "dataset.triple_barrier_label_long",
             "same_bar_tp_sl": "TP only when candle.close > candle.open; otherwise SL (including doji)",
             "round_trip_cost_bps": 4.0, "cost_assumption": "limit-only maker, both legs; no slippage or taker assumptions",
+            "timeout_settlement": "horizon-bar close, charged as a completed maker/maker position; long_timeout remains a classification zero, not an SL payoff",
             "resolution_metrics_note": (
                 "conditional_tp_share is TP rows divided by TP plus SL rows and is the primary skill comparison to "
                 "break_even_tp_share. whole_population_tp_share retains timeouts in its denominator and is reported "

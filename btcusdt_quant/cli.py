@@ -299,6 +299,9 @@ def _run_train_multi_horizon_regime_aware(
                     objective=args.threshold_objective,
                     tp_pct=args.tp_pct, sl_pct=args.sl_pct,
                     round_trip_cost=args.round_trip_cost,
+                    realized_payoffs=training.realized_payoffs(
+                        holdout_labeled, target_key, args.tp_pct, args.sl_pct,
+                    ),
                 )
                 print(f"[MH] regime {regime_name}/{side}: holdout n={len(holdout_labels):,} threshold={threshold:.4f}")
             else:

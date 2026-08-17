@@ -778,7 +778,13 @@ def _resolve_execution_outcome(
     candle: data.Candle, side: str, tp_price: float, sl_price: float,
     bar_count: int, min_hold_bars: int, label_horizon: int,
 ) -> tuple[str, float] | None:
-    """The one OHLC barrier/tie/timeout decision used by execution and reports."""
+    """The one OHLC barrier/tie/timeout decision used by execution and reports.
+
+    Contract: a TIMEOUT is a real exit on the horizon bar at that bar's close.
+    Under the project-wide limit-only premise it is charged as a maker exit,
+    just like every other completed exit.  Training threshold scoring uses the
+    same close through ``training.realized_payoffs``.
+    """
     hit_tp = candle.high >= tp_price if side == "BUY" else candle.low <= tp_price
     hit_sl = candle.low <= sl_price if side == "BUY" else candle.high >= sl_price
     can_exit_for_barrier = bar_count >= min_hold_bars

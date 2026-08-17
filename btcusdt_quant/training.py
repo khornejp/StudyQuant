@@ -849,6 +849,10 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             tp_pct=training_config.tp_pct,
             sl_pct=training_config.sl_pct,
             round_trip_cost=training_config.round_trip_cost,
+            realized_payoffs=realized_payoffs(
+                validation_rows, training_config.train_target,
+                training_config.tp_pct, training_config.sl_pct,
+            ),
         )
         # Override with Optuna best threshold if available (decision param, not model param)
         if optuna_threshold is not None:
@@ -943,9 +947,33 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 threshold=threshold,
                 calibration_offset=offset,
                 calibration_details=calibrator.as_dict(),
-                validation_metrics=metrics(calibrated_validation, validation_labels, threshold),
-                test_metrics=metrics(calibrated_test, test_labels, threshold),
-                train_metrics=metrics(calibrated_train, train_labels, threshold),
+                validation_metrics=metrics(
+                    calibrated_validation, validation_labels, threshold,
+                    tp_pct=training_config.tp_pct, sl_pct=training_config.sl_pct,
+                    round_trip_cost=training_config.round_trip_cost,
+                    realized_payoffs=realized_payoffs(
+                        validation_rows, training_config.train_target,
+                        training_config.tp_pct, training_config.sl_pct,
+                    ),
+                ),
+                test_metrics=metrics(
+                    calibrated_test, test_labels, threshold,
+                    tp_pct=training_config.tp_pct, sl_pct=training_config.sl_pct,
+                    round_trip_cost=training_config.round_trip_cost,
+                    realized_payoffs=realized_payoffs(
+                        test_rows, training_config.train_target,
+                        training_config.tp_pct, training_config.sl_pct,
+                    ),
+                ),
+                train_metrics=metrics(
+                    calibrated_train, train_labels, threshold,
+                    tp_pct=training_config.tp_pct, sl_pct=training_config.sl_pct,
+                    round_trip_cost=training_config.round_trip_cost,
+                    realized_payoffs=realized_payoffs(
+                        train_rows, training_config.train_target,
+                        training_config.tp_pct, training_config.sl_pct,
+                    ),
+                ),
                 model_selection=selection.as_dict(),
                 test_trading=oos_trading_metrics(
                     calibrated_test,
@@ -1979,6 +2007,10 @@ def _train_single_regime(
                 tp_pct=training_config.tp_pct,
                 sl_pct=training_config.sl_pct,
                 round_trip_cost=training_config.round_trip_cost,
+                realized_payoffs=realized_payoffs(
+                    regime_build.labeled_rows[holdout_start:], target_key,
+                    training_config.tp_pct, training_config.sl_pct,
+                ),
             )
             selected_thresholds[side] = threshold
             m = metrics(
@@ -1986,6 +2018,10 @@ def _train_single_regime(
                 tp_pct=training_config.tp_pct,
                 sl_pct=training_config.sl_pct,
                 round_trip_cost=training_config.round_trip_cost,
+                realized_payoffs=realized_payoffs(
+                    regime_build.labeled_rows[holdout_start:], target_key,
+                    training_config.tp_pct, training_config.sl_pct,
+                ),
             )
             baseline = _baseline_logloss(holdout_labels)
             m["baseline_logloss"] = baseline
@@ -2149,6 +2185,7 @@ def select_threshold(
     tp_pct: float = 0.003,
     sl_pct: float = 0.0015,
     round_trip_cost: float = DEFAULT_ROUND_TRIP_COST,
+    realized_payoffs: Sequence[float] | None = None,
 ) -> float:
     """Choose a decision threshold from a discrete grid of candidates.
 
@@ -2156,7 +2193,9 @@ def select_threshold(
 
     - "trading_pnl" (default; matches TrainingConfig.threshold_objective and
       the CLI default): rank by (calmar, sharpe, f1, -|t-0.5|) using the
-      `_trading_pnl` simulator. Recommended for trading models, since the
+      `_trading_pnl` simulator. When supplied, ``realized_payoffs`` is the
+      authoritative gross settlement reconstructed from the label reason:
+      TP/SL at their limits and TIMEOUT at the horizon close. Recommended for trading models, since the
       classification trade-off does not map cleanly to PnL when the label
       base rate is unbalanced.
     - "precision_recall" (legacy): precision with a minimum recall
@@ -2182,7 +2221,10 @@ def select_threshold(
             # Rank with the SAME barrier geometry the labels were built with --
             # a TP/SL sweep changes --tp-pct/--sl-pct, and the objective must
             # follow, or thresholds get picked for the wrong economics.
-            current = metrics(probabilities, labels, threshold, tp_pct=tp_pct, sl_pct=sl_pct, round_trip_cost=round_trip_cost)
+            current = metrics(
+                probabilities, labels, threshold, tp_pct=tp_pct, sl_pct=sl_pct,
+                round_trip_cost=round_trip_cost, realized_payoffs=realized_payoffs,
+            )
             trade_count = int(round(current.get("predicted_positive_rate", 0.0) * len(labels)))
             if trade_count < effective_min_trades:
                 continue
@@ -2221,13 +2263,17 @@ def _trading_pnl(
     tp_pct: float = 0.003,
     sl_pct: float = 0.0015,
     round_trip_cost: float = DEFAULT_ROUND_TRIP_COST,
+    realized_payoffs: Sequence[float] | None = None,
 ) -> list[float]:
     """Simulate per-row PnL for a SIDE-SPECIFIC success model.
 
     Semantics match how these models are actually traded:
-    - prob >= threshold  -> ENTER the side. label==1 (TP hit first) earns
-      +tp_pct; label==0 (SL first / timeout) loses -sl_pct. Both pay the
-      round-trip cost (fees + slippage, default 2*(0.02%+0.02%) = 0.08%).
+    - prob >= threshold  -> ENTER the side. With ``realized_payoffs``, the
+      position is settled exactly as execution does: TP/SL at their barrier
+      and TIMEOUT at the horizon close; every completed position pays the
+      maker/maker round-trip cost. Without that input this legacy helper can
+      only map class 0 to -sl_pct, so it must not be used for production
+      threshold selection.
     - prob <  threshold  -> NO TRADE -> PnL 0. (The old version treated this
       as an OPPOSITE position, i.e. below-threshold rows scored +/-0.001 as if
       shorting the signal -- which rewarded thresholds that let the "inverse"
@@ -2238,14 +2284,23 @@ def _trading_pnl(
     the backtest cost model, so calmar/sharpe rankings in select_threshold
     reflect cost-aware asymmetric-barrier economics.
     """
+    n = min(len(probabilities), len(labels))
+    if realized_payoffs is not None and len(realized_payoffs) != n:
+        # A partial vector used to fall through to ``label == 0 -> -sl_pct``
+        # below.  That makes an otherwise correctly reconstructed timeout turn
+        # into an SL solely because of a caller alignment bug.  Refuse it: the
+        # executable settlement vector is all-or-nothing.
+        raise ValueError(
+            "realized_payoffs must contain exactly one executable settlement "
+            f"for each scored row (got {len(realized_payoffs)}, expected {n})"
+        )
     pnl: list[float] = []
-    win = tp_pct - round_trip_cost
-    loss = -sl_pct - round_trip_cost
-    for prob, label in zip(probabilities, labels):
+    for index, (prob, label) in enumerate(zip(probabilities, labels)):
         if prob < threshold:
             pnl.append(0.0)
             continue
-        pnl.append(win if label == 1 else loss)
+        gross = realized_payoffs[index] if realized_payoffs is not None else (tp_pct if label == 1 else -sl_pct)
+        pnl.append(float(gross) - round_trip_cost)
     return pnl
 
 
@@ -2302,7 +2357,7 @@ def _calmar(pnl: Sequence[float]) -> float:
     return total_return / mdd_value
 
 
-def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: float, tp_pct: float = dataset.DEFAULT_LABEL_TP_PCT, sl_pct: float = dataset.DEFAULT_LABEL_SL_PCT, round_trip_cost: float = DEFAULT_ROUND_TRIP_COST) -> dict[str, float]:
+def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: float, tp_pct: float = dataset.DEFAULT_LABEL_TP_PCT, sl_pct: float = dataset.DEFAULT_LABEL_SL_PCT, round_trip_cost: float = DEFAULT_ROUND_TRIP_COST, realized_payoffs: Sequence[float] | None = None) -> dict[str, float]:
     if not probabilities or not labels:
         return {"rows": 0.0, "accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "ece": 0.0, "expected_calibration_error": 0.0, "mce": 0.0, "brier": 0.0, "brier_score": 0.0, "brier_skill_score": 0.0, "positive_rate": 0.0, "predicted_positive_rate": 0.0, "mdd": 0.0, "sharpe": 0.0, "calmar": 0.0}
     predictions = [1 if probability >= threshold else 0 for probability in probabilities]
@@ -2317,7 +2372,10 @@ def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: fl
     brier = calibration.brier_score(probabilities, labels)
     ece = calibration.expected_calibration_error(probabilities, labels)
     # Trading-derived metrics for champion-challenger evaluation
-    pnl = _trading_pnl(probabilities, labels, threshold, tp_pct=tp_pct, sl_pct=sl_pct, round_trip_cost=round_trip_cost)
+    pnl = _trading_pnl(
+        probabilities, labels, threshold, tp_pct=tp_pct, sl_pct=sl_pct,
+        round_trip_cost=round_trip_cost, realized_payoffs=realized_payoffs,
+    )
     return {
         "rows": float(len(labels)),
         "accuracy": (tp + tn) / len(labels),

@@ -2323,7 +2323,14 @@ def triple_barrier_label_long(
     tp_pct: float,
     sl_pct: float,
 ) -> tuple[int, str]:
-    """LONG 진입 시 TP가 SL보다 먼저 도달하면 1, 아니면 0."""
+    """Return the binary TP-first class plus its executable settlement reason.
+
+    ``long_timeout`` deliberately remains class 0: this target asks whether
+    TP was reached before SL, not whether a position made money.  It is *not*
+    an SL.  Consumers that score economic decisions must use the accompanying
+    reason and settle it at the horizon close, exactly as limit-only execution
+    does; treating every zero as ``-sl_pct`` is a label/execution mismatch.
+    """
     entry_price = candles[entry_index].close
     tp_level = entry_price * (1.0 + tp_pct)
     sl_level = entry_price * (1.0 - sl_pct)

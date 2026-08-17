@@ -2,7 +2,9 @@ import hashlib
 import json
 from datetime import timedelta
 
-from btcusdt_quant import barrier_screen, cli, data, dataset
+import pytest
+
+from btcusdt_quant import backtest, barrier_screen, cli, data, dataset, training
 
 
 def _candle(i, op, hi, lo, close):
@@ -83,6 +85,31 @@ def test_screen_uses_production_labeller_for_known_touch_order_and_same_bar_tie(
     assert result["whole_population_tp_share"] == 2 / 5
     assert result["random_walk_tp_share"] == 1 / 2
     assert result["break_even_tp_share"] == 0.52
+
+
+def test_timeout_settlement_is_identical_for_label_scoring_and_execution():
+    # No barrier is touched; the label is still binary class 0, but that must
+    # never be reinterpreted as an SL.  Its reason settles at the horizon close.
+    candles = [_candle(0, 100, 100, 100, 100), _candle(1, 100, 100.5, 99.5, 100.3)]
+    label, reason = dataset.triple_barrier_label_long(0, candles, 1, .01, .01)
+    assert (label, reason) == (0, "long_timeout")
+
+    outcome, execution_gross = backtest._barrier_outcome_after_run(
+        candles, 0, "BUY", 101.0, 99.0, horizon=1, min_hold_bars=0,
+    )
+    assert outcome == "TIMEOUT"
+    assert abs(execution_gross - 0.003) < 1e-12
+
+    # This assertion fails if threshold selection falls back to class-0 == SL.
+    net = training._trading_pnl([0.9], [label], .5, tp_pct=.01, sl_pct=.01,
+                                round_trip_cost=.0004, realized_payoffs=[execution_gross])
+    assert abs(net[0] - 0.0026) < 1e-12
+
+    # A shortened settlement vector must not silently revive the former
+    # class-0-is-SL fallback (-1.04% net here instead of +0.26%).
+    with pytest.raises(ValueError, match="exactly one executable settlement"):
+        training._trading_pnl([0.9], [label], .5, tp_pct=.01, sl_pct=.01,
+                              round_trip_cost=.0004, realized_payoffs=[])
 
 
 def test_screen_reports_ungated_reconciliation_on_the_same_training_rows(monkeypatch):
