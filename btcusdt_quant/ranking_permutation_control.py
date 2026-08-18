@@ -31,6 +31,18 @@ class FoldData:
     descending_rank: np.ndarray
 
 
+def fold_data(fold_index: int, tp: np.ndarray, probability: np.ndarray) -> FoldData:
+    """Construct one control fold, deriving the production stable rank order."""
+    tp = np.asarray(tp, dtype=bool)
+    probability = np.asarray(probability, dtype=float)
+    if len(tp) == 0 or len(tp) != len(probability):
+        raise ValueError("each permutation fold needs equally sized, non-empty outcome and score arrays")
+    order = np.argsort(-probability, kind="mergesort")
+    rank = np.empty(len(probability), dtype=np.int32)
+    rank[order] = np.arange(len(probability), dtype=np.int32)
+    return FoldData(int(fold_index), tp, probability, rank)
+
+
 def _load_gated_folds(spec: ArmSpec) -> tuple[list[FoldData], dict[str, Any]]:
     """Load exactly the gated test populations used by the original measure."""
     prediction_path = spec.path / "fold_test_predictions.csv"
@@ -60,10 +72,7 @@ def _load_gated_folds(spec: ArmSpec) -> tuple[list[FoldData], dict[str, Any]]:
             raise ValueError(f"{spec.name}: fold {fold_index} has no gated rows")
         tp = np.isclose(fold["payoff"].to_numpy(dtype=float), float(config["tp_pct"]), rtol=0.0, atol=1e-12)
         probability = fold["probability"].to_numpy(dtype=float)
-        order = np.argsort(-probability, kind="mergesort")
-        rank = np.empty(len(probability), dtype=np.int32)
-        rank[order] = np.arange(len(probability), dtype=np.int32)
-        folds.append(FoldData(int(fold_index), tp, probability, rank))
+        folds.append(fold_data(int(fold_index), tp, probability))
     source = {
         "arm": spec.name,
         "artifact_directory": str(spec.path),
@@ -106,12 +115,13 @@ def _summary(values: np.ndarray, observed: float) -> dict[str, float | int]:
     }
 
 
-def run_arm(spec: ArmSpec, arm_number: int, *, permutations: int = PERMUTATIONS,
-            block_rows: int = BLOCK_ROWS, seed: int = SEED) -> tuple[list[dict[str, Any]], dict[str, np.ndarray], dict[str, Any]]:
-    """Return observed-v-null summaries for fold and pooled fold-local buckets."""
+def run_folds(arm: str, folds: list[FoldData], arm_number: int, *, permutations: int = PERMUTATIONS,
+              block_rows: int = BLOCK_ROWS, seed: int = SEED) -> tuple[list[dict[str, Any]], dict[str, np.ndarray]]:
+    """Run the production control for supplied gated folds and score values."""
     if permutations < 1 or block_rows < 1:
         raise ValueError("permutations and block_rows must be positive")
-    folds, source = _load_gated_folds(spec)
+    if not folds:
+        raise ValueError("at least one permutation fold is required")
     bucket_names = tuple([f"decile_{d}" for d in DECILES] + [f"top_{p}_pct" for p in TAIL_PCTS])
     scopes = [f"fold_{fold.fold_index}" for fold in folds] + ["pooled_fold_local_ranks"]
     observed: dict[str, dict[str, float]] = {f"fold_{fold.fold_index}": _bucket_lifts(fold.tp, fold.probability) for fold in folds}
@@ -160,9 +170,18 @@ def run_arm(spec: ArmSpec, arm_number: int, *, permutations: int = PERMUTATIONS,
     rows: list[dict[str, Any]] = []
     for scope in scopes:
         for column, bucket in enumerate(bucket_names):
-            row: dict[str, Any] = {"arm": spec.name, "scope": scope, "bucket": bucket,
+            row: dict[str, Any] = {"arm": arm, "scope": scope, "bucket": bucket,
                                    "permutations": permutations, "block_rows": block_rows}
             row.update(_summary(null[scope][:, column], observed[scope][bucket]))
             rows.append(row)
+    return rows, null
+
+
+def run_arm(spec: ArmSpec, arm_number: int, *, permutations: int = PERMUTATIONS,
+            block_rows: int = BLOCK_ROWS, seed: int = SEED) -> tuple[list[dict[str, Any]], dict[str, np.ndarray], dict[str, Any]]:
+    """Return observed-v-null summaries for a persisted production arm."""
+    folds, source = _load_gated_folds(spec)
+    rows, null = run_folds(spec.name, folds, arm_number, permutations=permutations,
+                           block_rows=block_rows, seed=seed)
     source.update({"permutations": permutations, "block_rows": block_rows, "seed": seed})
     return rows, null, source

@@ -11,7 +11,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from btcusdt_quant import calibration, governance, risk
-from btcusdt_quant.ranking_skill import _ranked_masks, _share_and_se
+from btcusdt_quant.ranking_skill import _ranked_masks, _share_and_se, measure_ranked_folds
+from btcusdt_quant.ranking_permutation_control import fold_data, run_folds
 from btcusdt_quant.calibration import (
     MIN_BIN_SAMPLES,
     brier_score,
@@ -33,6 +34,27 @@ def test_ranking_skill_uses_fold_local_top_tail_and_paired_subset_se() -> None:
     assert share == 1.0
     assert lift_pp == 80.0
     assert se_pp > 0.0
+
+
+def test_ranking_instruments_recover_known_score_ordering() -> None:
+    """Known-answer guard: descending scores must produce the top bucket."""
+    import numpy as np
+
+    # Two equally sized folds deliberately require fold-local (not global) ranks.
+    outcomes = [np.tile(np.array([0, 1], dtype=bool), 50)] * 2
+    perfect = [outcome.astype(float) for outcome in outcomes]
+    rows = measure_ranked_folds("known", [(i, outcome, score) for i, (outcome, score) in enumerate(zip(outcomes, perfect))])
+    pooled = {row["bucket"]: row for row in rows if row["scope"] == "pooled_fold_local_ranks"}
+    assert pooled["decile_1"]["bucket_tp_share_pct"] == 100.0
+    assert pooled["decile_10"]["bucket_tp_share_pct"] == 0.0
+
+    # The identical score through the control must be more extreme than its
+    # score-block permutations, proving the injected-score interface is live.
+    folds = [fold_data(i, outcome, score) for i, (outcome, score) in enumerate(zip(outcomes, perfect))]
+    permuted, _ = run_folds("known", folds, 0, permutations=99, block_rows=1, seed=3)
+    control = {row["bucket"]: row for row in permuted if row["scope"] == "pooled_fold_local_ranks"}
+    assert control["decile_1"]["observed_lift_pp"] > 0
+    assert control["decile_1"]["empirical_p_one_sided_ge"] <= 0.05
 
 
 class ThresholdSelectionArtifactTests(unittest.TestCase):

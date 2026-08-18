@@ -79,6 +79,38 @@ def _result_row(arm: str, scope: str, bucket: str, tp: np.ndarray, mask: np.ndar
     }
 
 
+def measure_ranked_folds(
+    arm: str, folds: Iterable[tuple[int, np.ndarray, np.ndarray]],
+) -> list[dict[str, Any]]:
+    """Measure the production ranking statistic for supplied gated folds.
+
+    ``folds`` contains ``(fold_index, strict_tp, score)`` triples.  This is
+    deliberately the calculation core used by :func:`measure_arm`, and gives
+    validation probes a way to replace only the score while preserving the
+    real, gated outcome population and fold-local ranking convention.
+    """
+    rows: list[dict[str, Any]] = []
+    pooled_tp: list[np.ndarray] = []
+    pooled_masks: dict[str, list[np.ndarray]] = {}
+    for fold_index, is_tp, probability in folds:
+        is_tp = np.asarray(is_tp, dtype=bool)
+        probability = np.asarray(probability, dtype=float)
+        if len(is_tp) == 0 or len(is_tp) != len(probability):
+            raise ValueError("each ranked fold needs equally sized, non-empty outcome and score arrays")
+        masks = _ranked_masks(probability)
+        scope = f"fold_{int(fold_index)}"
+        for bucket, mask in masks.items():
+            rows.append(_result_row(arm, scope, bucket, is_tp, mask))
+            pooled_masks.setdefault(bucket, []).append(mask)
+        pooled_tp.append(is_tp)
+    if not pooled_tp:
+        raise ValueError("at least one ranked fold is required")
+    pooled_values = np.concatenate(pooled_tp)
+    for bucket, masks in pooled_masks.items():
+        rows.append(_result_row(arm, "pooled_fold_local_ranks", bucket, pooled_values, np.concatenate(masks)))
+    return rows
+
+
 def measure_arm(spec: ArmSpec) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Measure strict realised TP-share ranking lift from one corrected arm."""
     prediction_path = spec.path / "fold_test_predictions.csv"
@@ -103,10 +135,8 @@ def measure_arm(spec: ArmSpec) -> tuple[list[dict[str, Any]], list[dict[str, Any
     if gate_column not in predictions:
         raise ValueError(f"{spec.name}: missing persisted gate feature {gate_column}")
 
-    rows: list[dict[str, Any]] = []
+    ranked_folds: list[tuple[int, np.ndarray, np.ndarray]] = []
     populations: list[dict[str, Any]] = []
-    pooled_tp: list[np.ndarray] = []
-    pooled_masks: dict[str, list[np.ndarray]] = {}
     for fold_index in sorted(predictions["fold_index"].unique()):
         full_fold = predictions[predictions["fold_index"] == fold_index].reset_index(drop=True)
         minimum = float(minima[int(fold_index)])
@@ -121,12 +151,9 @@ def measure_arm(spec: ArmSpec) -> tuple[list[dict[str, Any]], list[dict[str, Any
         is_tp = np.isclose(payoff, tp_pct, rtol=0.0, atol=1e-12)
         is_sl = np.isclose(payoff, -sl_pct, rtol=0.0, atol=1e-12)
         is_timeout = ~(is_tp | is_sl)
-        masks = _ranked_masks(fold["probability"].to_numpy(dtype=float))
+        probability = fold["probability"].to_numpy(dtype=float)
         scope = f"fold_{int(fold_index)}"
-        for bucket, mask in masks.items():
-            rows.append(_result_row(spec.name, scope, bucket, is_tp, mask))
-            pooled_masks.setdefault(bucket, []).append(mask)
-        pooled_tp.append(is_tp)
+        ranked_folds.append((int(fold_index), is_tp, probability))
         populations.append({
             "arm": spec.name, "scope": scope, "gate_feature": gate_feature, "gate_minimum": minimum,
             "gated_rows": int(len(fold)), "tp_rows": int(is_tp.sum()), "sl_rows": int(is_sl.sum()),
@@ -135,9 +162,8 @@ def measure_arm(spec: ArmSpec) -> tuple[list[dict[str, Any]], list[dict[str, Any
             "timeout_mean_payoff_bps": float(payoff[is_timeout].mean() * 10_000.0) if is_timeout.any() else math.nan,
             "unresolved_rows": 0,
         })
-    pooled_values = np.concatenate(pooled_tp)
-    for bucket, masks in pooled_masks.items():
-        rows.append(_result_row(spec.name, "pooled_fold_local_ranks", bucket, pooled_values, np.concatenate(masks)))
+    rows = measure_ranked_folds(spec.name, ranked_folds)
+    pooled_values = np.concatenate([tp for _, tp, _ in ranked_folds])
     populations.append({
         "arm": spec.name, "scope": "pooled_fold_local_ranks", "gate_feature": gate_feature,
         "gate_minimum": float(minima[0]), "gated_rows": int(len(pooled_values)),
