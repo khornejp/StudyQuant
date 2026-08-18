@@ -22,11 +22,12 @@ untouched). So this module measures the thing the stack actually relies on:
   expected_calibration_error -- the sample-weighted average gap from the
                         diagonal. One number for "how far off are the stated
                         probabilities".
-  decision_band      -- the only slice that spends money: the bars ABOVE the
-                        deployed entry threshold. Its observed rate is compared
-                        against risk.breakeven_probability for the barrier, so
-                        the report answers "can this model pay for its costs at
-                        this barrier" and not merely "is it well calibrated".
+  entry_tp_rate_reference -- the bars ABOVE the deployed entry threshold,
+                        reported against the binary TP/SL reference implied by
+                        the label barrier. This is a calibration-target
+                        reference only, never an economic trading decision:
+                        binary labels do not provide timeout probability or
+                        horizon-close returns.
 
 Pure metrics, no I/O: the caller supplies (probability, outcome) pairs it
 produced with the same feature/label/routing path training used. See
@@ -43,9 +44,9 @@ from . import risk
 __all__ = [
     "ReliabilityBin",
     "CalibrationReport",
-    "DecisionBand",
+    "EntryTpRateReference",
     "brier_score",
-    "decision_band",
+    "entry_tp_rate_reference",
     "expected_calibration_error",
     "reliability_curve",
 ]
@@ -94,19 +95,20 @@ class ReliabilityBin:
 
 
 @dataclass(frozen=True)
-class DecisionBand:
-    """What happens on the bars the model would actually have traded.
+class EntryTpRateReference:
+    """TP-before-SL label rate on the bars the entry policy would have entered.
 
-    The reliability curve grades the model everywhere; this grades it where the
-    money is. `observed_rate` here is the win rate the strategy would realize
-    (before the backtest's own exit rules), and `breakeven_rate` is what the
-    barrier demands of it -- so `clears_breakeven` is the verdict the operator
-    is really after.
+    This object deliberately has no economic verdict. The target is binary:
+    TP-before-SL is 1 and both SL and TIMEOUT are 0. A binary TP rate therefore
+    cannot decide profitability when timeout settlement can vary. In
+    particular, do not use ``above_binary_tp_reference`` as a trade gate; use
+    measured three-outcome execution returns (for example the backtest's
+    outcome and net-return summaries) for an economic approval decision.
 
     The caller decides what population it hands in, and that choice IS the
-    meaning of this band: pass only the bars the entry policy would let the
-    strategy take (direction policy, range mean-reversion gate), or the band
-    reports a win rate for bars nobody trades. share_of_bars is therefore the
+    meaning of this reference: pass only the bars the entry policy would let
+    the strategy take (direction policy, range mean-reversion gate), or it
+    reports a label rate for bars nobody trades. share_of_bars is therefore the
     share of THAT population which cleared the threshold.
     """
 
@@ -114,19 +116,24 @@ class DecisionBand:
     count: int
     share_of_bars: float
     mean_predicted: float
-    observed_rate: float
-    breakeven_rate: float
+    tp_before_sl_rate: float
+    binary_tp_hurdle_rate: float
 
     @property
-    def clears_breakeven(self) -> bool:
-        if not isfinite(self.breakeven_rate) or self.count == 0:
+    def above_binary_tp_reference(self) -> bool:
+        """Whether the binary TP rate exceeds its binary TP/SL reference.
+
+        This is intentionally not an economic clearance decision. TIMEOUT is a
+        zero in the label but can have a positive or negative settled return.
+        """
+        if not isfinite(self.binary_tp_hurdle_rate) or self.count == 0:
             return False
-        return self.observed_rate >= self.breakeven_rate
+        return self.tp_before_sl_rate >= self.binary_tp_hurdle_rate
 
     @property
-    def margin(self) -> float:
-        """Observed rate minus the barrier's hurdle. Negative = structurally unprofitable."""
-        return self.observed_rate - self.breakeven_rate
+    def binary_tp_hurdle_margin(self) -> float:
+        """TP-label rate minus the binary TP/SL reference; not P&L."""
+        return self.tp_before_sl_rate - self.binary_tp_hurdle_rate
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -134,10 +141,11 @@ class DecisionBand:
             "count": self.count,
             "share_of_bars": self.share_of_bars,
             "mean_predicted": self.mean_predicted,
-            "observed_rate": self.observed_rate,
-            "breakeven_rate": self.breakeven_rate,
-            "margin": self.margin,
-            "clears_breakeven": self.clears_breakeven,
+            "tp_before_sl_rate": self.tp_before_sl_rate,
+            "binary_tp_hurdle_rate": self.binary_tp_hurdle_rate,
+            "binary_tp_hurdle_margin": self.binary_tp_hurdle_margin,
+            "above_binary_tp_reference": self.above_binary_tp_reference,
+            "economic_decision": "unavailable_from_binary_tp_labels",
         }
 
 
@@ -149,7 +157,7 @@ class CalibrationReport:
     brier: float
     ece: float
     bins: tuple[ReliabilityBin, ...]
-    decision: DecisionBand | None = None
+    entry_tp_rate_reference: EntryTpRateReference | None = None
 
     @property
     def overall_gap(self) -> float:
@@ -166,7 +174,9 @@ class CalibrationReport:
             "ece": self.ece,
             "ece_min_bin_samples": MIN_BIN_SAMPLES,
             "bins": [b.as_dict() for b in self.bins],
-            "decision_band": None if self.decision is None else self.decision.as_dict(),
+            "entry_tp_rate_reference": (
+                None if self.entry_tp_rate_reference is None else self.entry_tp_rate_reference.as_dict()
+            ),
         }
 
 
@@ -219,9 +229,9 @@ def reliability_curve(
     compressed into a narrow band around 0.52 -- by spreading that band across
     every bucket.
 
-    Pass threshold + the barrier to also get the decision band (see
-    decision_band); without a barrier there is no break-even to judge it
-    against, so it is reported without one only when tp/sl are omitted.
+    Pass threshold + the barrier to also get the entry TP-rate reference (see
+    entry_tp_rate_reference). It is not an economic conclusion: the model does
+    not provide a timeout probability or a conditional timeout return.
     """
     if bin_count <= 0:
         raise ValueError("bin_count must be positive")
@@ -251,9 +261,9 @@ def reliability_curve(
     )
 
     total = len(probabilities)
-    decision = None
+    reference = None
     if threshold is not None:
-        decision = _decision_band_unchecked(
+        reference = _entry_tp_rate_reference_unchecked(
             probabilities,
             outcomes,
             threshold=threshold,
@@ -268,7 +278,7 @@ def reliability_curve(
         brier=_brier_unchecked(probabilities, outcomes),
         ece=expected_calibration_error(bins),
         bins=bins,
-        decision=decision,
+        entry_tp_rate_reference=reference,
     )
 
 
@@ -288,7 +298,7 @@ def expected_calibration_error(bins: Sequence[ReliabilityBin]) -> float:
     return sum(b.count * abs(b.gap) for b in usable) / total
 
 
-def decision_band(
+def entry_tp_rate_reference(
     probabilities: Sequence[float],
     outcomes: Sequence[int],
     *,
@@ -296,21 +306,21 @@ def decision_band(
     tp_pct: float | None = None,
     sl_pct: float | None = None,
     round_trip_cost: float = 0.0,
-) -> DecisionBand:
-    """Grade the model on the bars it would have entered (probability >= threshold).
+) -> EntryTpRateReference:
+    """Report TP-before-SL labels above ``threshold`` against a binary reference.
 
-    breakeven_rate is NaN when no barrier is supplied: there is then no hurdle
-    to compare against, and inventing one (0.5) would silently pass or fail the
-    model against a barrier it never traded.
+    ``binary_tp_hurdle_rate`` is NaN when no barrier is supplied. It is a
+    what-if reference for the binary TP/SL payoff only, not a profitability
+    test and never a substitute for settled three-outcome returns.
     """
     _validate(probabilities, outcomes)
-    return _decision_band_unchecked(
+    return _entry_tp_rate_reference_unchecked(
         probabilities, outcomes, threshold=threshold, tp_pct=tp_pct, sl_pct=sl_pct,
         round_trip_cost=round_trip_cost,
     )
 
 
-def _decision_band_unchecked(
+def _entry_tp_rate_reference_unchecked(
     probabilities: Sequence[float],
     outcomes: Sequence[int],
     *,
@@ -318,7 +328,7 @@ def _decision_band_unchecked(
     tp_pct: float | None,
     sl_pct: float | None,
     round_trip_cost: float,
-) -> DecisionBand:
+) -> EntryTpRateReference:
     if not 0.0 <= threshold <= 1.0:
         raise ValueError(f"threshold must be in [0, 1], got {threshold!r}")
 
@@ -329,11 +339,11 @@ def _decision_band_unchecked(
         breakeven = float("nan")
     else:
         breakeven = risk.breakeven_probability(tp_pct, sl_pct, round_trip_cost)
-    return DecisionBand(
+    return EntryTpRateReference(
         threshold=threshold,
         count=count,
         share_of_bars=count / total if total else float("nan"),
         mean_predicted=sum(p for p, _ in entered) / count if count else float("nan"),
-        observed_rate=sum(o for _, o in entered) / count if count else float("nan"),
-        breakeven_rate=breakeven,
+        tp_before_sl_rate=sum(o for _, o in entered) / count if count else float("nan"),
+        binary_tp_hurdle_rate=breakeven,
     )

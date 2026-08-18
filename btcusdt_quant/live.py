@@ -1954,6 +1954,7 @@ def evaluate_entry_signal(
     cost_config: dict[str, float] | None = None,
     strategy: "StrategyConfig | None" = None,
     features: Mapping[str, float] | None = None,
+    allow_binary_outcome: bool = False,
 ) -> tuple[str, float, float]:
     """Evaluate entry signal based on EV calculation.
 
@@ -1970,12 +1971,23 @@ def evaluate_entry_signal(
          constants, so even a caller that forgets to pass a strategy degrades
          to label-consistent barriers instead of silently-wrong ones.
 
+    ``long_prob``/``short_prob`` are TP-before-SL probabilities.  With the
+    current targets their negative classes include horizon timeouts, yet these
+    inputs do not include either a timeout probability or conditional
+    horizon-close return.  Therefore the live/backtest EV admission gate
+    refuses by default instead of booking every non-TP outcome as an SL.
+    ``allow_binary_outcome`` is an explicit, caller-owned waiver for an
+    independently established negligible-timeout geometry; it is not used by
+    the production paths.
+
     Returns:
         (signal, long_ev, short_ev) where signal is "LONG", "SHORT", or "NO_TRADE"
     """
     if strategy is not None:
         tp_delta, sl_delta, _, _ = resolve_tp_sl_deltas(features or {}, strategy)
         gross_tp_pct, gross_sl_pct = tp_delta, sl_delta
+    if not allow_binary_outcome:
+        return "NO_TRADE", float("nan"), float("nan")
     long_ev = calculate_long_ev(long_prob, gross_tp_pct, gross_sl_pct, cost_config)
     short_ev = calculate_short_ev(short_prob, gross_tp_pct, gross_sl_pct, cost_config)
     

@@ -1,6 +1,4 @@
-"""Tests for calibration.py (reliability of the side models' probabilities)
-and risk.breakeven_probability, the hurdle the reports are graded against.
-"""
+"""Tests for calibration.py (reliability of the side models' probabilities)."""
 from __future__ import annotations
 
 import json
@@ -17,7 +15,7 @@ from btcusdt_quant.ranking_skill import _ranked_masks, _share_and_se
 from btcusdt_quant.calibration import (
     MIN_BIN_SAMPLES,
     brier_score,
-    decision_band,
+    entry_tp_rate_reference,
     expected_calibration_error,
     reliability_curve,
 )
@@ -172,54 +170,69 @@ class BrierScoreTests(unittest.TestCase):
         self.assertTrue(math.isnan(brier_score([], [])))
 
 
-class DecisionBandTests(unittest.TestCase):
+class EntryTpRateReferenceTests(unittest.TestCase):
     def test_grades_only_the_bars_above_the_threshold(self) -> None:
         # Below the cutoff the model is right; above it (where the money goes)
         # it is wrong. A pooled win rate would hide that; the band must not.
         probabilities = [0.2] * 50 + [0.6] * 50
         outcomes = [0] * 50 + ([1] * 15 + [0] * 35)
-        band = decision_band(probabilities, outcomes, threshold=0.5, tp_pct=0.010, sl_pct=0.005,
-                             round_trip_cost=0.0008)
-        self.assertEqual(band.count, 50)
-        self.assertAlmostEqual(band.share_of_bars, 0.5)
-        self.assertAlmostEqual(band.observed_rate, 0.30)
-        self.assertAlmostEqual(band.breakeven_rate, 0.3867, places=4)
-        self.assertFalse(band.clears_breakeven)
-        self.assertLess(band.margin, 0.0)
+        reference = entry_tp_rate_reference(probabilities, outcomes, threshold=0.5, tp_pct=0.010, sl_pct=0.005,
+                                            round_trip_cost=0.0008)
+        self.assertEqual(reference.count, 50)
+        self.assertAlmostEqual(reference.share_of_bars, 0.5)
+        self.assertAlmostEqual(reference.tp_before_sl_rate, 0.30)
+        self.assertAlmostEqual(reference.binary_tp_hurdle_rate, 0.3867, places=4)
+        self.assertFalse(reference.above_binary_tp_reference)
+        self.assertLess(reference.binary_tp_hurdle_margin, 0.0)
 
-    def test_clears_breakeven_when_the_realized_rate_is_good_enough(self) -> None:
-        band = decision_band([0.6] * 100, [1] * 45 + [0] * 55, threshold=0.5,
-                             tp_pct=0.010, sl_pct=0.005, round_trip_cost=0.0008)
-        self.assertAlmostEqual(band.observed_rate, 0.45)
-        self.assertTrue(band.clears_breakeven)
+    def test_binary_tp_reference_is_not_an_economic_verdict(self) -> None:
+        # The binary labels must stay the same when only the horizon-close
+        # settlement changes.  Therefore this comparison may be reported only
+        # as a TP-label reference, never as a trade/no-trade verdict.
+        positive_timeout_settlement = 0.004
+        negative_timeout_settlement = -0.004
+        self.assertGreater(positive_timeout_settlement, 0.0)
+        self.assertLess(negative_timeout_settlement, 0.0)
+        positive_timeout_cohort = entry_tp_rate_reference(
+            [0.6] * 100, [1] * 20 + [0] * 80, threshold=0.5,
+            tp_pct=0.010, sl_pct=0.005, round_trip_cost=0.0008,
+        )
+        negative_timeout_cohort = entry_tp_rate_reference(
+            [0.6] * 100, [1] * 20 + [0] * 80, threshold=0.5,
+            tp_pct=0.010, sl_pct=0.005, round_trip_cost=0.0008,
+        )
+        self.assertEqual(positive_timeout_cohort.as_dict(), negative_timeout_cohort.as_dict())
+        self.assertEqual(
+            positive_timeout_cohort.as_dict()["economic_decision"],
+            "unavailable_from_binary_tp_labels",
+        )
+        self.assertNotIn("clears_breakeven", positive_timeout_cohort.as_dict())
 
     def test_threshold_above_every_prediction_enters_nothing(self) -> None:
         # The range-regime failure mode: a floor above the model's whole output
         # range means zero trades, which must read as "never enters", not as a
         # 0% win rate.
-        band = decision_band([0.35] * 100, [1] * 40 + [0] * 60, threshold=0.45,
-                             tp_pct=0.010, sl_pct=0.005)
-        self.assertEqual(band.count, 0)
-        self.assertTrue(math.isnan(band.observed_rate))
-        self.assertFalse(band.clears_breakeven)
+        reference = entry_tp_rate_reference([0.35] * 100, [1] * 40 + [0] * 60, threshold=0.45,
+                                             tp_pct=0.010, sl_pct=0.005)
+        self.assertEqual(reference.count, 0)
+        self.assertTrue(math.isnan(reference.tp_before_sl_rate))
+        self.assertFalse(reference.above_binary_tp_reference)
 
-    def test_no_barrier_means_no_verdict(self) -> None:
-        # Without a barrier there is no hurdle; inventing 0.5 would pass or fail
-        # the model against a trade it never took.
-        band = decision_band([0.6] * 50, [1] * 30 + [0] * 20, threshold=0.5)
-        self.assertTrue(math.isnan(band.breakeven_rate))
-        self.assertFalse(band.clears_breakeven)
+    def test_no_barrier_means_no_binary_tp_reference(self) -> None:
+        reference = entry_tp_rate_reference([0.6] * 50, [1] * 30 + [0] * 20, threshold=0.5)
+        self.assertTrue(math.isnan(reference.binary_tp_hurdle_rate))
+        self.assertFalse(reference.above_binary_tp_reference)
 
     def test_reliability_curve_carries_the_band(self) -> None:
         report = reliability_curve([0.6] * 50, [1] * 20 + [0] * 30, threshold=0.5,
                                    tp_pct=0.010, sl_pct=0.005, round_trip_cost=0.0008)
-        self.assertIsNotNone(report.decision)
-        self.assertAlmostEqual(report.decision.observed_rate, 0.40)
-        self.assertTrue(report.decision.clears_breakeven)
+        self.assertIsNotNone(report.entry_tp_rate_reference)
+        self.assertAlmostEqual(report.entry_tp_rate_reference.tp_before_sl_rate, 0.40)
+        self.assertTrue(report.entry_tp_rate_reference.above_binary_tp_reference)
 
     def test_rejects_threshold_outside_probability_range(self) -> None:
         with self.assertRaises(ValueError):
-            decision_band([0.5], [1], threshold=1.5)
+            entry_tp_rate_reference([0.5], [1], threshold=1.5)
 
 
 class EnteredPopulationTests(unittest.TestCase):
@@ -230,7 +243,7 @@ class EnteredPopulationTests(unittest.TestCase):
     of getting that population wrong, which is what the reviewer caught.
     """
 
-    def test_gating_the_population_changes_the_verdict(self) -> None:
+    def test_gating_the_population_changes_the_tp_label_reference(self) -> None:
         # 100 bars over the threshold. The 50 the entry policy would BLOCK are
         # losers; the 50 it allows are winners. Scoring all 100 says the strategy
         # cannot pay its costs; scoring what it really enters says it can.
@@ -238,32 +251,32 @@ class EnteredPopulationTests(unittest.TestCase):
         enterable = ([0.6] * 50, [1] * 25 + [0] * 25)
         all_bars = (blocked[0] + enterable[0], blocked[1] + enterable[1])
 
-        ungated = decision_band(*all_bars, threshold=0.5, tp_pct=0.010, sl_pct=0.005,
-                                round_trip_cost=0.0008)
-        gated = decision_band(*enterable, threshold=0.5, tp_pct=0.010, sl_pct=0.005,
-                              round_trip_cost=0.0008)
+        ungated = entry_tp_rate_reference(*all_bars, threshold=0.5, tp_pct=0.010, sl_pct=0.005,
+                                           round_trip_cost=0.0008)
+        gated = entry_tp_rate_reference(*enterable, threshold=0.5, tp_pct=0.010, sl_pct=0.005,
+                                         round_trip_cost=0.0008)
 
-        self.assertAlmostEqual(ungated.observed_rate, 0.25)
-        self.assertFalse(ungated.clears_breakeven)
-        self.assertAlmostEqual(gated.observed_rate, 0.50)
-        self.assertTrue(gated.clears_breakeven)
+        self.assertAlmostEqual(ungated.tp_before_sl_rate, 0.25)
+        self.assertFalse(ungated.above_binary_tp_reference)
+        self.assertAlmostEqual(gated.tp_before_sl_rate, 0.50)
+        self.assertTrue(gated.above_binary_tp_reference)
         self.assertEqual(gated.count, 50)
 
     def test_share_is_relative_to_the_population_given(self) -> None:
         # 20 enterable bars, 5 of them above the threshold: 25% of ENTERABLE, and
         # the band must not silently divide by some larger universe.
-        band = decision_band([0.6] * 5 + [0.2] * 15, [1] * 5 + [0] * 15, threshold=0.5,
-                             tp_pct=0.010, sl_pct=0.005)
-        self.assertEqual(band.count, 5)
-        self.assertAlmostEqual(band.share_of_bars, 0.25)
+        reference = entry_tp_rate_reference([0.6] * 5 + [0.2] * 15, [1] * 5 + [0] * 15, threshold=0.5,
+                                             tp_pct=0.010, sl_pct=0.005)
+        self.assertEqual(reference.count, 5)
+        self.assertAlmostEqual(reference.share_of_bars, 0.25)
 
     def test_no_enterable_bars_is_not_a_zero_win_rate(self) -> None:
         # Every bar blocked by the entry gate: the band has nothing to say, and
         # must not report 0% (which reads as "enters and always loses").
-        band = decision_band([], [], threshold=0.5, tp_pct=0.010, sl_pct=0.005)
-        self.assertEqual(band.count, 0)
-        self.assertTrue(math.isnan(band.observed_rate))
-        self.assertFalse(band.clears_breakeven)
+        reference = entry_tp_rate_reference([], [], threshold=0.5, tp_pct=0.010, sl_pct=0.005)
+        self.assertEqual(reference.count, 0)
+        self.assertTrue(math.isnan(reference.tp_before_sl_rate))
+        self.assertFalse(reference.above_binary_tp_reference)
 
 
 class ReportSerializationTests(unittest.TestCase):
@@ -279,7 +292,7 @@ class ReportSerializationTests(unittest.TestCase):
         self.assertNotIn("NaN", text)
         payload = json.loads(text)
         self.assertIsNone(payload["ece"])
-        self.assertIsNone(payload["decision_band"]["observed_rate"])
+        self.assertIsNone(payload["entry_tp_rate_reference"]["tp_before_sl_rate"])
         self.assertEqual(payload["count"], 2)
 
 

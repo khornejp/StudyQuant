@@ -1183,6 +1183,7 @@ def run_backtest(
     regime_classifier_model: object | None = None,
     multi_feature_regime_detector: object | None = None,
     kelly_config: risk.KellySizingConfig | None = None,
+    allow_binary_ev: bool = False,
     allow_barrier_mismatch: bool = False,
     range_gate_enabled: bool = True,
     range_gate_edge: float = DEFAULT_RANGE_GATE_EDGE,
@@ -1203,12 +1204,15 @@ def run_backtest(
     initial_equity: starting equity
     position_size: fraction of equity per trade; with kelly_config set it is
         reinterpreted as the CAP on the per-trade Kelly fraction
-    kelly_config: opt-in fractional-Kelly position sizing (see
+        kelly_config: opt-in fractional-Kelly position sizing (see
         risk.KellySizingConfig and kelly_fraction_for_entry); entries whose
         Kelly edge is non-positive are skipped and reported under
         kelly_sizing["entries_skipped_no_edge"] (kept out of signal_counts,
         whose BUY/SELL/HOLD keys tally per-bar signal decisions, not sizing
         outcomes)
+    allow_binary_ev: explicit test/research waiver for the regime EV gate.
+        Production callers must leave this false unless the exact barrier and
+        horizon have independently demonstrated negligible timeout share.
     tp_sl_method: 'fixed_pct' or 'atr_pct'
     label_horizon: bars to hold before forced exit
     min_hold_bars: minimum bars to hold before allowing TP/SL exit
@@ -1295,6 +1299,10 @@ def run_backtest(
         "backtest_start": start_date,
         "backtest_end": end_date,
         "execution_horizon": label_horizon,
+        # A binary TP-before-SL probability cannot price timeouts. Record this
+        # waiver on every replay so a historical result can prove whether it
+        # used the binary-only EV admission path.
+        "allow_binary_ev": allow_binary_ev,
         "exec_tp_pct": exec_tp_pct,
         "exec_sl_pct": exec_sl_pct,
         "strategy_config": strategy.as_dict(),
@@ -1833,6 +1841,7 @@ def run_backtest(
                             short_threshold=st,
                             strategy=strategy,
                             features=feature_rows[i].features if i < len(feature_rows) else {},
+                            allow_binary_outcome=allow_binary_ev,
                         )
                         
                         if entry_signal == "LONG":
@@ -1897,6 +1906,7 @@ def run_backtest(
                             long_threshold=lt, short_threshold=st,
                             strategy=strategy,
                             features=feature_rows[i].features if i < len(feature_rows) else {},
+                            allow_binary_outcome=allow_binary_ev,
                         )
                         signal = "BUY" if entry_signal == "LONG" else ("SELL" if entry_signal == "SHORT" else "HOLD")
                     else:

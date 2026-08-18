@@ -104,6 +104,12 @@ class KellySizingConfig:
     holding_period_bars: int = 60
     recalc_interval_bars: int = 60
     variance_floor: float = 1e-10
+    # A success classifier estimates P(TP before SL), but it does not thereby
+    # estimate P(SL), P(timeout), or the timeout-close return.  Do not silently
+    # turn its class-0 bucket into an SL.  This opt-in exists only for a
+    # separately established two-outcome strategy (for example, one whose
+    # timeout share has been demonstrated negligible).
+    allow_binary_outcome: bool = False
 
     def __post_init__(self) -> None:
         if not 0.0 < self.kelly_multiplier <= 1.0:
@@ -147,6 +153,41 @@ def expected_edge(
     if net_win <= 0.0:
         return -net_loss
     return probability * net_win - (1.0 - probability) * net_loss
+
+
+def expected_edge_three_outcome(
+    tp_probability: float,
+    sl_probability: float,
+    timeout_probability: float,
+    expected_timeout_return: float,
+    tp_pct: float,
+    sl_pct: float,
+    round_trip_cost: float = 0.0,
+) -> float:
+    """Expected net return when a horizon close is a third settlement.
+
+    ``expected_timeout_return`` is the *gross*, side-signed horizon-close
+    return conditional on timing out.  Every completed outcome pays the same
+    round-trip cost.  In particular, class-0 probability cannot be treated as
+    an SL unless ``timeout_probability`` is known to be zero.
+    """
+    probabilities = (tp_probability, sl_probability, timeout_probability)
+    if any(not 0.0 <= value <= 1.0 for value in probabilities):
+        raise ValueError("outcome probabilities must be in [0, 1]")
+    if not math.isclose(sum(probabilities), 1.0, rel_tol=0.0, abs_tol=1e-9):
+        raise ValueError("TP, SL, and timeout probabilities must sum to 1")
+    if not math.isfinite(expected_timeout_return):
+        raise ValueError("expected_timeout_return must be finite")
+    if tp_pct < 0.0 or sl_pct < 0.0:
+        raise ValueError("tp_pct and sl_pct must be non-negative")
+    if round_trip_cost < 0.0:
+        raise ValueError("round_trip_cost must be non-negative")
+    return (
+        tp_probability * tp_pct
+        - sl_probability * sl_pct
+        + timeout_probability * expected_timeout_return
+        - round_trip_cost
+    )
 
 
 def breakeven_probability(
@@ -231,6 +272,8 @@ def kelly_leverage_for_signal(
     config: KellySizingConfig | None = None,
     cap: float | None = None,
     round_trip_cost: float = 0.0,
+    timeout_probability: float | None = None,
+    expected_timeout_return: float | None = None,
 ) -> float:
     """End-to-end sizing: model probability + TP/SL geometry + recent variance.
 
@@ -245,13 +288,30 @@ def kelly_leverage_for_signal(
     limit reinterpreted as the ceiling on the Kelly output); callers whose
     natural cap is an equity fraction or notional ratio pass it here.
 
-    `round_trip_cost` is 2*(fee + slippage); pass the SAME value the
-    execution layer charges so Kelly's entry filter agrees with realized PnL.
+    A TP-before-SL model supplies only ``probability``.  It does not provide
+    the timeout probability or conditional horizon-close return needed for
+    three-outcome EV, so this function refuses to size by default.  Callers
+    may pass both timeout quantities (the SL probability is then the residual)
+    or use the explicit ``allow_binary_outcome`` waiver only after establishing
+    that timeouts are negligible for the exact geometry and horizon.
     """
     cfg = config or KellySizingConfig()
     if cap is None:
         cap = (policy or RiskPolicy()).max_leverage
-    edge = expected_edge(probability, tp_pct, sl_pct, round_trip_cost)
+    if (timeout_probability is None) != (expected_timeout_return is None):
+        raise ValueError("timeout_probability and expected_timeout_return must be supplied together")
+    if timeout_probability is not None:
+        sl_probability = 1.0 - probability - timeout_probability
+        edge = expected_edge_three_outcome(
+            probability, sl_probability, timeout_probability,
+            expected_timeout_return, tp_pct, sl_pct, round_trip_cost,
+        )
+    elif cfg.allow_binary_outcome:
+        edge = expected_edge(probability, tp_pct, sl_pct, round_trip_cost)
+    else:
+        # The deployed model's negative class combines SL and TIMEOUT.  There
+        # is no defensible EV or Kelly fraction without splitting it.
+        return 0.0
     bar_variance = return_variance(recent_returns, cfg.variance_lookback_bars)
     trade_variance = bar_variance * cfg.holding_period_bars
     return kelly_leverage(edge, trade_variance, cfg, cap)

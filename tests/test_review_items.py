@@ -59,10 +59,23 @@ class KellySizingTests(unittest.TestCase):
 
     def test_kelly_leverage_for_signal_threads_cost(self) -> None:
         recent = [0.0005, -0.0005] * 500
-        cfg = risk.KellySizingConfig(kelly_multiplier=0.5, holding_period_bars=60)
+        cfg = risk.KellySizingConfig(kelly_multiplier=0.5, holding_period_bars=60, allow_binary_outcome=True)
         args = (0.40, 0.003, 0.0015, recent)
         self.assertGreater(risk.kelly_leverage_for_signal(*args, config=cfg, cap=1.0), 0.0)
         self.assertEqual(risk.kelly_leverage_for_signal(*args, config=cfg, cap=1.0, round_trip_cost=0.0008), 0.0)
+
+    def test_kelly_refuses_tp_sl_proxy_without_timeout_model(self) -> None:
+        # This model score is P(TP before SL), while its zero class includes
+        # timeouts.  A binary Kelly calculation would incorrectly accept it.
+        recent = [0.0005, -0.0005] * 500
+        self.assertEqual(
+            risk.kelly_leverage_for_signal(0.6, 0.01, 0.01, recent, cap=1.0),
+            0.0,
+        )
+        self.assertLess(
+            risk.expected_edge_three_outcome(0.6, 0.1, 0.3, -0.03, 0.01, 0.01),
+            0.0,
+        )
 
     def test_expected_edge_validates_inputs(self) -> None:
         with self.assertRaises(ValueError):
@@ -102,20 +115,21 @@ class KellySizingTests(unittest.TestCase):
         rng = random.Random(7)
         recent = [rng.gauss(0.0, 0.01) for _ in range(2000)]
         policy = risk.RiskPolicy(max_leverage=2.0)
-        lev = risk.kelly_leverage_for_signal(0.6, 0.01, 0.01, recent, policy)
+        binary = risk.KellySizingConfig(allow_binary_outcome=True)
+        lev = risk.kelly_leverage_for_signal(0.6, 0.01, 0.01, recent, policy, binary)
         self.assertGreater(lev, 0.0)
         # With per-bar var ~1e-4 scaled by holding_period_bars=60, half-Kelly
         # is ~0.17 -- the output must be DYNAMIC (below the cap), not pinned
         # to max_leverage by a units mismatch.
         self.assertLess(lev, 2.0)
         # A coin-flip signal has no edge -> no bet regardless of variance
-        self.assertEqual(risk.kelly_leverage_for_signal(0.5, 0.01, 0.01, recent, policy), 0.0)
+        self.assertEqual(risk.kelly_leverage_for_signal(0.5, 0.01, 0.01, recent, policy, binary), 0.0)
 
     def test_kelly_scales_bar_variance_to_trade_horizon(self) -> None:
         # Deterministic returns with exact per-bar variance 1e-4, holding 60
         # bars -> trade variance 6e-3; edge 0.002 -> f = 0.5*0.002/6e-3 = 1/6.
         recent = [0.01, -0.01] * 500
-        config = risk.KellySizingConfig(kelly_multiplier=0.5, holding_period_bars=60)
+        config = risk.KellySizingConfig(kelly_multiplier=0.5, holding_period_bars=60, allow_binary_outcome=True)
         lev = risk.kelly_leverage_for_signal(0.6, 0.01, 0.01, recent, risk.RiskPolicy(max_leverage=10.0), config)
         self.assertAlmostEqual(lev, (0.5 * 0.002) / (1e-4 * 60), places=6)
 
@@ -130,7 +144,7 @@ class KellySizingTests(unittest.TestCase):
 
 class KellyBacktestWiringTests(unittest.TestCase):
     def _config(self) -> risk.KellySizingConfig:
-        return risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=1000, holding_period_bars=60)
+        return risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=1000, holding_period_bars=60, allow_binary_outcome=True)
 
     def test_fraction_from_actual_barriers_known_value(self) -> None:
         # edge = 0.6*0.01 - 0.4*0.005 = 0.004; bar var 1e-4 * 60 = 6e-3
@@ -188,7 +202,7 @@ class KellyBacktestWiringTests(unittest.TestCase):
                 return 0.9
 
         candles = self._make_candles(400)
-        config = risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=120, holding_period_bars=10)
+        config = risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=120, holding_period_bars=10, allow_binary_outcome=True)
         result = run_backtest(
             candles,
             model=_AlwaysLong(),
@@ -218,7 +232,7 @@ class KellyBacktestWiringTests(unittest.TestCase):
                 return 0.1
 
         candles = self._make_candles(400)
-        config = risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=120, holding_period_bars=10)
+        config = risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=120, holding_period_bars=10, allow_binary_outcome=True)
         result = run_backtest(
             candles,
             model=_AlwaysShort(),
@@ -257,7 +271,7 @@ class KellyBacktestWiringTests(unittest.TestCase):
 
         candles = self._make_candles(400)
         rows = [_dc.replace(r, user_regime="trend") for r in _ds.build_feature_rows(candles)]
-        config = risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=120, holding_period_bars=10)
+        config = risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=120, holding_period_bars=10, allow_binary_outcome=True)
         result = run_backtest(
             candles,
             models_by_regime={"trend": _ShortBundle()},
@@ -266,6 +280,7 @@ class KellyBacktestWiringTests(unittest.TestCase):
             label_horizon=10,
             cooldown_bars=0,
             kelly_config=config,
+            allow_binary_ev=True,
         )
         self.assertEqual(result.kelly_sizing["shorts_skipped_no_short_model"], 0)
         self.assertGreater(result.trade_count, 0, "shorts with a real short model must be sized")
@@ -281,7 +296,7 @@ class KellyBacktestWiringTests(unittest.TestCase):
                 return 0.62
 
         candles = self._make_candles(300)
-        config = risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=120, holding_period_bars=10)
+        config = risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=120, holding_period_bars=10, allow_binary_outcome=True)
         result = run_backtest(
             candles,
             model=_WeakLong(),
@@ -321,7 +336,7 @@ class KellyLiveSizerTests(unittest.TestCase):
     def test_kelly_notional_accepted_and_dynamic(self) -> None:
         from btcusdt_quant import live
         recent = [0.01, -0.01] * 500  # per-bar var exactly 1e-4
-        config = risk.KellySizingConfig(kelly_multiplier=0.5, holding_period_bars=60)
+        config = risk.KellySizingConfig(kelly_multiplier=0.5, holding_period_bars=60, allow_binary_outcome=True)
         sizing = live.PositionSizer().kelly_notional(
             entry_price=100.0,
             account_balance_usdt=10000.0,
@@ -334,6 +349,7 @@ class KellyLiveSizerTests(unittest.TestCase):
             min_qty=0.001,
             qty_step=0.001,
             max_notional_fraction=0.5,
+            kelly_config=config,
         )
         self.assertTrue(sizing.accepted, sizing.reason)
         # f = 0.5*0.002/(1e-4*60) = 1/6 -> notional 10000/6, dynamic (below the 0.5 cap ratio)
@@ -376,13 +392,17 @@ class KellyLiveSizerTests(unittest.TestCase):
             min_qty=0.001,
             qty_step=0.001,
             max_notional_fraction=0.3,
+            kelly_config=risk.KellySizingConfig(allow_binary_outcome=True),
         )
         self.assertTrue(sizing.accepted, sizing.reason)
         self.assertAlmostEqual(sizing.notional, 10000.0 * 0.3)
 
     def test_kelly_leverage_for_signal_explicit_cap(self) -> None:
         recent = [0.001, -0.001] * 500
-        lev = risk.kelly_leverage_for_signal(0.9, 0.01, 0.01, recent, cap=0.25)
+        lev = risk.kelly_leverage_for_signal(
+            0.9, 0.01, 0.01, recent, cap=0.25,
+            config=risk.KellySizingConfig(allow_binary_outcome=True),
+        )
         self.assertAlmostEqual(lev, 0.25)
 
     def test_kelly_notional_capped_by_static_ratio(self) -> None:
@@ -400,6 +420,7 @@ class KellyLiveSizerTests(unittest.TestCase):
             min_qty=0.001,
             qty_step=0.001,
             max_notional_fraction=0.5,
+            kelly_config=risk.KellySizingConfig(allow_binary_outcome=True),
         )
         self.assertTrue(sizing.accepted, sizing.reason)
         self.assertAlmostEqual(sizing.notional, 10000.0 * 0.05)
@@ -697,7 +718,7 @@ class ReconciliationTests(unittest.TestCase):
                 return 0.9
 
         candles = KellyBacktestWiringTests()._make_candles(500)
-        config = risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=120, holding_period_bars=10)
+        config = risk.KellySizingConfig(kelly_multiplier=0.5, variance_lookback_bars=120, holding_period_bars=10, allow_binary_outcome=True)
         for kelly in (None, config):
             result = run_backtest(
                 candles, model=_AlwaysLong(), position_size=0.1, label_horizon=10,
@@ -1692,6 +1713,7 @@ class RangeGateToggleTests(unittest.TestCase):
             exec_tp_pct=0.01,
             exec_sl_pct=0.005,
             range_gate_enabled=gate_enabled,
+            allow_binary_ev=True,
         )
 
     def test_gate_blocks_and_toggle_frees_entries(self) -> None:
@@ -2042,7 +2064,7 @@ class MakerFillTests(unittest.TestCase):
         specs += [(100.2, 100.4, 100.0, 100.3)] * 20
         candles = _ohlc_candles(specs)
         common = dict(position_size=0.1, label_horizon=10, cooldown_bars=0,
-                      default_regime="all", model=None)
+                      default_regime="all", model=None, allow_binary_ev=True)
 
         # The short model's score is used AS-IS, not inverted: a short-target
         # model already outputs P(short wins). Inverting it here (as the
@@ -2148,7 +2170,7 @@ class MakerFillTests(unittest.TestCase):
         candles = _ohlc_candles(specs)
         both = TwoSidedModels(_P(0.99), _P(0.10))
         common = dict(models_by_regime={"all": both}, default_regime="all", model=None,
-                      position_size=0.1, label_horizon=10, cooldown_bars=0)
+                      position_size=0.1, label_horizon=10, cooldown_bars=0, allow_binary_ev=True)
         # A near-certain probability trades on a fixed cutoff...
         hot = run_backtest(candles, long_threshold=0.6, short_threshold=0.6, **common)
         self.assertGreater(hot.signal_counts["BUY"] + hot.signal_counts["SELL"], 0)
@@ -2180,7 +2202,7 @@ class MakerFillTests(unittest.TestCase):
         common = dict(models_by_regime={"all": TwoSidedModels(_P(0.99), _P(0.10))},
                       default_regime="all", model=None, position_size=0.1,
                       label_horizon=10, cooldown_bars=0,
-                      long_threshold=0.6, short_threshold=0.6)
+                      long_threshold=0.6, short_threshold=0.6, allow_binary_ev=True)
 
         ungated = run_backtest(candles, **common)
         self.assertGreater(len(ungated.trades), 0)
@@ -2475,7 +2497,7 @@ class MakerFillTests(unittest.TestCase):
         common = dict(models_by_regime={"all": TwoSidedModels(_P(0.99), _P(0.10))},
                       default_regime="all", model=None, position_size=0.1,
                       label_horizon=10, cooldown_bars=0,
-                      long_threshold=0.6, short_threshold=0.6)
+                      long_threshold=0.6, short_threshold=0.6, allow_binary_ev=True)
 
         # A series that falls and then dips further: close sits below its own
         # trailing mean, so a long is against the trend.
@@ -3076,8 +3098,14 @@ class MakerFillTests(unittest.TestCase):
         # running far above the short model's, that made every long+short bundle
         # effectively long-only.
         from btcusdt_quant.live import evaluate_entry_signal
+        # A TP-before-SL score alone cannot price the label's timeout class.
+        self.assertEqual(
+            evaluate_entry_signal(0.99, 0.01, min_ev=0.0, long_threshold=0.30, short_threshold=0.30)[0],
+            "NO_TRADE",
+        )
         kw = dict(min_ev=0.0, long_threshold=0.30, short_threshold=0.30,
                   gross_tp_pct=0.008, gross_sl_pct=0.004,
+                  allow_binary_outcome=True,
                   cost_config={"fee_entry": 0.0, "fee_exit": 0.0, "slippage": 0.0,
                                "spread_cost": 0.0, "safety_margin": 0.0})
         # Both clear their thresholds and both have positive EV; the short is
@@ -3455,7 +3483,7 @@ class ExecutionInstrumentationTests(unittest.TestCase):
             def probability(self, values) -> float: return self._probability
 
         candles = _ohlc_candles([(100.0 + (i % 2) * 2, 101.0 + (i % 2) * 2, 99.0 + (i % 2) * 2, 101.0 - (i % 2) * 2) for i in range(20)])
-        kelly = risk.KellySizingConfig(variance_lookback_bars=3, holding_period_bars=3)
+        kelly = risk.KellySizingConfig(variance_lookback_bars=3, holding_period_bars=3, allow_binary_outcome=True)
         common = dict(label_horizon=3, cooldown_bars=0, long_threshold=0.6, short_threshold=0.2,
                       maker_fill_window=0, maker_exit_outcomes=[], kelly_config=kelly)
         direct = run_backtest(candles, model=ShortTarget(0.9), **common)

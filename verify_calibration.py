@@ -25,10 +25,11 @@ OUT OF SAMPLE and compares stated probability against realized frequency:
     it against any other barrier grades it on a trade nobody trained it for.
     The script refuses rather than guess.
 
-The verdict line is the decision band: on the bars the deployed threshold would
-have entered, does the realized rate clear risk.breakeven_probability for this
-barrier? Below it, the strategy cannot pay its costs at ANY threshold, and the
-answer is a better model or a better barrier -- not more tuning.
+The threshold slice reports the observed binary TP-before-SL label rate beside
+the hypothetical binary TP/SL reference implied by the barrier. It is not a
+trading verdict: the model supplies neither the probability of a timeout nor
+its conditional horizon-close return. Economic approval must instead use
+measured three-outcome execution returns.
 
 Usage:
     python verify_calibration.py --input artifacts/btcusdt_2020_2025.parquet \\
@@ -49,8 +50,8 @@ from pathlib import Path
 from btcusdt_quant import backtest, calibration, dataset, live, risk
 
 # Matches backtest.DEFAULT_ROUND_TRIP_COST_PCT (2 x (fee + slippage) per side).
-# The break-even win rate is a function of the barrier AND the cost, so a
-# report run with the wrong cost grades the model against the wrong hurdle.
+# The binary TP/SL reference is a function of the barrier AND the cost. It is
+# retained only to contextualize the binary calibration target, not as P&L.
 DEFAULT_ROUND_TRIP_COST = backtest.DEFAULT_ROUND_TRIP_COST_PCT
 
 # attach_labels needs a label_threshold for its `profitability` target. This
@@ -81,12 +82,11 @@ def _entered_sides(bundle: live.RegimeModelBundle, regime: str, features: dict[s
     policy, then (in the range regime) by the mean-reversion gate, which only
     permits LONG near the bottom of the range and SHORT near the top and blocks
     entry entirely in the middle. Range is ~91% of 2025's bars, so ignoring that
-    gate would inflate the decision band with bars that were never entered and
-    measure its win rate on the wrong sample -- while the band is precisely the
-    line the operator reads as the verdict.
+    gate would inflate the TP-label reference with bars that were never entered
+    and measure its label rate on the wrong sample.
 
     The reliability CURVE still wants every bar the model prices (it grades the
-    model, not the policy); only the decision band is gated. See main().
+    model, not the policy); only the TP-label reference is gated. See main().
     """
     allowed = (bundle.direction_policy or {}).get(regime, {"LONG", "SHORT"})
     allowed = backtest.apply_range_mean_reversion_gate(regime, features, set(allowed))
@@ -122,23 +122,24 @@ def _format_report(report: calibration.CalibrationReport) -> list[str]:
             f"    [{b.lower:.1f},{b.upper:.1f})  {b.count:>8,}   {b.mean_predicted:>8.4f}   "
             f"{b.observed_rate:>8.4f}   {b.gap:>+8.4f}{flag}"
         )
-    band = report.decision
-    if band is not None:
+    reference = report.entry_tp_rate_reference
+    if reference is not None:
         lines.append("")
-        if band.count == 0:
+        if reference.count == 0:
             lines.append(
-                f"    DECISION BAND (p >= {band.threshold:.4f}): no bars -- this side never enters. "
+                f"    TP-LABEL REFERENCE (p >= {reference.threshold:.4f}): no bars -- this side never enters. "
                 f"The threshold is above everything the model outputs on the bars the entry policy allows."
             )
         else:
-            verdict = "CLEARS break-even" if band.clears_breakeven else "BELOW break-even"
             lines.append(
-                f"    DECISION BAND (p >= {band.threshold:.4f}): n={band.count:,} "
-                f"({band.share_of_bars:.2%} of ENTERABLE bars)  predicted={band.mean_predicted:.4f}  "
-                f"observed={band.observed_rate:.4f}"
+                f"    TP-LABEL REFERENCE (p >= {reference.threshold:.4f}): n={reference.count:,} "
+                f"({reference.share_of_bars:.2%} of ENTERABLE bars)  predicted={reference.mean_predicted:.4f}  "
+                f"TP-before-SL={reference.tp_before_sl_rate:.4f}"
             )
             lines.append(
-                f"      break-even={band.breakeven_rate:.4f}  margin={band.margin:+.4f}  -> {verdict}"
+                f"      binary TP/SL reference={reference.binary_tp_hurdle_rate:.4f}  "
+                f"delta={reference.binary_tp_hurdle_margin:+.4f}; NOT AN ECONOMIC DECISION "
+                f"(timeout probability/settlement are not modeled)."
             )
     return lines
 
@@ -197,11 +198,11 @@ def main() -> int:
         )
         return 1
 
-    breakeven = risk.breakeven_probability(tp_pct, sl_pct, args.round_trip_cost)
+    binary_tp_reference = risk.breakeven_probability(tp_pct, sl_pct, args.round_trip_cost)
     print(f"[CALIB] artifact={args.model_dir}")
     print(f"[CALIB] barrier: tp={tp_pct:.4%} sl={sl_pct:.4%}  horizon={args.horizon} bars  "
           f"round_trip_cost={args.round_trip_cost:.4%}")
-    print(f"[CALIB] break-even win rate for this barrier: {breakeven:.4f}")
+    print(f"[CALIB] binary TP/SL reference rate (not an economic decision): {binary_tp_reference:.4f}")
 
     candles = (
         dataset.load_parquet_candles(input_path)
@@ -258,8 +259,8 @@ def main() -> int:
     #               honest or it is not, whether or not the strategy acts on it.
     #   entered  -- only the bars run_backtest would actually enter (direction
     #               policy + range mean-reversion gate). This grades the TRADE,
-    #               and the decision band must be measured here or it reports a
-    #               win rate for bars nobody takes.
+    #               and the TP-label reference must be measured here or it
+    #               reports a label rate for bars nobody takes.
     #
     # Per regime/side rather than pooled, because each is a separate model:
     # pooling would average a well-calibrated regime with a broken one and report
@@ -291,7 +292,7 @@ def main() -> int:
         "label_tp_pct": tp_pct,
         "label_sl_pct": sl_pct,
         "round_trip_cost": args.round_trip_cost,
-        "breakeven_win_rate": breakeven,
+        "binary_tp_reference_rate": binary_tp_reference,
         "regimes": {},
     }
     for (regime, side), (probabilities, outcomes) in sorted(samples.items()):
@@ -301,11 +302,11 @@ def main() -> int:
         band = None
         if threshold is not None:
             gated_probabilities, gated_outcomes = entered.get((regime, side), ([], []))
-            band = calibration.decision_band(
+            band = calibration.entry_tp_rate_reference(
                 gated_probabilities, gated_outcomes, threshold=threshold,
                 tp_pct=tp_pct, sl_pct=sl_pct, round_trip_cost=args.round_trip_cost,
             )
-            report = replace(report, decision=band)
+            report = replace(report, entry_tp_rate_reference=band)
         gated_count = 0 if band is None else len(entered.get((regime, side), ([], []))[0])
         print(f"\n  {regime}/{side}  (learned threshold: "
               f"{'none saved' if threshold is None else f'{threshold:.4f}'})")
