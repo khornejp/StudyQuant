@@ -657,13 +657,34 @@ def archive_row_count(archive_dir: Path) -> int:
     return total
 
 
-def archive_date_coverage(archive_dir: Path) -> dict[str, object]:
-    """Return coverage summary for BTCUSDT-1m-*.csv files in archive_dir."""
+def archive_date_coverage(
+    archive_dir: Path,
+    start_date: str | date | datetime | None = None,
+    end_date: str | date | datetime | None = None,
+) -> dict[str, object]:
+    """Return coverage for archive CSVs, optionally constrained to a request.
+
+    A collection report must describe the requested interval, not whichever
+    files happened to be left in its output directory from a previous run.
+    """
+    if (start_date is None) != (end_date is None):
+        raise ValueError("start_date and end_date must be supplied together")
+    requested_start = _parse_archive_date(start_date) if start_date is not None else None
+    requested_end = _parse_archive_date(end_date) if end_date is not None else None
+    if requested_start is not None and requested_end is not None and requested_start > requested_end:
+        raise ValueError("start_date must be on or before end_date")
     files = sorted(archive_dir.glob("BTCUSDT-1m-*.csv"))
+    if requested_start is not None and requested_end is not None:
+        files = [
+            path for path in files
+            if requested_start <= datetime.strptime(
+                _extract_date_from_archive_filename(path.name), "%Y-%m-%d"
+            ).date() <= requested_end
+        ]
     if not files:
         return {
-            "start_date": None,
-            "end_date": None,
+            "start_date": requested_start.isoformat() if requested_start is not None else None,
+            "end_date": requested_end.isoformat() if requested_end is not None else None,
             "raw_rows": 0,
             "canonical_rows": 0,
             "missing_days": [],
@@ -678,19 +699,24 @@ def archive_date_coverage(archive_dir: Path) -> dict[str, object]:
             reader = csv.reader(handle)
             next(reader, None)  # skip header
             raw_rows += sum(1 for _ in reader)
-    start_date = min(dates)
-    end_date = max(dates)
+    coverage_start = requested_start or min(dates)
+    coverage_end = requested_end or max(dates)
     try:
-        canonical = load_archive_candles(archive_dir)
-        canonical_rows = len(canonical)
+        # Do not call load_archive_candles(archive_dir): that would merge
+        # out-of-range stale files back into the requested report.
+        canonical_rows = len({
+            candle.open_time
+            for csv_path in files
+            for candle in load_archive_csv_candles(csv_path)
+        })
     except ValueError:
         canonical_rows = raw_rows
-    all_days = set(_iter_archive_dates(start_date, end_date))
+    all_days = set(_iter_archive_dates(coverage_start, coverage_end))
     found_days = set(dates)
     missing_days = sorted([d.isoformat() for d in all_days - found_days])
     return {
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
+        "start_date": coverage_start.isoformat(),
+        "end_date": coverage_end.isoformat(),
         "raw_rows": raw_rows,
         "canonical_rows": canonical_rows,
         "missing_days": missing_days,

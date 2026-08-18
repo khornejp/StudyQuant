@@ -496,6 +496,28 @@ class ArchiveDownloaderTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue((Path(tmp) / "checkpoint.json").exists())
 
+    def test_archive_collection_report_uses_requested_range_and_exposes_gaps(self) -> None:
+        """A partial request must not look complete because coverage uses file bounds."""
+        class FakeDownloader:
+            def download_range(self, start_date: str, end_date: str, output_dir: Path, checkpoint_file: Path | None = None) -> dataset.ArchiveDownloadSummary:
+                output_dir.mkdir(parents=True, exist_ok=True)
+                # Requested day one is present; day two is a genuine gap.  A
+                # stale file outside the request must not add rows or hide it.
+                (output_dir / "BTCUSDT-1m-2024-01-01.csv").write_text(make_archive_csv("2024-01-01", rows=2), encoding="utf-8")
+                (output_dir / "BTCUSDT-1m-2023-12-31.csv").write_text(make_archive_csv("2023-12-31", rows=9), encoding="utf-8")
+                checkpoint = checkpoint_file or output_dir / "checkpoint.json"
+                checkpoint.write_text(json.dumps({"last_completed_date": "2024-01-01", "downloaded_files": ["BTCUSDT-1m-2024-01-01.zip"], "failed_dates": ["2024-01-02"]}), encoding="utf-8")
+                return dataset.ArchiveDownloadSummary(output_dir, checkpoint, start_date, end_date, 2, 1, 1, "2024-01-01", ("BTCUSDT-1m-2024-01-01.zip",), ("2024-01-02",))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("btcusdt_quant.cli.dataset.BinanceArchiveDownloader", return_value=FakeDownloader()):
+                code = main(["collect-archive", "--start", "2024-01-01", "--end", "2024-01-02", "--output", tmp, "--allow-public-network"])
+            report = json.loads((Path(tmp) / "data_expansion_report.json").read_text(encoding="utf-8"))
+        self.assertEqual(code, 0)
+        self.assertEqual(report["raw_rows"], 2)
+        self.assertEqual(report["canonical_rows"], 2)
+        self.assertEqual(report["missing_days"], ["2024-01-02"])
+
 
 class ExternalSourcesCollectorTests(unittest.TestCase):
     def test_collector_requires_allow_network(self) -> None:

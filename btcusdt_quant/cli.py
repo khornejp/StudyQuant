@@ -933,7 +933,7 @@ def run_collect_archive(start: str, end: str, output: Path, checkpoint: Path | N
     if not allow_public_network:
         raise RuntimeError("archive collection requires --allow-public-network")
     summary = dataset.BinanceArchiveDownloader().download_range(start, end, output, checkpoint)
-    coverage = dataset.archive_date_coverage(output)
+    coverage = dataset.archive_date_coverage(output, start, end)
     raw_rows = coverage["raw_rows"]
     if raw_rows == 0:
         missing_dates = tuple(summary.failed_dates)
