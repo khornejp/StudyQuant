@@ -2538,6 +2538,13 @@ def write_training_artifacts(
     # trades. Only the regime-bundle path escaped that, and only because the
     # file is named short_model.json.
     model_payload["train_target"] = training_config.train_target
+    # A standalone artifact is otherwise unable to prove the triple-barrier it
+    # scored. Regime artifacts already carry these in their run summary; mirror
+    # them here so both invocation routes are auditable. Existing artifacts are
+    # intentionally unchanged and will continue to produce the legacy warning.
+    model_payload["label_tp_pct"] = training_config.tp_pct
+    model_payload["label_sl_pct"] = training_config.sl_pct
+    model_payload["label_horizon"] = build.label_horizon
     writer = governance.ArtifactWriter(output_dir)
     writer.write_provenance(
         resolved_config=asdict(training_config),

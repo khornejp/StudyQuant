@@ -1541,7 +1541,7 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> models.Model
     model_family = str(payload.get("model_family", ""))
 
     def _with_side(adapter):
-        """Carry the artifact's train_target onto the loaded adapter.
+        """Carry execution-critical artifact metadata onto the loaded adapter.
 
         Every adapter's from_dict reads only the fields it needs to rebuild the
         estimator and drops the rest, so the train_target written at the end of
@@ -1560,16 +1560,23 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> models.Model
         cannot reach raises, because a model whose side cannot be established is
         not safe to trade in either direction.
         """
-        target = payload.get("train_target")
-        if adapter is not None and target is not None:
+        if adapter is not None:
             try:
-                object.__setattr__(adapter, "train_target", str(target))
+                target = payload.get("train_target")
+                if target is not None:
+                    object.__setattr__(adapter, "train_target", str(target))
+                # Standalone artifacts used to lose this geometry on load, so
+                # barrier parity only worked for regime summaries. Keep the
+                # fields separate from model-family deserialisation just as we
+                # do train_target above.
+                for name in ("label_tp_pct", "label_sl_pct", "label_horizon"):
+                    value = payload.get(name)
+                    if value is not None:
+                        object.__setattr__(adapter, name, float(value) if name != "label_horizon" else int(value))
             except AttributeError as error:
                 raise ValueError(
-                    f"model artifact records train_target={target!r} but it could not be "
-                    f"attached to a {type(adapter).__name__}: {error}. Refusing to load, "
-                    f"because a model whose side is unknown is read as LONG and a "
-                    f"short-trained one would be bought exactly where it says to sell."
+                    f"model artifact metadata could not be attached to a {type(adapter).__name__}: {error}. "
+                    "Refusing to load because its execution semantics cannot be verified."
                 ) from error
         return adapter
 
@@ -2035,6 +2042,7 @@ class LiveEngine:
         soak_report_interval_minutes: float = 60.0,
         long_threshold_override: float | None = None,
         short_threshold_override: float | None = None,
+        execution_side: str = "both",
         regime_classifier_model: object | None = None,
     ) -> None:
         if strategy_profile not in STRATEGY_PROFILE_CHOICES:
@@ -2052,6 +2060,9 @@ class LiveEngine:
         self.strategy_profile = strategy_profile
         self.long_threshold_override = long_threshold_override
         self.short_threshold_override = short_threshold_override
+        if execution_side not in {"both", "long", "short"}:
+            raise ValueError("execution_side must be one of 'both', 'long', or 'short'")
+        self.execution_side = execution_side
         # For the non-EV decision paths (_apply_strategy_decision -> select_signal
         # in single-model/legacy artifacts), preserve the historical behavior of
         # forcing 0.55 when the user passed no explicit --long/--short-threshold.
@@ -2566,7 +2577,19 @@ class LiveEngine:
                 latest_features = self.feature_rows[-1].features
                 try:
                     probability = model.probability(latest_features)
-                    self.signal = self._apply_strategy_decision(probability, active_regime, "HOLD")
+                    short_sided = str(getattr(model, "train_target", "")).lower() in {"short_success", "short_profitability"}
+                    if short_sided:
+                        # A high score is P(short-success), never P(long-success).
+                        # The old generic selector would buy it.  Standalone live
+                        # inference has no second model, so only the explicit short
+                        # route may use it, and it can emit SELL/HOLD only.
+                        if self.execution_side != "short":
+                            raise ValueError("standalone short-target artifact requires execution_side='short'; refusing inverse BUY mapping")
+                        self.signal = "SELL" if probability > self._nonev_short_threshold else "HOLD"
+                    elif self.execution_side == "short":
+                        raise ValueError("execution_side='short' requires a recorded short-target artifact")
+                    else:
+                        self.signal = self._apply_strategy_decision(probability, active_regime, "HOLD")
                     self.model_inference = {"probability": probability, "signal": self.signal, "model_loaded": True, "regime": active_regime, "fallback_regime": fallback_regime}
                 except Exception as inference_error:
                     self.signal = "HOLD"
@@ -2834,6 +2857,7 @@ def run_live(
     soak_report_interval_minutes: float = 60.0,
     long_threshold_override: float | None = None,
     short_threshold_override: float | None = None,
+    execution_side: str = "both",
     regime_classifier_model: object | None = None,
 ) -> LiveRunResult:
     return LiveEngine(
@@ -2852,6 +2876,7 @@ def run_live(
         soak_report_interval_minutes=soak_report_interval_minutes,
         long_threshold_override=long_threshold_override,
         short_threshold_override=short_threshold_override,
+        execution_side=execution_side,
         regime_classifier_model=regime_classifier_model,
     ).run()
 

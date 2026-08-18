@@ -790,6 +790,14 @@ def _resolve_execution_outcome(
     can_exit_for_barrier = bar_count >= min_hold_bars
     if not ((can_exit_for_barrier and (hit_tp or hit_sl)) or bar_count >= label_horizon):
         return None
+    # A stop skipped by the opening print is already triggered before any
+    # intrabar tie can be inferred.  Charge the adverse executable open rather
+    # than a stop price which this candle demonstrably never traded.
+    if can_exit_for_barrier and hit_sl and (
+        (side == "BUY" and candle.open <= sl_price)
+        or (side == "SELL" and candle.open >= sl_price)
+    ):
+        return "SL", candle.open
     if hit_tp and hit_sl and can_exit_for_barrier:
         # Keep the strict comparisons from the authoritative long/short
         # labelers: a doji is ambiguous for long and SL-first for short.
@@ -1169,6 +1177,7 @@ def run_backtest(
     vol_gate_min: float = 0.0,
     trend_filter_sma_bars: int = 0,
     long_only: bool = False,
+    execution_side: str = "both",
     precomputed_routing_diagnostics: dict | None = None,
     fee_rate_per_side: float = DEFAULT_FEE_RATE_PER_SIDE,
     maker_fee_rate_per_side: float = DEFAULT_MAKER_FEE_RATE_PER_SIDE,
@@ -1282,7 +1291,8 @@ def run_backtest(
     # are about to execute. A mismatch cannot be detected from the results (they
     # look like ordinary bad numbers), so it has to be refused up front.
     barrier_warnings = check_execution_barrier_parity(
-        models_by_regime, exec_tp_pct, exec_sl_pct, allow_mismatch=allow_barrier_mismatch
+        models_by_regime if models_by_regime is not None else model,
+        exec_tp_pct, exec_sl_pct, allow_mismatch=allow_barrier_mismatch
     )
     # Resolved once: a short-trained model inverts the score-to-side mapping on
     # every single-model branch below.
@@ -1295,6 +1305,21 @@ def run_backtest(
     # intentionally remains the start state if the checkout changes while a
     # long run is executing: it identifies the modules and inputs the process
     # began with, whereas an end snapshot could describe code never executed.
+    if execution_side not in {"both", "long", "short"}:
+        raise ValueError("execution_side must be one of 'both', 'long', or 'short'")
+    # Compatibility spelling for callers predating the explicit selector.
+    if long_only and execution_side == "short":
+        raise ValueError("long_only and execution_side='short' cannot both hold")
+    if long_only:
+        execution_side = "long"
+    if execution_side == "short":
+        target = model_train_target(model)
+        if target is None:
+            raise ValueError("execution_side='short' requires a model artifact that records a short train_target; legacy artifacts cannot prove that HIGH means SELL")
+        if not _short_sided:
+            raise ValueError(f"execution_side='short' requires a short-target model, but recorded train_target is {target!r}")
+        if models_by_regime is not None:
+            raise ValueError("execution_side='short' currently accepts one standalone short-target model, not a regime/two-sided bundle")
     run_config = {
         "backtest_start": start_date,
         "backtest_end": end_date,
@@ -1315,6 +1340,7 @@ def run_backtest(
         "range_gate_edge": range_gate_edge,
         "vol_gate_feature": vol_gate_feature,
         "trend_filter_sma_bars": trend_filter_sma_bars,
+        "execution_side": execution_side,
         "vol_gate_min": vol_gate_min,
         "entry_quantile": entry_quantile,
         "entry_quantile_window": entry_quantile_window,
@@ -1383,7 +1409,7 @@ def run_backtest(
         print(
             f"[BACKTEST] volatility gate: entries only where {vol_gate_feature} >= {vol_gate_min:.6g}"
         )
-    if long_only and _short_sided:
+    if execution_side == "long" and _short_sided:
         raise ValueError(
             "long_only was requested but the model's train_target scores the SHORT side, "
             "where a high probability means SELL. The two cannot both hold."
@@ -1397,7 +1423,7 @@ def run_backtest(
         quantile_thresholds = QuantileEntryThresholds(
             long=RollingQuantileThreshold(1.0 - entry_quantile, window=entry_quantile_window,
                                           warmup=entry_quantile_warmup),
-            short=None if long_only else RollingQuantileThreshold(
+            short=None if execution_side == "long" else RollingQuantileThreshold(
                 1.0 - entry_quantile, window=entry_quantile_window, warmup=entry_quantile_warmup),
         )
         print(
@@ -1734,6 +1760,7 @@ def run_backtest(
 
     last_in_window_candle = None
     for i, candle in enumerate(candles):
+        filled_resting_order_this_bar = False
         # Trade only inside [start_date, end_date) (features still use full history)
         if start_dt is not None and candle.open_time < start_dt:
             continue
@@ -1867,7 +1894,7 @@ def run_backtest(
                     # the ONLY gate now; the old extra hard gate (prob>=0.55 /
                     # prob<=0.45) silently overrode threshold experiments on the
                     # legacy single-model paths.
-                    if prob > lt:
+                    if prob > (st if _short_sided and execution_side == "short" else lt):
                         signal = "SELL" if _short_sided else "BUY"
                     elif prob < st:
                         signal = "BUY" if _short_sided else "SELL"
@@ -1918,7 +1945,7 @@ def run_backtest(
                     lt, st = _resolve_backtest_thresholds(regime_bundle, default_regime, long_threshold, short_threshold, strategy, threshold_floor)
                     _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = default_regime, prob, prob, lt, st
                     _ctx_genuine_sides.add("short" if _short_sided else "long")
-                    if prob > lt:
+                    if prob > (st if _short_sided and execution_side == "short" else lt):
                         signal = "SELL" if _short_sided else "BUY"
                     elif prob < st:
                         signal = "BUY" if _short_sided else "SELL"
@@ -1934,17 +1961,33 @@ def run_backtest(
             # run has one score and one side, so the quantile is well defined
             # here; warmup puts it out of reach rather than falling back to the
             # fixed cutoff it was passed to replace.
-            if quantile_thresholds is not None and quantile_thresholds.long is not None:
-                _q = quantile_thresholds.long.resolve(prob)
-                lt = max(_q, threshold_floor) if _q is not None else _UNREACHABLE_THRESHOLD
+            _direct_quantile = (
+                quantile_thresholds.short
+                if _short_sided and execution_side == "short"
+                else quantile_thresholds.long
+            ) if quantile_thresholds is not None else None
+            if _direct_quantile is not None:
+                _q = _direct_quantile.resolve(prob)
+                if _short_sided and execution_side == "short":
+                    st = max(_q, threshold_floor) if _q is not None else _UNREACHABLE_THRESHOLD
+                else:
+                    lt = max(_q, threshold_floor) if _q is not None else _UNREACHABLE_THRESHOLD
             _ctx_regime, _ctx_long_prob, _ctx_short_prob, _ctx_lt, _ctx_st = None, prob, prob, lt, st
             _ctx_genuine_sides.add("short" if _short_sided else "long")
-            if prob > lt:
+            if prob > (st if _short_sided and execution_side == "short" else lt):
                 signal = "SELL" if _short_sided else "BUY"
-            elif prob < st and not long_only:
+            elif prob < st and execution_side != "long":
                 signal = "BUY" if _short_sided else "SELL"
             else:
                 signal = "HOLD"
+
+        # Apply one selector after every routing branch, including legacy and
+        # fallback paths. A short-only run can therefore emit SELL or HOLD, but
+        # never the low-score inverse BUY of a short-target model.
+        if execution_side == "long" and signal == "SELL":
+            signal = "HOLD"
+        elif execution_side == "short" and signal == "BUY":
+            signal = "HOLD"
 
         # Scores are available only after the volatility gate admits a bar;
         # retain every scored side before its threshold/quantile turns it into
@@ -2027,10 +2070,19 @@ def run_backtest(
                 # a bare touch may only fill the front of the queue. Needing
                 # the market to trade through the level models your order
                 # clearing. 0 = touch fills (optimistic).
+                # The candle must also CONTAIN the limit.  A bar wholly beyond
+                # it is a gap: OHLC proves the limit itself never traded, so a
+                # maker fill at that absent price would invent liquidity.
                 if pside == "BUY":
-                    hit = candle.low <= lp * (1.0 - maker_fill_penetration)
+                    hit = (
+                        candle.high >= lp
+                        and candle.low <= lp * (1.0 - maker_fill_penetration)
+                    )
                 else:
-                    hit = candle.high >= lp * (1.0 + maker_fill_penetration)
+                    hit = (
+                        candle.low <= lp
+                        and candle.high >= lp * (1.0 + maker_fill_penetration)
+                    )
                 if hit:
                     opened = _open_trade(
                         pside, lp, candle.open_time.isoformat(),
@@ -2039,6 +2091,7 @@ def run_backtest(
                     pending_order = None
                     if opened is not None:
                         active_trade = opened
+                        filled_resting_order_this_bar = True
                         _record_stage_predicate("maker_fill", opened.candidate_identity, True)
                         bar_count = 0
                         maker_orders_filled += 1
@@ -2055,6 +2108,19 @@ def run_backtest(
                 candle, active_trade.side, active_trade.tp_price, active_trade.sl_price,
                 bar_count, min_hold_bars, label_horizon,
             )
+            # A resting entry and its TP can both lie inside one OHLC bar, but
+            # OHLC supplies no ordering between the fill and the favourable
+            # excursion.  Do not credit that profitable ordering.  Keep an SL
+            # (the resolver's conservative tie outcome) and a horizon timeout.
+            if filled_resting_order_this_bar and resolved is not None and resolved[0] == "TP":
+                fill_bar_hit_sl = (
+                    candle.low <= active_trade.sl_price
+                    if active_trade.side == "BUY" else candle.high >= active_trade.sl_price
+                )
+                resolved = (
+                    ("SL", active_trade.sl_price) if fill_bar_hit_sl else
+                    (("TIMEOUT", candle.close) if bar_count >= label_horizon else None)
+                )
             if resolved is not None:
                 outcome, exit_price = resolved
 
@@ -2455,6 +2521,7 @@ def compare_strategies(
     vol_gate_min: float = 0.0,
     trend_filter_sma_bars: int = 0,
     long_only: bool = False,
+    execution_side: str = "both",
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison.
 
@@ -2562,6 +2629,7 @@ def compare_strategies(
             vol_gate_min=vol_gate_min,
             trend_filter_sma_bars=trend_filter_sma_bars,
             long_only=long_only,
+            execution_side=execution_side,
             fee_rate_per_side=fee_rate_per_side,
             maker_fee_rate_per_side=maker_fee_rate_per_side,
             maker_exit_outcomes=maker_exit_outcomes,

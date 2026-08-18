@@ -3739,6 +3739,163 @@ class ExecutionInstrumentationTests(unittest.TestCase):
         funnel = result.execution_funnel
         self.assertGreater(funnel["cooldown_single_position_admission"]["overall"]["count"], funnel["maker_fill"]["overall"]["count"])
 
+class ShortOnlyExecutionTests(unittest.TestCase):
+    """Behavioral probes for the explicit one-sided standalone short route."""
+
+    class _ShortScores:
+        train_target = "short_success"
+        def __init__(self, scores): self.scores = iter(scores)
+        def probability(self, values): return next(self.scores)
+
+    def _run(self, scores, **kwargs):
+        candles = _ohlc_candles([(100.0, 100.1, 99.9, 100.0)] * 16)
+        return run_backtest(
+            candles, model=self._ShortScores(scores), position_size=0.1,
+            label_horizon=3, cooldown_bars=0, long_threshold=0.8,
+            short_threshold=0.8, maker_fill_window=0, maker_exit_outcomes=[], **kwargs,
+        )
+
+    def test_short_selector_red_control_and_green_no_inverse_buy(self) -> None:
+        # RED control: the two-sided legacy mapping turns a low short-model
+        # score into an inverse BUY. GREEN: the explicit short route suppresses
+        # it while retaining the direct high-score SELL.
+        red = self._run([0.1] * 16, execution_side="both")
+        green = self._run([0.1, 0.95] * 8, execution_side="short")
+        self.assertGreater(red.signal_counts["BUY"], 0)
+        self.assertEqual(green.signal_counts["BUY"], 0)
+        self.assertGreater(green.signal_counts["SELL"], 0)
+        self.assertTrue(all(t.side == "SELL" for t in green.trades))
+        self.assertEqual(green.run_config["execution_side"], "short")
+
+    def test_short_tie_break_bullish_bearish_and_doji(self) -> None:
+        # Both barriers touch. Short TP is below entry and SL above it: bearish
+        # closes resolve TP, bullish and doji resolve SL.
+        expected = {99.8: "TP", 100.0: "SL", 100.2: "SL"}
+        for close, outcome in expected.items():
+            candle = _ohlc_candles([(100, 100.1, 99.9, 100), (100, 101.2, 98.8, close)])[1]
+            got, price = backtest_module._resolve_execution_outcome(candle, "SELL", 99.0, 100.5, 1, 0, 1)
+            self.assertEqual(got, outcome)
+            self.assertEqual(price, 99.0 if outcome == "TP" else 100.5)
+
+    def test_short_selector_refuses_recorded_long_target(self) -> None:
+        class _LongTarget:
+            train_target = "profitability"
+            def probability(self, values): return 0.95
+        with self.assertRaisesRegex(ValueError, "recorded train_target.*profitability"):
+            run_backtest(
+                _ohlc_candles([(100, 100.1, 99.9, 100)] * 8), model=_LongTarget(),
+                execution_side="short", label_horizon=3, cooldown_bars=0,
+            )
+
+    def test_cli_refusal_uses_artifact_target_not_its_filename(self) -> None:
+        # The filename deliberately claims "short"; only model.json metadata
+        # decides whether the short route is safe.
+        import tempfile
+        from pathlib import Path
+        from btcusdt_quant import cli, models
+        fitted = models.CentroidLinearClassifier().fit([[0.0], [1.0]], [0, 1])
+        payload = fitted.as_dict() | {"train_target": "profitability"}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact = root / "definitely_a_short_model.json"
+            artifact.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "recorded train_target is 'profitability'"):
+                cli.main([
+                    "backtest", "--model-artifact", str(artifact), "--side", "short",
+                    "--output", str(root / "out"),
+                ])
+
+    def test_loaded_standalone_geometry_enforces_barrier_parity(self) -> None:
+        # New payload fields survive load and turn a previously unauditable
+        # standalone route into a real mismatch refusal.
+        import tempfile
+        from pathlib import Path
+        from btcusdt_quant import models
+        fitted = models.CentroidLinearClassifier().fit([[0.0], [1.0]], [0, 1])
+        payload = fitted.as_dict() | {
+            "train_target": "short_success", "label_tp_pct": 0.01,
+            "label_sl_pct": 0.005, "label_horizon": 7,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "arbitrarily_named_long_model.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            loaded = live.load_model_artifact(path)
+            self.assertEqual(check_execution_barrier_parity(loaded, 0.01, 0.005), [])
+            with self.assertRaisesRegex(ValueError, "execution barrier does not match"):
+                check_execution_barrier_parity(loaded, 0.02, 0.005)
+
+    def test_short_maker_fill_and_limit_exits_are_mirrored(self) -> None:
+        # SELL limit at the signal close 100 is filled only after price trades
+        # up to it; then TP is below (99) and SL above (100.5). Both legs are
+        # resting limits, so neither charges taker slippage.
+        specs = [(100.0, 100.1, 99.9, 100.0), (99.8, 100.2, 99.5, 99.9), (99.9, 100.0, 98.8, 99.0)] + [(99, 99.1, 98.9, 99)] * 4
+        result = run_backtest(
+            _ohlc_candles(specs), model=self._ShortScores([0.95] * len(specs)), execution_side="short",
+            position_size=0.1, label_horizon=3, cooldown_bars=10, short_threshold=0.8,
+            exec_tp_pct=0.01, exec_sl_pct=0.005, maker_fill_window=2,
+        )
+        trade = result.trades[0]
+        self.assertEqual(trade.side, "SELL")
+        self.assertTrue(trade.entry_maker)
+        self.assertEqual(trade.outcome, "TP")
+        self.assertAlmostEqual(trade.tp_price, 99.0)
+        self.assertAlmostEqual(trade.sl_price, 100.5)
+        self.assertAlmostEqual(trade.slippage_pct, 0.0)
+        self.assertAlmostEqual(trade.fee_pct, 2.0 * result.maker_fee_rate_per_side)
+
+    def test_short_limit_does_not_fill_a_gap_that_never_traded_the_limit(self) -> None:
+        """A SELL limit at 100 cannot be filled by an OHLC bar wholly above 100.
+
+        The first live price in bar 1 is 102 and its low is 101, so the bar
+        proves that 100 was not traded.  Treating ``high >= limit`` as a fill
+        creates an order out of a price absent from the replay.
+        """
+        specs = [
+            (100.0, 100.1, 99.9, 100.0),  # signal: rest SELL limit 100
+            (102.0, 103.0, 101.0, 102.0), # gaps above it; 100 never trades
+            (102.0, 103.0, 101.0, 102.0), # expiry bar, same non-touch
+        ]
+        result = run_backtest(
+            _ohlc_candles(specs), model=self._ShortScores([0.95, 0.1, 0.1]),
+            execution_side="short", label_horizon=3, cooldown_bars=99,
+            short_threshold=0.8, maker_fill_window=2, fee_rate_per_side=0.0,
+            maker_fee_rate_per_side=0.0, slippage_rate_per_side=0.0,
+        )
+        diag = result.maker_fill_diagnostics
+        self.assertEqual(result.trade_count, 0)
+        self.assertEqual(diag["orders_placed"], 1)
+        self.assertEqual(diag["orders_filled"], 0)
+        self.assertEqual(diag["orders_expired"], 1)
+
+    def test_short_stop_gap_uses_the_adverse_open_not_an_untraded_stop_price(self) -> None:
+        # A short's 100.5 stop is skipped by an open at 102.  Pricing the exit
+        # at 100.5 fabricates a better cover than the OHLC says was available.
+        candle = _ohlc_candles([(102.0, 103.0, 101.5, 102.0)])[0]
+        outcome, price = backtest_module._resolve_execution_outcome(
+            candle, "SELL", 99.0, 100.5, 1, 0, 3,
+        )
+        self.assertEqual(outcome, "SL")
+        self.assertEqual(price, 102.0)
+
+    def test_short_fill_bar_tp_is_deferred_when_ohlc_cannot_order_entry_and_tp(self) -> None:
+        # Bar 1 contains both the SELL limit (100) and its 99 TP.  OHLC cannot
+        # say whether the 99 low came before the rise which filled the short.
+        # A TP credit on this bar would select the profitable ordering.
+        specs = [
+            (100.0, 100.1, 99.9, 100.0),
+            (99.5, 100.2, 98.8, 99.8),  # contains entry + TP, not SL
+            (99.8, 100.0, 99.6, 99.8),
+        ]
+        result = run_backtest(
+            _ohlc_candles(specs), model=self._ShortScores([0.95, 0.1, 0.1]),
+            execution_side="short", label_horizon=3, cooldown_bars=99,
+            short_threshold=0.8, exec_tp_pct=0.01, exec_sl_pct=0.005,
+            maker_fill_window=2, fee_rate_per_side=0.0,
+            maker_fee_rate_per_side=0.0, slippage_rate_per_side=0.0,
+        )
+        self.assertEqual(result.trade_count, 1)
+        self.assertNotEqual(result.trades[0].outcome, "TP")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1023,6 +1023,7 @@ def run_live(
     soak_report_interval_minutes: float = 60.0,
     long_threshold_override: float | None = None,
     short_threshold_override: float | None = None,
+    execution_side: str = "both",
     regime_classifier_dir: str | None = None,
 ) -> dict[str, object]:
     exchange_adapter = create_exchange_adapter(exchange_name, allow_signed_network, allow_prod, approval_artifacts, recv_window_ms)
@@ -1053,6 +1054,7 @@ def run_live(
         soak_report_interval_minutes=soak_report_interval_minutes,
         long_threshold_override=long_threshold_override,
         short_threshold_override=short_threshold_override,
+        execution_side=execution_side,
         regime_classifier_model=regime_classifier_model,
     )
     summary = dict(result.summary)
@@ -1729,6 +1731,7 @@ def build_parser() -> argparse.ArgumentParser:
     live_parser.add_argument("--strategy-profile", choices=live.STRATEGY_PROFILE_CHOICES, default="balanced", help="strategy profile for regime-aware signal thresholds and TP/SL pricing")
     live_parser.add_argument("--long-threshold", type=float, default=None, help="explicit LONG-entry probability threshold. When omitted, live uses the learned per-regime holdout threshold (selected_thresholds) if the artifact has one, else 0.55. Pass a value to override both.")
     live_parser.add_argument("--short-threshold", type=float, default=None, help="explicit SHORT-entry probability threshold. When omitted, live uses the learned per-regime holdout threshold (selected_thresholds) if the artifact has one, else 0.55. Pass a value to override both.")
+    live_parser.add_argument("--side", choices=("both", "long", "short"), default="both", help="standalone short-target artifacts require --side short; this emits SELL/HOLD only and refuses the former inverse BUY mapping.")
     live_parser.add_argument("--min-ev", type=float, default=0.0001, help="minimum expected value for entry signals (0.01%% = 0.0001)")
     live_parser.add_argument("--soak-duration-hours", type=float, default=0.0, help="soak test duration in hours (0 = normal mode, >0 = soak mode)")
     live_parser.add_argument("--soak-report-interval-minutes", type=float, default=60.0, help="soak test periodic report interval in minutes")
@@ -1762,7 +1765,8 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--entry-quantile", type=float, default=None, help='enter the top FRACTION of bars by model probability instead of using a fixed cutoff -- 0.05 means the most confident 5%% of bars. The cutoff is recomputed every bar from the probabilities seen BEFORE it (strictly past-only), so it holds selectivity constant while the score distribution moves. A fixed number does the opposite: on 2026 H1 the horizon-return model kept its ranking (top 2%% still separated from top 10%%) while the level drifted, so the same 0.51 cutoff selected a different slice than it did in training. Requires a two-sided/bundle model: on the single-model path --short-threshold is a LOW cutoff on the same score, where a high-side quantile would be backwards. Cannot be combined with an explicit --long-threshold/--short-threshold.')
     backtest_parser.add_argument("--entry-quantile-window", type=int, default=0, help='bars of history the --entry-quantile cutoff is measured over. 0 = expanding (all history), which is causal but nearly inert here: 2.65M rows are already banked from 2020-2025, so 2026 H1 barely moves the quantile and expanding reproduces a fixed threshold at greater cost. A finite window is what tracks the shift -- e.g. 129600 is 90 days of 1m bars. The length is a free parameter: choose it before looking at the evaluation window, and report it, because sweeping it against the result is threshold fitting under another name.')
     backtest_parser.add_argument("--entry-quantile-warmup", type=int, default=None, help="observations the --entry-quantile estimator needs before it will trade. Default scales as 200/min(q,1-q) so the selected tail holds ~200 samples, which assumes a long stream: behind a volatility gate the estimator only sees the bars the gate passes, and on 2026 H1 that was 11,318 bars against a derived warmup of 10,000, so the run made zero trades and looked like a filter working perfectly. The fold analysis used 1000. A run that never leaves warmup now warns.")
-    backtest_parser.add_argument("--long-only", action="store_true", help="never emit a SELL on the single-model path, where a short fires because the one score is LOW rather than because a short model rated the bar. Required to combine --entry-quantile with a single model: a top-fraction quantile is a HIGH cutoff and would gate that low-side short backwards. Also refuses a short-target model, since there a high score already means SELL.")
+    backtest_parser.add_argument("--side", choices=("both", "long", "short"), default="both", help="explicit execution side. --side short accepts exactly one standalone artifact whose recorded train_target is short_success or short_profitability, then emits SELL or HOLD only; it refuses long-target and legacy unmarked artifacts. Use --side long for the corresponding one-sided route. Default both preserves existing behavior.")
+    backtest_parser.add_argument("--long-only", action="store_true", help="deprecated compatibility spelling for --side long; cannot be combined with --side short.")
     backtest_parser.add_argument("--vol-gate-feature", default=None, help='refuse entries on bars where this volatility feature is below --vol-gate-min. Not a filter on which bar looks best -- a refusal to trade where the horizon has too little dispersion for any realistic IC to pay the round trip, because edge ~ IC * sigma_H while cost is flat. Measured on 2020-2025 the std of the 45-bar forward return runs 22 bps in the lowest rv_60 quintile against 100 bps in the highest, so the bottom quintile needs IC 0.18 to clear 4 bps and the top needs 0.04. Gated bars are never shown to the model, so they are not HOLDs it chose. Pick the feature and minimum from the TRAINING period; deriving them from the evaluation window fits the gate to what it is judged on.')
     backtest_parser.add_argument("--vol-gate-min", type=float, default=0.0, help='minimum value of --vol-gate-feature for a bar to be eligible. Example: rv_60 >= 0.000961841 is the top quintile boundary measured on 2020-2025.')
     backtest_parser.add_argument("--trend-filter-sma", type=int, default=0, dest="trend_filter_sma_bars", help="require close > SMA(N bars) for a LONG entry and close < it for a SHORT one; 0 disables. N is in 1m bars, so 288000 is 200 daily bars. Measured on the gated fold test slices, this removed the entire -41%% crash fold (1021 causal top-2%% entries became 0) and took the pooled long result from +0.18 bps per trade at t=+0.34 to +1.98 at t=+2.47. It is not free: one uptrend fold fell from +2.55 to +0.79, so the filter cuts good trades along with the bad. Bars before the window fills are refused rather than waved through -- an unknown trend is not an uptrend. Only the long side was measured; the short rule is its mirror.")
@@ -2221,6 +2225,7 @@ def main(argv: list[str] | None = None) -> int:
                 soak_report_interval_minutes=args.soak_report_interval_minutes,
                 long_threshold_override=args.long_threshold,
                 short_threshold_override=args.short_threshold,
+                execution_side=args.side,
                 regime_classifier_dir=args.regime_classifier_dir,
             )
         except (OSError, RuntimeError, ValueError) as error:
@@ -2473,6 +2478,33 @@ def main(argv: list[str] | None = None) -> int:
                 models_by_regime = {"all": regime_bundle}
                 model = None  # both sides now route through the bundle
                 print("[BACKTEST] two-sided: long=--model-artifact, short=--short-model-artifact, no regime routing")
+            if args.long_only and args.side != "both":
+                raise SystemExit("--long-only is the compatibility spelling for --side long; do not combine it with --side")
+            execution_side = "long" if args.long_only else args.side
+            if execution_side == "short":
+                if args.long_threshold is not None:
+                    raise SystemExit(
+                        "--side short cannot accept --long-threshold: a cutoff derived for "
+                        "P(long_success) is not a cutoff for P(short_success). Use a separately "
+                        "justified --short-threshold."
+                    )
+                if args.short_model_artifact or regime_bundle is not None:
+                    raise SystemExit(
+                        "--side short accepts one standalone --model-artifact, not --short-model-artifact "
+                        "or a regime/two-sided bundle. The artifact in that single slot must itself score P(short_success)."
+                    )
+                target = backtest.model_train_target(model)
+                if target is None:
+                    raise SystemExit(
+                        "--side short requires an artifact with recorded train_target short_success or "
+                        "short_profitability; a legacy artifact cannot prove that HIGH means SELL."
+                    )
+                if not backtest.model_is_short_sided(model):
+                    raise SystemExit(
+                        f"--side short refused --model-artifact because its recorded train_target is {target!r}, "
+                        "which scores the LONG side. This check uses artifact metadata, not the filename."
+                    )
+                print(f"[BACKTEST] short-only: artifact train_target={target}; high scores may SELL, low scores HOLD")
             if args.entry_quantile is not None:
                 if not 0.0 < args.entry_quantile < 1.0:
                     raise SystemExit(
@@ -2485,10 +2517,10 @@ def main(argv: list[str] | None = None) -> int:
                         "--long-threshold/--short-threshold. Pass one or the other; passing both would leave "
                         "which mechanism gated the run unreadable from the flags."
                     )
-                if models_by_regime is None and not args.long_only:
+                if models_by_regime is None and execution_side == "both":
                     raise SystemExit(
                         "--entry-quantile needs a two-sided or regime-bundle model "
-                        "(--short-model-artifact, or a bundle --model-artifact), or --long-only. On the "
+                        "(--short-model-artifact, or a bundle --model-artifact), or --side long/--side short. On the "
                         "single-model path --short-threshold is a LOW cutoff on the same score, so a "
                         "top-fraction quantile would gate shorts backwards; --long-only removes that side "
                         "instead of gating it wrongly."
@@ -2631,6 +2663,7 @@ def main(argv: list[str] | None = None) -> int:
                 vol_gate_min=args.vol_gate_min,
                 trend_filter_sma_bars=args.trend_filter_sma_bars,
                 long_only=args.long_only,
+                execution_side=execution_side,
             )
             kelly_config = None
             if args.kelly_sizing:
@@ -2674,6 +2707,7 @@ def main(argv: list[str] | None = None) -> int:
                 vol_gate_min=args.vol_gate_min,
                 trend_filter_sma_bars=args.trend_filter_sma_bars,
                 long_only=args.long_only,
+                execution_side=execution_side,
                 label_horizon=args.horizon,
                 precomputed_routing_diagnostics=shared_routing_diag,
                 regime_detector=regime_detector,
