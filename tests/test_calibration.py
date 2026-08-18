@@ -60,6 +60,29 @@ class ThresholdSelectionArtifactTests(unittest.TestCase):
         self.assertGreater(compressed_bytes, 0)
         self.assertEqual(replayed, {"fold_0": audit["selected_threshold"]})
 
+    def test_replay_uses_persisted_candidate_scores_not_quadratic_rescoring(self) -> None:
+        """A realistic artifact must replay without calling the selector again."""
+        from btcusdt_quant import training
+
+        probabilities = [0.1 + index / 1000 for index in range(800)]
+        labels = [index % 3 == 0 for index in range(800)]
+        payoffs = [0.003 if label else -0.0015 for label in labels]
+        audit = training.threshold_selection_audit(
+            probabilities, labels, objective="trading_pnl", min_trades=1,
+            realized_payoffs=payoffs,
+        )
+        record = training.ThresholdSelectionRecord(
+            selection_id="fold_0", probabilities=probabilities, labels=labels,
+            realized_payoffs=payoffs, audit=audit,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "threshold_selection_inputs.npz"
+            training.write_threshold_selection_artifact(path, [record])
+            with patch.object(training, "select_threshold", side_effect=AssertionError("must not rescore")):
+                replayed = training.rederive_thresholds_from_selection_artifact(path)
+
+        self.assertEqual(replayed, {"fold_0": audit["selected_threshold"]})
+
 
 class BreakevenProbabilityTests(unittest.TestCase):
     def test_matches_the_barrier_economics_in_the_handoff(self) -> None:

@@ -1978,7 +1978,8 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
         from btcusdt_quant import training
         probs = [0.6, 0.4, 0.7, 0.3, 0.8]
         labels = [1, 0, 1, 0, 1]
-        m = training.metrics(probs, labels, 0.5)
+        m = training.metrics(probs, labels, 0.5,
+                             realized_payoffs=[0.003 if label else -0.0015 for label in labels])
         self.assertIn("mdd", m, "metrics should include mdd")
         self.assertIn("sharpe", m, "metrics should include sharpe")
         self.assertIn("calmar", m, "metrics should include calmar")

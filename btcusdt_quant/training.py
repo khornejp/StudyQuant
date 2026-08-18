@@ -1463,7 +1463,13 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
                             continue
                         probs = model.predict_proba(regime_matrix)
                         key = f"{regime_name}_{side}"
-                        regime_test_metrics[key] = metrics(probs, regime_labels, 0.5)
+                        regime_test_metrics[key] = metrics(
+                            probs, regime_labels, 0.5,
+                            realized_payoffs=realized_payoffs(
+                                regime_rows, target_key,
+                                training_config.tp_pct, training_config.sl_pct,
+                            ),
+                        )
                         print(f"[TRAIN]   Test period {regime_name}/{side}: n={len(regime_rows)} F1={regime_test_metrics[key]['f1']:.4f}, Acc={regime_test_metrics[key]['accuracy']:.4f}")
                     except Exception as e:
                         print(f"[TRAIN]   Test period evaluation for {regime_name}/{side} failed: {e}")
@@ -2320,7 +2326,25 @@ def threshold_selection_audit(
     best_threshold = 0.5
     best_score = (-1.0, -1.0, 0.0)
     for threshold in sorted(candidates):
-        current = metrics(probabilities, labels, threshold)
+        # This selector ranks classification quantities only.  Do not invoke
+        # metrics() here without executable settlements: that used to reach
+        # _trading_pnl's label-only class-0 -> -sl_pct fallback even though
+        # this objective never uses a PnL quantity.
+        predictions = [1 if probability >= threshold else 0 for probability in probabilities]
+        tp = sum(1 for prediction, label in zip(predictions, labels) if prediction == 1 and label == 1)
+        tn = sum(1 for prediction, label in zip(predictions, labels) if prediction == 0 and label == 0)
+        fp = sum(1 for prediction, label in zip(predictions, labels) if prediction == 1 and label == 0)
+        fn = sum(1 for prediction, label in zip(predictions, labels) if prediction == 0 and label == 1)
+        precision = tp / (tp + fp) if tp + fp else 0.0
+        recall = tp / (tp + fn) if tp + fn else 0.0
+        f1 = 2.0 * precision * recall / (precision + recall) if precision + recall else 0.0
+        current = {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "accuracy": (tp + tn) / len(labels),
+            "predicted_positive_rate": sum(predictions) / len(predictions),
+        }
         # Use precision with minimum recall constraint (recall >= 0.3)
         # If recall < 0.3, fall back to F1
         if current["recall"] >= 0.3:
@@ -2354,12 +2378,12 @@ def _trading_pnl(
     """Simulate per-row PnL for a SIDE-SPECIFIC success model.
 
     Semantics match how these models are actually traded:
-    - prob >= threshold  -> ENTER the side. With ``realized_payoffs``, the
+    - prob >= threshold  -> ENTER the side. ``realized_payoffs`` is required:
       position is settled exactly as execution does: TP/SL at their barrier
       and TIMEOUT at the horizon close; every completed position pays the
-      maker/maker round-trip cost. Without that input this legacy helper can
-      only map class 0 to -sl_pct, so it must not be used for production
-      threshold selection.
+      maker/maker round-trip cost. A class label cannot settle a timeout, so
+      label-only scoring is rejected rather than silently treating class 0 as
+      an SL.
     - prob <  threshold  -> NO TRADE -> PnL 0. (The old version treated this
       as an OPPOSITE position, i.e. below-threshold rows scored +/-0.001 as if
       shorting the signal -- which rewarded thresholds that let the "inverse"
@@ -2371,7 +2395,11 @@ def _trading_pnl(
     reflect cost-aware asymmetric-barrier economics.
     """
     n = min(len(probabilities), len(labels))
-    if realized_payoffs is not None and len(realized_payoffs) != n:
+    if realized_payoffs is None:
+        raise ValueError(
+            "realized_payoffs is required: label-only class-0 settlement is not executable"
+        )
+    if len(realized_payoffs) != n:
         # A partial vector used to fall through to ``label == 0 -> -sl_pct``
         # below.  That makes an otherwise correctly reconstructed timeout turn
         # into an SL solely because of a caller alignment bug.  Refuse it: the
@@ -2385,7 +2413,7 @@ def _trading_pnl(
         if prob < threshold:
             pnl.append(0.0)
             continue
-        gross = realized_payoffs[index] if realized_payoffs is not None else (tp_pct if label == 1 else -sl_pct)
+        gross = realized_payoffs[index]
         pnl.append(float(gross) - round_trip_cost)
     return pnl
 
@@ -2649,25 +2677,45 @@ def write_threshold_selection_artifact(path: Path, records: Sequence[ThresholdSe
 
 
 def rederive_thresholds_from_selection_artifact(path: Path) -> dict[str, float]:
-    """Recompute selector outcomes using only one persisted NPZ artifact."""
+    """Replay selector outcomes using only one persisted NPZ artifact.
+
+    Candidate score tuples are emitted by :func:`threshold_selection_audit`
+    beside the exact input rows.  Re-scoring every persisted probability as a
+    candidate is quadratic in a real fold (roughly 330k candidates times 330k
+    rows), so it made the purported ``without refit`` replay unusable on the
+    actual artifacts.  Selecting the maximum persisted eligible tuple is the
+    same decision and remains independently reproducible from this NPZ alone.
+    """
     import numpy as np
 
     with np.load(path, allow_pickle=False) as payload:
         metadata = json.loads(str(payload["metadata"].item()))
-        probabilities = payload["probabilities"]
-        labels = payload["labels"]
-        payoffs = payload["realized_payoffs"]
+        candidate_ids = payload["candidate_selection_index"]
+        candidate_thresholds = payload["candidate_thresholds"]
+        candidate_eligible = payload["candidate_eligible"]
+        candidate_scores = payload["candidate_scores"]
         outcomes: dict[str, float] = {}
-        for selection in metadata["selections"]:
-            parameters = selection["parameters"]
-            outcomes[str(selection["selection_id"])] = select_threshold(
-                probabilities[int(selection["row_start"]):int(selection["row_stop"])].tolist(),
-                labels[int(selection["row_start"]):int(selection["row_stop"])].tolist(),
-                objective=str(parameters["objective"]), min_trades=parameters["min_trades"],
-                tp_pct=float(parameters["tp_pct"]), sl_pct=float(parameters["sl_pct"]),
-                round_trip_cost=float(parameters["round_trip_cost"]),
-                realized_payoffs=payoffs[int(selection["row_start"]):int(selection["row_stop"])].tolist(),
-            )
+        for selection_index, selection in enumerate(metadata["selections"]):
+            rows = np.flatnonzero(candidate_ids == selection_index)
+            # Empty-input selection has no candidates and intentionally falls
+            # back to the selector's documented default.
+            if not len(rows):
+                outcomes[str(selection["selection_id"])] = 0.5
+                continue
+            eligible = rows[candidate_eligible[rows]]
+            if not len(eligible):
+                outcomes[str(selection["selection_id"])] = 0.5
+                continue
+            # Strictly-greater is deliberate: it preserves the original
+            # selector's first-in-sorted-candidate tie break.
+            best = int(eligible[0])
+            best_score = tuple(float(value) for value in candidate_scores[best])
+            for index in eligible[1:]:
+                score = tuple(float(value) for value in candidate_scores[int(index)])
+                if score > best_score:
+                    best = int(index)
+                    best_score = score
+            outcomes[str(selection["selection_id"])] = float(candidate_thresholds[best])
     return outcomes
 
 
@@ -3459,7 +3507,12 @@ def run_ensemble_training(
     # Evaluate on full dataset
     full_probs = ensemble_model.predict_proba(feature_matrix(build.labeled_rows, build.feature_names))
     full_labels = [row.targets.get("profitability", row.label) for row in build.labeled_rows]
-    full_metrics = metrics(full_probs, full_labels, 0.5)
+    full_metrics = metrics(
+        full_probs, full_labels, 0.5,
+        realized_payoffs=realized_payoffs(
+            build.labeled_rows, "profitability", config.tp_pct, config.sl_pct,
+        ),
+    )
 
     # Write artifacts
     output_dir.mkdir(parents=True, exist_ok=True)

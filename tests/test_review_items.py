@@ -3056,6 +3056,45 @@ class MakerFillTests(unittest.TestCase):
         self.assertAlmostEqual(thin["long_net_bps"], -2.0)
         self.assertEqual(oos_trading_metrics([], [], 0.5), {})
 
+    def test_threshold_selection_settles_timeouts_not_their_labels(self) -> None:
+        from btcusdt_quant.training import metrics, select_threshold
+
+        # Same probabilities and TP/SL labels; only the twelve timeout
+        # settlements flip sign. A label-only selector cannot distinguish them.
+        probabilities = [.95, .90, .85, .80, .75, .70, .65, .60,
+                         .55, .50, .45, .40, .35, .30, .25, .20]
+        labels = [1, 1, 1, 1] + [0] * 12
+        common = dict(objective="trading_pnl", min_trades=1, tp_pct=.003,
+                      sl_pct=.0015, round_trip_cost=.0004)
+        positive = [.003] * 4 + [.010] * 12
+        negative = [.003] * 4 + [-.010] * 12
+        positive_threshold = select_threshold(probabilities, labels,
+                                              realized_payoffs=positive, **common)
+        negative_threshold = select_threshold(probabilities, labels,
+                                              realized_payoffs=negative, **common)
+        self.assertEqual(positive_threshold, .20)
+        self.assertEqual(negative_threshold, .80)
+        self.assertNotEqual(positive_threshold, negative_threshold)
+        positive_metrics = metrics(probabilities, labels, positive_threshold,
+                                   realized_payoffs=positive, **{k: v for k, v in common.items() if k != "objective" and k != "min_trades"})
+        negative_metrics = metrics(probabilities, labels, negative_threshold,
+                                   realized_payoffs=negative, **{k: v for k, v in common.items() if k != "objective" and k != "min_trades"})
+        self.assertNotEqual(positive_metrics["sharpe"], negative_metrics["sharpe"])
+
+    def test_realized_payoffs_must_be_complete_and_never_fall_back_to_labels(self) -> None:
+        from btcusdt_quant.training import _trading_pnl
+
+        probabilities, labels = [.9, .8, .7], [1, 0, 0]
+        payoffs = [.003, .010, -.002]
+        with self.assertRaisesRegex(ValueError, "got 2, expected 3"):
+            _trading_pnl(probabilities, labels, .5, realized_payoffs=payoffs[:2])
+        full = _trading_pnl(probabilities, labels, .5, round_trip_cost=.0004,
+                            realized_payoffs=payoffs)
+        for observed, expected in zip(full, [.0026, .0096, -.0024]):
+            self.assertAlmostEqual(observed, expected)
+        with self.assertRaisesRegex(ValueError, "label-only class-0 settlement"):
+            _trading_pnl(probabilities, labels, .5)
+
     def test_positions_never_overlap_in_time(self) -> None:
         # The suite is structurally blind to this class of defect: a backtest
         # can hold two positions at once, or size one with equity that already
