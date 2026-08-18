@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from btcusdt_quant import calibration, governance, risk
+from btcusdt_quant.ranking_skill import _ranked_masks, _share_and_se
 from btcusdt_quant.calibration import (
     MIN_BIN_SAMPLES,
     brier_score,
@@ -20,6 +21,20 @@ from btcusdt_quant.calibration import (
     expected_calibration_error,
     reliability_curve,
 )
+
+
+def test_ranking_skill_uses_fold_local_top_tail_and_paired_subset_se() -> None:
+    import numpy as np
+
+    probabilities = np.array([0.1, 0.2, 0.3, 0.4, 0.5])
+    masks = _ranked_masks(probabilities)
+    assert masks["top_1_pct"].sum() == 1
+    assert masks["top_1_pct"][-1]
+    values = np.array([0, 0, 0, 0, 1], dtype=bool)
+    share, lift_pp, se_pp = _share_and_se(values, masks["top_1_pct"])
+    assert share == 1.0
+    assert lift_pp == 80.0
+    assert se_pp > 0.0
 
 
 class ThresholdSelectionArtifactTests(unittest.TestCase):
