@@ -798,6 +798,12 @@ def _resolve_execution_outcome(
         or (side == "SELL" and candle.open >= sl_price)
     ):
         return "SL", candle.open
+    # A short TP is a resting BUY.  If the opening print gaps below it, the
+    # target price was never available: covering at TP would invent a price
+    # above the bar's high and overstate the short's gain.  Use the first
+    # executable print, just as the adverse stop-gap branch above does.
+    if can_exit_for_barrier and hit_tp and side == "SELL" and candle.open <= tp_price:
+        return "TP", candle.open
     if hit_tp and hit_sl and can_exit_for_barrier:
         # Keep the strict comparisons from the authoritative long/short
         # labelers: a doji is ambiguous for long and SL-first for short.
@@ -1793,6 +1799,11 @@ def run_backtest(
         # never claim "short". Empty set => the Kelly guard refuses the entry
         # (fail-closed): a signal with no declared side is a routing bug.
         _ctx_genuine_sides: set[str] = set()
+        # An invalid model output is neither a low-confidence short nor a
+        # probability to include in calibration/quantile evidence.  In
+        # particular, mapping NaN through the low-score branch used to leave a
+        # short-only run as HOLD but crash later when its NaN was bucketed.
+        invalid_model_score = False
 
         # Volatility gate. Not a filter on WHICH bar looks best -- a refusal to
         # trade where the horizon's dispersion is too small for any realistic
@@ -1954,6 +1965,16 @@ def run_backtest(
         elif model is not None and i < len(feature_rows):
             features_dict = feature_rows[i].features
             prob = model.probability(features_dict)
+            try:
+                prob = float(prob)
+                invalid_model_score = not isfinite(prob) or not 0.0 <= prob <= 1.0
+            except (TypeError, ValueError):
+                invalid_model_score = True
+            # Keep the existing arithmetic branches total; the invalid flag
+            # below removes this placeholder before it can become a signal or
+            # a recorded probability.
+            if invalid_model_score:
+                prob = 0.0
             lt = long_threshold if long_threshold is not None else strategy.long_threshold
             st = short_threshold if short_threshold is not None else strategy.short_threshold
             # This branch resolved its cutoffs inline and so never saw the
@@ -1966,7 +1987,7 @@ def run_backtest(
                 if _short_sided and execution_side == "short"
                 else quantile_thresholds.long
             ) if quantile_thresholds is not None else None
-            if _direct_quantile is not None:
+            if _direct_quantile is not None and not invalid_model_score:
                 _q = _direct_quantile.resolve(prob)
                 if _short_sided and execution_side == "short":
                     st = max(_q, threshold_floor) if _q is not None else _UNREACHABLE_THRESHOLD
@@ -1980,6 +2001,11 @@ def run_backtest(
                 signal = "BUY" if _short_sided else "SELL"
             else:
                 signal = "HOLD"
+
+        if invalid_model_score:
+            signal = "HOLD"
+            _ctx_long_prob = _ctx_short_prob = None
+            _ctx_genuine_sides.clear()
 
         # Apply one selector after every routing branch, including legacy and
         # fallback paths. A short-only run can therefore emit SELL or HOLD, but

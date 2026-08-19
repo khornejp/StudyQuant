@@ -14,6 +14,8 @@ import math
 import dataclasses
 import random
 import unittest
+
+from btcusdt_quant.artifact_audit import reconstruct_exit, resolve_ohlc_exit
 from typing import Mapping
 from unittest import mock
 
@@ -3876,6 +3878,96 @@ class ShortOnlyExecutionTests(unittest.TestCase):
         )
         self.assertEqual(outcome, "SL")
         self.assertEqual(price, 102.0)
+
+    def test_short_tp_gap_uses_the_open_not_an_untraded_better_tp_price(self) -> None:
+        # A resting BUY TP at 99 is skipped by a gap-down open at 97.  Booking
+        # 99 would credit a cover at a price above this bar's high (98), i.e.
+        # a price the bar never traded and a better result than was executable.
+        candle = _ohlc_candles([(97.0, 98.0, 96.5, 97.5)])[0]
+        outcome, price = backtest_module._resolve_execution_outcome(
+            candle, "SELL", 99.0, 100.5, 1, 0, 3,
+        )
+        self.assertEqual(outcome, "TP")
+        self.assertEqual(price, 97.0)
+        self.assertEqual(
+            resolve_ohlc_exit({"open": 97.0, "high": 98.0, "low": 96.5, "close": 97.5}, "SELL", 99.0, 100.5, 1, 0, 3),
+            ("TP", 97.0, "gapped_tp"),
+        )
+
+    def test_short_run_is_reconstructible_from_ohlc_and_accounted_with_short_sign(self) -> None:
+        # This deliberately has three different short outcomes: a maker fill
+        # then TP, a maker fill then SL, and another maker fill then TP.  The
+        # expected entries/exits are written from the candles, not copied from
+        # the engine's result.
+        specs = [
+            (100.0, 100.1, 99.9, 100.0),  # rest SELL 100
+            (99.8, 100.2, 99.5, 99.9),     # fill 100
+            (99.9, 100.0, 98.8, 99.0),     # TP 99
+            (99.0, 99.1, 98.9, 99.0),      # rest SELL 99
+            (99.0, 99.2, 98.8, 99.0),      # fill 99
+            (99.0, 100.2, 98.8, 100.0),    # SL 99.495
+            (100.0, 100.1, 98.5, 99.0),    # rest SELL 100
+            (99.0, 99.1, 98.9, 99.0),      # fill, then TP 99
+        ]
+        candles = _ohlc_candles(specs)
+        result = run_backtest(
+            candles, model=self._ShortScores([0.95] * len(candles)), execution_side="short",
+            initial_equity=10_000.0, position_size=0.1, label_horizon=3, cooldown_bars=0,
+            short_threshold=0.8, exec_tp_pct=0.01, exec_sl_pct=0.005, maker_fill_window=2,
+        )
+        expected = [(1, 2, 100.0, 99.0, "TP"), (3, 5, 99.0, 99.495, "SL"), (6, 7, 100.0, 99.0, "TP")]
+        self.assertEqual(len(result.trades), len(expected))
+        equity = 10_000.0
+        candle_maps = [{"open": c.open, "high": c.high, "low": c.low, "close": c.close} for c in candles]
+        for trade, (entry_i, exit_i, limit, exit_price, outcome) in zip(result.trades, expected):
+            self.assertEqual(trade.side, "SELL")
+            self.assertTrue(trade.entry_maker)
+            self.assertEqual(trade.entry_time, candles[entry_i].open_time.isoformat())
+            self.assertEqual(trade.entry_price, limit)
+            self.assertLessEqual(candles[entry_i].low, limit)
+            self.assertGreaterEqual(candles[entry_i].high, limit)
+            reconstructed = reconstruct_exit(
+                candle_maps[entry_i:], "SELL", limit * 0.99, limit * 1.005,
+                horizon=3, min_hold_bars=0, maker_entry=True,
+            )
+            self.assertIsNotNone(reconstructed)
+            got_outcome, got_exit, relative_exit_i, _ = reconstructed
+            self.assertEqual((got_outcome, entry_i + relative_exit_i), (outcome, exit_i))
+            self.assertAlmostEqual(got_exit, exit_price)
+            self.assertEqual(trade.outcome, outcome)
+            self.assertAlmostEqual(trade.exit_price, exit_price)
+            gross = (limit - exit_price) / limit
+            self.assertAlmostEqual(trade.gross_pnl_pct, gross)
+            self.assertAlmostEqual(trade.pnl_pct, gross - 2.0 * result.maker_fee_rate_per_side)
+            equity += trade.pnl_pct * 0.1 * equity
+        self.assertAlmostEqual(result.total_return, equity / 10_000.0 - 1.0)
+
+    def test_short_route_external_score_inputs_never_emit_or_size_buy(self) -> None:
+        class MissingTarget:
+            def probability(self, values): return 0.95
+        class ContradictorySemanticModel:
+            # A caller can claim this high score is P(long); the route cannot
+            # prove score semantics beyond its metadata, but it must still
+            # never turn it into a BUY.
+            train_target = "short_success"
+            def probability(self, values): return 0.95
+
+        candles = _ohlc_candles([(100.0, 100.1, 99.9, 100.0)] * 8)
+        with self.assertRaisesRegex(ValueError, "requires a model artifact"):
+            run_backtest(candles, model=MissingTarget(), execution_side="short")
+        # The feature preparation can ask the small iterator more than once
+        # per candle, so supply a deliberately overlong constant stream.
+        for scores in ([float("nan")] * 64, [0.8] * 64):
+            result = self._run(scores, execution_side="short")
+            self.assertEqual(result.signal_counts["BUY"], 0)
+            self.assertEqual(result.trade_count, 0)
+        claimed_short = run_backtest(
+            candles, model=ContradictorySemanticModel(), execution_side="short",
+            position_size=0.1, label_horizon=3, cooldown_bars=0, short_threshold=0.8,
+            maker_fill_window=0, maker_exit_outcomes=[],
+        )
+        self.assertEqual(claimed_short.signal_counts["BUY"], 0)
+        self.assertTrue(all(trade.side == "SELL" for trade in claimed_short.trades))
 
     def test_short_fill_bar_tp_is_deferred_when_ohlc_cannot_order_entry_and_tp(self) -> None:
         # Bar 1 contains both the SELL limit (100) and its 99 TP.  OHLC cannot
