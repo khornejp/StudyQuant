@@ -87,6 +87,44 @@ def test_screen_uses_production_labeller_for_known_touch_order_and_same_bar_tie(
     assert result["break_even_tp_share"] == 0.52
 
 
+def test_short_screen_uses_production_short_labeller_and_short_timeout_payoff(monkeypatch):
+    # For shorts, bearish both-touch resolves TP; bullish and doji resolve SL.
+    candles = [_candle(0, 100, 100, 100, 100), _candle(1, 100, 101.5, 98.5, 99),
+               _candle(2, 99, 100.5, 97.5, 100), _candle(3, 100, 100, 100, 99)]
+
+    class Row:
+        warmup_invalid = False
+        features = {"rv_60": 1.0}
+    monkeypatch.setattr(dataset, "build_feature_rows", lambda _: [Row() for _ in candles])
+    report = barrier_screen.screen(candles, training_start=None, training_end=None,
+                                   gate_feature="rv_60", gate_quantile=0.0, horizon=1,
+                                   candidates=((.01, .01),), direction="short")
+    result = report["results"][0]
+    assert report["direction"] == "short"
+    assert report["touch_resolver"] == "dataset.triple_barrier_label_short"
+    assert report["same_bar_tp_sl"] == "TP only when candle.close < candle.open; otherwise SL (including doji)"
+    assert result["tp_rows"] == 1
+    assert result["sl_rows"] == 1
+    assert result["unresolved_rows"] == 1
+    # The final timeout is a 1% fall, hence a +1% short gross return minus 4 bps.
+    assert result["payoff_mean_bps"] == pytest.approx((96 + -104 + 96) / 3)
+
+
+def test_inverted_ratio_candidates_are_opt_in_and_classified(monkeypatch):
+    candles = [_candle(i, 100, 100, 100, 100) for i in range(3)]
+    class Row:
+        warmup_invalid = False
+        features = {"rv_60": 1.0}
+    monkeypatch.setattr(dataset, "build_feature_rows", lambda _: [Row() for _ in candles])
+    candidates = barrier_screen.DEFAULT_CANDIDATES + barrier_screen.INVERTED_RATIO_CANDIDATES
+    report = barrier_screen.screen(candles, training_start=None, training_end=None,
+                                   gate_feature="rv_60", gate_quantile=0.0, horizon=1,
+                                   candidates=candidates)
+    assert report["candidate_source"] == "historical_plus_inverted_ratio"
+    assert len(report["candidate_sets"]["additions"]) == 5
+    assert report["candidates"][-1]["category"] == "inverted_ratio"
+
+
 def test_timeout_settlement_is_identical_for_label_scoring_and_execution():
     # No barrier is touched; the label is still binary class 0, but that must
     # never be reinterpreted as an SL.  Its reason settles at the horizon close.

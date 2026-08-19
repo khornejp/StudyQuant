@@ -1841,7 +1841,7 @@ def build_parser() -> argparse.ArgumentParser:
     ev_parser.add_argument("--maker-exit", action="store_true", help="shorthand for --maker-exit-outcomes tp,sl,timeout,open_at_end; see the backtest's --maker-exit")
     ev_parser.add_argument("--maker-exit-outcomes", default=None, help="exit outcomes priced as resting limits, matching a backtest run with the same flag. Match the backtest: exit cost is roughly half the round trip, so cost-stressing a taker exit says nothing about a strategy that rests its TP/SL. See the backtest's --maker-exit-outcomes for what each outcome assumes")
     ev_parser.add_argument("--maker-fee-rate-per-side", type=float, default=None, help="base per-side MAKER fee fraction (defaults to backtest.DEFAULT_MAKER_FEE_RATE_PER_SIDE = 0.0002, Bitget VIP0); stress runs multiply it just like the taker rate, so a both-legs-maker strategy is actually stressed rather than passing 2x untouched")
-    barrier_parser = subparsers.add_parser("barrier-screen", help="screen long TP/SL geometry on training bars only, using the production labeller")
+    barrier_parser = subparsers.add_parser("barrier-screen", help="screen directional TP/SL geometry on training bars only, using the production labeller")
     barrier_parser.add_argument("--input", required=True, help="candle CSV or Parquet")
     barrier_parser.add_argument("--output", default="artifacts/barrier_screen", help="output directory for barrier_screen_report.json")
     barrier_parser.add_argument("--training-start", required=True, help="inclusive ISO training start")
@@ -1852,6 +1852,8 @@ def build_parser() -> argparse.ArgumentParser:
     barrier_horizons.add_argument("--horizon", type=int, help="one triple-barrier time horizon in bars")
     barrier_horizons.add_argument("--horizons", nargs="?", const="default", help="comma-separated horizon sweep; with no value uses 15,30,45,60,90,120,180")
     barrier_parser.add_argument("--candidates", default=None, help="optional comma-separated tp:sl fractions; default is the ten historical root-cause candidates")
+    barrier_parser.add_argument("--direction", choices=("long", "short"), default="long", help="production label direction (default: long)")
+    barrier_parser.add_argument("--include-inverted-ratios", action="store_true", help="add the five near-TP/far-SL mirrors of the historical 2:1 candidates")
     artifacts = subparsers.add_parser("artifacts", help="verify generated artifact hashes")
     artifacts.add_argument("--path", default="artifacts/demo", help="artifact directory")
     return parser
@@ -1931,7 +1933,10 @@ def main(argv: list[str] | None = None) -> int:
                 "training_end": _parse_end_date_exclusive(args.training_end),
                 "gate_feature": args.gate_feature,
                 "gate_quantile": args.gate_quantile,
-                "candidates": barrier_screen.parse_candidates(args.candidates),
+                "candidates": (barrier_screen.parse_candidates(args.candidates) + barrier_screen.INVERTED_RATIO_CANDIDATES
+                               if args.include_inverted_ratios and args.candidates is None
+                               else barrier_screen.parse_candidates(args.candidates)),
+                "direction": args.direction,
             }
             if args.horizons is None:
                 screen_kwargs["horizon"] = args.horizon
@@ -1943,7 +1948,7 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, RuntimeError, ValueError) as error:
             print(f"barrier screen failed: {error}", file=sys.stderr)
             return 1
-        print("Barrier screen complete (training bars only; production long labeller)")
+        print(f"Barrier screen complete (training bars only; production {report['direction']} labeller)")
         if args.horizons is None:
             print(f"gate={report['gate']['feature']} >= {report['gate']['cutoff']:.8g}; rows={report['gate']['eligible_rows']}")
         else:

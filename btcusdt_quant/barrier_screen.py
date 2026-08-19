@@ -1,8 +1,7 @@
 """Training-only, provenance-captured triple-barrier geometry screen.
 
-This deliberately calls ``dataset.triple_barrier_label_long`` for every
-entry.  It does not duplicate the barrier walk: that is the production
-long-label resolver, including its candle-direction same-bar tie rule.
+This deliberately calls the selected production triple-barrier resolver for
+every entry.  It does not duplicate the barrier walk or invent a tie-break.
 """
 from __future__ import annotations
 
@@ -22,6 +21,13 @@ DEFAULT_CANDIDATES = (
     (0.004, 0.002), (0.006, 0.003), (0.008, 0.004), (0.010, 0.005),
     (0.012, 0.006), (0.006, 0.006), (0.008, 0.008), (0.010, 0.010),
     (0.004, 0.004), (0.012, 0.012),
+)
+# Mirrors the five historical 2:1 reward:risk pairs.  For a short these make
+# TP the nearer barrier and SL the farther barrier, the unmeasured reflection
+# of the geometry selected for the long label.
+INVERTED_RATIO_CANDIDATES = (
+    (0.002, 0.004), (0.003, 0.006), (0.004, 0.008), (0.005, 0.010),
+    (0.006, 0.012),
 )
 # This spans materially shorter and longer holds around the inherited 45 bars,
 # while keeping enough spacing that the sweep is interpretable despite the
@@ -95,17 +101,26 @@ def _gate_input_fingerprint(feature: str, lo: int, label_hi: int, values: Sequen
     return digest.hexdigest()
 
 
+def _direction_contract(direction: str) -> tuple[object, str, str, str]:
+    if direction == "long":
+        return (dataset.triple_barrier_label_long, "long_tp_first", "long_sl_first", "long_timeout")
+    if direction == "short":
+        return (dataset.triple_barrier_label_short, "short_tp_first", "short_sl_first", "short_timeout")
+    raise ValueError("--direction must be 'long' or 'short'")
+
+
 def _outcome_counts(candles: Sequence[data.Candle], indices: Sequence[int], horizon: int,
-                    tp: float, sl: float) -> tuple[int, int, int]:
+                    tp: float, sl: float, direction: str) -> tuple[int, int, int]:
     """Count production-label outcomes for one geometry and set of entry rows."""
     tp_count = sl_count = timeout_count = 0
+    resolver, tp_reason, sl_reason, timeout_reason = _direction_contract(direction)
     for index in indices:
-        _, reason = dataset.triple_barrier_label_long(index, candles, horizon, tp, sl)
-        if reason == "long_tp_first":
+        _, reason = resolver(index, candles, horizon, tp, sl)  # type: ignore[operator]
+        if reason == tp_reason:
             tp_count += 1
-        elif reason == "long_sl_first":
+        elif reason == sl_reason:
             sl_count += 1
-        elif reason == "long_timeout":
+        elif reason == timeout_reason:
             timeout_count += 1
         else:
             raise RuntimeError(f"unexpected production label reason: {reason}")
@@ -116,13 +131,15 @@ def screen(
     candles: Sequence[data.Candle], *, training_start: datetime | None,
     training_end: datetime | None, gate_feature: str, gate_quantile: float,
     horizon: int, candidates: Sequence[tuple[float, float]],
+    direction: str = "long",
     _feature_rows: Sequence[object] | None = None,
 ) -> dict[str, object]:
-    """Screen long barrier geometry without an (n, horizon) window matrix."""
+    """Screen one direction's barrier geometry without an (n, horizon) window matrix."""
     if not 0.0 <= gate_quantile < 1.0:
         raise ValueError("--gate-quantile must be in [0, 1)")
     if horizon <= 0:
         raise ValueError("--horizon must be positive")
+    resolver, tp_reason, sl_reason, timeout_reason = _direction_contract(direction)
     # Feature construction is one full-series pass so rolling gate values retain
     # pre-training warmup.  No feature cache is accepted or consulted here.
     rows = dataset.build_feature_rows(candles) if _feature_rows is None else _feature_rows
@@ -151,16 +168,17 @@ def screen(
         payoffs: list[float] = []
         for index in eligible:
             # This is intentionally the production function, not an equivalent loop.
-            label, reason = dataset.triple_barrier_label_long(index, candles, horizon, tp, sl)
-            if reason == "long_tp_first":
+            _, reason = resolver(index, candles, horizon, tp, sl)  # type: ignore[operator]
+            if reason == tp_reason:
                 tp_count += 1; payoffs.append(tp - ROUND_TRIP_COST)
-            elif reason == "long_sl_first":
+            elif reason == sl_reason:
                 sl_count += 1; payoffs.append(-sl - ROUND_TRIP_COST)
-            elif reason == "long_timeout":
+            elif reason == timeout_reason:
                 timeout_count += 1
                 # A timeout exits at its horizon close, not at TP.  It remains
                 # unresolved for resolved/tp_share but has an honest payoff.
-                payoffs.append(candles[index + horizon].close / candles[index].close - 1.0 - ROUND_TRIP_COST)
+                timeout_return = candles[index + horizon].close / candles[index].close - 1.0
+                payoffs.append((timeout_return if direction == "long" else -timeout_return) - ROUND_TRIP_COST)
             else:  # Defensive: the labeller's public contract must be exhaustive.
                 raise RuntimeError(f"unexpected production label reason: {reason}")
         n = len(eligible)
@@ -176,16 +194,23 @@ def screen(
                         "break_even_tp_share": (sl + ROUND_TRIP_COST) / (tp + sl),
                         "payoff_mean_bps": mean * 10_000, "payoff_std_bps": std * 10_000})
     reconciliation_tp, reconciliation_sl, reconciliation_unresolved = _outcome_counts(
-        candles, range(lo, label_hi), horizon, *RECONCILIATION_CANDIDATE,
+        candles, range(lo, label_hi), horizon, *RECONCILIATION_CANDIDATE, direction,
     )
     reconciliation_total = reconciliation_tp + reconciliation_sl + reconciliation_unresolved
     gated_result = next((result for result in results
                           if (result["tp_pct"], result["sl_pct"]) == RECONCILIATION_CANDIDATE), None)
-    return {"screen_type": "training_barrier_geometry", "direction": "long",
-            "touch_resolver": "dataset.triple_barrier_label_long",
-            "same_bar_tp_sl": "TP only when candle.close > candle.open; otherwise SL (including doji)",
+    resolver_name = f"dataset.triple_barrier_label_{direction}"
+    same_bar = ("TP only when candle.close > candle.open; otherwise SL (including doji)"
+                if direction == "long" else
+                "TP only when candle.close < candle.open; otherwise SL (including doji)")
+    return {"screen_type": "training_barrier_geometry", "direction": direction,
+            "touch_resolver": resolver_name,
+            "same_bar_tp_sl": same_bar,
             "round_trip_cost_bps": 4.0, "cost_assumption": "limit-only maker, both legs; no slippage or taker assumptions",
-            "timeout_settlement": "horizon-bar close, charged as a completed maker/maker position; long_timeout remains a classification zero, not an SL payoff",
+            "timeout_settlement": (
+                f"horizon-bar close, charged as a completed maker/maker position; {timeout_reason} remains "
+                "a classification zero, not an SL payoff"
+            ),
             "resolution_metrics_note": (
                 "conditional_tp_share is TP rows divided by TP plus SL rows and is the primary skill comparison to "
                 "break_even_tp_share. whole_population_tp_share retains timeouts in its denominator and is reported "
@@ -198,13 +223,18 @@ def screen(
             "gate": {"feature": gate_feature, "quantile": gate_quantile, "cutoff": cutoff,
                      "input_fingerprint": gate_input_fingerprint,
                      "boundary_slice": "all finite training rows after horizon tail trim", "eligible_rows": len(eligible)},
-            "candidate_source": "historical_default" if tuple(candidates) == DEFAULT_CANDIDATES else "custom",
+            "candidate_source": ("historical_default" if tuple(candidates) == DEFAULT_CANDIDATES else
+                                 "historical_plus_inverted_ratio" if tuple(candidates) == DEFAULT_CANDIDATES + INVERTED_RATIO_CANDIDATES else "custom"),
             "candidate_sets": {
                 "historical": [{"tp_pct": tp, "sl_pct": sl} for tp, sl in DEFAULT_CANDIDATES],
-                "additions": [],
+                "additions": [{"tp_pct": tp, "sl_pct": sl,
+                               "reason": "mirror of a historical 2:1 pair: near TP / far SL"}
+                              for tp, sl in INVERTED_RATIO_CANDIDATES
+                              if (tp, sl) in candidates],
             },
             "candidates": [{"tp_pct": tp, "sl_pct": sl,
-                            "category": "historical" if (tp, sl) in DEFAULT_CANDIDATES else "custom"}
+                            "category": "historical" if (tp, sl) in DEFAULT_CANDIDATES else
+                            "inverted_ratio" if (tp, sl) in INVERTED_RATIO_CANDIDATES else "custom"}
                            for tp, sl in candidates], "results": results,
             "unresolved_reconciliation": {
                 "tp_pct": RECONCILIATION_CANDIDATE[0], "sl_pct": RECONCILIATION_CANDIDATE[1],
@@ -226,6 +256,7 @@ def screen_horizons(
     candles: Sequence[data.Candle], *, training_start: datetime | None,
     training_end: datetime | None, gate_feature: str, gate_quantile: float,
     horizons: Sequence[int], candidates: Sequence[tuple[float, float]],
+    direction: str = "long",
 ) -> dict[str, object]:
     """Run the existing training-only screen once per horizon.
 
@@ -238,12 +269,12 @@ def screen_horizons(
     reports = [screen(
         candles, training_start=training_start, training_end=training_end,
         gate_feature=gate_feature, gate_quantile=gate_quantile, horizon=horizon,
-        candidates=candidates, _feature_rows=rows,
+        candidates=candidates, direction=direction, _feature_rows=rows,
     ) for horizon in horizons]
     return {
         "screen_type": "training_barrier_horizon_sweep",
-        "direction": "long",
-        "touch_resolver": "dataset.triple_barrier_label_long",
+        "direction": direction,
+        "touch_resolver": f"dataset.triple_barrier_label_{direction}",
         "horizons": list(horizons),
         "horizon_reports": reports,
         "cross_horizon_note": (
