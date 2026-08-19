@@ -40,14 +40,17 @@ _RUNTIME_CONTEXT: dict[str, object] = {}
 CATBOOST_WATCHDOG_CALIBRATION_ROWS = 6_189_120
 CATBOOST_WATCHDOG_CALIBRATION_SECONDS = 17_234
 CATBOOST_WATCHDOG_HEADROOM = 1.50
+CATBOOST_WATCHDOG_MIN_SECONDS = 5 * 60
 CATBOOST_WATCHDOG_MAX_SECONDS = 3 * 60 * 60
 
 
 def catboost_fit_timeout_seconds(rows: int) -> int:
     """Return an auditable row-scaled hard limit for one CatBoost fit.
 
-    The three-hour ceiling preserves the watchdog's purpose: a native fit
-    that ignores Python interruption cannot run indefinitely. It does not
+    The five-minute floor preserves enough allowance for fixed CatBoost setup
+    cost and small fits. The three-hour ceiling preserves the watchdog's purpose:
+    a native fit that ignores Python interruption cannot run indefinitely.
+    It does not
     bind either known Stage-4 fit size (the full refit computes to about
     3h05m before this operational ceiling).
     """
@@ -58,7 +61,7 @@ def catboost_fit_timeout_seconds(rows: int) -> int:
         / CATBOOST_WATCHDOG_CALIBRATION_ROWS
         * CATBOOST_WATCHDOG_HEADROOM
     )
-    return min(scaled_seconds, CATBOOST_WATCHDOG_MAX_SECONDS)
+    return min(max(scaled_seconds, CATBOOST_WATCHDOG_MIN_SECONDS), CATBOOST_WATCHDOG_MAX_SECONDS)
 
 
 class GPUDeviceBusyError(RuntimeError):
@@ -360,7 +363,26 @@ class CatBoostAdapter:
 
     def __init__(self, feature_names: Sequence[str] | None = None, model_params: Mapping[str, object] | None = None) -> None:
         self.feature_names = tuple(str(name) for name in feature_names) if feature_names is not None else ()
-        self.model_params = _merged_params(self.DEFAULT_PARAMS, model_params)
+        default_params: Mapping[str, object] = self.DEFAULT_PARAMS
+        # pytest sets this inherited, test-only switch in tests/conftest.py so
+        # subprocess-based tests cannot silently revert to the GPU production
+        # default. An explicit task_type in model_params still wins, allowing
+        # focused GPU lease tests to exercise that route without a CUDA fit.
+        test_device_override = (
+            os.environ.get("STUDYQUANT_TEST_CATBOOST_DEFAULT_DEVICE") == "CPU"
+            and not (model_params and "task_type" in model_params)
+        )
+        if test_device_override:
+            default_params = dict(default_params)
+            default_params.pop("task_type", None)
+            default_params.pop("devices", None)
+            _runtime_event({
+                "type": "test_catboost_default_device_override_honored",
+                "environment_variable": "STUDYQUANT_TEST_CATBOOST_DEFAULT_DEVICE",
+                "requested_default_device": "GPU:0",
+                "effective_default_device": "CPU",
+            })
+        self.model_params = _merged_params(default_params, model_params)
         self.model: object | None = None
 
     @property

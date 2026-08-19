@@ -187,6 +187,10 @@ class TrainingConfig:
     label_threshold: float = 0.001
     tp_pct: float = 0.003
     sl_pct: float = 0.0015
+    long_tp_pct: float | None = None
+    long_sl_pct: float | None = None
+    short_tp_pct: float | None = None
+    short_sl_pct: float | None = None
     # Round-trip trading cost (fees + slippage, both sides) used by the
     # trading_pnl threshold objective and holdout PnL metrics. See
     # DEFAULT_ROUND_TRIP_COST -- it must mirror the backtest cost model or
@@ -370,6 +374,49 @@ MIN_ENTRIES_FOR_AN_INDEPENDENT_YEAR = 200
 _PERSISTED_VOLATILITY_FEATURES: tuple[str, ...] = ("rv_15", "rv_30", "rv_60", "rv_120", "atr_pct")
 
 _TRAIN_TARGET_KEYS: tuple[str, ...] = ("profitability", "long_success", "short_success", "short_profitability", "direction")
+
+
+def label_geometry(config: "TrainingConfig") -> dict[str, dict[str, float]]:
+    """Resolve and validate the complete geometry recorded for both sides."""
+    values = (config.long_tp_pct, config.long_sl_pct, config.short_tp_pct, config.short_sl_pct)
+    if any(value is not None for value in values) and any(value is None for value in values):
+        raise ValueError(
+            "side-specific label geometry requires long/short TP and SL for both sides; "
+            "no side inherits another side's barrier"
+        )
+    geometry = {
+        "long": {
+            "tp_pct": float(config.long_tp_pct if config.long_tp_pct is not None else config.tp_pct),
+            "sl_pct": float(config.long_sl_pct if config.long_sl_pct is not None else config.sl_pct),
+        },
+        "short": {
+            "tp_pct": float(config.short_tp_pct if config.short_tp_pct is not None else config.tp_pct),
+            "sl_pct": float(config.short_sl_pct if config.short_sl_pct is not None else config.sl_pct),
+        },
+    }
+    if any(value <= 0.0 for side in geometry.values() for value in side.values()):
+        raise ValueError("all label TP/SL values must be positive")
+    return geometry
+
+
+def shared_label_geometry(config: "TrainingConfig") -> dict[str, float] | None:
+    """Return legacy scalar geometry only when both sides are identical."""
+    geometry = label_geometry(config)
+    if geometry["long"] != geometry["short"]:
+        return None
+    return dict(geometry["long"])
+
+
+def target_geometry(config: "TrainingConfig", target: str) -> tuple[float, float]:
+    """Return the label barriers belonging to one target's trade side.
+
+    A side-specific label build deliberately has no shared economic geometry.
+    Threshold selection and its audit must therefore settle a short target at
+    the short barriers, not at the legacy ``tp_pct``/``sl_pct`` values.
+    """
+    side = "short" if target in ("short_success", "short_profitability") else "long"
+    geometry = label_geometry(config)[side]
+    return geometry["tp_pct"], geometry["sl_pct"]
 
 
 def realized_payoffs(
@@ -594,6 +641,7 @@ def shuffle_labeled_row_targets(rows: Sequence[dataset.LabeledRow], seed: int) -
 
 def run_training(input_path: Path | None, output_dir: Path, config: TrainingConfig | None = None, archive_dir: Path | None = None, external_sources: Mapping[str, object] | None = None, external_source_paths: Sequence[Path] | None = None, prebuilt_dataset: dataset.DatasetBuild | None = None, user_regime_periods: Sequence[dataset.UserRegimePeriod] | None = None) -> TrainingResult:
     training_config = resolve_screen_reference(config or TrainingConfig())
+    label_geometry(training_config)
     # Append as fits happen, rather than attempting to reconstruct device use
     # from a completed model. This survives a native-fit watchdog termination.
     models.start_training_runtime_artifact(output_dir)
@@ -633,6 +681,10 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
             label_threshold=training_config.label_threshold,
             tp_pct=training_config.tp_pct,
             sl_pct=training_config.sl_pct,
+            long_tp_pct=training_config.long_tp_pct,
+            long_sl_pct=training_config.long_sl_pct,
+            short_tp_pct=training_config.short_tp_pct,
+            short_sl_pct=training_config.short_sl_pct,
         )
     # Snapshot the full labeled set BEFORE applying training_start/training_end
     # cutoffs, so a post-cutoff test window (e.g. 2025 H1) can still be
@@ -834,6 +886,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     # Fixed once, on the earliest train slice, then held constant -- see
     # TrainingConfig.vol_gate_train_quantile for why not per fold.
     _gate_min_from_first_fold: float | None = None
+    _target_tp_pct, _target_sl_pct = target_geometry(training_config, training_config.train_target)
     for fold_index, split in enumerate(splits):
         print(f"[TRAIN]   Fold {fold_index + 1}/{len(splits)}: train={len(split.train)}, val={len(split.validation)}, test={len(split.test)}")
         train_indices = _split_indices(split.train)
@@ -858,13 +911,13 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         calibrated_validation = calibrator.transform(validation_probabilities)
         _validation_payoffs = realized_payoffs(
             validation_rows, training_config.train_target,
-            training_config.tp_pct, training_config.sl_pct,
+            _target_tp_pct, _target_sl_pct,
         )
         _threshold_audit = threshold_selection_audit(
             calibrated_validation, validation_labels,
             objective=training_config.threshold_objective,
             min_trades=training_config.threshold_min_trades,
-            tp_pct=training_config.tp_pct, sl_pct=training_config.sl_pct,
+            tp_pct=_target_tp_pct, sl_pct=_target_sl_pct,
             round_trip_cost=training_config.round_trip_cost,
             realized_payoffs=_validation_payoffs,
         )
@@ -883,8 +936,8 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         _fold_payoffs = realized_payoffs(
             test_rows,
             training_config.train_target,
-            training_config.tp_pct,
-            training_config.sl_pct,
+            _target_tp_pct,
+            _target_sl_pct,
         )
         # A gate is a property of the BAR, so it is read off the same rows the
         # fold scored. A row missing the feature is not eligible: treating an
@@ -966,26 +1019,26 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 calibration_details=calibrator.as_dict(),
                 validation_metrics=metrics(
                     calibrated_validation, validation_labels, threshold,
-                    tp_pct=training_config.tp_pct, sl_pct=training_config.sl_pct,
+                    tp_pct=_target_tp_pct, sl_pct=_target_sl_pct,
                     round_trip_cost=training_config.round_trip_cost,
                     realized_payoffs=_validation_payoffs,
                 ),
                 test_metrics=metrics(
                     calibrated_test, test_labels, threshold,
-                    tp_pct=training_config.tp_pct, sl_pct=training_config.sl_pct,
+                    tp_pct=_target_tp_pct, sl_pct=_target_sl_pct,
                     round_trip_cost=training_config.round_trip_cost,
                     realized_payoffs=realized_payoffs(
                         test_rows, training_config.train_target,
-                        training_config.tp_pct, training_config.sl_pct,
+                        _target_tp_pct, _target_sl_pct,
                     ),
                 ),
                 train_metrics=metrics(
                     calibrated_train, train_labels, threshold,
-                    tp_pct=training_config.tp_pct, sl_pct=training_config.sl_pct,
+                    tp_pct=_target_tp_pct, sl_pct=_target_sl_pct,
                     round_trip_cost=training_config.round_trip_cost,
                     realized_payoffs=realized_payoffs(
                         train_rows, training_config.train_target,
-                        training_config.tp_pct, training_config.sl_pct,
+                        _target_tp_pct, _target_sl_pct,
                     ),
                 ),
                 model_selection=selection.as_dict(),
@@ -1467,7 +1520,7 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
                             probs, regime_labels, 0.5,
                             realized_payoffs=realized_payoffs(
                                 regime_rows, target_key,
-                                training_config.tp_pct, training_config.sl_pct,
+                                *target_geometry(training_config, target_key),
                             ),
                         )
                         print(f"[TRAIN]   Test period {regime_name}/{side}: n={len(regime_rows)} F1={regime_test_metrics[key]['f1']:.4f}, Acc={regime_test_metrics[key]['accuracy']:.4f}")
@@ -1489,6 +1542,8 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
                 print("[TRAIN]   Test period: no regime had enough routed rows to evaluate")
         else:
             print(f"[TRAIN] Warning: no test period rows found ({training_config.test_start} to {training_config.test_end})")
+    geometry = label_geometry(training_config)
+    shared_geometry = shared_label_geometry(training_config)
     run_summary = {
         "regime_aware": True,
         "regime_source": regime_source,
@@ -1503,8 +1558,11 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
         # (single-horizon path), so it is the barrier the labels actually used.
         # threshold_horizon == label_horizon: selected_thresholds are chosen on
         # each regime's holdout at exactly this barrier (see _select_threshold).
-        "tp_pct": training_config.tp_pct,
-        "sl_pct": training_config.sl_pct,
+        "label_geometry": geometry,
+        # ``LabeledRow.label`` / ``targets[\"profitability\"]`` is a legacy
+        # long-side target, not a third shared barrier when sides differ.
+        "label_column_target": "long_profitability",
+        "label_column_geometry": geometry["long"],
         "threshold_horizon": build.label_horizon,
         "regime_results": regime_summaries,
         "regime_counts": regime_counts,
@@ -1536,6 +1594,10 @@ def run_regime_aware_training(build: dataset.DatasetBuild, output_dir: Path, tra
         "mean_test_brier": aggregated_mean_test_brier,
         "artifacts": ["regime_run_summary.json"],
     }
+    # Keep scalar compatibility fields only where they express one unambiguous
+    # barrier. Asymmetric artifacts must force consumers onto per-side geometry.
+    if shared_geometry is not None:
+        run_summary.update(shared_geometry)
     if test_period_metrics is not None:
         run_summary["test_period_evaluation"] = test_period_metrics
     writer = governance.ArtifactWriter(output_dir)
@@ -1936,12 +1998,15 @@ def _train_single_regime(
         else:
             print(f"[TRAIN]   Training LONG success model for regime '{regime_name}'...")
             long_params, long_report = _resolve_model_params("long", long_labels)
-            long_model = models.CatBoostAdapter(
-                feature_names=regime_build.feature_names,
-                model_params=long_params,
-            )
             with models.training_runtime_context(regime=regime_name, side="long", fit_role="final_refit"):
-                long_model.fit(f_matrix, long_labels)
+                long_model = models.ModelFactory().fit(
+                    training_config.model_family,
+                    f_matrix,
+                    long_labels,
+                    feature_names=regime_build.feature_names,
+                    model_params=long_params,
+                    fallback_allowed=training_config.fallback_allowed,
+                ).adapter
             writer = governance.ArtifactWriter(regime_output_dir)
             writer.write_json("long_model.json", long_model.as_dict())
             artifacts.append("long_model.json")
@@ -1956,12 +2021,15 @@ def _train_single_regime(
         else:
             print(f"[TRAIN]   Training SHORT success model for regime '{regime_name}'...")
             short_params, short_report = _resolve_model_params("short", short_labels)
-            short_model = models.CatBoostAdapter(
-                feature_names=regime_build.feature_names,
-                model_params=short_params,
-            )
             with models.training_runtime_context(regime=regime_name, side="short", fit_role="final_refit"):
-                short_model.fit(f_matrix, short_labels)
+                short_model = models.ModelFactory().fit(
+                    training_config.model_family,
+                    f_matrix,
+                    short_labels,
+                    feature_names=regime_build.feature_names,
+                    model_params=short_params,
+                    fallback_allowed=training_config.fallback_allowed,
+                ).adapter
             writer = governance.ArtifactWriter(regime_output_dir)
             writer.write_json("short_model.json", short_model.as_dict())
             artifacts.append("short_model.json")
@@ -2015,12 +2083,15 @@ def _train_single_regime(
             # Separate diagnostic model: same hyperparameters as the deployed
             # model (so the diagnostic reflects the same tuning), but fit ONLY
             # on the prefix -- never touches the holdout tail during .fit().
-            diagnostic_model = models.CatBoostAdapter(
-                feature_names=regime_build.feature_names,
-                model_params=dict(resolved_params),
-            )
             with models.training_runtime_context(regime=regime_name, side=side, fit_role="holdout_diagnostic"):
-                diagnostic_model.fit(prefix_matrix, prefix_labels)
+                diagnostic_model = models.ModelFactory().fit(
+                    training_config.model_family,
+                    prefix_matrix,
+                    prefix_labels,
+                    feature_names=regime_build.feature_names,
+                    model_params=dict(resolved_params),
+                    fallback_allowed=training_config.fallback_allowed,
+                ).adapter
             probs = diagnostic_model.predict_proba(holdout_matrix)
             # Select the decision threshold on THIS holdout (never on training
             # rows, to avoid overfitting the cutoff) using the same objective
@@ -2030,12 +2101,13 @@ def _train_single_regime(
             # from simulated PnL rather than classification balance.
             _holdout_payoffs = realized_payoffs(
                 regime_build.labeled_rows[holdout_start:], target_key,
-                training_config.tp_pct, training_config.sl_pct,
+                *target_geometry(training_config, target_key),
             )
+            _side_tp_pct, _side_sl_pct = target_geometry(training_config, target_key)
             _threshold_audit = threshold_selection_audit(
                 probs, holdout_labels, objective=training_config.threshold_objective,
                 min_trades=training_config.threshold_min_trades,
-                tp_pct=training_config.tp_pct, sl_pct=training_config.sl_pct,
+                tp_pct=_side_tp_pct, sl_pct=_side_sl_pct,
                 round_trip_cost=training_config.round_trip_cost,
                 realized_payoffs=_holdout_payoffs,
             )
@@ -2048,8 +2120,8 @@ def _train_single_regime(
             selected_thresholds[side] = threshold
             m = metrics(
                 probs, holdout_labels, threshold,
-                tp_pct=training_config.tp_pct,
-                sl_pct=training_config.sl_pct,
+                tp_pct=_side_tp_pct,
+                sl_pct=_side_sl_pct,
                 round_trip_cost=training_config.round_trip_cost,
                 realized_payoffs=_holdout_payoffs,
             )
@@ -2542,8 +2614,9 @@ def write_training_artifacts(
     # scored. Regime artifacts already carry these in their run summary; mirror
     # them here so both invocation routes are auditable. Existing artifacts are
     # intentionally unchanged and will continue to produce the legacy warning.
-    model_payload["label_tp_pct"] = training_config.tp_pct
-    model_payload["label_sl_pct"] = training_config.sl_pct
+    model_payload["label_geometry"] = label_geometry(training_config)
+    model_payload["label_column_target"] = "long_profitability"
+    model_payload["label_column_geometry"] = label_geometry(training_config)["long"]
     model_payload["label_horizon"] = build.label_horizon
     writer = governance.ArtifactWriter(output_dir)
     writer.write_provenance(

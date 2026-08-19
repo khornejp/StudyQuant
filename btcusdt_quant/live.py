@@ -1569,9 +1569,11 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> models.Model
                 # barrier parity only worked for regime summaries. Keep the
                 # fields separate from model-family deserialisation just as we
                 # do train_target above.
-                for name in ("label_tp_pct", "label_sl_pct", "label_horizon"):
+                for name in ("label_tp_pct", "label_sl_pct", "label_horizon", "label_geometry"):
                     value = payload.get(name)
-                    if value is not None:
+                    if name == "label_geometry" and value is not None:
+                        object.__setattr__(adapter, name, value)
+                    elif value is not None:
                         object.__setattr__(adapter, name, float(value) if name != "label_horizon" else int(value))
             except AttributeError as error:
                 raise ValueError(
@@ -1637,6 +1639,7 @@ class RegimeModelBundle:
     # None on artifacts written before this was recorded.
     label_tp_pct: float | None = None
     label_sl_pct: float | None = None
+    label_geometry: Mapping[str, Mapping[str, float]] | None = None
 
     def has_side_probability(self, regime: str, side: str) -> bool:
         """Does a model exist that outputs a GENUINE P(<side>_success) here?
@@ -1820,6 +1823,7 @@ def load_regime_aware_models(path: Path | None, strict: bool = False) -> RegimeM
         multi_feature_regime_detector=multi_feature_regime_detector,
         label_tp_pct=_coerce_optional_float(summary.get("tp_pct")),
         label_sl_pct=_coerce_optional_float(summary.get("sl_pct")),
+        label_geometry=summary.get("label_geometry") if isinstance(summary.get("label_geometry"), Mapping) else None,
     )
 
 
@@ -1960,6 +1964,8 @@ def evaluate_entry_signal(
     gross_sl_pct: float = 0.0015,
     cost_config: dict[str, float] | None = None,
     strategy: "StrategyConfig | None" = None,
+    long_strategy: "StrategyConfig | None" = None,
+    short_strategy: "StrategyConfig | None" = None,
     features: Mapping[str, float] | None = None,
     allow_binary_outcome: bool = False,
 ) -> tuple[str, float, float]:
@@ -1990,13 +1996,22 @@ def evaluate_entry_signal(
     Returns:
         (signal, long_ev, short_ev) where signal is "LONG", "SHORT", or "NO_TRADE"
     """
-    if strategy is not None:
+    if long_strategy is not None or short_strategy is not None:
+        if long_strategy is None or short_strategy is None:
+            raise ValueError("per-side EV geometry requires both long_strategy and short_strategy")
+        long_tp, long_sl, _, _ = resolve_tp_sl_deltas(features or {}, long_strategy)
+        short_tp, short_sl, _, _ = resolve_tp_sl_deltas(features or {}, short_strategy)
+    elif strategy is not None:
         tp_delta, sl_delta, _, _ = resolve_tp_sl_deltas(features or {}, strategy)
-        gross_tp_pct, gross_sl_pct = tp_delta, sl_delta
+        long_tp = short_tp = tp_delta
+        long_sl = short_sl = sl_delta
+    else:
+        long_tp = short_tp = gross_tp_pct
+        long_sl = short_sl = gross_sl_pct
     if not allow_binary_outcome:
         return "NO_TRADE", float("nan"), float("nan")
-    long_ev = calculate_long_ev(long_prob, gross_tp_pct, gross_sl_pct, cost_config)
-    short_ev = calculate_short_ev(short_prob, gross_tp_pct, gross_sl_pct, cost_config)
+    long_ev = calculate_long_ev(long_prob, long_tp, long_sl, cost_config)
+    short_ev = calculate_short_ev(short_prob, short_tp, short_sl, cost_config)
     
     # Both sides are scored, then the STRONGER one wins. This used to be
     # `if long ... elif short`, which meant a bar where the long qualified never

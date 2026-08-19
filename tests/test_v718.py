@@ -490,6 +490,31 @@ class TestRegimeTraining(unittest.TestCase):
             with self.assertRaises(ValueError):
                 backtest.check_execution_barrier_parity(bundle, 0.003, 0.0015)
 
+        # Per-side geometry remains authoritative.  A scalar representation
+        # would lie here, so it is deliberately absent and the scalar parity
+        # path refuses to pretend both sides share one barrier.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir)
+            self._run_regime_training(
+                output, self.REGIMES, label_horizon=60,
+                long_tp_pct=0.010, long_sl_pct=0.005,
+                short_tp_pct=0.006, short_sl_pct=0.012,
+            )
+            summary = json.loads((output / "regime_run_summary.json").read_text(encoding="utf-8"))
+            self.assertNotIn("tp_pct", summary)
+            self.assertNotIn("sl_pct", summary)
+            self.assertEqual(summary["label_geometry"], {
+                "long": {"tp_pct": 0.010, "sl_pct": 0.005},
+                "short": {"tp_pct": 0.006, "sl_pct": 0.012},
+            })
+            self.assertEqual(summary["label_column_target"], "long_profitability")
+            self.assertEqual(summary["label_column_geometry"], {"tp_pct": 0.010, "sl_pct": 0.005})
+            bundle = live.load_regime_aware_models(output, strict=True)
+            self.assertIsNone(bundle.label_tp_pct)
+            self.assertIsNone(bundle.label_sl_pct)
+            with self.assertRaises(ValueError):
+                backtest.check_execution_barrier_parity(bundle, 0.010, 0.005)
+
     def test_optuna_tunes_on_prefix_only_never_the_threshold_holdout(self) -> None:
         # The final 20% tail of each regime is the threshold/metric holdout;
         # Optuna must only ever receive the 80% prefix. Capture what the tuner
@@ -516,6 +541,10 @@ class TestRegimeTraining(unittest.TestCase):
         regimes: list[str],
         tp_pct: float | None = None,
         sl_pct: float | None = None,
+        long_tp_pct: float | None = None,
+        long_sl_pct: float | None = None,
+        short_tp_pct: float | None = None,
+        short_sl_pct: float | None = None,
         label_horizon: int | None = None,
         optuna: bool = False,
     ) -> training.TrainingResult:
@@ -544,6 +573,12 @@ class TestRegimeTraining(unittest.TestCase):
             config_kwargs["tp_pct"] = tp_pct
         if sl_pct is not None:
             config_kwargs["sl_pct"] = sl_pct
+        for name, value in (
+            ("long_tp_pct", long_tp_pct), ("long_sl_pct", long_sl_pct),
+            ("short_tp_pct", short_tp_pct), ("short_sl_pct", short_sl_pct),
+        ):
+            if value is not None:
+                config_kwargs[name] = value
         if label_horizon is not None:
             config_kwargs["label_horizon"] = label_horizon
         try:
@@ -2443,9 +2478,9 @@ class TestBacktest(unittest.TestCase):
 
     def test_backtest_deducts_maker_fees_and_no_slippage(self) -> None:
         # Limit-only execution: both legs rest, so both pay the MAKER fee and
-        # neither pays slippage. The dip on bar 1 is what lets the resting entry
-        # limit fill at all -- a monotonically rising fixture never revisits it.
-        candles = self._priced_candles([100.0, 99.0, 101.0])
+        # neither pays slippage. Bar 1 trades through the 100 limit: its OHLC
+        # range contains the resting price, unlike a gap below it.
+        candles = self._priced_candles([100.0, 100.0, 101.0])
         strategy = live.StrategyConfig("test", 0.60, 0.40, 0.500, 0.500, 1.0, 1.0, 0.0)
 
         result = backtest.run_backtest(
@@ -2565,9 +2600,9 @@ class TestBacktest(unittest.TestCase):
         self.assertEqual(d["trades"][0]["side"], "BUY")
 
     def test_backtest_min_hold_bars_delays_exit(self) -> None:
-        # Bar 1 dips so the resting entry limit fills; the flat run after it is
-        # what min_hold_bars has to hold through.
-        candles = self._priced_candles([100.0, 99.0, 110.0, 110.0, 110.0, 110.0, 110.0])
+        # Bar 1 trades through the resting entry limit; the flat run after it
+        # is what min_hold_bars has to hold through.
+        candles = self._priced_candles([100.0, 100.0, 110.0, 110.0, 110.0, 110.0, 110.0])
         strategy = live.StrategyConfig("test", 0.60, 0.40, 0.500, 0.500, 1.0, 1.0, 0.0)
         result = backtest.run_backtest(
             candles,

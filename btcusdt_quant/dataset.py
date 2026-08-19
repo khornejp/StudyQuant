@@ -1508,6 +1508,10 @@ def build_dataset(
     label_threshold: float = 0.001,
     tp_pct: float = DEFAULT_LABEL_TP_PCT,
     sl_pct: float = DEFAULT_LABEL_SL_PCT,
+    long_tp_pct: float | None = None,
+    long_sl_pct: float | None = None,
+    short_tp_pct: float | None = None,
+    short_sl_pct: float | None = None,
     external_events: Mapping[object, object] | None = None,
     archive_dir: Path | None = None,
     source_bundle: sources.MarketSourceBundle | None = None,
@@ -1553,6 +1557,10 @@ def build_dataset(
         label_threshold,
         tp_pct=tp_pct,
         sl_pct=sl_pct,
+        long_tp_pct=long_tp_pct,
+        long_sl_pct=long_sl_pct,
+        short_tp_pct=short_tp_pct,
+        short_sl_pct=short_sl_pct,
         external_events=external_events,
         include_warmup=input_path is not None or archive_dir is not None,
     )
@@ -2242,6 +2250,10 @@ def attach_labels(
     label_threshold: float,
     tp_pct: float = 0.001,
     sl_pct: float = 0.0005,
+    long_tp_pct: float | None = None,
+    long_sl_pct: float | None = None,
+    short_tp_pct: float | None = None,
+    short_sl_pct: float | None = None,
     external_events: Mapping[object, object] | None = None,
     include_warmup: bool = False,
 ) -> list[LabeledRow]:
@@ -2251,6 +2263,20 @@ def attach_labels(
         raise ValueError("tp_pct must be positive")
     if sl_pct <= 0.0:
         raise ValueError("sl_pct must be positive")
+    side_values = (long_tp_pct, long_sl_pct, short_tp_pct, short_sl_pct)
+    if any(value is not None for value in side_values) and any(value is None for value in side_values):
+        raise ValueError(
+            "side-specific label geometry requires --long-label-tp-pct, --long-label-sl-pct, "
+            "--short-label-tp-pct, and --short-label-sl-pct; no side inherits another side's barrier"
+        )
+    # The shared pair remains the backwards-compatible default only when no
+    # side-specific geometry is supplied.  Once a caller chooses the new form,
+    # every side is explicit: partial input must never become silent inheritance.
+    long_tp, long_sl = (tp_pct, sl_pct) if long_tp_pct is None else (long_tp_pct, long_sl_pct)
+    short_tp, short_sl = (tp_pct, sl_pct) if short_tp_pct is None else (short_tp_pct, short_sl_pct)
+    assert long_sl is not None and short_sl is not None
+    if min(long_tp, long_sl, short_tp, short_sl) <= 0.0:
+        raise ValueError("all side-specific label TP/SL values must be positive")
     labeled: list[LabeledRow] = []
     for row in feature_rows:
         future_index = row.index + horizon
@@ -2260,12 +2286,15 @@ def attach_labels(
         if close == 0.0:
             continue
         target_return = (candles[future_index].close - close) / close
-        label, label_reason = triple_barrier_label(row.index, candles, horizon, label_threshold, tp_pct, sl_pct, target_return)
+        # ``label`` / ``profitability`` is the retained long-side compatibility
+        # target.  With per-side geometry it must not silently use the stale
+        # shared pair while long_success uses a different barrier.
+        label, label_reason = triple_barrier_label(row.index, candles, horizon, label_threshold, long_tp, long_sl, target_return)
         # LONG/SHORT success labels
-        long_success, long_reason = triple_barrier_label_long(row.index, candles, horizon, tp_pct, sl_pct)
-        short_success, short_reason = triple_barrier_label_short(row.index, candles, horizon, tp_pct, sl_pct)
+        long_success, long_reason = triple_barrier_label_long(row.index, candles, horizon, long_tp, long_sl)
+        short_success, short_reason = triple_barrier_label_short(row.index, candles, horizon, short_tp, short_sl)
         short_profit, short_profit_reason = triple_barrier_label_short_profitability(
-            row.index, candles, horizon, label_threshold, tp_pct, sl_pct, target_return
+            row.index, candles, horizon, label_threshold, short_tp, short_sl, target_return
         )
         # Direction target: simple future return sign
         direction_label = 1 if target_return > 0.0 else 0

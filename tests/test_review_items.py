@@ -14,6 +14,7 @@ import math
 import dataclasses
 import random
 import unittest
+import pytest
 
 from btcusdt_quant.artifact_audit import reconstruct_exit, resolve_ohlc_exit
 from typing import Mapping
@@ -1774,7 +1775,7 @@ class MakerFillTests(unittest.TestCase):
     def _candles(self, specs):
         return _ohlc_candles(specs)
 
-    def _run(self, specs, window, penetration=0.0):
+    def _run(self, specs, window, penetration=0.0, **kwargs):
         return run_backtest(
             self._candles(specs),
             model=self._AlwaysLong(),
@@ -1789,6 +1790,7 @@ class MakerFillTests(unittest.TestCase):
             # limit-only on both legs, so pin taker exits to keep the entry the
             # only thing under test.
             maker_exit_outcomes=[],
+            **kwargs,
         )
 
     def test_taker_default_fills_at_close(self) -> None:
@@ -1833,6 +1835,89 @@ class MakerFillTests(unittest.TestCase):
         self.assertAlmostEqual(first.slippage_pct, 1.0 * result.slippage_rate_per_side)
         self.assertGreaterEqual(result.maker_fill_diagnostics["orders_filled"], 1)
 
+    def test_gapped_buy_limit_fills_by_default_and_old_replay_expires_it(self) -> None:
+        # The second candle is wholly below the resting BUY at 100. Its sells
+        # traversed the bid, so the default book model fills at 100; the named
+        # probe preserves the old, erroneous OHLC-containment replay.
+        specs = [(100.0, 100.1, 99.9, 100.0), (98.0, 99.0, 97.0, 98.0)]
+        corrected = self._run(specs, window=1)
+        self.assertEqual(corrected.trade_count, 1)
+        self.assertTrue(corrected.trades[0].entry_maker)
+        self.assertAlmostEqual(corrected.trades[0].entry_price, 100.0)
+        self.assertEqual(corrected.run_config["maker_gap_entry_rule"], "resting_limit_book_traversal")
+        replay = self._run(specs, window=1, maker_gap_pre_correction_replay=True)
+        self.assertEqual(replay.trade_count, 0)
+        self.assertEqual(replay.maker_fill_diagnostics["orders_expired"], 1)
+        self.assertTrue(replay.run_config["maker_gap_pre_correction_replay"])
+        for result in (corrected, replay):
+            diag = result.maker_fill_diagnostics
+            self.assertEqual(diag["orders_placed"], diag["orders_filled"] + diag["orders_expired"] + diag["orders_kelly_refused"])
+
+    def test_gapped_sell_limit_fills_by_default_and_old_replay_expires_it(self) -> None:
+        # Symmetric case: a candle wholly above a resting SELL offer traversed
+        # it with buys and therefore fills the offer at 100.
+        specs = [(100.0, 100.1, 99.9, 100.0), (102.0, 103.0, 101.0, 102.0)]
+        class _AlwaysShort:
+            train_target = "short_success"
+
+            def probability(self, values) -> float:
+                return 0.9
+
+        common = dict(execution_side="short", label_horizon=3, cooldown_bars=99,
+                      short_threshold=0.8, maker_fill_window=1, maker_exit_outcomes=[],
+                      fee_rate_per_side=0.0, maker_fee_rate_per_side=0.0, slippage_rate_per_side=0.0)
+        corrected = run_backtest(_ohlc_candles(specs), model=_AlwaysShort(), **common)
+        self.assertEqual(corrected.trade_count, 1)
+        self.assertEqual(corrected.trades[0].side, "SELL")
+        self.assertAlmostEqual(corrected.trades[0].entry_price, 100.0)
+        replay = run_backtest(_ohlc_candles(specs), model=_AlwaysShort(), maker_gap_pre_correction_replay=True, **common)
+        self.assertEqual(replay.trade_count, 0)
+        self.assertEqual(replay.maker_fill_diagnostics["orders_expired"], 1)
+        for result in (corrected, replay):
+            diag = result.maker_fill_diagnostics
+            self.assertEqual(diag["orders_placed"], diag["orders_filled"] + diag["orders_expired"] + diag["orders_kelly_refused"])
+
+    def test_wholly_beyond_measurement_separates_book_fill_timings_and_expiry(self) -> None:
+        """The diagnostic's three outcome names track the first gap bar.
+
+        Under book traversal an order cannot remain pending after that bar, so
+        the latter two cases intentionally become same-bar fills.  The
+        containment-replay probe preserves the old paths and proves that a
+        later containing fill and an expiry remain separately measurable.
+        """
+        buckets = (
+            "filled_on_wholly_beyond_bar",
+            "filled_later_at_containing_bar",
+            "expired_unfilled",
+        )
+
+        def outcomes(result):
+            measurement = result.maker_fill_diagnostics["wholly_beyond_measurement"]
+            self.assertNotIn("subsequently_filled_later", measurement)
+            self.assertNotIn("subsequently_expired_unfilled", measurement)
+            return tuple(measurement[bucket] for bucket in buckets)
+
+        # A wholly-below BUY gap is a book-traversal fill under the default.
+        same_bar = [(100.0, 100.1, 99.9, 100.0), (98.0, 99.0, 97.0, 98.0)]
+        self.assertEqual(outcomes(self._run(same_bar, window=1)), (1, 0, 0))
+
+        # The old replay leaves the gap order resting; a later containing bar
+        # fills it.  The default correctly takes that order on the gap bar.
+        later_containing = same_bar + [(99.5, 100.2, 99.0, 100.0)]
+        self.assertEqual(outcomes(self._run(later_containing, window=2)), (1, 0, 0))
+        self.assertEqual(
+            outcomes(self._run(later_containing, window=2, maker_gap_pre_correction_replay=True)),
+            (0, 1, 0),
+        )
+
+        # With no containing return before expiry, the replay's distinct
+        # wholly-beyond order expires.  The default still fills it on bar one.
+        expires = same_bar + [(98.0, 99.0, 97.0, 98.0)] * 2
+        self.assertEqual(outcomes(self._run(expires, window=2)), (1, 0, 0))
+        self.assertEqual(
+            outcomes(self._run(expires, window=2, maker_gap_pre_correction_replay=True)),
+            (0, 0, 1),
+        )
 
     def test_maker_unfilled_when_price_runs_away(self) -> None:
         # Monotonic ramp: every later low is above every prior close, so no
@@ -3845,12 +3930,11 @@ class ShortOnlyExecutionTests(unittest.TestCase):
         self.assertAlmostEqual(trade.slippage_pct, 0.0)
         self.assertAlmostEqual(trade.fee_pct, 2.0 * result.maker_fee_rate_per_side)
 
-    def test_short_limit_does_not_fill_a_gap_that_never_traded_the_limit(self) -> None:
-        """A SELL limit at 100 cannot be filled by an OHLC bar wholly above 100.
+    def test_short_limit_old_replay_does_not_fill_a_gap_wholly_beyond_the_limit(self) -> None:
+        """The named probe reproduces the old containment-only replay.
 
-        The first live price in bar 1 is 102 and its low is 101, so the bar
-        proves that 100 was not traded.  Treating ``high >= limit`` as a fill
-        creates an order out of a price absent from the replay.
+        Its wholly-above candle expires the resting SELL even though the
+        default book-traversal rule correctly fills it at the limit.
         """
         specs = [
             (100.0, 100.1, 99.9, 100.0),  # signal: rest SELL limit 100
@@ -3862,6 +3946,7 @@ class ShortOnlyExecutionTests(unittest.TestCase):
             execution_side="short", label_horizon=3, cooldown_bars=99,
             short_threshold=0.8, maker_fill_window=2, fee_rate_per_side=0.0,
             maker_fee_rate_per_side=0.0, slippage_rate_per_side=0.0,
+            maker_gap_pre_correction_replay=True,
         )
         diag = result.maker_fill_diagnostics
         self.assertEqual(result.trade_count, 0)
@@ -3991,3 +4076,223 @@ class ShortOnlyExecutionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+def test_side_specific_geometry_rejects_partial_input_and_refuses_legacy_artifacts() -> None:
+    """A side-specific request must never turn into a copied shared barrier."""
+    from btcusdt_quant import backtest as _bt, dataset as _ds
+
+    with pytest.raises(ValueError, match="no side inherits"):
+        _ds.attach_labels([], [], horizon=1, label_threshold=0.001, long_tp_pct=0.004)
+
+    class _Legacy:
+        label_tp_pct = 0.004
+        label_sl_pct = 0.002
+
+    with pytest.raises(ValueError, match="un-attributed"):
+        _bt.check_execution_barrier_parity(
+            _Legacy(), None, None,
+            long_exec_tp_pct=0.004, long_exec_sl_pct=0.002,
+            short_exec_tp_pct=0.006, short_exec_sl_pct=0.012,
+        )
+
+
+def test_side_specific_geometry_checks_each_side_independently() -> None:
+    from btcusdt_quant import backtest as _bt
+
+    class _Bundle:
+        label_geometry = {
+            "long": {"tp_pct": 0.004, "sl_pct": 0.002},
+            "short": {"tp_pct": 0.006, "sl_pct": 0.012},
+        }
+
+    assert _bt.check_execution_barrier_parity(
+        _Bundle(), None, None,
+        long_exec_tp_pct=0.004, long_exec_sl_pct=0.002,
+        short_exec_tp_pct=0.006, short_exec_sl_pct=0.012,
+    ) == []
+    with pytest.raises(ValueError, match="short.tp_pct"):
+        _bt.check_execution_barrier_parity(
+            _Bundle(), None, None,
+            long_exec_tp_pct=0.004, long_exec_sl_pct=0.002,
+            short_exec_tp_pct=0.004, short_exec_sl_pct=0.012,
+        )
+
+
+def test_shared_execution_is_checked_against_both_sides_of_new_artifacts() -> None:
+    from btcusdt_quant import backtest as _bt
+
+    class _Bundle:
+        label_geometry = {
+            "long": {"tp_pct": 0.004, "sl_pct": 0.002},
+            "short": {"tp_pct": 0.006, "sl_pct": 0.012},
+        }
+
+    with pytest.raises(ValueError, match="short.tp_pct"):
+        _bt.check_execution_barrier_parity(_Bundle(), 0.004, 0.002)
+
+
+def test_short_target_threshold_settlement_uses_its_side_geometry() -> None:
+    """A 0.60%/1.20% short fit must not price its TP as the legacy default."""
+    from btcusdt_quant import data as _data, dataset as _ds, training as _tr
+
+    config = _tr.TrainingConfig(
+        tp_pct=0.003, sl_pct=0.0015,
+        long_tp_pct=0.004, long_sl_pct=0.002,
+        short_tp_pct=0.006, short_sl_pct=0.012,
+    )
+    tp, sl = _tr.target_geometry(config, "short_profitability")
+    assert (tp, sl) == (0.006, 0.012)
+
+    row = _ds.LabeledRow(
+        index=0, open_time=_data.utc_minute(2026, 1, 1, 0, 0), features={},
+        label=1, label_reason="short_tp_first", target_return=0.0,
+        gap_flag=0, repaired=False, warmup_invalid=False,
+        targets={"short_profitability": 1},
+        target_reasons={"short_profitability": "short_tp_first"},
+    )
+    assert _tr.realized_payoffs([row], "short_profitability", tp, sl) == [0.006]
+
+
+def test_build_dataset_carries_explicit_per_side_geometry_to_labels(monkeypatch) -> None:
+    """The public training build path must not drop the new label arguments."""
+    from datetime import timedelta
+    from btcusdt_quant import data as _data, dataset as _ds
+
+    start = _data.utc_minute(2026, 1, 1, 0, 0)
+    candles = [
+        _data.Candle(
+            start + timedelta(minutes=i), 100.0, 100.1, 99.9, 100.0,
+            1.0, 100.0, 1, 0.5, 50.0,
+        )
+        for i in range(61)
+    ]
+    captured = {}
+    original = _ds.attach_labels
+
+    def capture(*args, **kwargs):
+        captured.update(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(_ds, "attach_labels", capture)
+    _ds.build_dataset(
+        stream_buffer=candles, horizon=1, label_threshold=0.001,
+        long_tp_pct=0.004, long_sl_pct=0.002,
+        short_tp_pct=0.006, short_sl_pct=0.012,
+    )
+    assert {key: captured[key] for key in ("long_tp_pct", "long_sl_pct", "short_tp_pct", "short_sl_pct")} == {
+        "long_tp_pct": 0.004, "long_sl_pct": 0.002,
+        "short_tp_pct": 0.006, "short_sl_pct": 0.012,
+    }
+
+
+def test_short_labels_and_threshold_settlement_are_side_specific() -> None:
+    """TP, SL and signed short timeouts must remain distinct from long labels."""
+    from btcusdt_quant import data as _data, dataset as _ds, training as _tr
+
+    def candle(index, o, h, l, c):
+        return _data.Candle(
+            _data.utc_minute(2026, 2, 1, 0, index), o, h, l, c,
+            1.0, c, 1, 0.5, c / 2,
+        )
+
+    # entry, short TP, short SL, short timeout win (-0.20%), timeout loss (-0.05%)
+    candles = [
+        candle(0, 100, 100.1, 99.9, 100), candle(1, 100, 100.1, 99.0, 99.2),
+        candle(2, 100, 100.1, 99.9, 100), candle(3, 100, 101.3, 99.9, 101.0),
+        candle(4, 100, 100.1, 99.9, 100), candle(5, 100, 100.1, 99.85, 99.85),
+        candle(6, 100, 100.1, 99.9, 100), candle(7, 100, 100.1, 99.9, 99.95),
+    ]
+    short = [
+        _ds.triple_barrier_label_short_profitability(i, candles, 1, .001, .006, .012,
+            (candles[i + 1].close - candles[i].close) / candles[i].close)
+        for i in (0, 2, 4, 6)
+    ]
+    long = [_ds.triple_barrier_label_long(i, candles, 1, .004, .002) for i in (0, 2, 4, 6)]
+    assert short == [(1, "short_tp_first"), (0, "short_sl_first"), (1, "short_timeout_return"), (0, "short_timeout_return")]
+    assert long == [(0, "long_sl_first"), (1, "long_tp_first"), (0, "long_timeout"), (0, "long_timeout")]
+
+    # This cohort changes the selected cutoff if short TP/SL are mistakenly
+    # priced as 0.30%/0.15% instead of 0.60%/1.20%.
+    reasons = ["short_tp_first"] * 5 + ["short_sl_first", "short_timeout_return", "short_tp_first"]
+    payoffs = [.006] * 5 + [-.012, -.001, .006]
+    rows = [
+        _ds.LabeledRow(i, candles[0].open_time, {}, int(payoff > 0), reason, -payoff,
+                       0, False, False, {"short_profitability": int(payoff > 0)},
+                       {"short_profitability": reason})
+        for i, (reason, payoff) in enumerate(zip(reasons, payoffs))
+    ]
+    probabilities = [.9, .8, .7, .6, .5, .4, .3, .2]
+    settled = _tr.realized_payoffs(rows, "short_profitability", .006, .012)
+    assert settled == payoffs
+    correct = _tr.threshold_selection_audit(probabilities, [row.label for row in rows], min_trades=1,
+        tp_pct=.006, sl_pct=.012, round_trip_cost=.0004, realized_payoffs=settled)
+    wrong = _tr.threshold_selection_audit(probabilities, [row.label for row in rows], min_trades=1,
+        tp_pct=.003, sl_pct=.0015, round_trip_cost=.0004,
+        realized_payoffs=[.003 if x == .006 else -.0015 if x == -.012 else x for x in settled])
+    assert (correct["selected_threshold"], wrong["selected_threshold"]) == (.2, .4)
+
+
+def test_funnel_candidate_uses_short_execution_geometry(monkeypatch) -> None:
+    """Diagnostic candidates must quote the same short barrier as execution."""
+    observed = []
+    original = live.optimized_tp_sl
+
+    def capture(entry_price, side, feats, strategy):
+        observed.append((side, strategy.tp_pct, strategy.sl_pct))
+        return original(entry_price, side, feats, strategy)
+
+    monkeypatch.setattr(live, "optimized_tp_sl", capture)
+    monkeypatch.setattr(ShortOnlyExecutionTests._ShortScores, "label_geometry", {
+        "long": {"tp_pct": 0.004, "sl_pct": 0.002},
+        "short": {"tp_pct": 0.006, "sl_pct": 0.012},
+    }, raising=False)
+    result = ShortOnlyExecutionTests()._run(
+        [0.95] * 64, execution_side="short", record_counterfactual_candidates=True,
+        long_exec_tp_pct=0.004, long_exec_sl_pct=0.002,
+        short_exec_tp_pct=0.006, short_exec_sl_pct=0.012,
+    )
+    assert result.execution_funnel["volatility_gate"]["overall"]["candidate_count"] > 0
+    assert observed[0] == ("SELL", 0.006, 0.012)
+
+
+def test_parity_checks_only_the_side_that_can_execute() -> None:
+    class _Bundle:
+        label_geometry = {
+            "long": {"tp_pct": 0.004, "sl_pct": 0.002},
+            "short": {"tp_pct": 0.006, "sl_pct": 0.012},
+        }
+
+    assert check_execution_barrier_parity(_Bundle(), 0.004, 0.002, execution_side="long") == []
+    with pytest.raises(ValueError, match="short.tp_pct"):
+        check_execution_barrier_parity(_Bundle(), 0.004, 0.002, execution_side="both")
+
+
+def test_profile_fingerprint_includes_per_side_execution_geometry(monkeypatch) -> None:
+    """A short-only geometry difference must keep profiles distinguishable."""
+    bundle = _ThresholdBundle({"up": {"long": 0.35, "short": 0.36}})
+    long = live.strategy_for_regime(None, "balanced")
+
+    def side_geometry(strategy, *_args):
+        short_tp = 0.006 if strategy.name.startswith("balanced") else 0.007
+        return strategy, long, dataclasses.replace(long, tp_pct=short_tp, sl_pct=0.012)
+
+    monkeypatch.setattr(backtest_module, "execution_strategies", side_geometry)
+    assert indistinguishable_profiles(_profiles(), models_by_regime={"up": bundle}) is None
+
+
+def test_legacy_label_uses_long_geometry_when_sides_are_explicit() -> None:
+    """`label` must not retain a third, shared barrier under per-side input."""
+    from btcusdt_quant import dataset as _ds
+
+    candles = _ohlc_candles([
+        (100.0, 100.1, 99.9, 100.0),
+        (100.0, 100.5, 99.9, 100.0),
+    ])
+    row = _ds.FeatureRow(0, candles[0].open_time, {}, 0, False, False)
+    labeled = _ds.attach_labels(
+        [row], candles, horizon=1, label_threshold=0.001, tp_pct=0.01, sl_pct=0.005,
+        long_tp_pct=0.004, long_sl_pct=0.002, short_tp_pct=0.006, short_sl_pct=0.012,
+    )[0]
+    assert labeled.label == 1
+    assert labeled.label_reason == "tp_first"
+    assert labeled.targets["profitability"] == labeled.label
+    assert labeled.targets["long_success"] == 1

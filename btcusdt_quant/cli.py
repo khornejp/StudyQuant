@@ -562,6 +562,10 @@ def run_train(
     threshold_min_trades: int | None = None,
     tp_pct: float = dataset.DEFAULT_LABEL_TP_PCT,
     sl_pct: float = dataset.DEFAULT_LABEL_SL_PCT,
+    long_tp_pct: float | None = None,
+    long_sl_pct: float | None = None,
+    short_tp_pct: float | None = None,
+    short_sl_pct: float | None = None,
     label_horizon: int = 60,
     label_threshold: float = 0.001,
     round_trip_cost: float = backtest.DEFAULT_ROUND_TRIP_COST_PCT,
@@ -632,6 +636,10 @@ def run_train(
         threshold_min_trades=threshold_min_trades,
         tp_pct=tp_pct,
         sl_pct=sl_pct,
+        long_tp_pct=long_tp_pct,
+        long_sl_pct=long_sl_pct,
+        short_tp_pct=short_tp_pct,
+        short_sl_pct=short_sl_pct,
         label_horizon=label_horizon,
         label_threshold=label_threshold,
         round_trip_cost=round_trip_cost,
@@ -1691,6 +1699,10 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--min-ev", type=float, default=0.0001, help="minimum expected value for entry signals (0.01%% = 0.0001)")
     train.add_argument("--tp-pct", type=float, default=dataset.DEFAULT_LABEL_TP_PCT, help=f"take profit %% for triple-barrier labeling. The backtest MUST execute this same barrier (--exec-tp-pct) or the model is answering about a trade you did not take. (default {dataset.DEFAULT_LABEL_TP_PCT} = 1.00%%)")
     train.add_argument("--sl-pct", type=float, default=dataset.DEFAULT_LABEL_SL_PCT, help=f"stop loss %% for triple-barrier labeling. The backtest MUST execute this same barrier (--exec-sl-pct). (default {dataset.DEFAULT_LABEL_SL_PCT} = 0.50%%)")
+    train.add_argument("--long-label-tp-pct", type=float, default=None, help="long-label TP; requires all four per-side label geometry flags")
+    train.add_argument("--long-label-sl-pct", type=float, default=None, help="long-label SL; requires all four per-side label geometry flags")
+    train.add_argument("--short-label-tp-pct", type=float, default=None, help="short-label TP; requires all four per-side label geometry flags")
+    train.add_argument("--short-label-sl-pct", type=float, default=None, help="short-label SL; requires all four per-side label geometry flags")
     train.add_argument("--horizon", type=int, default=60, help="triple-barrier horizon in bars (minutes for 1m data); default 60")
     train.add_argument("--label-threshold", type=float, default=0.001, help="return threshold for directional labeling (0.10%% = 0.001)")
     train.add_argument("--shuffle-labels", action="store_true", help="SHUFFLED-LABEL NEGATIVE CONTROL: permute every row's label/targets across rows (features untouched) before training. A leak-free pipeline must lose its edge under this; comparable net profit from the shuffled model means leakage, threshold overfit, a backtest bug or selection bias. The artifact records shuffled_labels=true -- NEVER deploy it.")
@@ -1750,6 +1762,10 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--short-threshold", type=float, default=None, help="override the SHORT-entry probability threshold for all regimes. When omitted, uses the learned per-regime threshold if present, else the strategy default.")
     backtest_parser.add_argument("--exec-tp-pct", type=float, default=None, help="execute with a FIXED take-profit of this fraction (e.g. 0.003 = 0.30%%) for every trade instead of the strategy's ATR-based barrier. Set equal to the training --tp-pct so the backtest executes the SAME barrier the model was labeled/trained on (avoids the train/execution mismatch where the model predicts a 0.30%% move but the backtest trades a 0.84%% ATR barrier). Requires --exec-sl-pct too.")
     backtest_parser.add_argument("--exec-sl-pct", type=float, default=None, help="execute with a FIXED stop-loss of this fraction (e.g. 0.0015 = 0.15%%). Set equal to training --sl-pct. Requires --exec-tp-pct too.")
+    backtest_parser.add_argument("--long-exec-tp-pct", type=float, default=None, help="long execution TP; requires all four per-side execution geometry flags")
+    backtest_parser.add_argument("--long-exec-sl-pct", type=float, default=None, help="long execution SL; requires all four per-side execution geometry flags")
+    backtest_parser.add_argument("--short-exec-tp-pct", type=float, default=None, help="short execution TP; requires all four per-side execution geometry flags")
+    backtest_parser.add_argument("--short-exec-sl-pct", type=float, default=None, help="short execution SL; requires all four per-side execution geometry flags")
     backtest_parser.add_argument("--allow-barrier-mismatch", action="store_true", help="permit --exec-tp-pct/--exec-sl-pct to differ from the tp_pct/sl_pct the loaded models were LABELED on (recorded in regime_run_summary.json). Off by default: the model predicts P(TP before SL) for the barrier it was trained on, so executing a different one denominates every probability, threshold and win rate in a barrier nobody trained on, and the run reports a meaningless number without erroring. No pipeline needs this -- tp_sl_sweep.sh RETRAINS each cell at its own tp/sl, so its barriers match. Pass it only for a deliberate one-off probe of how a fixed model behaves under a barrier it was not trained for, and read the result as a sensitivity check, not as performance.")
     backtest_parser.add_argument("--backtest-end", default=None, help="inclusive end date (YYYY-MM-DD) of the trading window. Without it the backtest silently trades from --backtest-start to the END OF FILE, so a parquet extended past 2025 would silently widen the traded span. Routing diagnostics are sliced to the same window.")
     backtest_parser.add_argument("--metrics-dir", default=None, help="directory of downloaded Binance metrics archive (collect-metrics output) -- pass the SAME directory used for training's --metrics-dir. Training with metrics and backtesting without them feeds the model F16 derivatives-metrics features (open interest change rates/z-scores, long/short ratios, taker ratio) as 0.0 -- inputs it never saw in training (train/serve feature skew). Without this flag those features are 0 in the backtest.")
@@ -1779,6 +1795,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--regime-classifier-dir", default=None, help="output directory from train-regime-classifier (contains regime_classifier_model.cbm). When set, this SAME saved classifier drives regime routing here via F17 multi-timeframe features -- pass the identical directory used for training's --regime-classifier-dir so routing stays consistent with how the up/down/range models were trained. Takes priority over --auto-regime. Ignored if --user-regime-file is given.")
     backtest_parser.add_argument("--maker-fill-window", type=int, default=backtest.DEFAULT_MAKER_FILL_WINDOW, help="model MAKER (resting limit) entries instead of the default instant taker fill at the signal-bar close. A BUY places a limit at the signal close and fills only when a LATER bar's low returns to it within this many bars (a SELL uses the high); unfilled within the window = the order is cancelled and the trade is MISSED. Maker entries pay no entry-side fee/slippage (only exit). This surfaces the two costs a taker backtest hides: adverse selection (you only fill when price came back to you) and missed trades (the moves that ran away). 0 = disabled (instant taker fill). See maker_fill_diagnostics in the summary for fill rate.")
     backtest_parser.add_argument("--maker-fill-penetration-bps", type=float, default=0.0, help="queue-priority stress for --maker-fill-window: require the price to PENETRATE the resting limit by this many bps before it fills, not merely touch it (a resting order sits behind others at its price, so a bare touch may only fill the front of the queue). E.g. 2 = a BUY limit fills only when a bar's low reaches 2bps BELOW the limit. 0 = touch fills (optimistic). Only meaningful with --maker-fill-window > 0.")
+    backtest_parser.add_argument("--maker-gap-pre-correction-replay", action="store_true", help="measurement-only probe: reproduce the pre-correction OHLC-containment replay, which expires a resting order when a later candle is wholly beyond its limit. The default book-traversal rule fills the resting BUY/SELL at its limit because the market crossed its order.")
     backtest_parser.add_argument("--record-counterfactual-candidates", action="store_true", help="write counterfactual_candidates.json for eligible signals rejected by the one-position scheduler. Off by default so normal 1m runs allocate and record nothing for rejected candidates.")
     backtest_parser.add_argument("--disable-range-gate", action="store_true", help="A/B experiment flag: skip the range mean-reversion direction gate (which blocks entries at range_position_20 0.25-0.75 and forces LONG-only/SHORT-only at the extremes). With 2025 ~91%% range, the gate suppresses most entries; disabling it lets the model's own probability decide direction everywhere. Backtest-only -- live keeps the gate. Recorded in run_config for comparability.")
     mh_parser = subparsers.add_parser(
@@ -2175,6 +2192,10 @@ def main(argv: list[str] | None = None) -> int:
                 threshold_min_trades=args.threshold_min_trades,
                 tp_pct=args.tp_pct,
                 sl_pct=args.sl_pct,
+                long_tp_pct=args.long_label_tp_pct,
+                long_sl_pct=args.long_label_sl_pct,
+                short_tp_pct=args.short_label_tp_pct,
+                short_sl_pct=args.short_label_sl_pct,
                 label_horizon=args.horizon,
                 label_threshold=args.label_threshold,
                 round_trip_cost=args.round_trip_cost,
@@ -2649,6 +2670,10 @@ def main(argv: list[str] | None = None) -> int:
                 multi_feature_regime_detector=multi_feature_regime_detector,
                 exec_tp_pct=args.exec_tp_pct,
                 exec_sl_pct=args.exec_sl_pct,
+                long_exec_tp_pct=args.long_exec_tp_pct,
+                long_exec_sl_pct=args.long_exec_sl_pct,
+                short_exec_tp_pct=args.short_exec_tp_pct,
+                short_exec_sl_pct=args.short_exec_sl_pct,
                 threshold_floor=args.threshold_floor,
                 label_horizon=args.horizon,
                 feature_rows=shared_feature_rows,
@@ -2704,6 +2729,10 @@ def main(argv: list[str] | None = None) -> int:
                 short_threshold=args.short_threshold,
                 exec_tp_pct=args.exec_tp_pct,
                 exec_sl_pct=args.exec_sl_pct,
+                long_exec_tp_pct=args.long_exec_tp_pct,
+                long_exec_sl_pct=args.long_exec_sl_pct,
+                short_exec_tp_pct=args.short_exec_tp_pct,
+                short_exec_sl_pct=args.short_exec_sl_pct,
                 threshold_floor=args.threshold_floor,
                 entry_quantile=args.entry_quantile,
                 entry_quantile_window=args.entry_quantile_window,
@@ -2724,6 +2753,7 @@ def main(argv: list[str] | None = None) -> int:
                 range_gate_enabled=not args.disable_range_gate,
                 maker_fill_window=args.maker_fill_window,
                 maker_fill_penetration=args.maker_fill_penetration_bps / 1e4,
+                maker_gap_pre_correction_replay=args.maker_gap_pre_correction_replay,
                 record_counterfactual_candidates=args.record_counterfactual_candidates,
                 provenance_input_paths=provenance_input_paths,
                 captured_provenance=captured_backtest_provenance,
@@ -2959,3 +2989,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     parser.print_help()
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

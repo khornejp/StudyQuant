@@ -271,6 +271,27 @@ def apply_exec_barrier(
     )
 
 
+def execution_strategies(
+    strategy: live.StrategyConfig,
+    exec_tp_pct: float | None,
+    exec_sl_pct: float | None,
+    long_exec_tp_pct: float | None = None,
+    long_exec_sl_pct: float | None = None,
+    short_exec_tp_pct: float | None = None,
+    short_exec_sl_pct: float | None = None,
+) -> tuple[live.StrategyConfig, live.StrategyConfig, live.StrategyConfig]:
+    """Resolve shared, long, and short execution geometry once."""
+    side_values = (long_exec_tp_pct, long_exec_sl_pct, short_exec_tp_pct, short_exec_sl_pct)
+    if any(value is not None for value in side_values) and any(value is None for value in side_values):
+        raise ValueError("per-side execution geometry requires all four long/short TP/SL values; no side inherits another")
+    shared_strategy = apply_exec_barrier(strategy, exec_tp_pct, exec_sl_pct)
+    return (
+        shared_strategy,
+        apply_exec_barrier(shared_strategy, long_exec_tp_pct, long_exec_sl_pct),
+        apply_exec_barrier(shared_strategy, short_exec_tp_pct, short_exec_sl_pct),
+    )
+
+
 def _execution_fingerprint(
     strategy: live.StrategyConfig,
     models_by_regime: Mapping[str, object] | None,
@@ -332,6 +353,10 @@ def indistinguishable_profiles(
     default_regime: str | None = None,
     exec_tp_pct: float | None = None,
     exec_sl_pct: float | None = None,
+    long_exec_tp_pct: float | None = None,
+    long_exec_sl_pct: float | None = None,
+    short_exec_tp_pct: float | None = None,
+    short_exec_sl_pct: float | None = None,
     long_threshold: float | None = None,
     short_threshold: float | None = None,
     threshold_floor: float = 0.0,
@@ -353,21 +378,22 @@ def indistinguishable_profiles(
     if len(strategies) < 2:
         return None
     fingerprints = {
-        name: _execution_fingerprint(
-            apply_exec_barrier(strategy, exec_tp_pct, exec_sl_pct),
-            models_by_regime,
-            default_regime,
-            long_threshold,
-            short_threshold,
-            threshold_floor,
-            entry_quantile,
+        name: tuple(
+            _execution_fingerprint(
+                side_strategy, models_by_regime, default_regime, long_threshold,
+                short_threshold, threshold_floor, entry_quantile,
+            )
+            for side_strategy in execution_strategies(
+                strategy, exec_tp_pct, exec_sl_pct, long_exec_tp_pct,
+                long_exec_sl_pct, short_exec_tp_pct, short_exec_sl_pct,
+            )[1:]
         )
         for name, strategy in strategies.items()
     }
     if len(set(fingerprints.values())) > 1:
         return None
     causes = []
-    if exec_tp_pct is not None and exec_sl_pct is not None:
+    if (exec_tp_pct is not None and exec_sl_pct is not None) or long_exec_tp_pct is not None:
         causes.append("the TP/SL barrier is fixed by --exec-tp-pct/--exec-sl-pct")
     if long_threshold is not None or short_threshold is not None:
         causes.append("the entry thresholds are fixed by explicit CLI overrides")
@@ -1022,6 +1048,11 @@ def check_execution_barrier_parity(
     exec_tp_pct: float | None,
     exec_sl_pct: float | None,
     allow_mismatch: bool = False,
+    long_exec_tp_pct: float | None = None,
+    long_exec_sl_pct: float | None = None,
+    short_exec_tp_pct: float | None = None,
+    short_exec_sl_pct: float | None = None,
+    execution_side: str = "both",
 ) -> list[str]:
     """Refuse to execute a barrier the loaded models were not labeled on.
 
@@ -1043,6 +1074,64 @@ def check_execution_barrier_parity(
     one-off probe of how a fixed model degrades under a barrier it was not
     trained for -- a sensitivity check, whose output is not performance.
     """
+    def _recorded_geometry(source: object) -> Mapping[str, object] | None:
+        """Return one consistent geometry through direct, bundle, or side wrappers."""
+        direct = getattr(source, "label_geometry", None)
+        if isinstance(direct, Mapping):
+            return direct
+        children: list[object] = []
+        if isinstance(source, Mapping):
+            children.extend(source.values())
+        else:
+            for name in ("long_models", "short_models"):
+                models_for_side = getattr(source, name, None)
+                if isinstance(models_for_side, Mapping):
+                    children.extend(models_for_side.values())
+        geometries = [_recorded_geometry(child) for child in children]
+        geometries = [geometry for geometry in geometries if geometry is not None]
+        if not geometries:
+            return None
+        first = geometries[0]
+        if any(geometry != first for geometry in geometries[1:]):
+            raise ValueError("artifact container has conflicting side-specific label geometries; retrain all contained models with one geometry")
+        return first
+
+    if execution_side not in {"both", "long", "short"}:
+        raise ValueError("execution_side must be one of 'both', 'long', or 'short'")
+    sides_to_verify = ("long", "short") if execution_side == "both" else (execution_side,)
+    side_values = (long_exec_tp_pct, long_exec_sl_pct, short_exec_tp_pct, short_exec_sl_pct)
+    if any(v is not None for v in side_values) and any(v is None for v in side_values):
+        raise ValueError("per-side execution geometry requires TP and SL for both long and short; neither side inherits the other")
+    if any(v is not None for v in side_values):
+        geometry = _recorded_geometry(regime_bundle)
+        if not isinstance(geometry, Mapping):
+            raise ValueError("artifact has a single un-attributed label geometry; cannot prove which side it belongs to. Retrain with per-side geometry.")
+        execution = {"long": (long_exec_tp_pct, long_exec_sl_pct), "short": (short_exec_tp_pct, short_exec_sl_pct)}
+        mismatched = []
+        for side in sides_to_verify:
+            tp, sl = execution[side]
+            recorded = geometry.get(side)
+            if not isinstance(recorded, Mapping) or recorded.get("tp_pct") is None or recorded.get("sl_pct") is None:
+                raise ValueError(f"artifact does not record {side} label geometry; cannot verify execution")
+            for name, labeled, executing in (("tp_pct", recorded["tp_pct"], tp), ("sl_pct", recorded["sl_pct"], sl)):
+                if abs(float(executing) - float(labeled)) > _BARRIER_MATCH_TOL:
+                    mismatched.append(f"{side}.{name}: labeled {float(labeled):.6g}, executing {float(executing):.6g}")
+        if not mismatched:
+            return []
+        if allow_mismatch:
+            return ["BARRIER MISMATCH (allowed): " + "; ".join(mismatched)]
+        raise ValueError("execution barrier does not match the side-specific labeled barrier (" + "; ".join(mismatched) + "). Retrain or pass allow_mismatch for a sensitivity probe.")
+    # New artifacts record both sides even when they happen to share a barrier.
+    # A legacy --exec-tp/sl pair applies to both directions, so verify it
+    # against both records instead of falling through to absent scalar fields.
+    geometry = _recorded_geometry(regime_bundle)
+    if exec_tp_pct is not None and exec_sl_pct is not None and isinstance(geometry, Mapping):
+        return check_execution_barrier_parity(
+            regime_bundle, None, None, allow_mismatch=allow_mismatch,
+            long_exec_tp_pct=exec_tp_pct, long_exec_sl_pct=exec_sl_pct,
+            short_exec_tp_pct=exec_tp_pct, short_exec_sl_pct=exec_sl_pct,
+            execution_side=execution_side,
+        )
     if exec_tp_pct is None and exec_sl_pct is None:
         return []
     label_tp = getattr(regime_bundle, "label_tp_pct", None)
@@ -1175,6 +1264,10 @@ def run_backtest(
     short_threshold: float | None = None,
     exec_tp_pct: float | None = None,
     exec_sl_pct: float | None = None,
+    long_exec_tp_pct: float | None = None,
+    long_exec_sl_pct: float | None = None,
+    short_exec_tp_pct: float | None = None,
+    short_exec_sl_pct: float | None = None,
     threshold_floor: float = 0.0,
     entry_quantile: float | None = None,
     entry_quantile_window: int = 0,
@@ -1204,6 +1297,7 @@ def run_backtest(
     range_gate_edge: float = DEFAULT_RANGE_GATE_EDGE,
     maker_fill_window: int = DEFAULT_MAKER_FILL_WINDOW,
     maker_fill_penetration: float = 0.0,
+    maker_gap_pre_correction_replay: bool = False,
     maker_exit_outcomes: Sequence[str] | None = None,
     record_counterfactual_candidates: bool = False,
     provenance_input_paths: Sequence[Path] = (),
@@ -1267,7 +1361,10 @@ def run_backtest(
     """
     if strategy is None:
         strategy = live.strategy_for_regime(None, "balanced")
-    strategy = apply_exec_barrier(strategy, exec_tp_pct, exec_sl_pct)
+    strategy, long_strategy, short_strategy = execution_strategies(
+        strategy, exec_tp_pct, exec_sl_pct, long_exec_tp_pct, long_exec_sl_pct,
+        short_exec_tp_pct, short_exec_sl_pct,
+    )
     _validate_cost_rates(fee_rate_per_side, slippage_rate_per_side, maker_fee_rate_per_side)
     if not 0.0 < range_gate_edge <= 0.5:
         raise ValueError(f"range_gate_edge must be in (0, 0.5], got {range_gate_edge}")
@@ -1293,12 +1390,22 @@ def run_backtest(
         raise ValueError("maker_fill_penetration must be non-negative")
     if cooldown_bars < 0:
         raise ValueError("cooldown_bars must be non-negative")
+    if execution_side not in {"both", "long", "short"}:
+        raise ValueError("execution_side must be one of 'both', 'long', or 'short'")
+    # Compatibility spelling for callers predating the explicit selector.
+    if long_only and execution_side == "short":
+        raise ValueError("long_only and execution_side='short' cannot both hold")
+    if long_only:
+        execution_side = "long"
     # Before anything else: the models must have been labeled on the barrier we
     # are about to execute. A mismatch cannot be detected from the results (they
     # look like ordinary bad numbers), so it has to be refused up front.
     barrier_warnings = check_execution_barrier_parity(
         models_by_regime if models_by_regime is not None else model,
-        exec_tp_pct, exec_sl_pct, allow_mismatch=allow_barrier_mismatch
+        exec_tp_pct, exec_sl_pct, allow_mismatch=allow_barrier_mismatch,
+        long_exec_tp_pct=long_exec_tp_pct, long_exec_sl_pct=long_exec_sl_pct,
+        short_exec_tp_pct=short_exec_tp_pct, short_exec_sl_pct=short_exec_sl_pct,
+        execution_side=execution_side,
     )
     # Resolved once: a short-trained model inverts the score-to-side mapping on
     # every single-model branch below.
@@ -1311,13 +1418,6 @@ def run_backtest(
     # intentionally remains the start state if the checkout changes while a
     # long run is executing: it identifies the modules and inputs the process
     # began with, whereas an end snapshot could describe code never executed.
-    if execution_side not in {"both", "long", "short"}:
-        raise ValueError("execution_side must be one of 'both', 'long', or 'short'")
-    # Compatibility spelling for callers predating the explicit selector.
-    if long_only and execution_side == "short":
-        raise ValueError("long_only and execution_side='short' cannot both hold")
-    if long_only:
-        execution_side = "long"
     if execution_side == "short":
         target = model_train_target(model)
         if target is None:
@@ -1356,6 +1456,15 @@ def run_backtest(
         "maker_fill_window": maker_fill_window,
         "maker_exit_outcomes": sorted(maker_exit_set),
         "maker_fill_penetration": maker_fill_penetration,
+        # Default: a resting limit is a book order.  A later candle wholly
+        # beyond it proves the market traversed the level, so it fills at its
+        # limit.  This probe reproduces the pre-correction OHLC-containment
+        # replay, which incorrectly treated those orders as unfilled.
+        "maker_gap_entry_rule": (
+            "pre_correction_ohlc_containment_replay"
+            if maker_gap_pre_correction_replay else "resting_limit_book_traversal"
+        ),
+        "maker_gap_pre_correction_replay": maker_gap_pre_correction_replay,
         "record_counterfactual_candidates": record_counterfactual_candidates,
         "kelly_enabled": kelly_config is not None,
         "kelly_multiplier": kelly_config.kelly_multiplier if kelly_config else None,
@@ -1523,7 +1632,8 @@ def run_backtest(
 
     def _funnel_candidate(index: int, candle: data.Candle, side: str, probability: float | None) -> dict[str, object]:
         feats = feature_rows[index].features if index < len(feature_rows) else {}
-        tp_price, sl_price, _ = live.optimized_tp_sl(candle.close, side, feats, strategy)
+        trade_strategy = long_strategy if side == "BUY" else short_strategy
+        tp_price, sl_price, _ = live.optimized_tp_sl(candle.close, side, feats, trade_strategy)
         return {
             "bar_index": index, "side": side,
             "identity": _candidate_identity(index, side),
@@ -1546,6 +1656,15 @@ def run_backtest(
         funnel_candidates[stage].append(candidate)
     maker_orders_placed = 0
     maker_orders_filled = 0
+    # Measurement only: keep the first wholly-beyond bar for each order, then
+    # price its isolated hypothetical trade after replay.  Its fill outcome is
+    # classified relative to that first gap bar, not merely as an eventual fill:
+    # on that bar, later at a containing bar, or expired unfilled.
+    # This neither opens a trade nor changes the scheduler unless the explicit
+    # counterfactual switch below is enabled.
+    maker_gap_bars = 0
+    maker_gap_orders: dict[CandidateIdentity, dict[str, object]] = {}
+    maker_gap_order_status: dict[CandidateIdentity, str] = {}
     # Expiries and Kelly refusals are counted apart: an expiry is the book
     # never coming back to the limit (what fill_rate is about), a refusal is a
     # fill the sizer then declined. Lumping them made fill_rate a statement
@@ -1729,7 +1848,8 @@ def run_backtest(
         Reads the loop's current `i` for the Kelly variance window."""
         nonlocal kelly_skipped_shorts, kelly_skipped_longs, kelly_skipped_entries
         regime, lprob, sprob, lt_, st_, genuine = ctx
-        tp_price, sl_price, _decision = live.optimized_tp_sl(entry_price, side, features, strategy)
+        trade_strategy = long_strategy if side == "BUY" else short_strategy
+        tp_price, sl_price, _decision = live.optimized_tp_sl(entry_price, side, features, trade_strategy)
         trade_size: float | None = None
         if kelly_config is not None:
             entered_side = "long" if side == "BUY" else "short"
@@ -1877,7 +1997,8 @@ def run_backtest(
                             short_prob if short_prob is not None else 0.0,
                             long_threshold=lt,
                             short_threshold=st,
-                            strategy=strategy,
+                            long_strategy=long_strategy,
+                            short_strategy=short_strategy,
                             features=feature_rows[i].features if i < len(feature_rows) else {},
                             allow_binary_outcome=allow_binary_ev,
                         )
@@ -1942,7 +2063,8 @@ def run_backtest(
                             long_prob if long_prob is not None else 0.0,
                             short_prob if short_prob is not None else 0.0,
                             long_threshold=lt, short_threshold=st,
-                            strategy=strategy,
+                            long_strategy=long_strategy,
+                            short_strategy=short_strategy,
                             features=feature_rows[i].features if i < len(feature_rows) else {},
                             allow_binary_outcome=allow_binary_ev,
                         )
@@ -2085,20 +2207,37 @@ def run_backtest(
         # 2) placing a new order stays below, after the exit block.
         if maker_fill_window > 0 and active_trade is None and pending_order is not None:
             if i > int(pending_order["expiry"]):
+                _identity = pending_order["identity"]
+                if _identity in maker_gap_order_status:
+                    maker_gap_order_status[_identity] = "expired_unfilled"
                 pending_order = None
                 maker_orders_expired += 1
             else:
                 lp = float(pending_order["limit"])
                 pside = str(pending_order["side"])
+                wholly_beyond = (
+                    candle.high < lp if pside == "BUY" else candle.low > lp
+                )
+                if wholly_beyond:
+                    maker_gap_bars += 1
+                    _identity = pending_order["identity"]
+                    if _identity not in maker_gap_orders:
+                        maker_gap_orders[_identity] = {
+                            "entry_index": i, "side": pside, "limit": lp,
+                            "features": pending_order["features"],
+                        }
+                        maker_gap_order_status[_identity] = "pending"
                 # Queue-priority proxy: require the price to PENETRATE the
                 # limit by maker_fill_penetration (fraction), not merely
                 # touch it. A resting order sits behind others at its price;
                 # a bare touch may only fill the front of the queue. Needing
                 # the market to trade through the level models your order
                 # clearing. 0 = touch fills (optimistic).
-                # The candle must also CONTAIN the limit.  A bar wholly beyond
-                # it is a gap: OHLC proves the limit itself never traded, so a
-                # maker fill at that absent price would invent liquidity.
+                # The candle normally contains the limit. A bar wholly beyond
+                # it instead means the market traversed a resting book order:
+                # a BUY bid is consumed while moving lower and a SELL offer is
+                # consumed while moving higher, both at the limit.  The opt-in
+                # probe below reproduces the old OHLC-containment replay.
                 if pside == "BUY":
                     hit = (
                         candle.high >= lp
@@ -2109,7 +2248,18 @@ def run_backtest(
                         candle.low <= lp
                         and candle.high >= lp * (1.0 + maker_fill_penetration)
                     )
-                if hit:
+                if hit or (wholly_beyond and not maker_gap_pre_correction_replay):
+                    # This is a book-fill diagnostic, not a trade-open
+                    # diagnostic: a Kelly refusal still means the resting
+                    # order filled.  The first wholly-beyond bar is retained
+                    # above so the two fill timings cannot be conflated.
+                    _identity = pending_order["identity"]
+                    if _identity in maker_gap_order_status:
+                        maker_gap_order_status[_identity] = (
+                            "filled_on_wholly_beyond_bar"
+                            if i == int(maker_gap_orders[_identity]["entry_index"])
+                            else "filled_later_at_containing_bar"
+                        )
                     opened = _open_trade(
                         pside, lp, candle.open_time.isoformat(),
                         pending_order["features"], pending_order["ctx"], True, pending_order["identity"],
@@ -2228,6 +2378,9 @@ def run_backtest(
     # Counting it keeps placed == filled + expired + kelly_refused, so a reader
     # can tell the accounting is complete rather than off by a silent one.
     if pending_order is not None:
+        _identity = pending_order["identity"]
+        if _identity in maker_gap_order_status:
+            maker_gap_order_status[_identity] = "expired_unfilled"
         pending_order = None
         maker_orders_expired += 1
 
@@ -2415,6 +2568,36 @@ def run_backtest(
             "max_fraction": max(sizes) if sizes else 0.0,
         }
     if maker_fill_window > 0:
+        def _gap_trade_outcome(order: dict[str, object]) -> tuple[str, float]:
+            """Resolve one first-gap fill at its limit with normal exit rules."""
+            entry_index = int(order["entry_index"])
+            side = str(order["side"])
+            entry_price = float(order["limit"])
+            features = order["features"]
+            trade_strategy = long_strategy if side == "BUY" else short_strategy
+            tp_price, sl_price, _ = live.optimized_tp_sl(entry_price, side, features, trade_strategy)
+            last_index = max(index for index, c in enumerate(candles) if c.open_time == last_in_window_candle.open_time)
+            for index in range(entry_index, min(entry_index + label_horizon, last_index) + 1):
+                bar_count_cf = index - entry_index + 1
+                resolved = _resolve_execution_outcome(
+                    candles[index], side, tp_price, sl_price, bar_count_cf, min_hold_bars, label_horizon,
+                )
+                if resolved is not None and index == entry_index and resolved[0] == "TP":
+                    fill_bar_hit_sl = candles[index].low <= sl_price if side == "BUY" else candles[index].high >= sl_price
+                    resolved = (
+                        ("SL", sl_price) if fill_bar_hit_sl else
+                        (("TIMEOUT", candles[index].close) if bar_count_cf >= label_horizon else None)
+                    )
+                if resolved is not None:
+                    outcome, exit_price = resolved
+                    return outcome, ((exit_price / entry_price) - 1.0) * (1.0 if side == "BUY" else -1.0)
+            return "OPEN_AT_END", ((last_in_window_candle.close / entry_price) - 1.0) * (1.0 if side == "BUY" else -1.0)
+
+        gap_outcomes = [_gap_trade_outcome(order) for order in maker_gap_orders.values()]
+        gap_completed = [(outcome, gross) for outcome, gross in gap_outcomes if outcome != "OPEN_AT_END"]
+        gap_tp = sum(1 for outcome, _ in gap_outcomes if outcome == "TP")
+        gap_sl = sum(1 for outcome, _ in gap_outcomes if outcome == "SL")
+        gap_cost = 2.0 * maker_fee_rate_per_side
         result.maker_fill_diagnostics = {
             "maker_fill_window": maker_fill_window,
             "maker_fill_penetration": maker_fill_penetration,
@@ -2430,6 +2613,34 @@ def run_backtest(
                 (maker_orders_filled + maker_orders_kelly_refused) / maker_orders_placed
                 if maker_orders_placed else 0.0
             ),
+            "wholly_beyond_measurement": {
+                "enabled": True,
+                "entry_fill_rule": run_config["maker_gap_entry_rule"],
+                "pre_correction_ohlc_containment_replay": maker_gap_pre_correction_replay,
+                "bars": maker_gap_bars,
+                "distinct_orders": len(maker_gap_orders),
+                "filled_on_wholly_beyond_bar": sum(
+                    1 for value in maker_gap_order_status.values()
+                    if value == "filled_on_wholly_beyond_bar"
+                ),
+                "filled_later_at_containing_bar": sum(
+                    1 for value in maker_gap_order_status.values()
+                    if value == "filled_later_at_containing_bar"
+                ),
+                "expired_unfilled": sum(
+                    1 for value in maker_gap_order_status.values()
+                    if value == "expired_unfilled"
+                ),
+                "isolated_gap_fill_trade_distribution": {
+                    "count": len(gap_outcomes),
+                    "tp": gap_tp, "sl": gap_sl,
+                    "timeout": sum(1 for outcome, _ in gap_outcomes if outcome == "TIMEOUT"),
+                    "open_at_end": sum(1 for outcome, _ in gap_outcomes if outcome == "OPEN_AT_END"),
+                    "tp_hit_rate": gap_tp / (gap_tp + gap_sl) if gap_tp + gap_sl else None,
+                    "mean_gross_bps": sum(gross for _, gross in gap_outcomes) / len(gap_outcomes) * 1e4 if gap_outcomes else None,
+                    "mean_net_bps_at_4bps_rt": (sum(gross - gap_cost for _, gross in gap_outcomes) / len(gap_outcomes) * 1e4) if gap_outcomes else None,
+                },
+            },
         }
     if quantile_thresholds is not None and quantile_thresholds.long is not None:
         # A warmup longer than the stream produces zero trades and no error, and
@@ -2535,6 +2746,10 @@ def compare_strategies(
     multi_feature_regime_detector: object | None = None,
     exec_tp_pct: float | None = None,
     exec_sl_pct: float | None = None,
+    long_exec_tp_pct: float | None = None,
+    long_exec_sl_pct: float | None = None,
+    short_exec_tp_pct: float | None = None,
+    short_exec_sl_pct: float | None = None,
     threshold_floor: float = 0.0,
     label_horizon: int = 60,
     maker_exit_outcomes: Sequence[str] | None = None,
@@ -2629,6 +2844,10 @@ def compare_strategies(
         default_regime=default_regime,
         exec_tp_pct=exec_tp_pct,
         exec_sl_pct=exec_sl_pct,
+        long_exec_tp_pct=long_exec_tp_pct,
+        long_exec_sl_pct=long_exec_sl_pct,
+        short_exec_tp_pct=short_exec_tp_pct,
+        short_exec_sl_pct=short_exec_sl_pct,
         threshold_floor=threshold_floor,
         entry_quantile=entry_quantile,
     )
@@ -2669,6 +2888,10 @@ def compare_strategies(
             feature_rows=feature_rows,
             exec_tp_pct=exec_tp_pct,
             exec_sl_pct=exec_sl_pct,
+            long_exec_tp_pct=long_exec_tp_pct,
+            long_exec_sl_pct=long_exec_sl_pct,
+            short_exec_tp_pct=short_exec_tp_pct,
+            short_exec_sl_pct=short_exec_sl_pct,
             threshold_floor=threshold_floor,
             label_horizon=label_horizon,
             allow_barrier_mismatch=allow_barrier_mismatch,

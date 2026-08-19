@@ -1607,7 +1607,9 @@ class CatBoostRuntimeSafetyTests(unittest.TestCase):
                  mock.patch.object(models, "_GPU_LOCK_FD", None), \
                  mock.patch.object(models, "_GPU_LOCK_OWNER", None), \
                  mock.patch.object(models, "_import_optional_module", return_value=FakeCatBoost):
-                adapter = models.CatBoostAdapter(feature_names=["x"])
+                adapter = models.CatBoostAdapter(
+                    feature_names=["x"], model_params={"task_type": "GPU", "devices": "0"}
+                )
                 adapter.fit([[1.0], [2.0]], [0, 1])
             events = [json.loads(line)["event"] for line in runtime_path.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(events[0]["type"], "gpu_lease_acquired")
@@ -1623,15 +1625,21 @@ class CatBoostRuntimeSafetyTests(unittest.TestCase):
             lock_path.write_text(json.dumps({"pid": os.getpid(), "device": "0"}), encoding="utf-8")
             with mock.patch.object(models, "_GPU_LOCK_PATH", lock_path), \
                  mock.patch.object(models, "_GPU_LOCK_FD", None), \
-                 mock.patch.object(models, "_GPU_LOCK_OWNER", None):
+                 mock.patch.object(models, "_GPU_LOCK_OWNER", None), \
+                 mock.patch.object(models, "_pid_is_live", return_value=True), \
+                 mock.patch.object(models.os, "open", side_effect=FileExistsError):
                 with self.assertRaisesRegex(models.GPUDeviceBusyError, "Refusing to start"):
-                    models.CatBoostAdapter(feature_names=["x"]).fit([[1.0], [2.0]], [0, 1])
+                    models.CatBoostAdapter(
+                        feature_names=["x"], model_params={"task_type": "GPU", "devices": "0"}
+                    ).fit([[1.0], [2.0]], [0, 1])
 
     def test_gpu_thread_count_default_is_unchanged_and_watchdog_scales_by_fit_rows(self) -> None:
         self.assertEqual(models.CatBoostAdapter.DEFAULT_PARAMS["thread_count"], -1)
         # Slowest Stage-3 arm: 17,234 seconds over five fits totalling
-        # 6,189,120 rows, with 50% headroom. The final refit is capped at
-        # three hours so a native-extension hang remains bounded.
+        # 6,189,120 rows, with 50% headroom. Small fits also retain the
+        # measured fixed setup allowance; the final refit is capped at three
+        # hours so a native-extension hang remains bounded.
+        self.assertEqual(models.catboost_fit_timeout_seconds(2), 5 * 60)
         self.assertEqual(models.catboost_fit_timeout_seconds(884_160), 3_693)
         self.assertEqual(models.catboost_fit_timeout_seconds(2_652_480), 3 * 60 * 60)
 
