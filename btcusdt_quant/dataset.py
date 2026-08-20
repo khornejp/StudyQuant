@@ -1990,7 +1990,10 @@ def build_feature_rows(
             # without --metrics-dir degrades to a constant, exactly like the
             # other external features).
             "oi_change_rate_5m": _metrics_feature_value(candle_external_sources, "oi_change_rate_5m"),
+            "oi_change_rate_15m": _metrics_feature_value(candle_external_sources, "oi_change_rate_15m"),
             "oi_change_rate_30m": _metrics_feature_value(candle_external_sources, "oi_change_rate_30m"),
+            "oi_change_rate_45m": _metrics_feature_value(candle_external_sources, "oi_change_rate_45m"),
+            "oi_change_rate_60m": _metrics_feature_value(candle_external_sources, "oi_change_rate_60m"),
             "oi_zscore_1d": _metrics_feature_value(candle_external_sources, "oi_zscore_1d"),
             "oi_value_zscore_1d": _metrics_feature_value(candle_external_sources, "oi_value_zscore_1d"),
             "global_ls_account": _metrics_feature_value(candle_external_sources, "global_ls_account"),
@@ -1998,9 +2001,13 @@ def build_feature_rows(
             "global_ls_account_change_5m": _metrics_feature_value(candle_external_sources, "global_ls_account_change_5m"),
             "global_ls_account_change_15m": _metrics_feature_value(candle_external_sources, "global_ls_account_change_15m"),
             "global_ls_account_change_30m": _metrics_feature_value(candle_external_sources, "global_ls_account_change_30m"),
+            "global_ls_account_change_45m": _metrics_feature_value(candle_external_sources, "global_ls_account_change_45m"),
+            "global_ls_account_change_60m": _metrics_feature_value(candle_external_sources, "global_ls_account_change_60m"),
             "taker_ls_ratio_change_5m": _metrics_feature_value(candle_external_sources, "taker_ls_ratio_change_5m"),
             "taker_ls_ratio_change_15m": _metrics_feature_value(candle_external_sources, "taker_ls_ratio_change_15m"),
             "taker_ls_ratio_change_30m": _metrics_feature_value(candle_external_sources, "taker_ls_ratio_change_30m"),
+            "taker_ls_ratio_change_45m": _metrics_feature_value(candle_external_sources, "taker_ls_ratio_change_45m"),
+            "taker_ls_ratio_change_60m": _metrics_feature_value(candle_external_sources, "taker_ls_ratio_change_60m"),
             "global_ls_account_taker_ls_ratio_gap": _metrics_feature_value(candle_external_sources, "global_ls_account_taker_ls_ratio_gap"),
             # F17: Multi-timeframe (15m/1h/4h/24h-rolling) trend/vol/momentum
             # features, pre-computed once for the whole candle series above
@@ -2085,7 +2092,7 @@ def build_feature_rows(
             # Keep that mixed lineage visible on every dependent F16 value.
             for name in (
                 "taker_ls_ratio", "taker_ls_ratio_change_5m", "taker_ls_ratio_change_15m",
-                "taker_ls_ratio_change_30m", "global_ls_account_taker_ls_ratio_gap",
+                "taker_ls_ratio_change_30m", "taker_ls_ratio_change_45m", "taker_ls_ratio_change_60m", "global_ls_account_taker_ls_ratio_gap",
             ):
                 if name not in nan_status:
                     nan_status[name] = "reconstructed_klines"

@@ -41,20 +41,27 @@ def test_metrics_alignment_uses_create_time_as_the_first_visible_minute() -> Non
 
 def test_new_metrics_features_are_causal_and_forward_fill_from_their_tick() -> None:
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    rows = [_row(base + timedelta(minutes=5 * tick), float(tick)) for tick in range(8)]
+    rows = [_row(base + timedelta(minutes=5 * tick), float(tick)) for tick in range(13)]
     features = metrics.compute_metrics_features(rows)
-    at_t = base + timedelta(minutes=30)
+    at_t = base + timedelta(minutes=60)
     row = features[at_t]
 
-    assert row["global_ls_account_change_15m"] == (14.0 - 11.0) / 11.0
-    assert row["global_ls_account_change_30m"] == (14.0 - 8.0) / 8.0
-    assert row["taker_ls_ratio_change_15m"] == (22.0 - 19.0) / 19.0
-    assert row["taker_ls_ratio_change_30m"] == (22.0 - 16.0) / 16.0
-    assert row["global_ls_account_taker_ls_ratio_gap"] == math.log(14.0) - math.log(22.0)
+    assert row["global_ls_account_change_15m"] == (20.0 - 17.0) / 17.0
+    assert row["global_ls_account_change_30m"] == (20.0 - 14.0) / 14.0
+    assert row["global_ls_account_change_45m"] == (20.0 - 11.0) / 11.0
+    assert row["global_ls_account_change_60m"] == (20.0 - 8.0) / 8.0
+    assert row["taker_ls_ratio_change_15m"] == (28.0 - 25.0) / 25.0
+    assert row["taker_ls_ratio_change_30m"] == (28.0 - 22.0) / 22.0
+    assert row["taker_ls_ratio_change_45m"] == (28.0 - 19.0) / 19.0
+    assert row["taker_ls_ratio_change_60m"] == (28.0 - 16.0) / 16.0
+    assert row["oi_change_rate_15m"] == (112.0 - 109.0) / 109.0
+    assert row["oi_change_rate_45m"] == (112.0 - 103.0) / 103.0
+    assert row["oi_change_rate_60m"] == (112.0 - 100.0) / 100.0
+    assert row["global_ls_account_taker_ls_ratio_gap"] == math.log(20.0) - math.log(28.0)
 
     # Altering a future tick cannot change any feature at T. The same feature
     # vector first becomes visible at T and remains active through T+4.
-    future_changed = rows[:-1] + [_row(rows[-1].create_time, 10_000.0)]
+    future_changed = rows + [_row(rows[-1].create_time + timedelta(minutes=5), 10_000.0)]
     changed_features = metrics.compute_metrics_features(future_changed)
     assert changed_features[at_t] == row
     minutes = [at_t - timedelta(minutes=1), at_t, at_t + timedelta(minutes=4)]

@@ -4,7 +4,7 @@ import hashlib
 import sys
 from collections import deque
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from math import isfinite
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -110,13 +110,17 @@ class RollingQuantileThreshold:
     which a sorted list would not be over three million bars.
     """
 
-    __slots__ = ("quantile", "window", "bins", "_tree", "_count", "_recent", "_warmup", "_seen")
+    __slots__ = ("quantile", "window", "time_window", "bins", "_tree", "_count", "_recent", "_warmup", "_seen")
 
-    def __init__(self, quantile: float, window: int = 0, warmup: int | None = None, bins: int = 10_000) -> None:
+    def __init__(self, quantile: float, window: int = 0, warmup: int | None = None, bins: int = 10_000,
+                 time_window: timedelta | None = None) -> None:
         if not 0.0 < quantile < 1.0:
             raise ValueError(f"quantile must be in (0, 1), got {quantile}")
         self.quantile = float(quantile)
         self.window = int(window)
+        self.time_window = time_window
+        if time_window is not None and time_window <= timedelta(0):
+            raise ValueError("time_window must be positive when set")
         self.bins = int(bins)
         self._tree = [0] * (self.bins + 1)
         self._count = 0
@@ -165,14 +169,21 @@ class RollingQuantileThreshold:
         """Everything ever seen, unlike the windowed count the quantile uses."""
         return self._seen
 
-    def observe(self, probability: float) -> None:
+    def observe(self, probability: float, observed_at: datetime | None = None) -> None:
+        if self.time_window is not None and observed_at is None:
+            raise ValueError("observed_at is required with a calendar time_window")
         self._seen += 1
         bucket = self._bucket(probability)
         self._add(bucket, 1)
-        if self.window > 0:
-            self._recent.append(bucket)
-            if len(self._recent) > self.window:
-                self._add(self._recent.popleft(), -1)
+        if self.window > 0 or self.time_window is not None:
+            self._recent.append((bucket, observed_at) if self.time_window is not None else bucket)
+            if self.window > 0 and len(self._recent) > self.window:
+                expired = self._recent.popleft()
+                self._add(expired[0] if self.time_window is not None else expired, -1)
+        if self.time_window is not None:
+            cutoff_time = observed_at - self.time_window
+            while self._recent and self._recent[0][1] < cutoff_time:
+                self._add(self._recent.popleft()[0], -1)
 
     def threshold(self) -> float | None:
         """The current cutoff, or None while still in warmup."""
@@ -181,7 +192,7 @@ class RollingQuantileThreshold:
         rank = int(self.quantile * self._count) + 1
         return self._kth(min(rank, self._count)) / self.bins
 
-    def resolve(self, probability: float | None) -> float | None:
+    def resolve(self, probability: float | None, observed_at: datetime | None = None) -> float | None:
         """The cutoff for this bar, then fold this bar's probability in.
 
         Order matters: reading first is what keeps the bar out of its own
@@ -189,7 +200,7 @@ class RollingQuantileThreshold:
         """
         cutoff = self.threshold()
         if probability is not None:
-            self.observe(probability)
+            self.observe(probability, observed_at)
         return cutoff
 
 

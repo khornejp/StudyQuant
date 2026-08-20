@@ -236,7 +236,10 @@ ADL_FEATURES: tuple[str, ...] = ("adl_indicator", "adl_quantile_change", "adl_hi
 # that live source exists.
 METRICS_FEATURES: tuple[str, ...] = (
     "oi_change_rate_5m",
+    "oi_change_rate_15m",
     "oi_change_rate_30m",
+    "oi_change_rate_45m",
+    "oi_change_rate_60m",
     "oi_zscore_1d",
     "oi_value_zscore_1d",
     "global_ls_account",
@@ -244,9 +247,13 @@ METRICS_FEATURES: tuple[str, ...] = (
     "global_ls_account_change_5m",
     "global_ls_account_change_15m",
     "global_ls_account_change_30m",
+    "global_ls_account_change_45m",
+    "global_ls_account_change_60m",
     "taker_ls_ratio_change_5m",
     "taker_ls_ratio_change_15m",
     "taker_ls_ratio_change_30m",
+    "taker_ls_ratio_change_45m",
+    "taker_ls_ratio_change_60m",
     "global_ls_account_taker_ls_ratio_gap",
 )
 

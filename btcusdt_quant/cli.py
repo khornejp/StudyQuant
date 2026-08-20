@@ -536,6 +536,9 @@ def run_train(
     vol_gate_train_quantile: float | None = None,
     vol_gate_screen_reference_report: str | None = None,
     walk_forward_test_gap: int = 0,
+    walk_forward_train_size: int | None = None,
+    walk_forward_validation_size: int | None = None,
+    walk_forward_test_size: int | None = None,
     vol_gate_train_only: bool = False,
     regime_aware: bool = False,
     min_regime_rows: int = 80,
@@ -561,6 +564,8 @@ def run_train(
     only_build: bool = False,
     threshold_objective: str = "trading_pnl",
     threshold_min_trades: int | None = None,
+    shared_prior_threshold: bool = False,
+    shared_prior_reserve_rows: int = 64_800,
     tp_pct: float = dataset.DEFAULT_LABEL_TP_PCT,
     sl_pct: float = dataset.DEFAULT_LABEL_SL_PCT,
     long_tp_pct: float | None = None,
@@ -593,6 +598,9 @@ def run_train(
         cv_mode=cv_mode,
         embargo_size=embargo_size,
         walk_forward_test_gap=walk_forward_test_gap,
+        walk_forward_train_size=walk_forward_train_size,
+        walk_forward_validation_size=walk_forward_validation_size,
+        walk_forward_test_size=walk_forward_test_size,
         n_groups=n_groups,
         test_group_count=test_group_count,
         model_family=model_family,
@@ -603,6 +611,8 @@ def run_train(
         optuna_enabled=optuna_enabled,
         optuna_trials=optuna_trials,
         optuna_budget_profile=optuna_budget_profile,
+        shared_prior_threshold=shared_prior_threshold,
+        shared_prior_reserve_rows=shared_prior_reserve_rows,
         shuffle_labels=shuffle_labels,
         shuffle_labels_seed=shuffle_labels_seed,
         exclude_fallback_features=exclude_fallback_features,
@@ -1658,6 +1668,9 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--cv-mode", choices=("walk_forward", "combinatorial_purged"), default="walk_forward", help="cross-validation splitter mode")
     train.add_argument("--embargo-size", type=int, default=0, help="bars to embargo after combinatorial test windows")
     train.add_argument("--walk-forward-test-gap", type=int, default=0, help="bars omitted between consecutive walk-forward TEST windows; set to --horizon to prevent forward-label overlap. Does not apply to combinatorial_purged.")
+    train.add_argument("--walk-forward-train-size", type=int, default=None, help="rolling walk-forward train rows; omit to retain the historical n_rows//3 default")
+    train.add_argument("--walk-forward-validation-size", type=int, default=None, help="rolling walk-forward validation rows; omit to retain the historical n_rows//8 default")
+    train.add_argument("--walk-forward-test-size", type=int, default=None, help="rolling walk-forward test rows; omit to retain the historical n_rows//8 default")
     train.add_argument("--n-groups", type=int, default=5, help="sequential groups for combinatorial purged CV")
     train.add_argument("--test-group-count", type=int, default=1, help="number of groups selected for each combinatorial test fold")
     train.add_argument("--no-model-fallback", action="store_true", help="disable optional model fallback and fail if the requested family is unavailable")
@@ -1724,6 +1737,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="minimum number of trades (predicted-positives) for a candidate threshold to be considered under --threshold-objective=trading_pnl. Defaults to max(1, 5%% of rows).",
+    )
+    train.add_argument(
+        "--shared-prior-threshold", action="store_true",
+        help="option C: fit one calibrator and trading-PnL cutoff on a dedicated, purged pre-fold reserve, then apply it unchanged to every fold. The selector minimum is ceil(1%% of that calibration history; validation never selects the cutoff.",
+    )
+    train.add_argument(
+        "--shared-prior-reserve-rows", type=int, default=64_800,
+        help="strictly pre-fold reserve for --shared-prior-threshold (default 64800 = 45 days); its first third fits the probe and its final two thirds calibrate out of sample.",
     )
     train.add_argument(
         "--round-trip-cost",
@@ -2207,6 +2228,8 @@ def main(argv: list[str] | None = None) -> int:
                 only_build=args.only_build,
                 threshold_objective=args.threshold_objective,
                 threshold_min_trades=args.threshold_min_trades,
+                shared_prior_threshold=args.shared_prior_threshold,
+                shared_prior_reserve_rows=args.shared_prior_reserve_rows,
                 tp_pct=args.tp_pct,
                 sl_pct=args.sl_pct,
                 long_tp_pct=args.long_label_tp_pct,
@@ -2225,6 +2248,9 @@ def main(argv: list[str] | None = None) -> int:
                 vol_gate_train_quantile=args.vol_gate_train_quantile,
                 vol_gate_screen_reference_report=args.vol_gate_screen_reference_report,
                 walk_forward_test_gap=args.walk_forward_test_gap,
+                walk_forward_train_size=args.walk_forward_train_size,
+                walk_forward_validation_size=args.walk_forward_validation_size,
+                walk_forward_test_size=args.walk_forward_test_size,
                 vol_gate_train_only=args.vol_gate_train_only,
             )
         except (OSError, RuntimeError, ValueError) as error:

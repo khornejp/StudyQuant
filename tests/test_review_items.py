@@ -2537,6 +2537,102 @@ class MakerFillTests(unittest.TestCase):
         )
         self.assertEqual(sum(next_split.test.start - split.test.stop for split, next_split in zip(first_four, first_four[1:])), 135)
 
+    def test_configured_splits_none_is_the_historical_default_and_explicit_sizes_are_forwarded(self) -> None:
+        from btcusdt_quant import cv as _cv
+        from btcusdt_quant import training as _tr
+
+        n_rows = 2_623_680
+        intervals: list[_cv.SampleInterval] = []
+        historical = _cv.SplitManager().get_splits(n_rows, label_horizon=45)
+        defaulted = _tr.configured_splits(n_rows, 45, _tr.TrainingConfig(), intervals)
+        self.assertEqual(defaulted, historical)
+        self.assertEqual((len(defaulted[0].train), len(defaulted[0].validation), len(defaulted[0].test)), (874_560, 327_960, 327_960))
+
+        config = _tr.TrainingConfig(
+            walk_forward_train_size=10_080,
+            walk_forward_validation_size=10_080,
+            walk_forward_test_size=10_080,
+            walk_forward_test_gap=45,
+        )
+        configured = _tr.configured_splits(n_rows, 45, config, intervals)
+        self.assertEqual(len(configured), 257)
+        self.assertTrue(all((len(split.train), len(split.validation), len(split.test)) == (10_080, 10_080, 10_080) for split in configured))
+
+    def test_shared_prior_threshold_index_proof_excludes_every_test_purge_zone(self) -> None:
+        from datetime import timedelta
+        from btcusdt_quant import cv as _cv, data as _data, dataset as _ds, training as _tr
+
+        rows = [_ds.LabeledRow(
+            index=i, open_time=_data.utc_minute(2025, 1, 1, 0, 0) + timedelta(minutes=i),
+            features={"f": float(i % 17)}, label=int(i % 3 == 0),
+            label_reason="tp_first" if i % 3 == 0 else "timeout_no_tp",
+            target_return=0.004 if i % 3 == 0 else -0.002, gap_flag=0,
+            repaired=False, warmup_invalid=False,
+            targets={"long_success": int(i % 3 == 0)}, target_reasons={},
+        ) for i in range(1_000)]
+        config = _tr.TrainingConfig(
+            model_family="auto", shared_prior_threshold=True,
+            shared_prior_reserve_rows=200,
+            walk_forward_train_size=200, walk_forward_validation_size=100,
+            walk_forward_test_size=100, walk_forward_test_gap=10, label_horizon=10,
+        )
+        splits = _tr.configured_splits(len(rows), 10, config, _cv.sample_intervals_from_labeled_rows(rows, 10))
+        uniqueness = _cv.uniqueness_weights(_cv.sample_intervals_from_labeled_rows(rows, 10))
+        _, threshold, proof, _ = _tr.fit_shared_prior_threshold_rule(rows, ("f",), config, uniqueness, splits)
+        self.assertIsInstance(threshold, float)
+        self.assertEqual(proof["reserve_indices"], {"start": 0, "stop_exclusive": 200, "count": 200})
+        self.assertEqual(proof["minimum_prior_scores"], 1_000)
+        self.assertEqual(proof["calendar_window_days"], 30)
+        self.assertEqual(proof["probe_fit_indices"], {"start": 0, "stop_exclusive": 57})
+        self.assertEqual(proof["purged_between_probe_and_calibration"], {"start": 57, "stop_exclusive": 67})
+        self.assertEqual(proof["calibration_indices"], {"start": 67, "stop_exclusive": 200, "count": 133})
+        self.assertEqual(proof["test_purge_boundary"], 510)
+        self.assertEqual(proof["fold_test_starts"], [520, 630, 740, 850])
+        self.assertTrue(proof["assertion_passed"])
+        self.assertEqual(proof["rule"], "seeded_rolling_99th_percentile")
+
+    def test_shared_prior_reserve_rebases_seven_day_geometry_before_every_fold(self) -> None:
+        from btcusdt_quant import cv as _cv, training as _tr
+
+        config = _tr.TrainingConfig(
+            shared_prior_threshold=True, shared_prior_reserve_rows=64_800,
+            walk_forward_train_size=10_080, walk_forward_validation_size=10_080,
+            walk_forward_test_size=10_080, walk_forward_test_gap=45, label_horizon=45,
+        )
+        splits = _tr.configured_splits(2_623_680, 45, config, [])
+        self.assertEqual(len(splits), 250)
+        self.assertEqual((splits[0].train.start, splits[0].validation.start, splits[0].test.start), (64_800, 74_925, 85_050))
+        self.assertEqual(sum(len(split.test) for split in splits), 2_520_000)
+
+    def test_seeded_rolling_rule_decides_before_observing_its_own_score(self) -> None:
+        from datetime import timedelta
+        from btcusdt_quant import data as _data, training as _tr
+
+        start = _data.utc_minute(2025, 1, 1, 0, 0)
+        seed_scores = [.10] * 1_000
+        seed_times = [start + timedelta(minutes=i) for i in range(1_000)]
+        first = _tr.seeded_rolling_threshold_rule(seed_scores, seed_times)
+        second = _tr.seeded_rolling_threshold_rule(seed_scores, seed_times)
+        when = start + timedelta(minutes=1_000)
+        # Changing this row's score cannot change the cutoff that judges it.
+        self.assertEqual(_tr.resolve_rolling_thresholds(first, [.11], [when]), [.1])
+        self.assertEqual(_tr.resolve_rolling_thresholds(second, [.99], [when]), [.1])
+
+    def test_seeded_rolling_rule_admits_validation_and_test_scores_only_after_decision(self) -> None:
+        from datetime import timedelta
+        from btcusdt_quant import data as _data, training as _tr
+
+        start = _data.utc_minute(2025, 1, 1, 0, 0)
+        rule = _tr.seeded_rolling_threshold_rule([.10] * 1_000, [start + timedelta(minutes=i) for i in range(1_000)])
+        validation_cutoff = _tr.resolve_rolling_thresholds(
+            rule, [.90] * 100, [start + timedelta(minutes=1_000 + i) for i in range(100)]
+        )
+        test_cutoff = _tr.resolve_rolling_thresholds(rule, [.90], [start + timedelta(minutes=1_100)])
+        # Validation's score is available to the later test decision; the test
+        # score itself was not yet in the history that produced its cutoff.
+        self.assertEqual(validation_cutoff[0], .1)
+        self.assertEqual(test_cutoff, [.9])
+
     def test_screen_reference_report_is_fingerprinted_as_a_training_input(self) -> None:
         from unittest.mock import patch
         from btcusdt_quant import governance

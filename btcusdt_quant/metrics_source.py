@@ -361,7 +361,10 @@ METRICS_FEATURE_NAMES: tuple[str, ...] = (
     # Open interest: absolute scale drifts over years, so we never expose the
     # raw level. Change-rates and a rolling z-score are scale-stable.
     "oi_change_rate_5m",
+    "oi_change_rate_15m",
     "oi_change_rate_30m",
+    "oi_change_rate_45m",
+    "oi_change_rate_60m",
     "oi_zscore_1d",
     "oi_value_zscore_1d",
     # Long/short ratios are already scale-stable. Keep their raw levels and
@@ -371,9 +374,13 @@ METRICS_FEATURE_NAMES: tuple[str, ...] = (
     "global_ls_account_change_5m",
     "global_ls_account_change_15m",
     "global_ls_account_change_30m",
+    "global_ls_account_change_45m",
+    "global_ls_account_change_60m",
     "taker_ls_ratio_change_5m",
     "taker_ls_ratio_change_15m",
     "taker_ls_ratio_change_30m",
+    "taker_ls_ratio_change_45m",
+    "taker_ls_ratio_change_60m",
     "global_ls_account_taker_ls_ratio_gap",
 )
 
@@ -462,22 +469,32 @@ def compute_metrics_features(rows: Sequence[MetricsRow]) -> dict[datetime, dict[
     if not ordered:
         return {}
     oi_chg_5m = _causal_change_rate(ordered, "sum_open_interest", timedelta(minutes=5))
+    oi_chg_15m = _causal_change_rate(ordered, "sum_open_interest", timedelta(minutes=15))
     oi_chg_30m = _causal_change_rate(ordered, "sum_open_interest", timedelta(minutes=30))
+    oi_chg_45m = _causal_change_rate(ordered, "sum_open_interest", timedelta(minutes=45))
+    oi_chg_60m = _causal_change_rate(ordered, "sum_open_interest", timedelta(minutes=60))
     oi_z = _causal_zscore(ordered, "sum_open_interest", timedelta(days=1))
     oi_val_z = _causal_zscore(ordered, "sum_open_interest_value", timedelta(days=1))
     gl_acct_chg = _causal_change_rate(ordered, "count_long_short_ratio", timedelta(minutes=5))
     gl_acct_chg_15m = _causal_change_rate(ordered, "count_long_short_ratio", timedelta(minutes=15))
     gl_acct_chg_30m = _causal_change_rate(ordered, "count_long_short_ratio", timedelta(minutes=30))
+    gl_acct_chg_45m = _causal_change_rate(ordered, "count_long_short_ratio", timedelta(minutes=45))
+    gl_acct_chg_60m = _causal_change_rate(ordered, "count_long_short_ratio", timedelta(minutes=60))
     taker_chg = _causal_change_rate(ordered, "sum_taker_long_short_vol_ratio", timedelta(minutes=5))
     taker_chg_15m = _causal_change_rate(ordered, "sum_taker_long_short_vol_ratio", timedelta(minutes=15))
     taker_chg_30m = _causal_change_rate(ordered, "sum_taker_long_short_vol_ratio", timedelta(minutes=30))
+    taker_chg_45m = _causal_change_rate(ordered, "sum_taker_long_short_vol_ratio", timedelta(minutes=45))
+    taker_chg_60m = _causal_change_rate(ordered, "sum_taker_long_short_vol_ratio", timedelta(minutes=60))
 
     features: dict[datetime, dict[str, float]] = {}
     for i, row in enumerate(ordered):
         t = row.create_time
         features[t] = {
             "oi_change_rate_5m": oi_chg_5m[i],
+            "oi_change_rate_15m": oi_chg_15m[i],
             "oi_change_rate_30m": oi_chg_30m[i],
+            "oi_change_rate_45m": oi_chg_45m[i],
+            "oi_change_rate_60m": oi_chg_60m[i],
             "oi_zscore_1d": oi_z[i],
             "oi_value_zscore_1d": oi_val_z[i],
             "global_ls_account": row.values.get("count_long_short_ratio", float("nan")),
@@ -485,9 +502,13 @@ def compute_metrics_features(rows: Sequence[MetricsRow]) -> dict[datetime, dict[
             "global_ls_account_change_5m": gl_acct_chg[i],
             "global_ls_account_change_15m": gl_acct_chg_15m[i],
             "global_ls_account_change_30m": gl_acct_chg_30m[i],
+            "global_ls_account_change_45m": gl_acct_chg_45m[i],
+            "global_ls_account_change_60m": gl_acct_chg_60m[i],
             "taker_ls_ratio_change_5m": taker_chg[i],
             "taker_ls_ratio_change_15m": taker_chg_15m[i],
             "taker_ls_ratio_change_30m": taker_chg_30m[i],
+            "taker_ls_ratio_change_45m": taker_chg_45m[i],
+            "taker_ls_ratio_change_60m": taker_chg_60m[i],
             # A real zero is preserved.  Missing/non-positive inputs instead
             # remain NaN so the dataset records unavailability, not 0.0.
             "global_ls_account_taker_ls_ratio_gap": (

@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import asdict, dataclass, field, replace
-from datetime import datetime, timezone
-from math import exp, isfinite, log, sqrt
+from datetime import datetime, timedelta, timezone
+from math import ceil, exp, isfinite, log, sqrt
+from random import Random
 from pathlib import Path
 from statistics import mean
 from time import perf_counter, time
@@ -12,6 +13,7 @@ from types import MappingProxyType
 from typing import Mapping, Sequence
 
 from . import cv, dataset, features, governance, lineage, models, monitoring
+from .backtest import RollingQuantileThreshold
 
 
 # Round-trip trading cost (fees + slippage, both sides) charged by the
@@ -74,6 +76,11 @@ class TrainingConfig:
     # Rows omitted between walk-forward TEST windows.  Set equal to the label
     # horizon to prevent forward-label overlap across fold boundaries.
     walk_forward_test_gap: int = 0
+    # Explicit rolling-window sizes.  None deliberately delegates to
+    # SplitManager's historical n_rows-derived defaults.
+    walk_forward_train_size: int | None = None
+    walk_forward_validation_size: int | None = None
+    walk_forward_test_size: int | None = None
     n_groups: int = 5
     test_group_count: int = 1
     model_family: str = "auto"
@@ -216,6 +223,16 @@ class TrainingConfig:
     # threshold candidate to be considered under the trading_pnl objective.
     # None lets select_threshold pick a default of max(1, 5% of rows).
     threshold_min_trades: int | None = None
+    # Option C: one probability calibrator and entry cutoff, fit once from a
+    # calibration tail that is strictly before every walk-forward test slice.
+    # Fold validation is consequently diagnostic/early-stopping-only; it never
+    # selects an entry threshold.
+    shared_prior_threshold: bool = False
+    # Option C reserve, kept wholly before fold 0.  The default is 45 days at
+    # one-minute frequency: its first third fits the probe, its last two thirds
+    # are a 30-day genuinely out-of-sample calibration history.  The
+    # deterministic cutoff-stability probe established that 30 days is enough.
+    shared_prior_reserve_rows: int = 64_800
 
     def __post_init__(self) -> None:
         if self.cv_mode not in {"walk_forward", "combinatorial_purged"}:
@@ -241,6 +258,13 @@ class TrainingConfig:
             raise ValueError("embargo_size must be non-negative")
         if self.walk_forward_test_gap < 0:
             raise ValueError("walk_forward_test_gap must be non-negative")
+        for name, value in (
+            ("walk_forward_train_size", self.walk_forward_train_size),
+            ("walk_forward_validation_size", self.walk_forward_validation_size),
+            ("walk_forward_test_size", self.walk_forward_test_size),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive when set")
         if self.n_groups <= 0:
             raise ValueError("n_groups must be positive")
         if self.test_group_count <= 0:
@@ -256,6 +280,10 @@ class TrainingConfig:
             raise ValueError("threshold_objective must be 'precision_recall' or 'trading_pnl'")
         if self.threshold_min_trades is not None and self.threshold_min_trades < 0:
             raise ValueError("threshold_min_trades must be non-negative")
+        if self.shared_prior_threshold and self.cv_mode != "walk_forward":
+            raise ValueError("shared_prior_threshold requires walk_forward chronology")
+        if self.shared_prior_reserve_rows <= 0:
+            raise ValueError("shared_prior_reserve_rows must be positive")
 
 
 def resolve_screen_reference(config: TrainingConfig) -> TrainingConfig:
@@ -460,7 +488,7 @@ def realized_payoffs(
 def oos_trading_metrics(
     probabilities: Sequence[float],
     forward_returns: Sequence[float],
-    threshold: float,
+    threshold: float | Sequence[float | None],
     round_trip_cost: float = DEFAULT_ROUND_TRIP_COST,
     target: str = "profitability",
     eligible: Sequence[bool] | None = None,
@@ -499,6 +527,10 @@ def oos_trading_metrics(
     if n == 0:
         return {}
     p = [float(x) for x in probabilities[:n]]
+    thresholds = ([float(threshold)] * n if isinstance(threshold, (int, float))
+                  else [None if x is None else float(x) for x in threshold[:n]])
+    if len(thresholds) != n:
+        raise ValueError("threshold sequence must contain one cutoff per row")
     r = [float(x) for x in forward_returns[:n]]
     # ``eligible`` restricts every figure below to a subset of the slice -- the
     # bars a gate would have let through. Without it a gated strategy cannot be
@@ -519,20 +551,21 @@ def oos_trading_metrics(
                 "target": target,
                 "rows": 0.0,
                 "eligible_share": 0.0,
-                "threshold": float(threshold),
+                "threshold": float(threshold) if isinstance(threshold, (int, float)) else float("nan"),
                 "cost_bps": 1e4 * float(round_trip_cost),
                 "no_eligible_rows": True,
             }
         keep_index = keep
         p = [p[i] for i in keep]
         r = [r[i] for i in keep]
+        thresholds = [thresholds[i] for i in keep]
         n = len(keep)
     cost_bps = 1e4 * float(round_trip_cost)
 
     def _mean_bps(values: Sequence[float]) -> float:
         return 1e4 * sum(values) / len(values) if values else float("nan")
 
-    entered = [i for i in range(n) if p[i] >= threshold]
+    entered = [i for i in range(n) if thresholds[i] is not None and p[i] >= thresholds[i]]
     longs = [r[i] for i in entered]
     # WHEN the entries happened, not just how many. A fold vote reads as
     # independent confirmation until you notice every fold is scoring the same
@@ -579,7 +612,7 @@ def oos_trading_metrics(
         "rows": float(n),
         "eligible_share": eligible_share,
         "coverage": coverage,
-        "threshold": float(threshold),
+        "threshold": float(threshold) if isinstance(threshold, (int, float)) else float("nan"),
         "cost_bps": cost_bps,
         "entry_rate": len(longs) / n,
         "long_gross_bps": long_gross,
@@ -891,6 +924,30 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     # TrainingConfig.vol_gate_train_quantile for why not per fold.
     _gate_min_from_first_fold: float | None = None
     _target_tp_pct, _target_sl_pct = target_geometry(training_config, training_config.train_target)
+    _shared_calibrator: features.CalibrationModule | None = None
+    _shared_threshold: float | None = None
+    _shared_threshold_proof: dict[str, object] | None = None
+    _shared_threshold_record: ThresholdSelectionRecord | None = None
+    _shared_rolling_rule: RollingQuantileThreshold | None = None
+    if training_config.shared_prior_threshold:
+        _shared_calibrator, _shared_threshold, _shared_threshold_proof, _shared_threshold_record = fit_shared_prior_threshold_rule(
+            build.labeled_rows, effective_feature_names, training_config, uniqueness, splits,
+        )
+        print(
+            "[TRAIN] seeded rolling 99th percentile: initial cutoff "
+            f"{_shared_threshold:.6f}; calibration rows "
+            f"{_shared_threshold_proof['calibration_indices']['start']}:"
+            f"{_shared_threshold_proof['calibration_indices']['stop_exclusive']} "
+            "(30 calendar days; abstain below 1,000 prior scores)"
+        )
+        _calibration_bounds = _shared_threshold_proof["calibration_indices"]
+        _calibration_rows = build.labeled_rows[
+            int(_calibration_bounds["start"]):int(_calibration_bounds["stop_exclusive"])
+        ]
+        _shared_rolling_rule = seeded_rolling_threshold_rule(
+            _shared_threshold_record.probabilities,
+            [row.open_time for row in _calibration_rows],
+        )
     for fold_index, split in enumerate(splits):
         print(f"[TRAIN]   Fold {fold_index + 1}/{len(splits)}: train={len(split.train)}, val={len(split.validation)}, test={len(split.test)}")
         train_indices = _split_indices(split.train)
@@ -911,28 +968,42 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         model = selection.adapter
         validation_probabilities = model.predict_proba(feature_matrix(validation_rows, effective_feature_names))
         offset = calibration_offset(validation_probabilities, validation_labels)
-        calibrator = features.CalibrationModule().fit(validation_probabilities, validation_labels, positive_samples=sum(validation_labels))
+        calibrator = _shared_calibrator or features.CalibrationModule().fit(
+            validation_probabilities, validation_labels, positive_samples=sum(validation_labels))
         calibrated_validation = calibrator.transform(validation_probabilities)
+        validation_thresholds = (
+            resolve_rolling_thresholds(_shared_rolling_rule, calibrated_validation,
+                                       [row.open_time for row in validation_rows])
+            if _shared_rolling_rule is not None else None
+        )
         _validation_payoffs = realized_payoffs(
             validation_rows, training_config.train_target,
             _target_tp_pct, _target_sl_pct,
         )
-        _threshold_audit = threshold_selection_audit(
-            calibrated_validation, validation_labels,
-            objective=training_config.threshold_objective,
-            min_trades=training_config.threshold_min_trades,
-            tp_pct=_target_tp_pct, sl_pct=_target_sl_pct,
-            round_trip_cost=training_config.round_trip_cost,
-            realized_payoffs=_validation_payoffs,
+        _threshold_audit = (
+            dict(_shared_threshold_record.audit) if _shared_threshold_record is not None else
+            threshold_selection_audit(
+                calibrated_validation, validation_labels,
+                objective=training_config.threshold_objective,
+                min_trades=training_config.threshold_min_trades,
+                tp_pct=_target_tp_pct, sl_pct=_target_sl_pct,
+                round_trip_cost=training_config.round_trip_cost,
+                realized_payoffs=_validation_payoffs,
+            )
         )
-        threshold = float(_threshold_audit["selected_threshold"])
+        threshold = float(_shared_threshold if _shared_threshold is not None else _threshold_audit["selected_threshold"])
         # Override with Optuna best threshold if available (decision param, not model param)
-        if optuna_threshold is not None:
+        if optuna_threshold is not None and _shared_rolling_rule is None:
             threshold = optuna_threshold
             _threshold_audit["applied_threshold"] = threshold
             _threshold_audit["selection_source"] = "optuna_override"
         test_probabilities = model.predict_proba(feature_matrix(test_rows, effective_feature_names))
         calibrated_test = calibrator.transform(test_probabilities)
+        test_thresholds = (
+            resolve_rolling_thresholds(_shared_rolling_rule, calibrated_test,
+                                       [row.open_time for row in test_rows])
+            if _shared_rolling_rule is not None else None
+        )
         # Entry timestamps, so a fold can report WHEN it traded and not only
         # how much. Without it a fold vote reads as independent confirmation
         # even when every fold is scoring the same calendar stretch.
@@ -953,7 +1024,8 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         # sees these slices in-sample. That second trap is what made 2020-2025
         # look evaluable when it never was.
         _fold_predictions: list[dict[str, object]] = []
-        for _row, _prob, _pay in zip(test_rows, calibrated_test, _fold_payoffs):
+        for _row, _prob, _pay, _cutoff in zip(test_rows, calibrated_test, _fold_payoffs,
+                                               test_thresholds or [threshold] * len(test_rows)):
             _fold_predictions.append({
                 "fold_index": fold_index,
                 # The entry identity. Without it nobody can rebuild
@@ -963,7 +1035,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 "entry_time": _row.open_time.isoformat() if getattr(_row, "open_time", None) else "",
                 "probability": float(_prob),
                 "payoff": float(_pay),
-                "threshold": float(threshold),
+                "threshold": None if _cutoff is None else float(_cutoff),
                 **{f"sigma__{k}": _row.features.get(k) for k in _persisted_gate_features},
             })
         _fold_eligible = None
@@ -1022,13 +1094,13 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 calibration_offset=offset,
                 calibration_details=calibrator.as_dict(),
                 validation_metrics=metrics(
-                    calibrated_validation, validation_labels, threshold,
+                    calibrated_validation, validation_labels, validation_thresholds if validation_thresholds is not None else threshold,
                     tp_pct=_target_tp_pct, sl_pct=_target_sl_pct,
                     round_trip_cost=training_config.round_trip_cost,
                     realized_payoffs=_validation_payoffs,
                 ),
                 test_metrics=metrics(
-                    calibrated_test, test_labels, threshold,
+                    calibrated_test, test_labels, test_thresholds if test_thresholds is not None else threshold,
                     tp_pct=_target_tp_pct, sl_pct=_target_sl_pct,
                     round_trip_cost=training_config.round_trip_cost,
                     realized_payoffs=realized_payoffs(
@@ -1049,7 +1121,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 test_trading=oos_trading_metrics(
                     calibrated_test,
                     _fold_payoffs,
-                    threshold,
+                    test_thresholds if test_thresholds is not None else threshold,
                     round_trip_cost=training_config.round_trip_cost,
                     target=training_config.train_target,
                     row_times=_fold_times,
@@ -1057,17 +1129,14 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                 test_predictions=_fold_predictions,
                 vol_gate_min_used=_fold_gate_min if training_config.vol_gate_feature else None,
                 threshold_selection=ThresholdSelectionRecord(
-                    selection_id=f"fold_{fold_index}",
-                    probabilities=calibrated_validation,
-                    labels=validation_labels,
-                    realized_payoffs=_validation_payoffs,
-                    audit=_threshold_audit,
-                ),
+                    selection_id=f"fold_{fold_index}", probabilities=calibrated_validation,
+                    labels=validation_labels, realized_payoffs=_validation_payoffs, audit=_threshold_audit,
+                ) if _shared_threshold_record is None or fold_index == 0 else None,
                 test_trading_gated=(
                     oos_trading_metrics(
                         calibrated_test,
                         _fold_payoffs,
-                        threshold,
+                        test_thresholds if test_thresholds is not None else threshold,
                         round_trip_cost=training_config.round_trip_cost,
                         target=training_config.train_target,
                         eligible=_fold_eligible,
@@ -1091,6 +1160,11 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     latency_report = inference_latency_report(final_selection.adapter, feature_matrix(build.labeled_rows, effective_feature_names))
     artifacts = write_training_artifacts(output_dir, build, splits, fold_results, final_selection.adapter, training_config, sample_intervals, uniqueness, final_selection, latency_report, captured_provenance)
     run_summary = training_summary(build, splits, fold_results, artifacts, training_config, uniqueness, final_selection, latency_report)
+    if _shared_threshold_proof is not None:
+        governance.ArtifactWriter(output_dir).write_json("shared_threshold_rule.json", _shared_threshold_proof)
+        artifacts.append("shared_threshold_rule.json")
+        run_summary["shared_threshold_rule"] = _shared_threshold_proof
+        run_summary["artifacts"] = list(artifacts)
     print(f"[TRAIN] Training complete: {len(build.labeled_rows):,} rows, {len(splits)} folds, test_f1={run_summary.get('mean_test_f1', 0.0):.4f}")
     model_metadata = model_version_metadata(build, final_selection.adapter, training_config, final_selection)
     run_summary.update(
@@ -2217,16 +2291,168 @@ def default_splits(n_rows: int, purge_gap: int, test_gap: int = 0) -> list[featu
 
 def configured_splits(n_rows: int, label_horizon: int, config: TrainingConfig, sample_intervals: Sequence[cv.SampleInterval]) -> list[object]:
     manager = cv.SplitManager()
-    return manager.get_splits(
-        n_rows,
+    reserve_rows = config.shared_prior_reserve_rows if config.shared_prior_threshold else 0
+    if reserve_rows >= n_rows:
+        raise ValueError("shared_prior_reserve_rows must leave rows for walk-forward folds")
+    splits = manager.get_splits(
+        n_rows - reserve_rows,
         label_horizon=label_horizon,
         cv_mode=config.cv_mode,
         embargo_size=config.embargo_size,
         walk_forward_test_gap=config.walk_forward_test_gap,
+        train_size=config.walk_forward_train_size,
+        validation_size=config.walk_forward_validation_size,
+        test_size=config.walk_forward_test_size,
         n_groups=config.n_groups,
         test_group_count=config.test_group_count,
         sample_intervals=sample_intervals,
     )
+    if reserve_rows == 0:
+        return splits
+    # SplitManager deliberately owns the historical zero-origin geometry.  The
+    # reserve is an offset, not an altered default or a relabelled dataset.
+    return [features.Split(
+        range(split.train.start + reserve_rows, split.train.stop + reserve_rows),
+        range(split.validation.start + reserve_rows, split.validation.stop + reserve_rows),
+        range(split.test.start + reserve_rows, split.test.stop + reserve_rows),
+    ) for split in splits if isinstance(split, features.Split)]
+
+
+def fit_shared_prior_threshold_rule(
+    rows: Sequence[dataset.LabeledRow], feature_names: Sequence[str], config: TrainingConfig,
+    uniqueness: cv.UniquenessWeightResult, splits: Sequence[object],
+) -> tuple[features.CalibrationModule, float, dict[str, object], ThresholdSelectionRecord]:
+    """Fit option C once, wholly before the earliest test embargo boundary.
+
+    A probe model is fit on the first third of a dedicated pre-fold reserve.
+    Its final two thirds are the calibration history, separated from the probe
+    by the label-horizon purge.  That history is earlier than every fold train,
+    validation, and test range.
+    """
+    if not splits or not isinstance(splits[0], features.Split):
+        raise ValueError("shared_prior_threshold requires ordinary walk-forward splits")
+    first_train = _split_indices(splits[0].train)
+    reserve_stop = _min_index(first_train)
+    purge_gap = _min_index(_split_indices(splits[0].validation)) - _stop_exclusive(first_train)
+    if reserve_stop != config.shared_prior_reserve_rows:
+        raise AssertionError("shared threshold reserve must end exactly at fold 0 train start")
+    calibration_count = max(100, (reserve_stop * 2) // 3)
+    calibration_start_pos = reserve_stop - calibration_count
+    probe_stop_pos = calibration_start_pos - purge_gap
+    if probe_stop_pos < 30:
+        raise ValueError("shared_prior_threshold needs at least 30 pre-calibration rows after purge")
+    probe_indices = list(range(probe_stop_pos))
+    calibration_indices = list(range(calibration_start_pos, reserve_stop))
+    test_starts = [_min_index(_split_indices(split.test)) for split in splits]
+    first_forbidden = min(test_starts) - purge_gap
+    if _stop_exclusive(calibration_indices) > first_forbidden:
+        raise AssertionError("shared threshold calibration overlaps a test purge zone")
+    with models.training_runtime_context(fold_index=0, fit_role="shared_threshold_probe"):
+        probe = fit_model_adapter(
+            [rows[index] for index in probe_indices], feature_names, config,
+            _weights_for_indices(uniqueness, probe_indices),
+        ).adapter
+    calibration_rows = [rows[index] for index in calibration_indices]
+    raw = probe.predict_proba(feature_matrix(calibration_rows, feature_names))
+    labels = [row.label for row in calibration_rows]
+    calibrator = features.CalibrationModule().fit(raw, labels, positive_samples=sum(labels))
+    probabilities = calibrator.transform(raw)
+    tp_pct, sl_pct = target_geometry(config, config.train_target)
+    payoffs = realized_payoffs(calibration_rows, config.train_target, tp_pct, sl_pct)
+    min_trades = int(ceil(0.01 * len(calibration_rows)))
+    # The probe's OOS calibration scores are seed history, not a threshold
+    # optimisation sample.  Its 99th percentile is recorded only as the first
+    # dynamic cutoff a later row would face.
+    threshold = percentile(probabilities, 0.99)
+    proof = {
+        "rule": "seeded_rolling_99th_percentile",
+        "predeclared_selectivity": 0.01,
+        "reserve_indices": {"start": 0, "stop_exclusive": reserve_stop, "count": reserve_stop},
+        "minimum_prior_scores": 1_000,
+        "calendar_window_days": 30,
+        "probe_fit_indices": {"start": _min_index(probe_indices), "stop_exclusive": _stop_exclusive(probe_indices)},
+        "purged_between_probe_and_calibration": {"start": _stop_exclusive(probe_indices), "stop_exclusive": _min_index(calibration_indices)},
+        "calibration_indices": {"start": _min_index(calibration_indices), "stop_exclusive": _stop_exclusive(calibration_indices), "count": len(calibration_indices)},
+        "test_purge_boundary": first_forbidden,
+        "fold_test_starts": test_starts,
+        "assertion": "calibration_stop_exclusive <= min(fold_test_start) - purge_gap",
+        "assertion_passed": True,
+        "calibrator": calibrator.as_dict(),
+        "initial_seed_cutoff": threshold,
+        "decision_order": "resolve score before it enters the 30-calendar-day history",
+    }
+    return calibrator, threshold, proof, ThresholdSelectionRecord(
+        selection_id="shared_prior_calibration", probabilities=probabilities,
+        labels=labels, realized_payoffs=payoffs, audit={
+            "selection_source": "seed_history_only", "selected_threshold": threshold,
+            "predeclared_selectivity": 0.01,
+        },
+    )
+
+
+def seeded_rolling_threshold_rule(
+    seed_scores: Sequence[float], seed_times: Sequence[datetime],
+) -> RollingQuantileThreshold:
+    """Resolve a causal 1% score tail, seeded strictly before the scored rows.
+
+    The Fenwick implementation keeps the per-row 30-calendar-day query and
+    update logarithmic.  ``resolve`` deliberately obtains the cutoff before
+    admitting that row, which is the causality contract for both validation and
+    test streams.
+    """
+    if len(seed_scores) != len(seed_times):
+        raise ValueError("seed scores and timestamps must have matching lengths")
+    rule = RollingQuantileThreshold(.99, warmup=1_000, time_window=timedelta(days=30))
+    for score, when in zip(seed_scores, seed_times):
+        rule.observe(float(score), when)
+    return rule
+
+
+def resolve_rolling_thresholds(
+    rule: RollingQuantileThreshold, scores: Sequence[float], times: Sequence[datetime],
+) -> list[float | None]:
+    if len(scores) != len(times):
+        raise ValueError("scores and timestamps must have matching lengths")
+    return [rule.resolve(float(score), when) for score, when in zip(scores, times)]
+
+
+def threshold_stability_curve(
+    probabilities: Sequence[float], labels: Sequence[int], payoffs: Sequence[float],
+    config: TrainingConfig, tp_pct: float, sl_pct: float,
+) -> list[dict[str, object]]:
+    """Deterministic bootstrap stability evidence for the shared cutoff.
+
+    The candidate lengths are calibration histories, not model-fit histories:
+    every score remains out-of-sample from the probe that generated it.
+    """
+    curve: list[dict[str, object]] = []
+    lengths = sorted({min(len(labels), length) for length in (10_080, 43_200, len(labels)) if length > 0})
+    for length in lengths:
+        start = len(labels) - length
+        p, y, r = list(probabilities[start:]), list(labels[start:]), list(payoffs[start:])
+        selected: list[float] = []
+        rng = Random(10_000 + length)
+        # Keep diagnostic cost bounded.  The draw is with replacement, so this
+        # remains a bootstrap; 1,000 rows is also enough to retain the 1%
+        # selector's ten-trade floor in every reported replicate.
+        bootstrap_rows = min(length, 1_000)
+        for _ in range(50):
+            indices = [rng.randrange(length) for _ in range(bootstrap_rows)]
+            audit = threshold_selection_audit(
+                [p[index] for index in indices], [y[index] for index in indices],
+                objective=config.threshold_objective, min_trades=int(ceil(0.01 * bootstrap_rows)),
+                tp_pct=tp_pct, sl_pct=sl_pct, round_trip_cost=config.round_trip_cost,
+                realized_payoffs=[r[index] for index in indices],
+            )
+            selected.append(float(audit["selected_threshold"]))
+        selected.sort()
+        curve.append({
+            "calibration_rows": length, "minimum_trades": int(ceil(0.01 * length)),
+            "bootstrap_replicates": len(selected), "bootstrap_sample_rows": bootstrap_rows,
+            "cutoff_p05": selected[2], "cutoff_median": selected[24], "cutoff_p95": selected[47],
+            "cutoff_span": selected[47] - selected[2],
+        })
+    return curve
 
 
 def fit_model_adapter(
@@ -2445,7 +2671,7 @@ def threshold_selection_audit(
 def _trading_pnl(
     probabilities: Sequence[float],
     labels: Sequence[int],
-    threshold: float,
+    threshold: float | Sequence[float | None],
     tp_pct: float = 0.003,
     sl_pct: float = 0.0015,
     round_trip_cost: float = DEFAULT_ROUND_TRIP_COST,
@@ -2471,6 +2697,10 @@ def _trading_pnl(
     reflect cost-aware asymmetric-barrier economics.
     """
     n = min(len(probabilities), len(labels))
+    thresholds = ([float(threshold)] * n if isinstance(threshold, (int, float))
+                  else [None if value is None else float(value) for value in threshold[:n]])
+    if len(thresholds) != n:
+        raise ValueError("threshold sequence must contain one cutoff per row")
     if realized_payoffs is None:
         raise ValueError(
             "realized_payoffs is required: label-only class-0 settlement is not executable"
@@ -2486,7 +2716,7 @@ def _trading_pnl(
         )
     pnl: list[float] = []
     for index, (prob, label) in enumerate(zip(probabilities, labels)):
-        if prob < threshold:
+        if thresholds[index] is None or prob < thresholds[index]:
             pnl.append(0.0)
             continue
         gross = realized_payoffs[index]
@@ -2547,10 +2777,14 @@ def _calmar(pnl: Sequence[float]) -> float:
     return total_return / mdd_value
 
 
-def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: float, tp_pct: float = dataset.DEFAULT_LABEL_TP_PCT, sl_pct: float = dataset.DEFAULT_LABEL_SL_PCT, round_trip_cost: float = DEFAULT_ROUND_TRIP_COST, realized_payoffs: Sequence[float] | None = None) -> dict[str, float]:
+def metrics(probabilities: Sequence[float], labels: Sequence[int], threshold: float | Sequence[float | None], tp_pct: float = dataset.DEFAULT_LABEL_TP_PCT, sl_pct: float = dataset.DEFAULT_LABEL_SL_PCT, round_trip_cost: float = DEFAULT_ROUND_TRIP_COST, realized_payoffs: Sequence[float] | None = None) -> dict[str, float]:
     if not probabilities or not labels:
         return {"rows": 0.0, "accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "ece": 0.0, "expected_calibration_error": 0.0, "mce": 0.0, "brier": 0.0, "brier_score": 0.0, "brier_skill_score": 0.0, "positive_rate": 0.0, "predicted_positive_rate": 0.0, "mdd": 0.0, "sharpe": 0.0, "calmar": 0.0}
-    predictions = [1 if probability >= threshold else 0 for probability in probabilities]
+    thresholds = ([float(threshold)] * len(probabilities) if isinstance(threshold, (int, float))
+                  else [None if value is None else float(value) for value in threshold])
+    if len(thresholds) != len(probabilities):
+        raise ValueError("threshold sequence must contain one cutoff per row")
+    predictions = [1 if cutoff is not None and probability >= cutoff else 0 for probability, cutoff in zip(probabilities, thresholds)]
     tp = sum(1 for prediction, label in zip(predictions, labels) if prediction == 1 and label == 1)
     tn = sum(1 for prediction, label in zip(predictions, labels) if prediction == 0 and label == 0)
     fp = sum(1 for prediction, label in zip(predictions, labels) if prediction == 1 and label == 0)
@@ -3145,6 +3379,9 @@ def cv_split_manifest_rows(splits: Sequence[object], config: TrainingConfig) -> 
             "test_stop_exclusive": _stop_exclusive(test),
             "embargo_size": config.embargo_size,
             "walk_forward_test_gap": config.walk_forward_test_gap,
+            "walk_forward_train_size": config.walk_forward_train_size if config.walk_forward_train_size is not None else "default",
+            "walk_forward_validation_size": config.walk_forward_validation_size if config.walk_forward_validation_size is not None else "default",
+            "walk_forward_test_size": config.walk_forward_test_size if config.walk_forward_test_size is not None else "default",
         }
         if isinstance(split, cv.CombinatorialPurgedSplit):
             row.update(
