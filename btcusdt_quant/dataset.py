@@ -1259,6 +1259,8 @@ def _load_labeled_rows_parquet(
     feature_names = tuple(str(name) for name in expected_feature_names) if expected_feature_names is not None else tuple(str(name) for name in stored_feature_names)
     source_status_cache: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
     feature_status_cache: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
+    targets_cache: dict[tuple[tuple[str, int], ...], dict[str, int]] = {}
+    target_reasons_cache: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
     rows: list[LabeledRow] = []
     for index in range(table.num_rows):
         rows.append(
@@ -1276,8 +1278,8 @@ def _load_labeled_rows_parquet(
                 feature_availability_status=_json_dict_str(columns.get("feature_availability_status_json", [None] * table.num_rows)[index], intern_cache=feature_status_cache),
                 unavailable_sources=_json_tuple_str(columns.get("unavailable_sources_json", [None] * table.num_rows)[index]),
                 fallback_features=_json_tuple_str(columns.get("fallback_features_json", [None] * table.num_rows)[index]),
-                targets=_json_dict_int(columns.get("targets_json", [None] * table.num_rows)[index]),
-                target_reasons=_json_dict_str(columns.get("target_reasons_json", [None] * table.num_rows)[index]),
+                targets=_json_dict_int(columns.get("targets_json", [None] * table.num_rows)[index], intern_cache=targets_cache),
+                target_reasons=_json_dict_str(columns.get("target_reasons_json", [None] * table.num_rows)[index], intern_cache=target_reasons_cache),
                 user_regime=columns.get("user_regime", [None] * table.num_rows)[index],
             )
         )
@@ -1371,11 +1373,21 @@ def _json_dict_str(
     return intern_cache[cache_key]
 
 
-def _json_dict_int(value: object) -> dict[str, int]:
+def _json_dict_int(
+    value: object,
+    *,
+    intern_cache: dict[tuple[tuple[str, int], ...], dict[str, int]] | None = None,
+) -> dict[str, int]:
     loaded = _json_load(value, {})
     if not isinstance(loaded, Mapping):
         return {}
-    return {str(key): int(item) for key, item in loaded.items()}
+    decoded = {str(key): int(item) for key, item in loaded.items()}
+    if intern_cache is None:
+        return decoded
+    cache_key = tuple(sorted(decoded.items()))
+    if cache_key not in intern_cache:
+        intern_cache[cache_key] = decoded
+    return intern_cache[cache_key]
 
 
 def _json_tuple_str(value: object) -> tuple[str, ...]:
@@ -2318,6 +2330,11 @@ def attach_labels(
     if min(long_tp, long_sl, short_tp, short_sl) <= 0.0:
         raise ValueError("all side-specific label TP/SL values must be positive")
     labeled: list[LabeledRow] = []
+    # These five-key dictionaries have a tiny value space but are retained for
+    # every labeled row.  Share one ordinary dict per content; consumers retain
+    # the existing contract to copy before mutating.
+    targets_by_content: dict[tuple[tuple[str, int], ...], dict[str, int]] = {}
+    target_reasons_by_content: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
     for row in feature_rows:
         future_index = row.index + horizon
         if (row.warmup_invalid and not include_warmup) or future_index >= len(candles):
@@ -2343,6 +2360,24 @@ def attach_labels(
         if external_label is not None and external_reason is not None:
             label = external_label
             label_reason = external_reason
+        targets = {
+            "direction": direction_label,
+            "profitability": label,
+            "long_success": long_success,
+            "short_success": short_success,
+            "short_profitability": short_profit,
+        }
+        targets_key = tuple(sorted(targets.items()))
+        targets = targets_by_content.setdefault(targets_key, targets)
+        target_reasons = {
+            "direction": direction_reason,
+            "profitability": label_reason,
+            "long_success": long_reason,
+            "short_success": short_reason,
+            "short_profitability": short_profit_reason,
+        }
+        target_reasons_key = tuple(sorted(target_reasons.items()))
+        target_reasons = target_reasons_by_content.setdefault(target_reasons_key, target_reasons)
         labeled.append(
             LabeledRow(
                 index=row.index,
@@ -2358,20 +2393,8 @@ def attach_labels(
                 feature_availability_status=row.feature_availability_status,
                 unavailable_sources=row.unavailable_sources,
                 fallback_features=row.fallback_features,
-                targets={
-                    "direction": direction_label,
-                    "profitability": label,
-                    "long_success": long_success,
-                    "short_success": short_success,
-                    "short_profitability": short_profit,
-                },
-                target_reasons={
-                    "direction": direction_reason,
-                    "profitability": label_reason,
-                    "long_success": long_reason,
-                    "short_success": short_reason,
-                    "short_profitability": short_profit_reason,
-                },
+                targets=targets,
+                target_reasons=target_reasons,
                 user_regime=row.user_regime,
             )
         )
