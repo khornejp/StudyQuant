@@ -239,13 +239,15 @@ METRICS_FEATURES: tuple[str, ...] = (
     "oi_change_rate_30m",
     "oi_zscore_1d",
     "oi_value_zscore_1d",
-    "toptrader_ls_account",
-    "toptrader_ls_position",
     "global_ls_account",
     "taker_ls_ratio",
-    "toptrader_ls_account_change_5m",
     "global_ls_account_change_5m",
+    "global_ls_account_change_15m",
+    "global_ls_account_change_30m",
     "taker_ls_ratio_change_5m",
+    "taker_ls_ratio_change_15m",
+    "taker_ls_ratio_change_30m",
+    "global_ls_account_taker_ls_ratio_gap",
 )
 
 # Soft regime probabilities (F18), produced by regime_classifier.py's purged

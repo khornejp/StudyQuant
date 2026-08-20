@@ -262,13 +262,15 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("oi_change_rate_30m", "F16", DERIVATIVES_METRICS, "(sum_open_interest_t - sum_open_interest_t-30m) / |sum_open_interest_t-30m|", 30, 30, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
     _feature("oi_zscore_1d", "F16", DERIVATIVES_METRICS, "(sum_open_interest_t - mean_1d) / std_1d (trailing 1-day window, causal)", 1440, 1440, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
     _feature("oi_value_zscore_1d", "F16", DERIVATIVES_METRICS, "(sum_open_interest_value_t - mean_1d) / std_1d (trailing 1-day window, causal)", 1440, 1440, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
-    _feature("toptrader_ls_account", "F16", DERIVATIVES_METRICS, "count_toptrader_long_short_ratio (raw)", 1, 1, "metrics", warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
-    _feature("toptrader_ls_position", "F16", DERIVATIVES_METRICS, "sum_toptrader_long_short_ratio (raw)", 1, 1, "metrics", warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
     _feature("global_ls_account", "F16", DERIVATIVES_METRICS, "count_long_short_ratio (raw)", 1, 1, "metrics", warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
     _feature("taker_ls_ratio", "F16", DERIVATIVES_METRICS, "sum_taker_long_short_vol_ratio (raw)", 1, 1, "metrics", warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
-    _feature("toptrader_ls_account_change_5m", "F16", DERIVATIVES_METRICS, "(count_toptrader_long_short_ratio_t - t-5m) / |t-5m|", 5, 5, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
     _feature("global_ls_account_change_5m", "F16", DERIVATIVES_METRICS, "(count_long_short_ratio_t - t-5m) / |t-5m|", 5, 5, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("global_ls_account_change_15m", "F16", DERIVATIVES_METRICS, "(count_long_short_ratio_t - t-15m) / |t-15m|", 15, 15, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("global_ls_account_change_30m", "F16", DERIVATIVES_METRICS, "(count_long_short_ratio_t - t-30m) / |t-30m|", 30, 30, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
     _feature("taker_ls_ratio_change_5m", "F16", DERIVATIVES_METRICS, "(sum_taker_long_short_vol_ratio_t - t-5m) / |t-5m|", 5, 5, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("taker_ls_ratio_change_15m", "F16", DERIVATIVES_METRICS, "(sum_taker_long_short_vol_ratio_t - t-15m) / |t-15m|", 15, 15, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("taker_ls_ratio_change_30m", "F16", DERIVATIVES_METRICS, "(sum_taker_long_short_vol_ratio_t - t-30m) / |t-30m|", 30, 30, "metrics", warmup_rule="strict", required_for_live=False, leakage_risk="low_past_only"),
+    _feature("global_ls_account_taker_ls_ratio_gap", "F16", DERIVATIVES_METRICS, "ln(count_long_short_ratio) - ln(sum_taker_long_short_vol_ratio)", 1, 1, "metrics", ("global_ls_account", "taker_ls_ratio"), warmup_rule="none", required_for_live=False, leakage_risk="low_past_only"),
     # F17: Multi-timeframe trend/volatility/momentum features (15m/1h/4h closed
     # bars + 24h-rolling group), resampled causally from the same 1m klines
     # already in hand -- no external source, no network, and (unlike F16

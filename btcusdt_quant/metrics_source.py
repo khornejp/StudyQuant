@@ -26,10 +26,13 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import time
 import urllib.error
 import urllib.request
 import zipfile
+from bisect import bisect_left
+from collections import deque
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -128,7 +131,7 @@ def parse_metrics_csv_text(csv_text: str) -> list[MetricsRow]:
         field_index = {name: idx for idx, name in enumerate(METRICS_CSV_FIELDS)}
         data_rows = rows_raw
 
-    required = ("create_time",) + METRICS_VALUE_FIELDS
+    required = ("create_time",)
     missing = [name for name in required if name not in field_index]
     if missing:
         raise MetricsValidationError(f"metrics CSV missing columns: {', '.join(missing)}")
@@ -140,16 +143,17 @@ def parse_metrics_csv_text(csv_text: str) -> list[MetricsRow]:
         except (IndexError, MetricsValidationError):
             continue
         values: dict[str, float] = {}
-        ok = True
         for name in METRICS_VALUE_FIELDS:
             idx = field_index[name]
             try:
-                values[name] = float(row[idx])
+                value = float(row[idx])
+                if math.isfinite(value):
+                    values[name] = value
             except (IndexError, ValueError):
-                ok = False
-                break
-        if ok:
-            parsed.append(MetricsRow(create_time=ct, values=values))
+                # A missing numeric cell is field-level unavailability, not a
+                # malformed timestamp row. Keep the parseable fields.
+                continue
+        parsed.append(MetricsRow(create_time=ct, values=values))
     return parsed
 
 
@@ -185,13 +189,27 @@ def align_metrics_to_minutes(
     ordered = dedup_metrics_rows(rows)
     idx = 0
     n = len(ordered)
-    current: dict[str, float] | None = None
+    current: dict[str, float] = {}
+    observed_at: dict[str, datetime] = {}
     for minute in minute_times:
         while idx < n and ordered[idx].create_time <= minute:
-            current = dict(ordered[idx].values)
+            row = ordered[idx]
+            # A field omitted by a newer archive row is explicitly absent: do
+            # not keep serving an earlier value as though it was observed.
+            for name in METRICS_VALUE_FIELDS:
+                if name in row.values:
+                    current[name] = row.values[name]
+                    observed_at[name] = row.create_time
+                else:
+                    current.pop(name, None)
+                    observed_at.pop(name, None)
             idx += 1
-        if current is not None:
-            aligned[minute] = current
+            visible = {
+                name: value for name, value in current.items()
+            if name == TAKER_PROVENANCE_KEY or minute - observed_at[name] <= METRICS_STALENESS_CAP
+        }
+        if visible:
+            aligned[minute] = visible
     return aligned
 
 
@@ -346,57 +364,89 @@ METRICS_FEATURE_NAMES: tuple[str, ...] = (
     "oi_change_rate_30m",
     "oi_zscore_1d",
     "oi_value_zscore_1d",
-    # Long/short ratios are already ratios (scale-stable) -> raw + short change.
-    "toptrader_ls_account",
-    "toptrader_ls_position",
+    # Long/short ratios are already scale-stable. Keep their raw levels and
+    # selected 5m/15m/30m causal changes; do not expose bare log transforms.
     "global_ls_account",
     "taker_ls_ratio",
-    "toptrader_ls_account_change_5m",
     "global_ls_account_change_5m",
+    "global_ls_account_change_15m",
+    "global_ls_account_change_30m",
     "taker_ls_ratio_change_5m",
+    "taker_ls_ratio_change_15m",
+    "taker_ls_ratio_change_30m",
+    "global_ls_account_taker_ls_ratio_gap",
 )
 
-# Rolling window lengths expressed in 5-minute metric ticks.
-_TICKS_30M = 6      # 30 minutes / 5m
-_TICKS_1D = 288     # 24h / 5m
+# Reserved per-minute metadata key.  It is deliberately outside
+# METRICS_FEATURE_NAMES: it records lineage, rather than becoming a model input.
+TAKER_PROVENANCE_KEY = "__taker_ls_ratio_provenance"
+TAKER_ARCHIVE_PROVENANCE = "archive"
+TAKER_RECONSTRUCTED_PROVENANCE = "reconstructed_klines"
+TAKER_RECONSTRUCTION_START = datetime(2022, 1, 1, tzinfo=timezone.utc)
+TAKER_RECONSTRUCTION_END = datetime(2022, 5, 12, tzinfo=timezone.utc)
+
+# 99.36% of measured archive gaps are exactly one five-minute cadence and the
+# thin genuine tail ends at 40 minutes. Older values are unavailable, not
+# forward-fill candidates.
+METRICS_STALENESS_CAP = timedelta(minutes=40)
+# The measured 4-minute jitter is one minute early; accept that observed
+# cadence jitter, but not a second unobserved minute.
+_LOOKBACK_TIMESTAMP_TOLERANCE = timedelta(minutes=1)
 
 
-def _causal_change_rate(series: Sequence[float], lag_ticks: int) -> list[float]:
-    """(x[t] - x[t-lag]) / |x[t-lag]|, using only past values. 0 before warmup."""
-    out = [0.0] * len(series)
-    for t in range(len(series)):
-        past = t - lag_ticks
-        if past < 0:
+def _field_values(rows: Sequence[MetricsRow], field: str) -> tuple[list[datetime], list[float]]:
+    pairs = [(row.create_time, row.values[field]) for row in rows if field in row.values]
+    return [time for time, _ in pairs], [value for _, value in pairs]
+
+
+def _causal_change_rate(rows: Sequence[MetricsRow], field: str, lookback: timedelta) -> list[float]:
+    """Timestamp-indexed change rate; NaN when either required value is absent.
+
+    The reference is the observation nearest the requested elapsed duration,
+    within one minute. It is still before the current observation, so this is
+    causal, but missing blocks cannot become a fictitious six-row "30m" lag.
+    """
+    times, values = _field_values(rows, field)
+    out = [float("nan")] * len(rows)
+    for index, row in enumerate(rows):
+        current = row.values.get(field)
+        if current is None:
             continue
-        base = series[past]
-        if base == 0.0:
+        target = row.create_time - lookback
+        pos = bisect_left(times, target)
+        candidates = [candidate for candidate in (pos - 1, pos) if 0 <= candidate < len(times) and times[candidate] < row.create_time]
+        if not candidates:
             continue
-        out[t] = (series[t] - base) / abs(base)
+        past = min(candidates, key=lambda candidate: abs(times[candidate] - target))
+        if abs(times[past] - target) > _LOOKBACK_TIMESTAMP_TOLERANCE or values[past] == 0.0:
+            continue
+        out[index] = (current - values[past]) / abs(values[past])
     return out
 
 
-def _causal_zscore(series: Sequence[float], window_ticks: int) -> list[float]:
-    """Rolling z-score over the trailing window (inclusive of t), past-only.
-
-    Uses the window ending at t (values t-window+1 .. t). This is causal: it
-    never reads future ticks. Returns 0 until at least 2 samples exist and when
-    the trailing std is zero.
-    """
-    import math
-
-    out = [0.0] * len(series)
-    for t in range(len(series)):
-        lo = max(0, t - window_ticks + 1)
-        window = series[lo : t + 1]
-        n = len(window)
-        if n < 2:
+def _causal_zscore(rows: Sequence[MetricsRow], field: str, window: timedelta) -> list[float]:
+    """Timestamp-indexed trailing z-score; NaN when the current input is absent."""
+    out = [float("nan")] * len(rows)
+    active: deque[tuple[datetime, float]] = deque()
+    total = total_sq = 0.0
+    for index, row in enumerate(rows):
+        value = row.values.get(field)
+        if value is not None:
+            active.append((row.create_time, value))
+            total += value
+            total_sq += value * value
+        cutoff = row.create_time - window
+        while active and active[0][0] < cutoff:
+            _, expired = active.popleft()
+            total -= expired
+            total_sq -= expired * expired
+        if value is None or len(active) < 2:
             continue
-        mean = sum(window) / n
-        var = sum((v - mean) ** 2 for v in window) / n
-        std = math.sqrt(var)
-        if std == 0.0:
-            continue
-        out[t] = (series[t] - mean) / std
+        mean = total / len(active)
+        variance = max(0.0, total_sq / len(active) - mean * mean)
+        std = math.sqrt(variance)
+        if std > 0.0:
+            out[index] = (value - mean) / std
     return out
 
 
@@ -411,36 +461,46 @@ def compute_metrics_features(rows: Sequence[MetricsRow]) -> dict[datetime, dict[
     ordered = dedup_metrics_rows(rows)
     if not ordered:
         return {}
-    times = [r.create_time for r in ordered]
-    oi = [r.values["sum_open_interest"] for r in ordered]
-    oi_val = [r.values["sum_open_interest_value"] for r in ordered]
-    tt_acct = [r.values["count_toptrader_long_short_ratio"] for r in ordered]
-    tt_pos = [r.values["sum_toptrader_long_short_ratio"] for r in ordered]
-    gl_acct = [r.values["count_long_short_ratio"] for r in ordered]
-    taker = [r.values["sum_taker_long_short_vol_ratio"] for r in ordered]
-
-    oi_chg_5m = _causal_change_rate(oi, 1)
-    oi_chg_30m = _causal_change_rate(oi, _TICKS_30M)
-    oi_z = _causal_zscore(oi, _TICKS_1D)
-    oi_val_z = _causal_zscore(oi_val, _TICKS_1D)
-    tt_acct_chg = _causal_change_rate(tt_acct, 1)
-    gl_acct_chg = _causal_change_rate(gl_acct, 1)
-    taker_chg = _causal_change_rate(taker, 1)
+    oi_chg_5m = _causal_change_rate(ordered, "sum_open_interest", timedelta(minutes=5))
+    oi_chg_30m = _causal_change_rate(ordered, "sum_open_interest", timedelta(minutes=30))
+    oi_z = _causal_zscore(ordered, "sum_open_interest", timedelta(days=1))
+    oi_val_z = _causal_zscore(ordered, "sum_open_interest_value", timedelta(days=1))
+    gl_acct_chg = _causal_change_rate(ordered, "count_long_short_ratio", timedelta(minutes=5))
+    gl_acct_chg_15m = _causal_change_rate(ordered, "count_long_short_ratio", timedelta(minutes=15))
+    gl_acct_chg_30m = _causal_change_rate(ordered, "count_long_short_ratio", timedelta(minutes=30))
+    taker_chg = _causal_change_rate(ordered, "sum_taker_long_short_vol_ratio", timedelta(minutes=5))
+    taker_chg_15m = _causal_change_rate(ordered, "sum_taker_long_short_vol_ratio", timedelta(minutes=15))
+    taker_chg_30m = _causal_change_rate(ordered, "sum_taker_long_short_vol_ratio", timedelta(minutes=30))
 
     features: dict[datetime, dict[str, float]] = {}
-    for i, t in enumerate(times):
+    for i, row in enumerate(ordered):
+        t = row.create_time
         features[t] = {
             "oi_change_rate_5m": oi_chg_5m[i],
             "oi_change_rate_30m": oi_chg_30m[i],
             "oi_zscore_1d": oi_z[i],
             "oi_value_zscore_1d": oi_val_z[i],
-            "toptrader_ls_account": tt_acct[i],
-            "toptrader_ls_position": tt_pos[i],
-            "global_ls_account": gl_acct[i],
-            "taker_ls_ratio": taker[i],
-            "toptrader_ls_account_change_5m": tt_acct_chg[i],
+            "global_ls_account": row.values.get("count_long_short_ratio", float("nan")),
+            "taker_ls_ratio": row.values.get("sum_taker_long_short_vol_ratio", float("nan")),
             "global_ls_account_change_5m": gl_acct_chg[i],
+            "global_ls_account_change_15m": gl_acct_chg_15m[i],
+            "global_ls_account_change_30m": gl_acct_chg_30m[i],
             "taker_ls_ratio_change_5m": taker_chg[i],
+            "taker_ls_ratio_change_15m": taker_chg_15m[i],
+            "taker_ls_ratio_change_30m": taker_chg_30m[i],
+            # A real zero is preserved.  Missing/non-positive inputs instead
+            # remain NaN so the dataset records unavailability, not 0.0.
+            "global_ls_account_taker_ls_ratio_gap": (
+                math.log(row.values["count_long_short_ratio"])
+                - math.log(row.values["sum_taker_long_short_vol_ratio"])
+                if (
+                    math.isfinite(row.values.get("count_long_short_ratio", float("nan")))
+                    and row.values.get("count_long_short_ratio", 0.0) > 0.0
+                    and math.isfinite(row.values.get("sum_taker_long_short_vol_ratio", float("nan")))
+                    and row.values.get("sum_taker_long_short_vol_ratio", 0.0) > 0.0
+                )
+                else float("nan")
+            ),
         }
     return features
 
@@ -448,6 +508,7 @@ def compute_metrics_features(rows: Sequence[MetricsRow]) -> dict[datetime, dict[
 def metrics_features_to_minutes(
     rows: Sequence[MetricsRow],
     minute_times: Sequence[datetime],
+    reconstructed_taker_times: set[datetime] | None = None,
 ) -> dict[datetime, dict[str, float]]:
     """Compute 5m features then forward-fill onto the 1m clock, causally.
 
@@ -462,14 +523,75 @@ def metrics_features_to_minutes(
     aligned: dict[datetime, dict[str, float]] = {}
     idx = 0
     n = len(grid_times)
-    current: dict[str, float] | None = None
+    current: dict[str, float] = {}
+    observed_at: dict[str, datetime] = {}
+    reconstructed_taker_times = reconstructed_taker_times or set()
     for minute in minute_times:
         while idx < n and grid_times[idx] <= minute:
-            current = feat_5m[grid_times[idx]]
+            row = feat_5m[grid_times[idx]]
+            for name in METRICS_FEATURE_NAMES:
+                value = row.get(name, float("nan"))
+                if math.isfinite(value):
+                    current[name] = value
+                    observed_at[name] = grid_times[idx]
+                else:
+                    current.pop(name, None)
+                    observed_at.pop(name, None)
+            if grid_times[idx] in reconstructed_taker_times:
+                current[TAKER_PROVENANCE_KEY] = TAKER_RECONSTRUCTED_PROVENANCE
+            else:
+                current.pop(TAKER_PROVENANCE_KEY, None)
             idx += 1
-        if current is not None:
-            aligned[minute] = current
+        visible = {
+            name: value for name, value in current.items()
+            if name == TAKER_PROVENANCE_KEY or minute - observed_at[name] <= METRICS_STALENESS_CAP
+        }
+        if visible:
+            aligned[minute] = visible
     return aligned
+
+
+def splice_taker_ratio_from_klines(
+    rows: Sequence[MetricsRow],
+    candles: Sequence[object],
+) -> tuple[list[MetricsRow], set[datetime]]:
+    """Fill only the 2022 taker-field hole from the causal prior five 1m bars.
+
+    Archive values always win.  The returned timestamp set lets callers retain
+    per-feature lineage after the reconstructed 5m values are forward-filled.
+    """
+    minute_values: dict[datetime, tuple[float, float]] = {}
+    for candle in candles:
+        at = getattr(candle, "open_time")
+        minute_values[at] = (float(getattr(candle, "volume")), float(getattr(candle, "taker_buy_base_volume")))
+    reconstructed: set[datetime] = set()
+    output: list[MetricsRow] = []
+    field = "sum_taker_long_short_vol_ratio"
+    for row in rows:
+        at = row.create_time
+        if field in row.values or not (TAKER_RECONSTRUCTION_START <= at < TAKER_RECONSTRUCTION_END):
+            output.append(row)
+            continue
+        buy = sell = 0.0
+        complete = True
+        for offset in range(5, 0, -1):
+            minute = minute_values.get(at - timedelta(minutes=offset))
+            if minute is None:
+                complete = False
+                break
+            volume, taker_buy = minute
+            buy += taker_buy
+            sell += volume - taker_buy
+        if not complete or sell <= 0.0:
+            output.append(row)
+            continue
+        values = dict(row.values)
+        values[field] = buy / sell
+        output.append(MetricsRow(at, values))
+        reconstructed.add(at)
+    return output, reconstructed
+
+
 
 
 def load_metrics_dir(metrics_dir: Path) -> list[MetricsRow]:

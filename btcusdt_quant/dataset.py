@@ -1592,6 +1592,7 @@ def build_dataset(
         short_sl_pct=short_sl_pct,
         external_events=external_events,
         include_warmup=input_path is not None or archive_dir is not None,
+        excluded_windows=_metrics_training_exclusion_windows(),
     )
     # Exclude warmup rows: first 50 weeks have unreliable weekly MA features
     # Only apply for large datasets where meaningful training data remains
@@ -1992,13 +1993,15 @@ def build_feature_rows(
             "oi_change_rate_30m": _metrics_feature_value(candle_external_sources, "oi_change_rate_30m"),
             "oi_zscore_1d": _metrics_feature_value(candle_external_sources, "oi_zscore_1d"),
             "oi_value_zscore_1d": _metrics_feature_value(candle_external_sources, "oi_value_zscore_1d"),
-            "toptrader_ls_account": _metrics_feature_value(candle_external_sources, "toptrader_ls_account"),
-            "toptrader_ls_position": _metrics_feature_value(candle_external_sources, "toptrader_ls_position"),
             "global_ls_account": _metrics_feature_value(candle_external_sources, "global_ls_account"),
             "taker_ls_ratio": _metrics_feature_value(candle_external_sources, "taker_ls_ratio"),
-            "toptrader_ls_account_change_5m": _metrics_feature_value(candle_external_sources, "toptrader_ls_account_change_5m"),
             "global_ls_account_change_5m": _metrics_feature_value(candle_external_sources, "global_ls_account_change_5m"),
+            "global_ls_account_change_15m": _metrics_feature_value(candle_external_sources, "global_ls_account_change_15m"),
+            "global_ls_account_change_30m": _metrics_feature_value(candle_external_sources, "global_ls_account_change_30m"),
             "taker_ls_ratio_change_5m": _metrics_feature_value(candle_external_sources, "taker_ls_ratio_change_5m"),
+            "taker_ls_ratio_change_15m": _metrics_feature_value(candle_external_sources, "taker_ls_ratio_change_15m"),
+            "taker_ls_ratio_change_30m": _metrics_feature_value(candle_external_sources, "taker_ls_ratio_change_30m"),
+            "global_ls_account_taker_ls_ratio_gap": _metrics_feature_value(candle_external_sources, "global_ls_account_taker_ls_ratio_gap"),
             # F17: Multi-timeframe (15m/1h/4h/24h-rolling) trend/vol/momentum
             # features, pre-computed once for the whole candle series above
             # (mtf_feature_values) and looked up per-candle here by open_time.
@@ -2054,6 +2057,12 @@ def build_feature_rows(
             "bb_zscore": close_zscore_20,
         }
         clipped_values = clipper.clip_values_only({name: values[name] for name in FEATURE_NAMES})
+        metrics_snapshot = candle_external_sources.get("metrics") if isinstance(candle_external_sources, Mapping) else None
+        unavailable_metrics_features = (
+            {name for name in sources.METRICS_FEATURES if name not in metrics_snapshot}
+            if isinstance(metrics_snapshot, Mapping)
+            else set()
+        )
         row_context = {
             "gap_flag": candle.gap_flag,
             "canonical_candle_repaired": candle.repaired,
@@ -2062,7 +2071,24 @@ def build_feature_rows(
         nan_status: dict[str, str] = {}
         for name, value in clipped_values.items():
             if value is None:
-                nan_status[name] = nan_classifier.classify(row_context, name)
+                # Partial archive fields use the same availability convention
+                # as source fallbacks. The source itself remains available, so
+                # only the affected feature is unavailable on this minute.
+                nan_status[name] = (
+                    "fallback_unavailable_source"
+                    if name in unavailable_metrics_features
+                    else nan_classifier.classify(row_context, name)
+                )
+        if isinstance(metrics_snapshot, Mapping) and metrics_snapshot.get("__taker_ls_ratio_provenance") == "reconstructed_klines":
+            # The archive supplied the global-account leg but this interval's
+            # taker leg was independently rebuilt from preceding 1m klines.
+            # Keep that mixed lineage visible on every dependent F16 value.
+            for name in (
+                "taker_ls_ratio", "taker_ls_ratio_change_5m", "taker_ls_ratio_change_15m",
+                "taker_ls_ratio_change_30m", "global_ls_account_taker_ls_ratio_gap",
+            ):
+                if name not in nan_status:
+                    nan_status[name] = "reconstructed_klines"
         nan_status_key = tuple(sorted(nan_status.items()))
         merged_feature_status = feature_status_by_nan.get(nan_status_key)
         if merged_feature_status is None:
@@ -2308,6 +2334,7 @@ def attach_labels(
     short_sl_pct: float | None = None,
     external_events: Mapping[object, object] | None = None,
     include_warmup: bool = False,
+    excluded_windows: Sequence[tuple[datetime, datetime]] = (),
 ) -> list[LabeledRow]:
     if horizon <= 0:
         raise ValueError("horizon must be positive")
@@ -2337,7 +2364,8 @@ def attach_labels(
     target_reasons_by_content: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
     for row in feature_rows:
         future_index = row.index + horizon
-        if (row.warmup_invalid and not include_warmup) or future_index >= len(candles):
+        if ((row.warmup_invalid and not include_warmup) or future_index >= len(candles)
+                or any(start <= row.open_time < end for start, end in excluded_windows)):
             continue
         close = candles[row.index].close
         if close == 0.0:
@@ -2638,6 +2666,21 @@ def _source_availability_status(source_report: Mapping[str, object]) -> dict[str
         if isinstance(source_name, str):
             status[source_name] = str(availability_grade)
     return status
+
+
+def _metrics_training_exclusion_windows() -> tuple[tuple[datetime, datetime], ...]:
+    """Known global-account hole plus its registry-derived metrics tail.
+
+    Labels own row admissibility, so this uses ``attach_labels``' existing
+    skip path rather than filtering a completed dataset.  The end is exclusive.
+    """
+    start = datetime(2022, 1, 1, tzinfo=timezone.utc)
+    missing_end = datetime(2022, 1, 20, tzinfo=timezone.utc)
+    largest_lookback = max(
+        (int(row["lookback"]) for row in FEATURE_FORMULAS if row.get("source") == "metrics"),
+        default=0,
+    )
+    return ((start, missing_end + timedelta(minutes=largest_lookback)),)
 
 
 def max_feature_min_samples(n_candles: int | None = None) -> int:
@@ -3663,15 +3706,17 @@ def _metrics_feature_value(external_sources: Mapping[str, object] | None, featur
     The training pipeline forward-fills the 5m metrics-derived features onto
     the 1m clock (see metrics_source.metrics_features_to_minutes) and packs
     them per-candle as external_sources[candle_time]["metrics"] = {feature: v}.
-    Returns 0.0 when metrics are absent (e.g. training run without
-    --metrics-dir), so the feature degrades to a constant rather than raising.
+    A present metrics snapshot which omits the named feature means that field
+    is unavailable at this minute; return NaN so FeatureVector and
+    feature_availability_status preserve that fact. A wholly absent metrics
+    source retains the established source-report fallback path.
     """
     if external_sources is None:
         return 0.0
     metrics = external_sources.get("metrics")
     if isinstance(metrics, Mapping):
         try:
-            return float(metrics.get(feature_name, 0.0))
+            return float(metrics.get(feature_name, float("nan")))
         except (TypeError, ValueError):
             return 0.0
     return 0.0

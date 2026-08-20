@@ -1,7 +1,7 @@
 # BTCUSDT 1m Quant Trading System v7.18 — Scaffold Implementation
 
 **Status**: Core scaffold implementation complete. Data collection and training pipeline operational. Live execution framework ready with model artifact loading and TP/SL bracket order wiring.  
-**Active features**: 107 of 107 (F01–F12). F11–F12 compute from real-time exchange sources when available (depth, funding, ADL, mark price).  
+**Active features**: 187 of 203 (F01–F18). F11–F12 compute from real-time exchange sources when available (depth, funding, ADL, mark price).
 **See**: `docs/V718_CRITICAL_GAPS.md` for the complete critical review.
 
 **⚠️ SAFETY WARNING**: Do not use for live trading. Mock exchange is default. Production requires human approval, security audit, and testnet soak.
@@ -10,7 +10,7 @@
 
 ### Data Pipeline (Core Complete)
 - **Canonical 1-minute timeline** with gap repair, gap metrics, and gap ratio tracking
-- **107 active computed features** across F01–F12 (price/return, trend, volatility, volume, candle structure, gap quality, regime normalization, volatility-adjusted returns/trend/flow, microstructure, exchange-safety)
+- **187 active computed features** across F01–F18 (price/return, trend, volatility, volume, candle structure, gap quality, regime normalization, volatility-adjusted returns/trend/flow, microstructure, exchange-safety, derivatives metrics, multi-timeframe, regime probabilities)
 - **F11–F12 real-time features**: Compute from live exchange data when available (depth, funding, ADL, mark price, premium index, leverage bracket). Fall back to safe mock defaults when sources are offline.
 - **Feature governance**: finite-value enforcement, clipping (z-score ±10, ratio ±100, return ±0.20, vol_adj ±10), NaN source classification (outage, warmup, structural, isolated)
 - **Source contracts**: availability grading (A/B/C/D), train/live feature parity gates, column data contracts, retention contracts
