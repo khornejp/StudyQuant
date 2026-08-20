@@ -132,6 +132,33 @@ def _run_offline_training_test(output: Path) -> dict[str, object]:
 
 
 class DataPipelineTests(unittest.TestCase):
+    def test_parallel_feature_tasks_do_not_serialize_source_bundle(self) -> None:
+        class RecordingExecutor:
+            initargs: tuple[object, ...] = ()
+            work_items: list[tuple[object, ...]] = []
+
+            def __init__(self, **kwargs: object) -> None:
+                RecordingExecutor.initargs = kwargs["initargs"]  # type: ignore[index]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def map(self, fn, work_items):
+                RecordingExecutor.work_items = list(work_items)
+                return iter([[] for _ in RecordingExecutor.work_items])
+
+        candles = [make_stream_candles(1)[0]] * 50_001
+        bundle = object()
+        with mock.patch("btcusdt_quant.dataset.ProcessPoolExecutor", RecordingExecutor), \
+             mock.patch("btcusdt_quant.dataset.weekly_features.compute_weekly_features", return_value={}):
+            dataset._build_feature_rows_parallel(candles, bundle, None, None)  # type: ignore[arg-type]
+        self.assertEqual(RecordingExecutor.initargs, (bundle,))
+        self.assertTrue(RecordingExecutor.work_items)
+        self.assertTrue(all(len(item) == 8 for item in RecordingExecutor.work_items))
+
     def label_for_path(self, path: list[tuple[float, float, float, float, int]]) -> dataset.LabeledRow:
         base = data.utc_minute(2026, 1, 1, 0, 0)
         candles = [
@@ -337,7 +364,7 @@ class DataPipelineTests(unittest.TestCase):
         self.assertEqual(row.label, 0)
         self.assertEqual(row.label_reason, "sl_first")
 
-    def test_triple_barrier_ambiguous(self) -> None:
+    def test_triple_barrier_flat_dual_touch_is_conservative_sl(self) -> None:
         row = self.label_for_path(
             [
                 (100.0, 100.0, 100.0, 100.0, 0),
@@ -347,7 +374,7 @@ class DataPipelineTests(unittest.TestCase):
             ]
         )
         self.assertEqual(row.label, 0)
-        self.assertEqual(row.label_reason, "ambiguous_path")
+        self.assertEqual(row.label_reason, "sl_first")
 
     def test_triple_barrier_gap_cross_timeout(self) -> None:
         row = self.label_for_path(

@@ -1217,6 +1217,11 @@ def _load_feature_rows_parquet(
     stored = tuple(str(name) for name in stored_feature_names) if stored_feature_names is not None else _infer_feature_names(table.column_names, expected_feature_names, labeled=False)
     _validate_dataset_cache_features(stored, expected_feature_names, allow_missing_features)
     feature_names = tuple(str(name) for name in expected_feature_names) if expected_feature_names is not None else stored
+    # Availability statuses are invariant for almost every cached row.  Keep
+    # one dictionary per content rather than retaining a JSON-decoded copy per
+    # row (a full training cache otherwise retains millions of equal dicts).
+    source_status_cache: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
+    feature_status_cache: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
     rows: list[FeatureRow] = []
     for index in range(table.num_rows):
         rows.append(
@@ -1227,8 +1232,8 @@ def _load_feature_rows_parquet(
                 gap_flag=int(columns["gap_flag"][index]),
                 repaired=bool(columns["repaired"][index]),
                 warmup_invalid=bool(columns["warmup_invalid"][index]),
-                source_availability_status=_json_dict_str(columns.get("source_availability_status_json", [None] * table.num_rows)[index]),
-                feature_availability_status=_json_dict_str(columns.get("feature_availability_status_json", [None] * table.num_rows)[index]),
+                source_availability_status=_json_dict_str(columns.get("source_availability_status_json", [None] * table.num_rows)[index], intern_cache=source_status_cache),
+                feature_availability_status=_json_dict_str(columns.get("feature_availability_status_json", [None] * table.num_rows)[index], intern_cache=feature_status_cache),
                 unavailable_sources=_json_tuple_str(columns.get("unavailable_sources_json", [None] * table.num_rows)[index]),
                 fallback_features=_json_tuple_str(columns.get("fallback_features_json", [None] * table.num_rows)[index]),
                 user_regime=columns.get("user_regime", [None] * table.num_rows)[index],
@@ -1252,6 +1257,8 @@ def _load_labeled_rows_parquet(
     columns = {name: table.column(name).to_pylist() for name in table.column_names}
     _validate_dataset_cache_features(stored_feature_names, expected_feature_names, allow_missing_features)
     feature_names = tuple(str(name) for name in expected_feature_names) if expected_feature_names is not None else tuple(str(name) for name in stored_feature_names)
+    source_status_cache: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
+    feature_status_cache: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
     rows: list[LabeledRow] = []
     for index in range(table.num_rows):
         rows.append(
@@ -1265,8 +1272,8 @@ def _load_labeled_rows_parquet(
                 gap_flag=int(columns["gap_flag"][index]),
                 repaired=bool(columns["repaired"][index]),
                 warmup_invalid=bool(columns["warmup_invalid"][index]),
-                source_availability_status=_json_dict_str(columns.get("source_availability_status_json", [None] * table.num_rows)[index]),
-                feature_availability_status=_json_dict_str(columns.get("feature_availability_status_json", [None] * table.num_rows)[index]),
+                source_availability_status=_json_dict_str(columns.get("source_availability_status_json", [None] * table.num_rows)[index], intern_cache=source_status_cache),
+                feature_availability_status=_json_dict_str(columns.get("feature_availability_status_json", [None] * table.num_rows)[index], intern_cache=feature_status_cache),
                 unavailable_sources=_json_tuple_str(columns.get("unavailable_sources_json", [None] * table.num_rows)[index]),
                 fallback_features=_json_tuple_str(columns.get("fallback_features_json", [None] * table.num_rows)[index]),
                 targets=_json_dict_int(columns.get("targets_json", [None] * table.num_rows)[index]),
@@ -1347,11 +1354,21 @@ def _json_load(value: object, default: object) -> object:
     return json.loads(value)
 
 
-def _json_dict_str(value: object) -> dict[str, str]:
+def _json_dict_str(
+    value: object,
+    *,
+    intern_cache: dict[tuple[tuple[str, str], ...], dict[str, str]] | None = None,
+) -> dict[str, str]:
     loaded = _json_load(value, {})
     if not isinstance(loaded, Mapping):
         return {}
-    return {str(key): str(item) for key, item in loaded.items()}
+    decoded = {str(key): str(item) for key, item in loaded.items()}
+    if intern_cache is None:
+        return decoded
+    cache_key = tuple(sorted(decoded.items()))
+    if cache_key not in intern_cache:
+        intern_cache[cache_key] = decoded
+    return intern_cache[cache_key]
 
 
 def _json_dict_int(value: object) -> dict[str, int]:
@@ -1640,6 +1657,12 @@ def build_feature_rows(
     )
     source_availability_status = _source_availability_status(source_report)
     feature_availability_status = dict(source_report.get("feature_source_status", {}))
+    # The source status never varies within this build.  Feature status only
+    # differs when clipping produces a NaN; memoize those rare overlays by
+    # content so row ownership is not proportional to row count.
+    feature_status_by_nan: dict[tuple[tuple[str, str], ...], dict[str, str]] = {
+        (): feature_availability_status,
+    }
     unavailable_sources = tuple(str(value) for value in source_report.get("unavailable_sources", ()))
     fallback_features = tuple(str(value) for value in source_report.get("fallback_features", ()))
     opens = [candle.open for candle in candles]
@@ -2028,8 +2051,12 @@ def build_feature_rows(
         for name, value in clipped_values.items():
             if value is None:
                 nan_status[name] = nan_classifier.classify(row_context, name)
-        merged_feature_status = dict(feature_availability_status)
-        merged_feature_status.update(nan_status)
+        nan_status_key = tuple(sorted(nan_status.items()))
+        merged_feature_status = feature_status_by_nan.get(nan_status_key)
+        if merged_feature_status is None:
+            merged_feature_status = dict(feature_availability_status)
+            merged_feature_status.update(nan_status)
+            feature_status_by_nan[nan_status_key] = merged_feature_status
         rows.append(
             FeatureRow(
                 index,
@@ -2038,7 +2065,7 @@ def build_feature_rows(
                 candle.gap_flag,
                 candle.repaired,
                 warmup_invalid,
-                dict(source_availability_status),
+                source_availability_status,
                 merged_feature_status,
                 unavailable_sources,
                 fallback_features,
@@ -2091,8 +2118,17 @@ def _build_feature_rows_chunk(
     return result
 
 
+_WORKER_SOURCE_BUNDLE: sources.MarketSourceBundle | None = None
+
+
+def _init_feature_worker(source_bundle: sources.MarketSourceBundle | None) -> None:
+    """Install immutable source metadata once in each spawned worker."""
+    global _WORKER_SOURCE_BUNDLE
+    _WORKER_SOURCE_BUNDLE = source_bundle
+
+
 def _process_feature_chunk(
-    args: tuple[int, int, bool, Sequence[data.Candle], sources.MarketSourceBundle | None, Mapping[str, object] | None, Sequence[UserRegimePeriod] | None, int, Mapping[str, Sequence[float]] | None],
+    args: tuple[int, int, bool, Sequence[data.Candle], Mapping[str, object] | None, Sequence[UserRegimePeriod] | None, int, Mapping[str, Sequence[float]] | None],
 ) -> list[FeatureRow]:
     """Top-level worker for parallel feature computation.
 
@@ -2107,10 +2143,10 @@ def _process_feature_chunk(
     weeks (~504k bars) of history, far more than any chunk contains, so they
     must never be recomputed per-chunk.
     """
-    start, end, is_first, chunk_candles, source_bundle, external_sources, user_regime_periods, overlap, weekly_slice = args
+    start, end, is_first, chunk_candles, external_sources, user_regime_periods, overlap, weekly_slice = args
     return _build_feature_rows_chunk(
         chunk_candles,
-        source_bundle=source_bundle,
+        source_bundle=_WORKER_SOURCE_BUNDLE,
         external_sources=external_sources,
         user_regime_periods=user_regime_periods,
         index_offset=start,
@@ -2220,15 +2256,15 @@ def _build_feature_rows_parallel(
 
     all_rows: list[FeatureRow] = []
     # Slice each chunk's candles HERE (in the parent) so each worker only
-    # receives its own sub-range, not the entire candle list. This avoids
-    # pickling the full multi-million-candle list once per worker.
+    # receives its own sub-range, not the entire candle list.  The immutable
+    # source bundle is deliberately absent: Windows spawn receives it once via
+    # the worker initializer rather than serializing it with every work item.
     work_items = [
         (
             start,
             end,
             is_first,
             candles[start:end],
-            source_bundle,
             _external_slice(start, end),
             user_regime_periods,
             overlap,
@@ -2236,7 +2272,11 @@ def _build_feature_rows_parallel(
         )
         for start, end, is_first in chunks
     ]
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+    with ProcessPoolExecutor(
+        max_workers=num_workers,
+        initializer=_init_feature_worker,
+        initargs=(source_bundle,),
+    ) as executor:
         for result in executor.map(_process_feature_chunk, work_items):
             all_rows.extend(result)
     print(f"[FEATURE] Parallel computation complete: {len(all_rows):,} rows")
@@ -2314,8 +2354,8 @@ def attach_labels(
                 gap_flag=row.gap_flag,
                 repaired=row.repaired,
                 warmup_invalid=row.warmup_invalid,
-                source_availability_status=dict(row.source_availability_status),
-                feature_availability_status=dict(row.feature_availability_status),
+                source_availability_status=row.source_availability_status,
+                feature_availability_status=row.feature_availability_status,
                 unavailable_sources=row.unavailable_sources,
                 fallback_features=row.fallback_features,
                 targets={
@@ -2362,7 +2402,10 @@ def triple_barrier_label(
                 return 1, "tp_first"
             if candle.close < candle.open:
                 return 0, "sl_first"
-            return 0, "ambiguous_path"
+            # A flat dual-touch supplies no favorable intrabar direction.  The
+            # published conservative tie rule therefore settles it at the SL,
+            # matching the per-side long/short targets.
+            return 0, "sl_first"
         if tp_touched:
             return 1, "tp_first"
         if sl_touched:

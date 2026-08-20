@@ -563,6 +563,14 @@ class ArtifactProvenanceTests(unittest.TestCase):
             "installed": False, "version": None, "imported": False,
         })
 
+    def test_pinned_runtime_refuses_mismatch_unless_explicitly_overridden(self) -> None:
+        with patch("btcusdt_quant.governance._installed_distribution_fingerprint", return_value="not-pinned"):
+            with self.assertRaisesRegex(RuntimeError, "run-of-record refused"):
+                governance.require_pinned_runtime()
+            decision = governance.require_pinned_runtime(allow_unpinned_runtime=True)
+        self.assertFalse(decision["matches_pinned_runtime"])
+        self.assertTrue(decision["allow_unpinned_runtime"])
+
     def test_model_selection_artifact_preserves_fallback_attempts_and_unavailable_families(self) -> None:
         from btcusdt_quant import models, training
 

@@ -522,6 +522,7 @@ def run_train(
     n_groups: int = 5,
     test_group_count: int = 1,
     fallback_allowed: bool = True,
+    allow_unpinned_runtime: bool = False,
     model_params: Mapping[str, object] | None = None,
     feature_selection_enabled: bool = False,
     optuna_enabled: bool = False,
@@ -597,6 +598,7 @@ def run_train(
         model_family=model_family,
         model_params=dict(model_params or {}),
         fallback_allowed=fallback_allowed,
+        allow_unpinned_runtime=allow_unpinned_runtime,
         feature_selection_enabled=feature_selection_enabled,
         optuna_enabled=optuna_enabled,
         optuna_trials=optuna_trials,
@@ -1658,6 +1660,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--n-groups", type=int, default=5, help="sequential groups for combinatorial purged CV")
     train.add_argument("--test-group-count", type=int, default=1, help="number of groups selected for each combinatorial test fold")
     train.add_argument("--no-model-fallback", action="store_true", help="disable optional model fallback and fail if the requested family is unavailable")
+    train.add_argument("--allow-unpinned-runtime", action="store_true", help="permit a run-of-record artifact on a runtime whose installed distribution fingerprint differs from the pinned venv; recorded in provenance and resolved_config for deliberate experiments")
     train.add_argument("--feature-selection", action="store_true", help="enable 6-stage feature selection pipeline (Spearman, gain, permutation, SHAP, ablation, core set)")
     train.add_argument("--optuna", action="store_true", help="enable Optuna hyperparameter tuning for threshold and signal scale")
     train.add_argument("--optuna-trials", type=int, default=0, help="number of Optuna trials (0 uses budget profile default)")
@@ -2021,6 +2024,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "train":
         output = Path(args.output)
         input_path = Path(args.input) if args.input else None
+        try:
+            runtime_decision = governance.require_pinned_runtime(
+                allow_unpinned_runtime=args.allow_unpinned_runtime,
+            )
+        except RuntimeError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        print(
+            "[RUNTIME] pinned environment "
+            f"{'matched' if runtime_decision['matches_pinned_runtime'] else 'overridden'}; "
+            f"fingerprint={runtime_decision['observed_environment_fingerprint']}"
+        )
         # --long-threshold / --short-threshold / --min-ev only affect the
         # live/backtest DECISION stage, not label-based model training. They
         # were previously parsed but never used anywhere; warn so users don't
@@ -2156,6 +2171,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = run_train(
                 output, input_path, args.model_family, args.cv_mode, args.embargo_size, args.n_groups, args.test_group_count,
                 not args.no_model_fallback,
+                allow_unpinned_runtime=args.allow_unpinned_runtime,
                 feature_selection_enabled=args.feature_selection,
                 optuna_enabled=args.optuna,
                 optuna_trials=args.optuna_trials,

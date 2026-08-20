@@ -115,7 +115,7 @@ horizon, or subset of this window.
 ## Exact command — do not run until review is complete
 
 ```powershell
-python -m btcusdt_quant backtest --input artifacts/btcusdt_2020_2026h1.parquet --metrics-dir artifacts/metrics --funding-dir artifacts/funding_2020_2026h1 --premium-index-dir artifacts/premium_index_2020_2026h1 --model-artifact artifacts/stage4_h45_tp004_sl002_q80_sources_timeoutfix/model.json --output artifacts/frozen_evaluation_2026_h1_s4a --backtest-start 2026-01-01 --backtest-end 2026-06-30 --horizon 45 --exec-tp-pct 0.004 --exec-sl-pct 0.002 --fixed-tp-sl --tp-floor 0.004 --sl-floor 0.002 --vol-gate-feature rv_60 --vol-gate-min 0.0013057161122560501 --long-only --long-threshold 0.40 --position-size 0.1 --maker-fill-window 5 --maker-fill-penetration-bps 0 --maker-exit
+venv_btcusdt/Scripts/python.exe -m btcusdt_quant backtest --input artifacts/btcusdt_2020_2026h1.parquet --metrics-dir artifacts/metrics --funding-dir artifacts/funding_2020_2026h1 --premium-index-dir artifacts/premium_index_2020_2026h1 --model-artifact artifacts/stage4_h45_tp004_sl002_q80_sources_timeoutfix/model.json --output artifacts/frozen_evaluation_2026_h1_s4a --backtest-start 2026-01-01 --backtest-end 2026-06-30 --horizon 45 --exec-tp-pct 0.004 --exec-sl-pct 0.002 --fixed-tp-sl --tp-floor 0.004 --sl-floor 0.002 --vol-gate-feature rv_60 --vol-gate-min 0.0013057161122560501 --long-only --long-threshold 0.40 --position-size 0.1 --maker-fill-window 5 --maker-fill-penetration-bps 0 --maker-exit
 ```
 
 Do not alter or remove `--long-threshold 0.40`, or append

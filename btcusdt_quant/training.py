@@ -79,6 +79,10 @@ class TrainingConfig:
     model_family: str = "auto"
     model_params: Mapping[str, object] = field(default_factory=dict)
     fallback_allowed: bool = True
+    # An explicit escape hatch for controlled runtime experiments.  The CLI
+    # performs the refusal before any training work and provenance records this
+    # value so an override cannot be mistaken for a pinned run.
+    allow_unpinned_runtime: bool = False
     lineage_enabled: bool = True
     feature_selection_enabled: bool = False
     optuna_enabled: bool = False

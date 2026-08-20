@@ -19,6 +19,12 @@ from . import parity, sources
 
 UNTRACKED_CONTENT_MAX_BYTES = 1024 * 1024
 
+# The pinned venv used for run-of-record training.  This is a SHA-256 over the
+# sorted, normalized ``distribution==version`` set, not ``pip freeze`` text:
+# it is independent of install order and captures every installed wheel that
+# could affect imports or numerical/native behavior.
+PINNED_ENVIRONMENT_FINGERPRINT = "734b2e0ce8508d6ce7432914ee04f6dd32b7887083d2d5a488c69a9afc2477ef"
+
 
 PIPELINE_STAGES = [
     "RAW_SNAPSHOT",
@@ -285,7 +291,10 @@ def _capture_runtime() -> dict[str, object]:
             "state": PROVENANCE_RECORDED,
             "reason": None,
             "interpreter": sys.version,
+            "executable": getattr(sys, "executable", PROVENANCE_UNKNOWN),
+            "prefix": getattr(sys, "prefix", PROVENANCE_UNKNOWN),
             "platform": platform.platform(),
+            "environment_fingerprint": _installed_distribution_fingerprint(),
             "packages": packages,
         }
     except Exception as exc:
@@ -293,9 +302,41 @@ def _capture_runtime() -> dict[str, object]:
             "state": PROVENANCE_UNKNOWN,
             "reason": _capture_failure_reason(exc),
             "interpreter": PROVENANCE_UNKNOWN,
+            "executable": PROVENANCE_UNKNOWN,
+            "prefix": PROVENANCE_UNKNOWN,
             "platform": PROVENANCE_UNKNOWN,
+            "environment_fingerprint": PROVENANCE_UNKNOWN,
             "packages": PROVENANCE_UNKNOWN,
         }
+
+
+def _installed_distribution_fingerprint() -> str:
+    """Hash the complete installed distribution name/version set deterministically."""
+    distributions = sorted(
+        (distribution.metadata["Name"].lower(), distribution.version)
+        for distribution in importlib.metadata.distributions()
+        if distribution.metadata.get("Name")
+    )
+    return sha256_text("\n".join(f"{name}=={version}" for name, version in distributions))
+
+
+def require_pinned_runtime(*, allow_unpinned_runtime: bool = False) -> dict[str, object]:
+    """Refuse a run-of-record before it starts on a non-pinned environment."""
+    observed = _installed_distribution_fingerprint()
+    matches = observed == PINNED_ENVIRONMENT_FINGERPRINT
+    decision = {
+        "pinned_environment_fingerprint": PINNED_ENVIRONMENT_FINGERPRINT,
+        "observed_environment_fingerprint": observed,
+        "matches_pinned_runtime": matches,
+        "allow_unpinned_runtime": allow_unpinned_runtime,
+    }
+    if not matches and not allow_unpinned_runtime:
+        raise RuntimeError(
+            "run-of-record refused: installed distribution fingerprint does not match "
+            "the pinned environment; rerun with venv_btcusdt or pass "
+            "--allow-unpinned-runtime for a recorded experiment"
+        )
+    return decision
 def _capture_input_fingerprints(
     input_paths: Sequence[Path],
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
