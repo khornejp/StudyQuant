@@ -602,12 +602,18 @@ def oos_trading_metrics(
     bottom = [r[i] for i in order[:k]]
     top = [r[i] for i in order[-k:]]
 
-    long_gross = _mean_bps(longs)
+    # No admitted primary entry is an absence of a measurement, rather than a
+    # flat result.  In particular, do not serialize NaN here: it is both easy
+    # to mistake for a real metric in a log and awkward for downstream JSON
+    # consumers.  Keep the fold, entry count, and coverage so aggregates can
+    # count the abstention while excluding it from entry-weighted figures.
+    no_entries = not longs
+    long_gross = _mean_bps(longs) if longs else None
     # The opposite book: take the least-confident decile the other way. The
     # payoffs are already signed for `target`, so negating gives the return of
     # trading against the model's low-confidence bars.
     short_gross = -_mean_bps(bottom)
-    return {
+    result: dict[str, object] = {
         "target": target,
         "rows": float(n),
         "eligible_share": eligible_share,
@@ -615,8 +621,7 @@ def oos_trading_metrics(
         "threshold": float(threshold) if isinstance(threshold, (int, float)) else float("nan"),
         "cost_bps": cost_bps,
         "entry_rate": len(longs) / n,
-        "long_gross_bps": long_gross,
-        "long_net_bps": long_gross - cost_bps,
+        "no_entries": no_entries,
         "long_trades": float(len(longs)),
         "top_decile_gross_bps": _mean_bps(top),
         "short_gross_bps": short_gross,
@@ -624,6 +629,10 @@ def oos_trading_metrics(
         "short_trades": float(len(bottom)),
         "all_rows_mean_bps": _mean_bps(r),
     }
+    if long_gross is not None:
+        result["long_gross_bps"] = long_gross
+        result["long_net_bps"] = long_gross - cost_bps
+    return result
 
 
 def apply_training_target(rows: Sequence[dataset.LabeledRow], target: str) -> list[dataset.LabeledRow]:
@@ -1149,9 +1158,13 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         )
         _tt = fold_results[-1].test_trading
         if _tt:
+            _primary_net = (
+                f"{float(_tt['long_net_bps']):+.2f}bps"
+                if "long_net_bps" in _tt else "not-measured (no entries)"
+            )
             print(
                 f"[TRAIN]     OOS trading (fold test slice): entries {_tt['entry_rate']:.1%} "
-                f"long_net={_tt['long_net_bps']:+.2f}bps short_net={_tt['short_net_bps']:+.2f}bps "
+                f"long_net={_primary_net} short_net={_tt['short_net_bps']:+.2f}bps "
                 f"(cost {_tt['cost_bps']:.1f}bps, all-rows {_tt['all_rows_mean_bps']:+.2f}bps)"
             )
     final_indices = list(range(len(build.labeled_rows)))
@@ -2988,7 +3001,13 @@ def write_threshold_selection_artifact(path: Path, records: Sequence[ThresholdSe
         candidate_thresholds=np.asarray(candidate_thresholds, dtype=np.float64),
         candidate_trade_counts=np.asarray(candidate_trade_counts, dtype=np.uint32),
         candidate_eligible=np.asarray(candidate_eligible, dtype=np.bool_),
-        candidate_scores=np.asarray(candidate_scores, dtype=np.float64).reshape((-1, score_width)),
+        # ``seed_history_only`` records deliberately have no ranked
+        # candidates.  ``np.asarray([]).reshape((-1, 0))`` is ambiguous to
+        # NumPy and raises, even though an empty score matrix is valid evidence.
+        candidate_scores=(
+            np.asarray(candidate_scores, dtype=np.float64).reshape((-1, score_width))
+            if candidate_scores else np.empty((0, score_width), dtype=np.float64)
+        ),
         metadata=np.asarray(json.dumps(metadata, sort_keys=True, separators=(",", ":"))),
     )
     return path.stat().st_size

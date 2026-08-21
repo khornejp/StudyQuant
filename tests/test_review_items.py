@@ -2344,7 +2344,9 @@ class MakerFillTests(unittest.TestCase):
         # empty and cannot report a gross -- not zero, which would read as a
         # measured break-even.
         self.assertEqual(gated["entry_rate"], 0.0)
-        self.assertNotEqual(gated["long_gross_bps"], gated["long_gross_bps"])  # NaN
+        self.assertTrue(gated["no_entries"])
+        self.assertNotIn("long_gross_bps", gated)
+        self.assertNotIn("long_net_bps", gated)
         self.assertGreater(ungated["long_gross_bps"], 0.0)
         # An empty mask still REPORTS the fold -- see the dedicated test for
         # why returning {} was wrong -- but carries no gross, because a zero

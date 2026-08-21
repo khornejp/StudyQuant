@@ -58,6 +58,34 @@ def test_ranking_instruments_recover_known_score_ordering() -> None:
 
 
 class ThresholdSelectionArtifactTests(unittest.TestCase):
+    def test_zero_entry_fold_post_fold_artifact_writes_without_candidates(self) -> None:
+        """A shared-prior zero-entry fold must not break post-fold persistence."""
+        from btcusdt_quant import training
+        import numpy as np
+
+        zero_entry = training.oos_trading_metrics([0.1, 0.2], [0.003, 0.003], 0.5)
+        self.assertTrue(zero_entry["no_entries"])
+        self.assertEqual(zero_entry["long_trades"], 0.0)
+        self.assertNotIn("long_net_bps", zero_entry)
+        # This is the exact audit shape created by --shared-prior-threshold:
+        # its seed history is evidence, not a threshold candidate sweep.
+        record = training.ThresholdSelectionRecord(
+            selection_id="shared_prior_calibration", probabilities=[0.4], labels=[0],
+            realized_payoffs=[-0.005], audit={
+                "selection_source": "seed_history_only", "selected_threshold": 0.99,
+                "predeclared_selectivity": 0.01,
+            },
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "threshold_selection_inputs.npz"
+            training.write_threshold_selection_artifact(path, [record])
+            with np.load(path, allow_pickle=False) as payload:
+                self.assertEqual(payload["candidate_scores"].shape, (0, 0))
+            self.assertEqual(
+                training.rederive_thresholds_from_selection_artifact(path),
+                {"shared_prior_calibration": 0.5},
+            )
+
     def test_persisted_inputs_rederive_selected_threshold_without_refit(self) -> None:
         """The NPZ alone must replay the choice, including its payoff path."""
         from btcusdt_quant import training
