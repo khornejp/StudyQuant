@@ -65,8 +65,8 @@ class ThresholdSelectionArtifactTests(unittest.TestCase):
 
         zero_entry = training.oos_trading_metrics([0.1, 0.2], [0.003, 0.003], 0.5)
         self.assertTrue(zero_entry["no_entries"])
-        self.assertEqual(zero_entry["long_trades"], 0.0)
-        self.assertNotIn("long_net_bps", zero_entry)
+        self.assertEqual(zero_entry["primary_trades"], 0.0)
+        self.assertNotIn("primary_net_bps", zero_entry)
         # This is the exact audit shape created by --shared-prior-threshold:
         # its seed history is evidence, not a threshold candidate sweep.
         record = training.ThresholdSelectionRecord(

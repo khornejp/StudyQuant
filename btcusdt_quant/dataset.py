@@ -172,14 +172,18 @@ USER_REGIME_NAMES: tuple[str, ...] = ("up", "down", "range")
 # stored under a "feature__" prefix. Before that the feature silently
 # overwrote the field's column and came back as NaN, so a cached matrix was not
 # the matrix it replaced.
-DATASET_CACHE_SCHEMA_VERSION = 2
+# Bumped to 5 on 2026-08-21: per-target gap-stop settlement returns are part
+# of the labeled-row contract; MFE dual-touch truncation changed; and MAE float
+# columns were added.  Cached labels encode the former target definition.
+DATASET_CACHE_SCHEMA_VERSION = 5
 # Column names the row schema owns. A feature sharing one of these names cannot
 # share its column, so it is written prefixed and mapped back on read.
 _RESERVED_ROW_COLUMNS: frozenset[str] = frozenset({
     "index", "open_time", "gap_flag", "repaired", "warmup_invalid", "user_regime",
     "source_availability_status_json", "feature_availability_status_json",
     "unavailable_sources_json", "fallback_features_json",
-    "label", "label_reason", "target_return", "targets_json", "target_reasons_json",
+    "label", "label_reason", "target_return", "mfe_long_bps", "mfe_short_bps", "mae_long_bps", "mae_short_bps",
+    "targets_json", "target_reasons_json", "target_gap_stop_returns_json",
 })
 _FEATURE_COLUMN_PREFIX = "feature__"
 
@@ -227,6 +231,15 @@ class LabeledRow:
     gap_flag: int
     repaired: bool
     warmup_invalid: bool
+    # Path-truncated maximum favourable excursion from the signal-bar close,
+    # in basis points. These deliberately live outside ``targets``: the binary
+    # target maps have a tiny value space and are interned by content.
+    mfe_long_bps: float = 0.0
+    mfe_short_bps: float = 0.0
+    # Path-truncated maximum adverse excursion, expressed on the same entry
+    # price and basis-point scale as MFE.  These also remain outside targets.
+    mae_long_bps: float = 0.0
+    mae_short_bps: float = 0.0
     source_availability_status: dict[str, str] = field(default_factory=dict)
     feature_availability_status: dict[str, str] = field(default_factory=dict)
     unavailable_sources: tuple[str, ...] = ()
@@ -234,6 +247,9 @@ class LabeledRow:
     targets: dict[str, int] = field(default_factory=dict)
     target_reasons: dict[str, str] = field(default_factory=dict)
     user_regime: str | None = None
+    # Exact signed return at the adverse open for targets stopped on a repaired
+    # gap candle.  Empty for every other target/outcome.
+    target_gap_stop_returns: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -1189,8 +1205,13 @@ def _write_rows_parquet(path: Path, rows: Sequence[FeatureRow] | Sequence[Labele
                 "label": pa.array([row.label for row in labeled_rows], type=pa.int64()),
                 "label_reason": pa.array([row.label_reason for row in labeled_rows], type=pa.string()),
                 "target_return": pa.array([row.target_return for row in labeled_rows], type=pa.float64()),
+                "mfe_long_bps": pa.array([row.mfe_long_bps for row in labeled_rows], type=pa.float64()),
+                "mfe_short_bps": pa.array([row.mfe_short_bps for row in labeled_rows], type=pa.float64()),
+                "mae_long_bps": pa.array([row.mae_long_bps for row in labeled_rows], type=pa.float64()),
+                "mae_short_bps": pa.array([row.mae_short_bps for row in labeled_rows], type=pa.float64()),
                 "targets_json": pa.array([_json_dump(row.targets) for row in labeled_rows], type=pa.string()),
                 "target_reasons_json": pa.array([_json_dump(row.target_reasons) for row in labeled_rows], type=pa.string()),
+                "target_gap_stop_returns_json": pa.array([_json_dump(row.target_gap_stop_returns) for row in labeled_rows], type=pa.string()),
             }
         )
     for name in feature_names:
@@ -1261,6 +1282,7 @@ def _load_labeled_rows_parquet(
     feature_status_cache: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
     targets_cache: dict[tuple[tuple[str, int], ...], dict[str, int]] = {}
     target_reasons_cache: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
+    target_gap_stop_returns_cache: dict[tuple[tuple[str, float], ...], dict[str, float]] = {}
     rows: list[LabeledRow] = []
     for index in range(table.num_rows):
         rows.append(
@@ -1274,6 +1296,10 @@ def _load_labeled_rows_parquet(
                 gap_flag=int(columns["gap_flag"][index]),
                 repaired=bool(columns["repaired"][index]),
                 warmup_invalid=bool(columns["warmup_invalid"][index]),
+                mfe_long_bps=float(columns["mfe_long_bps"][index]),
+                mfe_short_bps=float(columns["mfe_short_bps"][index]),
+                mae_long_bps=float(columns["mae_long_bps"][index]),
+                mae_short_bps=float(columns["mae_short_bps"][index]),
                 source_availability_status=_json_dict_str(columns.get("source_availability_status_json", [None] * table.num_rows)[index], intern_cache=source_status_cache),
                 feature_availability_status=_json_dict_str(columns.get("feature_availability_status_json", [None] * table.num_rows)[index], intern_cache=feature_status_cache),
                 unavailable_sources=_json_tuple_str(columns.get("unavailable_sources_json", [None] * table.num_rows)[index]),
@@ -1281,6 +1307,7 @@ def _load_labeled_rows_parquet(
                 targets=_json_dict_int(columns.get("targets_json", [None] * table.num_rows)[index], intern_cache=targets_cache),
                 target_reasons=_json_dict_str(columns.get("target_reasons_json", [None] * table.num_rows)[index], intern_cache=target_reasons_cache),
                 user_regime=columns.get("user_regime", [None] * table.num_rows)[index],
+                target_gap_stop_returns=_json_dict_float(columns.get("target_gap_stop_returns_json", [None] * table.num_rows)[index], intern_cache=target_gap_stop_returns_cache),
             )
         )
     return rows
@@ -1300,7 +1327,7 @@ def _infer_feature_names(column_names: Sequence[str], expected_feature_names: Se
         "fallback_features_json",
     }
     if labeled:
-        reserved.update({"label", "label_reason", "target_return", "targets_json", "target_reasons_json"})
+        reserved.update({"label", "label_reason", "target_return", "mfe_long_bps", "mfe_short_bps", "targets_json", "target_reasons_json", "target_gap_stop_returns_json"})
     inferred = [
         name[len(_FEATURE_COLUMN_PREFIX):] if name.startswith(_FEATURE_COLUMN_PREFIX) else name
         for name in column_names
@@ -1382,6 +1409,23 @@ def _json_dict_int(
     if not isinstance(loaded, Mapping):
         return {}
     decoded = {str(key): int(item) for key, item in loaded.items()}
+    if intern_cache is None:
+        return decoded
+    cache_key = tuple(sorted(decoded.items()))
+    if cache_key not in intern_cache:
+        intern_cache[cache_key] = decoded
+    return intern_cache[cache_key]
+
+
+def _json_dict_float(
+    value: object,
+    *,
+    intern_cache: dict[tuple[tuple[str, float], ...], dict[str, float]] | None = None,
+) -> dict[str, float]:
+    loaded = _json_load(value, {})
+    if not isinstance(loaded, Mapping):
+        return {}
+    decoded = {str(key): float(item) for key, item in loaded.items()}
     if intern_cache is None:
         return decoded
     cache_key = tuple(sorted(decoded.items()))
@@ -1708,6 +1752,7 @@ def build_feature_rows(
     return_10_np = _np_return_series(closes_np, 10)
     return_15_np = _np_return_series(closes_np, 15)
     return_30_np = _np_return_series(closes_np, 30)
+    return_45_np = _np_return_series(closes_np, 45)
     return_60_np = _np_return_series(closes_np, 60)
     log_return_1_np = _np_log_return_series(closes_np, 1)
     log_return_5_np = _np_log_return_series(closes_np, 5)
@@ -1802,10 +1847,12 @@ def build_feature_rows(
     rv_5_values = _rolling_return_std_series(closes, 5)
     rv_15_values = _rolling_return_std_series(closes, 15)
     rv_30_values = _rolling_return_std_series(closes, 30)
+    rv_45_values = _rolling_return_std_series(closes, 45)
     rv_60_values = _rolling_return_std_series(closes, 60)
     rv_120_values = _rolling_return_std_series(closes, 120)
     atr_pct_14_values = _atr_pct_series(candles, 14)
     atr_pct_30_values = _atr_pct_series(candles, 30)
+    atr_pct_45_values = _atr_pct_series(candles, 45)
 
     # Indicator zscore / ratio-to-mean: rv_5/rv_15 over a 60-bar window.
     # Inline the same prefix-sum recipe as _np_zscore_series / _np_ratio_to_mean_series,
@@ -1831,6 +1878,7 @@ def build_feature_rows(
         return_10 = float(return_10_np[index])
         return_15 = float(return_15_np[index])
         return_30 = float(return_30_np[index])
+        return_45 = float(return_45_np[index])
         return_60 = float(return_60_np[index])
         momentum_10 = return_10
         momentum_30 = return_30
@@ -1844,10 +1892,12 @@ def build_feature_rows(
         rv_15 = rv_15_values[index]
         rv_5 = rv_5_values[index]
         rv_30 = rv_30_values[index]
+        rv_45 = rv_45_values[index]
         rv_60 = rv_60_values[index]
         rv_120 = rv_120_values[index]
         atr_pct = atr_pct_14_values[index]
         atr_pct_30 = atr_pct_30_values[index]
+        atr_pct_45 = atr_pct_45_values[index]
         volatility_denominator = _positive_denominator(rv_15, rv_60, rv_120, atr_pct)
         rv_60_denominator = _positive_denominator(rv_60)
         close_zscore_20 = float(close_zscore_20_np[index])
@@ -1881,6 +1931,7 @@ def build_feature_rows(
             "return_10": return_10,
             "return_15": return_15,
             "return_30": return_30,
+            "return_45": return_45,
             "return_60": return_60,
             "log_return_1": float(log_return_1_np[index]),
             "log_return_5": float(log_return_5_np[index]),
@@ -1905,10 +1956,12 @@ def build_feature_rows(
             "rv_5": rv_5,
             "rv_15": rv_15,
             "rv_30": rv_30,
+            "rv_45": rv_45,
             "rv_60": rv_60,
             "rv_120": rv_120,
             "atr_pct": atr_pct,
             "atr_pct_30": atr_pct_30,
+            "atr_pct_45": atr_pct_45,
             "parkinson_vol_20": float(parkinson_vol_20_np[index]),
             "garman_klass_vol_20": float(garman_klass_vol_20_np[index]),
             "range_vol_20": float(range_vol_20_np[index]),
@@ -2369,6 +2422,7 @@ def attach_labels(
     # the existing contract to copy before mutating.
     targets_by_content: dict[tuple[tuple[str, int], ...], dict[str, int]] = {}
     target_reasons_by_content: dict[tuple[tuple[str, str], ...], dict[str, str]] = {}
+    target_gap_stop_returns_by_content: dict[tuple[tuple[str, float], ...], dict[str, float]] = {}
     for row in feature_rows:
         future_index = row.index + horizon
         if ((row.warmup_invalid and not include_warmup) or future_index >= len(candles)
@@ -2388,6 +2442,10 @@ def attach_labels(
         short_profit, short_profit_reason = triple_barrier_label_short_profitability(
             row.index, candles, horizon, label_threshold, short_tp, short_sl, target_return
         )
+        mfe_long_bps = maximum_favorable_excursion_long_bps(row.index, candles, horizon, long_tp, long_sl)
+        mfe_short_bps = maximum_favorable_excursion_short_bps(row.index, candles, horizon, short_tp, short_sl)
+        mae_long_bps = maximum_adverse_excursion_long_bps(row.index, candles, horizon, long_tp, long_sl)
+        mae_short_bps = maximum_adverse_excursion_short_bps(row.index, candles, horizon, short_tp, short_sl)
         # Direction target: simple future return sign
         direction_label = 1 if target_return > 0.0 else 0
         direction_reason = "future_positive" if target_return > 0.0 else "future_negative"
@@ -2413,6 +2471,19 @@ def attach_labels(
         }
         target_reasons_key = tuple(sorted(target_reasons.items()))
         target_reasons = target_reasons_by_content.setdefault(target_reasons_key, target_reasons)
+        target_gap_stop_returns: dict[str, float] = {}
+        for target, reason, side, side_tp, side_sl in (
+            ("profitability", label_reason, "long", long_tp, long_sl),
+            ("long_success", long_reason, "long", long_tp, long_sl),
+            ("short_success", short_reason, "short", short_tp, short_sl),
+            ("short_profitability", short_profit_reason, "short", short_tp, short_sl),
+        ):
+            if reason == "gap_cross_sl":
+                target_gap_stop_returns[target] = gap_cross_stop_return(
+                    row.index, candles, horizon, side_tp, side_sl, side,
+                )
+        gap_returns_key = tuple(sorted(target_gap_stop_returns.items()))
+        target_gap_stop_returns = target_gap_stop_returns_by_content.setdefault(gap_returns_key, target_gap_stop_returns)
         labeled.append(
             LabeledRow(
                 index=row.index,
@@ -2424,6 +2495,10 @@ def attach_labels(
                 gap_flag=row.gap_flag,
                 repaired=row.repaired,
                 warmup_invalid=row.warmup_invalid,
+                mfe_long_bps=mfe_long_bps,
+                mfe_short_bps=mfe_short_bps,
+                mae_long_bps=mae_long_bps,
+                mae_short_bps=mae_short_bps,
                 source_availability_status=row.source_availability_status,
                 feature_availability_status=row.feature_availability_status,
                 unavailable_sources=row.unavailable_sources,
@@ -2431,9 +2506,115 @@ def attach_labels(
                 targets=targets,
                 target_reasons=target_reasons,
                 user_regime=row.user_regime,
+                target_gap_stop_returns=target_gap_stop_returns,
             )
         )
     return labeled
+
+
+def maximum_favorable_excursion_long_bps(
+    entry_index: int,
+    candles: Sequence[data.Candle],
+    horizon: int,
+    tp_pct: float,
+    sl_pct: float,
+) -> float:
+    """Return LONG MFE in bps, truncated at the first SL-touch candle.
+
+    A bullish dual touch resolves TP first, so its high is reachable and caps
+    MFE; an SL-resolved touch contributes nothing.  Either way later candles
+    are unreachable for every swept TP candidate.
+    """
+    entry_price = candles[entry_index].close
+    sl_level = entry_price * (1.0 - sl_pct)
+    tp_level = entry_price * (1.0 + tp_pct)
+    best = 0.0
+    for future_index in range(entry_index + 1, entry_index + horizon + 1):
+        candle = candles[future_index]
+        sl_touched = candle.low <= sl_level
+        if sl_touched:
+            tp_touched = candle.high >= tp_level
+            if tp_touched and candle.close > candle.open:
+                best = max(best, (candle.high - entry_price) / entry_price)
+            break
+        best = max(best, (candle.high - entry_price) / entry_price)
+    return best * 10_000.0
+
+
+def maximum_favorable_excursion_short_bps(
+    entry_index: int,
+    candles: Sequence[data.Candle],
+    horizon: int,
+    tp_pct: float,
+    sl_pct: float,
+) -> float:
+    """Return SHORT MFE in bps, truncated at the first SL-touch candle.
+
+    A bearish dual touch resolves TP first, so its low caps MFE; an
+    SL-resolved touch contributes nothing.  No later candle is reachable.
+    """
+    entry_price = candles[entry_index].close
+    sl_level = entry_price * (1.0 + sl_pct)
+    tp_level = entry_price * (1.0 - tp_pct)
+    best = 0.0
+    for future_index in range(entry_index + 1, entry_index + horizon + 1):
+        candle = candles[future_index]
+        sl_touched = candle.high >= sl_level
+        if sl_touched:
+            tp_touched = candle.low <= tp_level
+            if tp_touched and candle.close < candle.open:
+                best = max(best, (entry_price - candle.low) / entry_price)
+            break
+        best = max(best, (entry_price - candle.low) / entry_price)
+    return best * 10_000.0
+
+
+def maximum_adverse_excursion_long_bps(
+    entry_index: int, candles: Sequence[data.Candle], horizon: int, tp_pct: float, sl_pct: float,
+) -> float:
+    """Return LONG MAE in bps, ending when the favourable TP resolves.
+
+    On a dual touch, a bearish/doji SL-first candle contributes its low; a
+    bullish TP-first candle contributes nothing because the trade closes first.
+    A TP-only candle contributes its low, whose intrabar ordering is unknown.
+    """
+    entry_price = candles[entry_index].close
+    tp_level = entry_price * (1.0 + tp_pct)
+    sl_level = entry_price * (1.0 - sl_pct)
+    best = 0.0
+    for future_index in range(entry_index + 1, entry_index + horizon + 1):
+        candle = candles[future_index]
+        tp_touched = candle.high >= tp_level
+        if tp_touched and candle.low <= sl_level and candle.close > candle.open:
+            break
+        best = max(best, (entry_price - candle.low) / entry_price)
+        if tp_touched:
+            break
+    return best * 10_000.0
+
+
+def maximum_adverse_excursion_short_bps(
+    entry_index: int, candles: Sequence[data.Candle], horizon: int, tp_pct: float, sl_pct: float,
+) -> float:
+    """Return SHORT MAE in bps, ending when the favourable TP resolves.
+
+    On a dual touch, a bullish/doji SL-first candle contributes its high; a
+    bearish TP-first candle contributes nothing because the trade closes first.
+    A TP-only candle contributes its high, whose intrabar ordering is unknown.
+    """
+    entry_price = candles[entry_index].close
+    tp_level = entry_price * (1.0 - tp_pct)
+    sl_level = entry_price * (1.0 + sl_pct)
+    best = 0.0
+    for future_index in range(entry_index + 1, entry_index + horizon + 1):
+        candle = candles[future_index]
+        tp_touched = candle.low <= tp_level
+        if tp_touched and candle.high >= sl_level and candle.close < candle.open:
+            break
+        best = max(best, (candle.high - entry_price) / entry_price)
+        if tp_touched:
+            break
+    return best * 10_000.0
 
 
 def triple_barrier_label(
@@ -2501,7 +2682,7 @@ def triple_barrier_label_long(
         if tp_touched:
             return 1, "long_tp_first"
         if sl_touched:
-            return 0, "long_sl_first"
+            return 0, "gap_cross_sl" if candle.gap_flag == 1 else "long_sl_first"
     return 0, "long_timeout"
 
 
@@ -2527,8 +2708,37 @@ def triple_barrier_label_short(
         if tp_touched:
             return 1, "short_tp_first"
         if sl_touched:
-            return 0, "short_sl_first"
+            return 0, "gap_cross_sl" if candle.gap_flag == 1 else "short_sl_first"
     return 0, "short_timeout"
+
+
+def gap_cross_stop_return(
+    entry_index: int,
+    candles: Sequence[data.Candle],
+    horizon: int,
+    tp_pct: float,
+    sl_pct: float,
+    side: str,
+) -> float:
+    """Return the signed adverse-open fill for a per-side gap-crossed stop."""
+    entry_price = candles[entry_index].close
+    if side == "long":
+        tp_level = entry_price * (1.0 + tp_pct)
+        sl_level = entry_price * (1.0 - sl_pct)
+        for future_index in range(entry_index + 1, entry_index + horizon + 1):
+            candle = candles[future_index]
+            if candle.low <= sl_level and candle.high < tp_level and candle.gap_flag == 1:
+                return (candle.open - entry_price) / entry_price
+    elif side == "short":
+        tp_level = entry_price * (1.0 - tp_pct)
+        sl_level = entry_price * (1.0 + sl_pct)
+        for future_index in range(entry_index + 1, entry_index + horizon + 1):
+            candle = candles[future_index]
+            if candle.high >= sl_level and candle.low > tp_level and candle.gap_flag == 1:
+                return (entry_price - candle.open) / entry_price
+    else:
+        raise ValueError("side must be 'long' or 'short'")
+    raise ValueError("gap_cross_sl reason did not resolve to an adverse-open stop")
 
 
 def triple_barrier_label_short_profitability(
@@ -3584,6 +3794,10 @@ def labeled_row_dict(row: LabeledRow, feature_names: Sequence[str]) -> dict[str,
         "label": row.label,
         "label_reason": row.label_reason,
         "target_return": row.target_return,
+        "mfe_long_bps": row.mfe_long_bps,
+        "mfe_short_bps": row.mfe_short_bps,
+        "mae_long_bps": row.mae_long_bps,
+        "mae_short_bps": row.mae_short_bps,
         "gap_flag": row.gap_flag,
         "repaired": row.repaired,
         "warmup_invalid": row.warmup_invalid,

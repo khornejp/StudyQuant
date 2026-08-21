@@ -570,6 +570,162 @@ class CatBoostAdapter:
         return probs[0] if probs else 0.5
 
 
+class CatBoostRegressorAdapter:
+    """CatBoost quantile regressor with the classifier adapter's device policy.
+
+    It is intentionally not wired into ``ModelFactory`` or the binary training
+    paths in this change.
+    """
+
+    DEFAULT_PARAMS: Mapping[str, object] = {
+        "loss_function": "Quantile:alpha=0.5",
+        "iterations": 500,
+        "learning_rate": 0.03,
+        "depth": 8,
+        "random_seed": 42,
+        "verbose": True,
+        "allow_writing_files": False,
+        "thread_count": -1,
+        "task_type": "GPU",
+        "devices": "0",
+        "od_type": "Iter",
+        "od_wait": 50,
+    }
+
+    def __init__(
+        self,
+        feature_names: Sequence[str] | None = None,
+        model_params: Mapping[str, object] | None = None,
+        quantile_alpha: float = 0.5,
+    ) -> None:
+        self.feature_names = tuple(str(name) for name in feature_names) if feature_names is not None else ()
+        parameter_alpha = (model_params or {}).get("quantile_alpha", quantile_alpha)
+        self.quantile_alpha = float(parameter_alpha)
+        if not 0.0 < self.quantile_alpha < 1.0:
+            raise ValueError("quantile_alpha must be strictly between 0 and 1")
+        default_params: Mapping[str, object] = self.DEFAULT_PARAMS
+        if os.environ.get("STUDYQUANT_TEST_CATBOOST_DEFAULT_DEVICE") == "CPU" and not (model_params and "task_type" in model_params):
+            default_params = dict(default_params)
+            default_params.pop("task_type", None)
+            default_params.pop("devices", None)
+        self.model_params = _merged_params(default_params, model_params)
+        self.model_params.pop("quantile_alpha", None)
+        self.model_params["loss_function"] = f"Quantile:alpha={self.quantile_alpha:g}"
+        self.model: object | None = None
+
+    @property
+    def model_family(self) -> str:
+        return "catboost_regressor"
+
+    @staticmethod
+    def available() -> bool:
+        return CatBoostAdapter.available()
+
+    def fit(self, feature_matrix: FeatureMatrix, labels: Sequence[float], sample_weight: Sequence[float] | None = None) -> "CatBoostRegressorAdapter":
+        catboost = _import_optional_module("catboost")
+        rows = _matrix_to_float_lists(feature_matrix)
+        label_values = [float(label) for label in labels]
+        if len(rows) != len(label_values):
+            raise ValueError("feature_matrix and labels must have the same length")
+        if not self.feature_names:
+            self.feature_names = _default_feature_names(rows)
+        model_params = dict(self.model_params)
+        requested_device = "GPU:0" if model_params.get("task_type") == "GPU" else "CPU"
+        fit_event = {"type": "fit_started", "model_family": self.model_family, "requested_device": requested_device, "rows": len(rows), "features": len(self.feature_names)}
+        timeout_seconds = catboost_fit_timeout_seconds(len(rows))
+        fit_event["watchdog_timeout_seconds"] = timeout_seconds
+        fit_kwargs: dict[str, object] = {}
+        if sample_weight is not None:
+            fit_kwargs["sample_weight"] = [float(weight) for weight in sample_weight]
+        if requested_device == "GPU:0":
+            _acquire_gpu_lease()
+        _runtime_event(fit_event)
+        started = perf_counter()
+        watchdog = _fit_watchdog(timeout_seconds, fit_event)
+        try:
+            model = catboost.CatBoostRegressor(**model_params)
+            model.fit(rows, label_values, **fit_kwargs)
+            self.model = model
+            _runtime_event({"type": "fit_completed", "model_family": self.model_family, "actual_device": requested_device, "wall_clock_seconds": perf_counter() - started})
+        except Exception as error:
+            if self.model_params.get("task_type") != "GPU":
+                _runtime_event({"type": "fit_failed", "model_family": self.model_family, "actual_device": requested_device, "reason": str(error), "wall_clock_seconds": perf_counter() - started})
+                raise
+            message = f"[CatBoost] GPU training failed ({error}), falling back to CPU..."
+            print(message)
+            _runtime_event({"type": "gpu_fallback", "model_family": self.model_family, "from_device": "GPU:0", "to_device": "CPU", "reason": str(error), "message": message, "wall_clock_seconds_before_fallback": perf_counter() - started})
+            cpu_params = dict(self.model_params)
+            cpu_params.pop("task_type", None)
+            cpu_params.pop("devices", None)
+            model = catboost.CatBoostRegressor(**cpu_params)
+            model.fit(rows, label_values, **fit_kwargs)
+            self.model = model
+            _runtime_event({"type": "fit_completed", "model_family": self.model_family, "actual_device": "CPU", "wall_clock_seconds": perf_counter() - started, "fallback_used": True})
+        finally:
+            watchdog.cancel()
+            if requested_device == "GPU:0":
+                _release_gpu_lease()
+        return self
+
+    def predict(self, feature_matrix: FeatureMatrix) -> list[float]:
+        if self.model is None:
+            raise RuntimeError("catboost regressor adapter must be fitted before predict")
+        return [float(value) for value in getattr(self.model, "predict")(_matrix_to_float_lists(feature_matrix))]
+
+    def predict_proba(self, feature_matrix: FeatureMatrix) -> list[float]:
+        raise NotImplementedError(
+            "CatBoostRegressorAdapter does not produce probabilities; use predict instead"
+        )
+
+    def probability(self, values: Mapping[str, float]) -> float:
+        predictions = self.predict([[float(values.get(name, 0.0)) for name in self.feature_names]])
+        return predictions[0] if predictions else 0.0
+
+    def as_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {"model_family": self.model_family, "feature_names": list(self.feature_names), "model_params": dict(self.model_params), "quantile_alpha": self.quantile_alpha, "fitted": self.model is not None}
+        payload["weights"] = _feature_importance_map(self.model, self.feature_names)
+        if self.model is not None:
+            try:
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".cbm", delete=False) as tmp:
+                    tmp_path = tmp.name
+                getattr(self.model, "save_model")(tmp_path, format="cbm")
+                with open(tmp_path, "rb") as handle:
+                    payload["serialized_model"] = base64.b64encode(handle.read()).decode("ascii")
+                os.remove(tmp_path)
+            except Exception:
+                pass
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "CatBoostRegressorAdapter":
+        feature_names = payload.get("feature_names", ())
+        if isinstance(feature_names, str):
+            feature_names = (feature_names,)
+        model_params = payload.get("model_params", {})
+        adapter = cls(
+            feature_names=tuple(str(name) for name in feature_names),
+            model_params=model_params if isinstance(model_params, Mapping) else {},
+            quantile_alpha=float(payload.get("quantile_alpha", 0.5)),
+        )
+        serialized = payload.get("serialized_model")
+        if not serialized:
+            raise ValueError("catboost regressor model.json missing serialized_model; retrain with updated code to include serialization")
+        try:
+            catboost = _import_optional_module("catboost")
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".cbm", delete=False) as tmp:
+                tmp.write(base64.b64decode(str(serialized)))
+                tmp_path = tmp.name
+            model = catboost.CatBoostRegressor()
+            model.load_model(tmp_path)
+            adapter.model = model
+            os.remove(tmp_path)
+        except Exception as error:
+            raise ValueError(f"failed to load catboost regressor serialized model: {error}") from error
+        return adapter
+
+
 class EnsembleAdapter:
     """Simple ensemble: train multiple models and average predictions."""
 
@@ -612,6 +768,8 @@ class EnsembleAdapter:
                 family = str(m_payload.get("model_family", ""))
                 if family == "catboost":
                     models.append(CatBoostAdapter.from_dict(m_payload))
+                elif family == "catboost_regressor":
+                    models.append(CatBoostRegressorAdapter.from_dict(m_payload))
                 elif family == "lightgbm":
                     models.append(LightGBMAdapter.from_dict(m_payload))
         weights = [float(w) for w in payload.get("weights", [])]

@@ -68,3 +68,7 @@ class LabelDictionarySharingTests(unittest.TestCase):
 
         _assert_shared_by_content(self, loaded, "targets")
         _assert_shared_by_content(self, loaded, "target_reasons")
+        self.assertEqual([row.mfe_long_bps for row in loaded], [row.mfe_long_bps for row in rows])
+        self.assertEqual([row.mfe_short_bps for row in loaded], [row.mfe_short_bps for row in rows])
+        self.assertEqual([row.mae_long_bps for row in loaded], [row.mae_long_bps for row in rows])
+        self.assertEqual([row.mae_short_bps for row in loaded], [row.mae_short_bps for row in rows])
