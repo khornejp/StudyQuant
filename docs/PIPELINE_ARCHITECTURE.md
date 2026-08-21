@@ -167,7 +167,6 @@ For each 1m candle in 2025:
 - [ ] `live.py`: regime-aware ensemble inference
 
 ### Phase 3: 고급 기능
-- [ ] Feature selection (6-stage pipeline 활성화)
 - [ ] Optuna hyperparameter tuning
 - [ ] Champion-Challenger promotion
 - [ ] Live trading 연동 (Binance Testnet)

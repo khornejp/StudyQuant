@@ -174,7 +174,7 @@ naive var <= 0 인 바 (조용히 버려짐): 0   (0.0000%)
 
 ### R2 — 파이프라인 플래그 오타 (기각)
 
-자체 스캔이 `--optuna`, `--cv-mode`, `--multi-feature-regime`, `--ensemble`, `--feature-selection`, `--optuna-trials` 6개를 "미정의"로 표시했으나, `cli.py:968-992`에 **전부 정의**되어 있었다. 프로브 스크립트가 `train --help`를 제대로 실행하지 못한 결함이었고, 독립 크로스파일 앵글의 전수 대조도 통과했다.
+자체 스캔이 `--optuna`, `--cv-mode`, `--multi-feature-regime`, `--ensemble`, `--optuna-trials` 5개를 "미정의"로 표시했으나, `cli.py:968-992`에 **전부 정의**되어 있었다. 프로브 스크립트가 `train --help`를 제대로 실행하지 못한 결함이었고, 독립 크로스파일 앵글의 전수 대조도 통과했다.
 
 ---
 

@@ -103,7 +103,6 @@
 | 항목 | 설명 |
 |------|------|
 | **Depth/ADL historical API** | Binance에 historical depth/ADL API 요청 또는 대체 데이터 소스 탐색 |
-| **Feature selection 최적화** | 59개 feature 중 가장 중요한 20-30개 선택 |
 | **Calibration 개선** | Beta calibration 대신 Isotonic 또는 Platt scaling |
 
 ### 4.3 Long-term (운영 적용 전)

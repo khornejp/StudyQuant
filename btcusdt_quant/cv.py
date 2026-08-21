@@ -258,9 +258,6 @@ class SplitManager:
     def get_stage_splits(self, stage: str, *args: object, **kwargs: object) -> list[object]:
         return self.get_splits(*args, **kwargs)  # type: ignore[arg-type]
 
-    def get_feature_selection_splits(self, *args: object, **kwargs: object) -> list[object]:
-        return self.get_splits(*args, **kwargs)  # type: ignore[arg-type]
-
     def get_hpo_splits(self, *args: object, **kwargs: object) -> list[object]:
         return self.get_splits(*args, **kwargs)  # type: ignore[arg-type]
 

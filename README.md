@@ -19,7 +19,6 @@
 - **Model adapters**: stdlib centroid linear classifier (default), optional LightGBM/CatBoost with graceful fallback chain
 - **Walk-forward validation**: standard purged splits + combinatorial purged CV (CPCV) with sample uniqueness weighting (O(N+T))
 - **Calibration**: Platt/Beta/Isotonic calibration with sample gates, ECE/Brier drift monitoring
-- **Feature selection**: 6-stage pipeline (Spearman clustering, gain filtering, permutation importance, SHAP stability, ablation testing, core feature set)
 - **Bootstrap confidence intervals**: score-bin CI for net return and win rate
 - **Optuna integration**: budget profiles (research/practical/full) with MDD(p90) objective
 - **Champion-challenger workflow**: shadow → canary 5/20/50 → full promotion with rollback gates
@@ -146,7 +145,7 @@ btcusdt_quant/
 ├── data.py              # Candle structures, canonical timeline, gap repair
 ├── dataset.py           # Feature engineering (70+ features), labeling, CSV/archive
 ├── feature_registry.py  # Feature definitions, dependency graph, categories
-├── features.py          # Feature selection, calibration, bootstrap CI, Optuna
+├── features.py          # calibration, bootstrap CI, Optuna
 ├── cv.py                # Purged CV, combinatorial CV, sample uniqueness
 ├── training.py          # Offline training, model adapters, artifact generation
 ├── models.py            # Model adapter protocol, stdlib/LightGBM/CatBoost

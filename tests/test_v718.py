@@ -1967,21 +1967,6 @@ class PublicCollectionV718Tests(unittest.TestCase):
             dataset.collect_candles = original_collect
 
 class AdvancedTrainingV718Tests(unittest.TestCase):
-    def test_feature_selection_enabled_reduces_feature_count(self) -> None:
-        from btcusdt_quant import training
-        with tempfile.TemporaryDirectory() as tmpdir:
-            data_path = Path(tmpdir) / "btcusdt_1m.csv"
-            dataset.collect_candles(data_path, rows=500)
-            train_dir = Path(tmpdir) / "training"
-            config = training.TrainingConfig(feature_selection_enabled=True)
-            result = training.run_training(data_path, train_dir, config=config)
-            fs_report = result.run_summary.get("feature_selection", {})
-            self.assertTrue(fs_report.get("enabled", False), "feature_selection should be enabled")
-            # Core features should be <= original features
-            original_count = fs_report.get("original_feature_count", 0)
-            selected_count = fs_report.get("selected_core_count", 0)
-            self.assertGreaterEqual(original_count, selected_count, "selected features should not exceed original")
-
     def test_optuna_enabled_produces_report(self) -> None:
         from btcusdt_quant import training
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2228,7 +2213,7 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
             features.OptunaStudyRunner.run_study = original_run_study
 
     def test_cli_advanced_args_wired_to_training(self) -> None:
-        """Advanced CLI args (feature-selection, optuna, champion-challenger) must be wired to training config."""
+        """Advanced CLI args (Optuna and champion-challenger) must be wired to training config."""
         import os
         import subprocess
         import sys
@@ -2243,7 +2228,6 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
                     sys.executable, "-m", "btcusdt_quant", "train",
                     "--input", str(data_path),
                     "--output", str(train_dir),
-                    "--feature-selection",
                     "--optuna",
                     "--optuna-trials", "3",
                     "--optuna-budget", "research_fast",
@@ -2258,7 +2242,6 @@ class AdvancedTrainingV718Tests(unittest.TestCase):
             run_summary_path = Path(train_dir) / "run_summary.json"
             self.assertTrue(run_summary_path.exists(), "run_summary.json should exist")
             summary = json.loads(run_summary_path.read_text())
-            self.assertTrue(summary.get("feature_selection", {}).get("enabled", False), "feature-selection should be enabled")
             self.assertTrue(summary.get("optuna", {}).get("enabled", False), "optuna should be enabled")
             self.assertTrue(summary.get("champion_challenger", {}).get("enabled", False), "champion-challenger should be enabled")
 

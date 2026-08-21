@@ -223,7 +223,7 @@ class DataPipelineTests(unittest.TestCase):
         registry_features = cast(list[dict[str, object]], registry["features"])
         categories = {feature["category"] for feature in registry_features}
         # F01-F15 original groups, F16 derivatives-metrics, F17 multi-timeframe
-        # (15m/1h/4h/24h-rolling), F18 regime probabilities (soft up/range/down
+        # (15m/45m/1h/4h/24h-rolling), F18 regime probabilities (soft up/range/down
         # from a leakage-safe purged-K-fold OOF classifier on F17 features).
         self.assertEqual(categories, {f"F{index:02d}" for index in range(1, 19)})
 
@@ -692,7 +692,7 @@ class DataQualityEdgeTests(unittest.TestCase):
         # F14 time/session features are computed from open_time (timestamp), not OHLCV values
         time_features = {"hour", "minute", "day_of_week", "session_asia", "session_europe", "session_us", "session_overlap", "weekend_flag"}
         # F15/F17 momentum indicators have neutral default values during warmup
-        momentum_defaults = {"rsi_7", "rsi_14", "rsi_15m", "rsi_1h", "rsi_4h"}  # RSI neutral = 50.0 during warmup
+        momentum_defaults = {"rsi_7", "rsi_14", "rsi_15m", "rsi_45m", "rsi_1h", "rsi_4h"}  # RSI neutral = 50.0 during warmup
         for row in rows:
             self.assertEqual(set(row.features), set(dataset.FEATURE_NAMES))
             for name, value in row.features.items():
@@ -716,89 +716,6 @@ class FeatureGovernanceTests(unittest.TestCase):
         self.assertEqual(classifier.classify({"gap_flag": 1}, "volume"), "outage_nan")
         self.assertEqual(classifier.classify({"warmup_invalid": 1}, "return_120"), "warmup_nan")
         self.assertEqual(classifier.classify({}, "optional_feature"), "structural_nan")
-
-    def test_spearman_clustering_removes_correlated(self) -> None:
-        matrix = [[float(index), float(index * 2), float(10 - index)] for index in range(10)]
-        dropped = features.FeatureSelectionPipeline().spearman_clustering(matrix, ["a", "b", "c"], threshold=0.90)
-        self.assertIn("b", dropped)
-
-    def test_gain_importance_filter_drops_bottom(self) -> None:
-        matrix = [[float(index), 1.0, float(index % 2)] for index in range(10)]
-        dropped = features.FeatureSelectionPipeline().gain_importance_filter(matrix, ["high", "flat", "low"], drop_ratio=0.34)
-        self.assertEqual(dropped, ["flat"])
-
-    def test_permutation_importance_ranks_features(self) -> None:
-        class ThresholdModel:
-            def predict(self, row: list[float]) -> int:
-                return 1 if row[0] >= 0.5 else 0
-
-        matrix = [[0.0, 1.0], [0.1, 0.0], [0.9, 0.0], [1.0, 1.0]]
-        labels = [0, 0, 1, 1]
-        ranked = features.FeatureSelectionPipeline().permutation_importance(ThresholdModel(), matrix, labels, ["signal", "noise"])
-        self.assertEqual(ranked[0]["feature_name"], "signal")
-        self.assertGreater(float(ranked[0]["metric_delta"]), 0.0)
-
-    def test_shap_stability_scaffold(self) -> None:
-        report = features.FeatureSelectionPipeline().shap_stability([[1.0], [2.0], [3.0]], ["a"])
-        self.assertIn(report["status"], {"shap_unavailable", "shap_available_proxy", "insufficient_data"})
-
-    def test_ablation_test_impact(self) -> None:
-        class ThresholdModel:
-            def predict(self, row: list[float]) -> int:
-                return 1 if row[0] >= 0.5 else 0
-
-        matrix = [[0.0, 1.0], [0.1, 0.0], [0.9, 0.0], [1.0, 1.0]]
-        labels = [0, 0, 1, 1]
-        ranked = features.FeatureSelectionPipeline().ablation_test(ThresholdModel(), matrix, labels, ["signal", "noise"])
-        self.assertEqual(ranked[0]["feature_name"], "signal")
-        self.assertGreater(float(ranked[0]["impact"]), 0.0)
-
-    def test_full_pipeline_returns_core_features(self) -> None:
-        class ThresholdModel:
-            def predict(self, row: list[float]) -> int:
-                return 1 if row[0] >= 0.5 else 0
-
-        matrix = [[0.0, 1.0, 0.0], [0.1, 1.0, 1.0], [0.9, 1.0, 0.0], [1.0, 1.0, 1.0]]
-        report = features.FeatureSelectionPipeline().run_full_pipeline(ThresholdModel(), matrix, [0, 0, 1, 1], ["signal", "flat", "noise"])
-        self.assertIn("core_features", report)
-        core_features = cast(list[str], report["core_features"])
-        self.assertIn("signal", core_features)
-
-    def test_feature_selection_bounds_trim_to_max(self) -> None:
-        class ThresholdModel:
-            def predict(self, row: list[float]) -> int:
-                return 1 if row[0] >= 0.5 else 0
-        matrix = [[0.0, 1.0, 0.0], [0.1, 1.0, 1.0], [0.9, 1.0, 0.0], [1.0, 1.0, 1.0]]
-        pipeline = features.FeatureSelectionPipeline(target_max_features=2)
-        report = pipeline.run_full_pipeline(ThresholdModel(), matrix, [0, 0, 1, 1], ["signal", "flat", "noise"])
-        self.assertIn("core_features_bounded", report)
-        bounded = cast(list[str], report["core_features_bounded"])
-        self.assertLessEqual(len(bounded), 2)
-
-    def test_feature_selection_bounds_backfill_to_min(self) -> None:
-        class ThresholdModel:
-            def predict(self, row: list[float]) -> int:
-                return 1 if row[0] >= 0.5 else 0
-        matrix = [[0.0, 1.0, 0.0], [0.1, 1.0, 1.0], [0.9, 1.0, 0.0], [1.0, 1.0, 1.0]]
-        pipeline = features.FeatureSelectionPipeline(target_min_features=5)
-        report = pipeline.run_full_pipeline(ThresholdModel(), matrix, [0, 0, 1, 1], ["signal", "flat", "noise"])
-        self.assertIn("core_features_bounded", report)
-        bounded = cast(list[str], report["core_features_bounded"])
-        # With only 3 features total, backfill can only reach 3
-        self.assertGreaterEqual(len(bounded), 2)
-        self.assertLessEqual(len(bounded), 3)
-
-    def test_feature_selection_bounds_disabled_when_zero(self) -> None:
-        class ThresholdModel:
-            def predict(self, row: list[float]) -> int:
-                return 1 if row[0] >= 0.5 else 0
-        matrix = [[0.0, 1.0, 0.0], [0.1, 1.0, 1.0], [0.9, 1.0, 0.0], [1.0, 1.0, 1.0]]
-        pipeline = features.FeatureSelectionPipeline()
-        report = pipeline.run_full_pipeline(ThresholdModel(), matrix, [0, 0, 1, 1], ["signal", "flat", "noise"])
-        self.assertIn("core_features_bounded", report)
-        bounded = cast(list[str], report["core_features_bounded"])
-        core = cast(list[str], report["core_features"])
-        self.assertEqual(bounded, core)
 
     def test_bootstrap_ci_deterministic_with_seed(self) -> None:
         engine = features.BootstrapCIEngine()
@@ -1099,7 +1016,7 @@ class GovernanceTests(unittest.TestCase):
             enforcer.complete("SCHEMA_VALIDATION")
         for stage in governance.PIPELINE_STAGES:
             enforcer.complete(stage)
-        self.assertEqual(len(enforcer.completed), 13)
+        self.assertEqual(len(enforcer.completed), 12)
 
     def test_fallback_policy_is_deterministic(self) -> None:
         self.assertEqual(governance.fallback_action("gap_ratio_20", 0.20), "block_new_entries")
@@ -1217,9 +1134,6 @@ class GovernanceTests(unittest.TestCase):
             self.assertFalse(set(split.validation) & set(split.test))
             self.assertFalse(set(split.train) & set(split.test))
 
-    def test_feature_selection_pipeline_core_features_survival_rule(self) -> None:
-        self.assertEqual(features.FeatureSelectionPipeline().core_features([["a", "b"], ["a"], ["a", "c"]]), ["a"])
-
     def test_bootstrap_ci_engine_deterministic_percentile_bounds(self) -> None:
         self.assertEqual(features.BootstrapCIEngine().ci95([-0.1, 0.0, 0.1]), (-0.1, 0.0))
 
@@ -1287,7 +1201,6 @@ class GovernanceTests(unittest.TestCase):
         self.assertEqual(features.RollingFeatureEngine().rolling_mean([1.0, 2.0, 3.0], 2), [None, 1.5, 2.5])
         self.assertEqual(features.CalibrationModule().select_method(40), "platt")
         self.assertEqual(len(features.PurgedWalkForwardSplit().split(20, 5, 3, 3, 1)), 3)
-        self.assertEqual(features.FeatureSelectionPipeline().core_features([["a", "b"], ["a"], ["a", "c"]]), ["a"])
         self.assertEqual(features.BootstrapCIEngine().ci95([-0.1, 0.0, 0.1]), (-0.1, 0.0))
         self.assertEqual(features.OptunaBudgetProfiles().get("practical_start")["trials"], 200)
         self.assertTrue(features.ChampionChallengerManager().can_promote(30, 100, -0.01, 0.01, sharpe=1.5, mdd=0.10, calmar=2.5, score_bin_ci=[{"lower": 0.01, "upper": 0.05}], threshold_flip_rate=0.02, latency_p99_ms=50.0, psi=0.05)[0])

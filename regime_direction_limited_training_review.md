@@ -415,7 +415,6 @@ Final Backtest:
 - threshold 변경 금지
 - TP / SL 변경 금지
 - horizon 변경 금지
-- feature selection 변경 금지
 - Optuna 재튜닝 금지
 ```
 

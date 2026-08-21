@@ -295,7 +295,7 @@ echo "  log lines below. Each regime/side model also picks its decision"
 echo "  threshold on that same holdout via --threshold-objective"
 echo "  ($THRESHOLD_OBJECTIVE) instead of a fixed 0.5 cutoff -- see 'threshold='"
 echo "  in the holdout log lines. Other flags (--ensemble, --cv-mode,"
-echo "  --feature-selection) are NOT applied on this path."
+echo "  are NOT applied on this path."
 echo ""
 
 MODEL_DIR="$ARTIFACTS_DIR/regime_stacking_model"

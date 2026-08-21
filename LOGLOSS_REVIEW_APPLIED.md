@@ -87,7 +87,6 @@
 - **--cv-mode를 regime-aware 경로에 적용**: regime 분할과 fold 분할이 겹쳐
   표본이 지나치게 작아짐. 지금 regime holdout(1-fold)을 향후 walk-forward
   다중 fold로 확장하는 절충안이 낫다고 판단, 미적용.
-- **--feature-selection**: 사용자 요청으로 보류.
 - **probability calibration (Platt/Isotonic)**: 미구현. class_weights를 끈
   지금은 우선순위가 낮아짐.
 

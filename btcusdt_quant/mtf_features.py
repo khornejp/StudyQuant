@@ -42,7 +42,7 @@ _MAX_LOOKBACK_BARS = 24
 # Timeframes in minutes. "1d" is intentionally a rolling 24h window built from
 # 1h bars (not calendar-day bars), since BTC trades continuously and a
 # calendar-day boundary is an arbitrary UTC cut with no market meaning.
-TIMEFRAME_MINUTES: dict[str, int] = {"15m": 15, "1h": 60, "4h": 240}
+TIMEFRAME_MINUTES: dict[str, int] = {"15m": 15, "45m": 45, "1h": 60, "4h": 240}
 
 # Feature names this module emits, per timeframe (except the 24h-rolling
 # group, which is clock-independent and uses 1h bars internally).
@@ -59,7 +59,7 @@ _PER_TF_FEATURE_TEMPLATE: tuple[str, ...] = (
 )
 
 MTF_FEATURE_NAMES: tuple[str, ...] = tuple(
-    template.format(tf=tf) for tf in ("15m", "1h", "4h") for template in _PER_TF_FEATURE_TEMPLATE
+    template.format(tf=tf) for tf in ("15m", "45m", "1h", "4h") for template in _PER_TF_FEATURE_TEMPLATE
 ) + (
     "trend_slope_24h",
     "return_24h",

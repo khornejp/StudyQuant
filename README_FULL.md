@@ -19,7 +19,6 @@
 - **LinearClassifier** — stdlib centroid linear classifier with `probability()` and `as_dict()`/`from_dict()` for JSON serialization
 - **Walk-forward validation** — purged splits + combinatorial purged CV (CPCV) with sample uniqueness weighting
 - **Calibration** — Platt/Beta/Isotonic calibration with ECE/Brier drift monitoring
-- **Feature selection** — 6-stage pipeline
 - **Bootstrap confidence intervals** — score-bin CI for net return and win rate
 - **Optuna integration** — budget profiles with MDD(p90) objective
 - **Champion-challenger workflow** — shadow → canary → full promotion with rollback gates

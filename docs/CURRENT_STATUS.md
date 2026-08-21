@@ -15,7 +15,7 @@ BTCUSDT 1분봉 기반 자동화 양매매(quant) 시스템 v7.18의 오프라�
 |------|------|
 | **데이터 수집** | ✅ 완료 (Public API, Archive, Parquet) |
 | **피처 엔지니어링** | ✅ 완료 (107개 피처, F01~F12) |
-| **학습 파이프라인** | ✅ 완료 (4-fold CV, Calibration, Feature Selection) |
+| **학습 파이프라인** | ✅ 완료 (4-fold CV, Calibration) |
 | **모델 성능** | ✅ 개선 완료 (F1=0.430, Precision=0.51~0.57). LightGBM/CatBoost available, Regime-Aware training, Order Block Imbalance |
 | **라이브 실행** | ✅ 스캐폴드 완료 (Mock/Testnet/Prod) |
 | **50k+ 데이터 수집** | ✅ 완료 (2024-01 archive: 44,640 rows, 31 days) |
@@ -36,7 +36,6 @@ BTCUSDT 1분봉 기반 자동화 양매매(quant) 시스템 v7.18의 오프라�
 - [x] **라이브 소스 패리티**: train/live 피처 패리티 검증 및 진입 차단
 - [x] **트리플 배리어 라벨링**: TP/SL/Time-out 기반 라벨 생성 (horizon=15분)
 - [x] **보정(Calibration)**: Platt/Beta/Isotonic 보정, ECE/Brier 드리프트 모니터링
-- [x] **피처 선택**: 6-stage 파이프라인 (Spearman, gain, permutation, SHAP, ablation, core set)
 - [x] **부트스트랩 CI**: score-bin CI (net_return, win_rate)
 - [x] **옵투나 통합**: budget profiles (research/practical/full), MDD(p90) objective
 - [x] **챔피언-챌린저**: shadow → canary 5/20/50 → full promotion, rollback gates
@@ -186,7 +185,7 @@ btcusdt_quant/
 ├── data.py              # Candle, Timeline, Gap repair
 ├── dataset.py           # Feature engineering, labeling, CSV/Parquet/Archive
 ├── feature_registry.py  # 107 feature definitions, dependency graph
-├── features.py          # Feature selection, calibration, Optuna, champion-challenger
+├── features.py          # calibration, Optuna, champion-challenger
 ├── cv.py                # Purged CV, combinatorial CV, sample uniqueness
 ├── training.py          # Offline training, model adapters, artifact generation
 ├── models.py            # Model adapter protocol, stdlib/LightGBM/CatBoost
@@ -232,8 +231,8 @@ artifacts/
 # 1. 데이터 수집 (Parquet)
 python -m btcusdt_quant collect --output data/btcusdt_1m.parquet --rows 20000 --allow-public-network --format parquet
 
-# 2. 학습 (Feature Selection + Champion-Challenger + F11/F12)
-python -m btcusdt_quant train --input data/btcusdt_1m.parquet --output artifacts/training --feature-selection --champion-challenger --collect-external-sources
+# 2. 학습 (Champion-Challenger + F11/F12)
+python -m btcusdt_quant train --input data/btcusdt_1m.parquet --output artifacts/training --champion-challenger --collect-external-sources
 
 # 3. 라이브 (Mock, Dry-run)
 python -m btcusdt_quant live --dry-run --output artifacts/live --model-artifact artifacts/training/model.json
@@ -268,7 +267,6 @@ python -m unittest discover -s tests
 | P1 | **2-Stage Long/Short 모델 실험** | regime별 분리 모델 성능 비교 | ✅ 완료 (F1 +6.6%) |
 | P1 | **Regime별 threshold 최적화** | high_vol/trending/range별 다른 threshold | 🔄 진행 중 |
 | P2 | **Depth/ADL historical API 탐색** | F11/F12 완전 통합 | ⏳ 대기 |
-| P2 | **Feature selection 최적화** | 59개 → 20~30개 축소 | ⏳ 대기 |
 
 ### 8.3 장기 (운영 배포 전)
 

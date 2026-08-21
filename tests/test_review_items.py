@@ -2345,15 +2345,15 @@ class MakerFillTests(unittest.TestCase):
         # measured break-even.
         self.assertEqual(gated["entry_rate"], 0.0)
         self.assertTrue(gated["no_entries"])
-        self.assertNotIn("long_gross_bps", gated)
-        self.assertNotIn("long_net_bps", gated)
-        self.assertGreater(ungated["long_gross_bps"], 0.0)
+        self.assertNotIn("primary_gross_bps", gated)
+        self.assertNotIn("primary_net_bps", gated)
+        self.assertGreater(ungated["primary_gross_bps"], 0.0)
         # An empty mask still REPORTS the fold -- see the dedicated test for
         # why returning {} was wrong -- but carries no gross, because a zero
         # there would read as a measured break-even.
         empty = _tr.oos_trading_metrics(probs, payoffs, 0.5, eligible=[False] * 4)
         self.assertTrue(empty["no_eligible_rows"])
-        self.assertNotIn("long_gross_bps", empty)
+        self.assertNotIn("primary_gross_bps", empty)
         # The gate is configuration, not a change to the model.
         cfg = _tr.TrainingConfig(vol_gate_feature="rv_60", vol_gate_min=0.001)
         self.assertEqual((cfg.vol_gate_feature, cfg.vol_gate_min), ("rv_60", 0.001))
@@ -2385,9 +2385,9 @@ class MakerFillTests(unittest.TestCase):
         # the aggregate either. `x == x` alone is False only for NaN; a MISSING
         # key returns None and None == None is True, so the old filter would
         # have indexed a key the emptied fold does not have.
-        self.assertEqual(len(summary["long_net_bps_by_fold"]), 2)
-        self.assertEqual(summary["long_folds_with_no_trades"], 1)
-        self.assertAlmostEqual(summary["long_profitable_trade_share"], 1.0)
+        self.assertEqual(len(summary["primary_net_bps_by_fold"]), 2)
+        self.assertEqual(summary["primary_folds_with_no_trades"], 1)
+        self.assertAlmostEqual(summary["primary_profitable_trade_share"], 1.0)
 
     def test_fold_mean_does_not_let_a_28_trade_fold_outvote_a_765_trade_one(self) -> None:
         # The plain mean averages fold MEANS, so it weights folds equally no
@@ -2405,10 +2405,10 @@ class MakerFillTests(unittest.TestCase):
                                       [-0.0002] * 765 + [0.001] * 100, 0.5,
                                       round_trip_cost=0.0004)
         summary = _tr.summarise_fold_trading([tiny, big])
-        self.assertEqual(summary["long_trades_by_fold"], [28.0, 765.0])
+        self.assertEqual(summary["primary_trades_by_fold"], [28.0, 765.0])
         # Equal weighting calls it profitable; trade weighting does not.
-        self.assertGreater(summary["long_net_bps_plain_fold_mean"], 0.0)
-        self.assertLess(summary["long_net_bps_trade_weighted_mean"], 0.0)
+        self.assertGreater(summary["primary_net_bps_plain_fold_mean"], 0.0)
+        self.assertLess(summary["primary_net_bps_trade_weighted_mean"], 0.0)
 
     def test_trading_summary_makes_trade_weighted_result_primary_and_keeps_empty_fold_visible(self) -> None:
         from btcusdt_quant import training as _tr
@@ -2423,12 +2423,12 @@ class MakerFillTests(unittest.TestCase):
         summary = _tr.summarise_fold_trading([profitable, empty_long, losing])
 
         self.assertEqual(summary["fold_count"], 3)
-        self.assertEqual(summary["long_folds_with_no_trades"], 1)
-        self.assertEqual(summary["long_trade_weighted_mean_folds_with_trades"], 2)
-        self.assertEqual(summary["long_plain_fold_mean_folds_with_trades"], 2)
-        self.assertLess(summary["long_net_bps_trade_weighted_mean"], 0.0)
-        self.assertGreater(summary["long_net_bps_plain_fold_mean"], 0.0)
-        self.assertAlmostEqual(summary["long_profitable_trade_share"], 4 / 104)
+        self.assertEqual(summary["primary_folds_with_no_trades"], 1)
+        self.assertEqual(summary["primary_trade_weighted_mean_folds_with_trades"], 2)
+        self.assertEqual(summary["primary_plain_fold_mean_folds_with_trades"], 2)
+        self.assertLess(summary["primary_net_bps_trade_weighted_mean"], 0.0)
+        self.assertGreater(summary["primary_net_bps_plain_fold_mean"], 0.0)
+        self.assertAlmostEqual(summary["primary_profitable_trade_share"], 4 / 104)
 
     def test_metric_correction_derives_a_new_report_without_mutating_the_run(self) -> None:
         from btcusdt_quant import derive_trading_metric_correction as correction
@@ -2445,7 +2445,7 @@ class MakerFillTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "run_summary.json"
             output = Path(temporary) / "trade_weighted_metric_correction__example.json"
-            source.write_text(json.dumps({"oos_trading": {
+            source.write_text(json.dumps({"schema_version": _tr.RUN_SUMMARY_SCHEMA_VERSION, "oos_trading": {
                 "folds": [profitable, empty_long, losing],
                 "gated": {"folds": [profitable, empty_long, losing]},
             }}), encoding="utf-8")
@@ -2455,8 +2455,10 @@ class MakerFillTests(unittest.TestCase):
 
             self.assertEqual(source.read_bytes(), before)
             self.assertTrue(output.exists())
-            self.assertEqual(report["gated"]["long_folds_with_no_trades"], 1)
-            self.assertLess(report["gated"]["long_net_bps_trade_weighted_mean"], 0.0)
+            self.assertEqual(report["gated"]["primary_side"], "long")
+            self.assertEqual(report["gated"]["opposite_side"], "short")
+            self.assertEqual(report["gated"]["primary_folds_with_no_trades"], 1)
+            self.assertLess(report["gated"]["primary_net_bps_trade_weighted_mean"], 0.0)
 
     def test_gate_cutoff_can_be_chosen_inside_the_fold(self) -> None:
         # An absolute cutoff derived over the whole span is not fold-clean:
@@ -2731,8 +2733,8 @@ class MakerFillTests(unittest.TestCase):
         self.assertEqual(metrics["coverage"]["entries_by_year"], {2021: 2, 2022: 1})
         self.assertEqual(metrics["coverage"]["unique_months"], 2)
         # Coverage is additional, not a replacement: the payoff figures survive.
-        self.assertGreater(metrics["long_gross_bps"], 0.0)
-        self.assertEqual(metrics["long_trades"], 3.0)
+        self.assertGreater(metrics["primary_gross_bps"], 0.0)
+        self.assertEqual(metrics["primary_trades"], 3.0)
         # Under a gate the timestamps must follow the SURVIVING rows, not the
         # original positions -- an off-by-one here would attribute entries to
         # the wrong year and the independence check would pass on noise.
@@ -3222,24 +3224,34 @@ class MakerFillTests(unittest.TestCase):
         probs = [i / 100.0 for i in range(100)]
         rets = [(i - 50) / 1e4 for i in range(100)]        # -50 bps .. +49 bps
         m = oos_trading_metrics(probs, rets, threshold=0.9, round_trip_cost=0.0004)
-        self.assertEqual(m["long_trades"], 10)             # p >= 0.9
-        self.assertAlmostEqual(m["long_gross_bps"], 44.5)  # mean of +40..+49
-        self.assertAlmostEqual(m["long_net_bps"], 44.5 - 4.0)
+        self.assertEqual(m["primary_trades"], 10)             # p >= 0.9
+        self.assertAlmostEqual(m["primary_gross_bps"], 44.5)  # mean of +40..+49
+        self.assertAlmostEqual(m["primary_net_bps"], 44.5 - 4.0)
         # The short book is the least-confident decile, and shorting losers pays.
-        self.assertAlmostEqual(m["short_gross_bps"], 45.5)  # -(mean of -50..-41)
-        self.assertAlmostEqual(m["short_net_bps"], 45.5 - 4.0)
+        self.assertAlmostEqual(m["opposite_decile_gross_bps"], 45.5)  # -(mean of -50..-41)
+        self.assertAlmostEqual(m["opposite_decile_net_bps"], 45.5 - 4.0)
         self.assertAlmostEqual(m["all_rows_mean_bps"], -0.5)
         # An uninformative ranking must not look profitable: reverse the returns
         # so high probability marks the WORST bars.
         bad = oos_trading_metrics(probs, list(reversed(rets)), threshold=0.9, round_trip_cost=0.0004)
-        self.assertLess(bad["long_net_bps"], 0.0)
-        self.assertLess(bad["short_net_bps"], 0.0)
+        self.assertLess(bad["primary_net_bps"], 0.0)
+        self.assertLess(bad["opposite_decile_net_bps"], 0.0)
         # Cost is subtracted, not decorative: a ranking whose edge is under the
         # round trip reports a negative net.
         thin = oos_trading_metrics(probs, [0.0002] * 100, threshold=0.5, round_trip_cost=0.0004)
-        self.assertAlmostEqual(thin["long_gross_bps"], 2.0)
-        self.assertAlmostEqual(thin["long_net_bps"], -2.0)
+        self.assertAlmostEqual(thin["primary_gross_bps"], 2.0)
+        self.assertAlmostEqual(thin["primary_net_bps"], -2.0)
         self.assertEqual(oos_trading_metrics([], [], 0.5), {})
+
+    def test_oos_trading_metrics_name_the_trained_and_opposite_sides(self) -> None:
+        from btcusdt_quant.training import format_oos_trading_log, oos_trading_metrics
+
+        long_metric = oos_trading_metrics([0.9, 0.1], [0.004, -0.002], 0.5, target="profitability")
+        short_metric = oos_trading_metrics([0.9, 0.1], [0.004, -0.002], 0.5, target="short_profitability")
+        self.assertEqual((long_metric["primary_side"], long_metric["opposite_side"]), ("long", "short"))
+        self.assertEqual((short_metric["primary_side"], short_metric["opposite_side"]), ("short", "long"))
+        self.assertIn("primary_net[short]", format_oos_trading_log(short_metric))
+        self.assertIn("opposite_decile_net[long]", format_oos_trading_log(short_metric))
 
     def test_threshold_selection_settles_timeouts_not_their_labels(self) -> None:
         from btcusdt_quant.training import metrics, select_threshold
@@ -4248,6 +4260,41 @@ def test_short_target_threshold_settlement_uses_its_side_geometry() -> None:
         target_reasons={"short_profitability": "short_tp_first"},
     )
     assert _tr.realized_payoffs([row], "short_profitability", tp, sl) == [0.006]
+
+
+@pytest.mark.parametrize(
+    ("side", "gap_open", "tp_pct", "sl_pct", "target"),
+    [
+        ("long", 98.0, 0.004, 0.002, "long_success"),
+        ("short", 102.0, 0.006, 0.012, "short_success"),
+    ],
+)
+def test_per_side_gap_stop_reason_and_settlement_use_adverse_open(
+    side: str, gap_open: float, tp_pct: float, sl_pct: float, target: str,
+) -> None:
+    """Both side labelers preserve the legacy gap reason and its real fill."""
+    from datetime import timedelta
+    from btcusdt_quant import data as _data, dataset as _ds, training as _tr
+
+    start = _data.utc_minute(2026, 1, 1, 0, 0)
+    candles = [
+        _data.Candle(start, 100.0, 100.1, 99.9, 100.0, 1.0, 100.0, 1, .5, 50.0),
+        _data.Candle(start + timedelta(minutes=1), gap_open, gap_open, gap_open, gap_open,
+                     0.0, 0.0, 0, 0.0, 0.0, gap_flag=1, repaired=True),
+    ]
+    labeler = _ds.triple_barrier_label_long if side == "long" else _ds.triple_barrier_label_short
+    assert labeler(0, candles, 1, tp_pct, sl_pct) == (0, "gap_cross_sl")
+
+    row = _ds.FeatureRow(0, start, {}, 0, False, False)
+    labeled = _ds.attach_labels(
+        [row], candles, 1, .001,
+        long_tp_pct=0.004, long_sl_pct=0.002,
+        short_tp_pct=0.006, short_sl_pct=0.012,
+    )[0]
+    expected = (gap_open - 100.0) / 100.0 if side == "long" else (100.0 - gap_open) / 100.0
+    assert labeled.target_reasons[target] == "gap_cross_sl"
+    assert labeled.target_gap_stop_returns[target] == expected
+    assert _tr.realized_payoffs([labeled], target, tp_pct, sl_pct) == [expected]
 
 
 def test_build_dataset_carries_explicit_per_side_geometry_to_labels(monkeypatch) -> None:

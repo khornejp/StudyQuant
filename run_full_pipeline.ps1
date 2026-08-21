@@ -347,7 +347,7 @@ Write-Host "  regimes) -- see 'Regime holdout' log lines. Each regime/side model
 Write-Host "  also picks its decision threshold on that same holdout via" -ForegroundColor DarkYellow
 Write-Host "  --threshold-objective ($ThresholdObjective) instead of a fixed 0.5" -ForegroundColor DarkYellow
 Write-Host "  cutoff -- see 'threshold=' in the holdout log lines. Other flags" -ForegroundColor DarkYellow
-Write-Host "  (--ensemble, --cv-mode, --feature-selection) are NOT applied on" -ForegroundColor DarkYellow
+Write-Host "  (--ensemble, --cv-mode) are NOT applied on" -ForegroundColor DarkYellow
 Write-Host "  this path." -ForegroundColor DarkYellow
 Write-Host ""
 

@@ -35,7 +35,6 @@ This document was created during early planning when the project was at ~40% of 
 12. **Lockbox Evaluation**: ✅ Bootstrap CI with PnL metrics
 13. **Sample Uniqueness Weighting**: Spec requires O(N+T) difference-array implementation
 14. **Combinatorial Purged CV**: Currently only simple purged walk-forward
-15. **Feature Selection Full Pipeline**: Has 6 stages but needs production-grade implementation
 16. **Calibration ECE/Brier Reporting**: Basic calibration exists but ECE drift monitoring incomplete
 17. **3-Tier Drawdown Protocol**: 5%/8%/12%/20% step-down rules not implemented
 18. **Gap-Cross Exit**: Slippage calculation and gap-cross liquidation not implemented

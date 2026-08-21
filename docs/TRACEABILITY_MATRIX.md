@@ -13,7 +13,6 @@ This matrix maps the ProjectMD BTCUSDT v7.18 requirements to the local scaffold 
 | Source availability grading | `SourceGradeManager` | `test_ml_and_ops_scaffold_modules` |
 | Calibration sample gate | `CalibrationModule` | `test_ml_and_ops_scaffold_modules` |
 | Purged walk-forward split contract | `PurgedWalkForwardSplit` | `test_ml_and_ops_scaffold_modules` |
-| Feature core-set survival rule | `FeatureSelectionPipeline` | `test_ml_and_ops_scaffold_modules` |
 | Bootstrap CI scaffold | `BootstrapCIEngine` | `test_ml_and_ops_scaffold_modules` |
 | Optuna budget profiles | `OptunaBudgetProfiles` | `test_ml_and_ops_scaffold_modules` |
 | RateLimitManager and 429/418 actions | `RateLimitManager` | `test_rate_limit_budget_and_status_actions` |

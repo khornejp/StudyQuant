@@ -81,6 +81,7 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("return_10", "F01", PRICE_RETURN, "close_t / close_t-10 - 1", 11, 11, "klines_1m"),
     _feature("return_15", "F01", PRICE_RETURN, "close_t / close_t-15 - 1", 16, 16, "klines_1m"),
     _feature("return_30", "F01", PRICE_RETURN, "close_t / close_t-30 - 1", 31, 31, "klines_1m"),
+    _feature("return_45", "F01", PRICE_RETURN, "close_t / close_t-45 - 1", 46, 46, "klines_1m"),
     _feature("return_60", "F01", PRICE_RETURN, "close_t / close_t-60 - 1", 61, 61, "klines_1m"),
     _feature("log_return_1", "F01", PRICE_RETURN, "ln(close_t / close_t-1)", 2, 2, "klines_1m"),
     _feature("log_return_5", "F01", PRICE_RETURN, "ln(close_t / close_t-5)", 6, 6, "klines_1m"),
@@ -105,10 +106,12 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("rv_5", "F03", VOLATILITY, "stddev(1m returns over 5 bars ending at t)", 6, 6, "klines_1m", ("return_1",)),
     _feature("rv_15", "F03", VOLATILITY, "stddev(1m returns over 15 bars ending at t)", 16, 16, "klines_1m", ("return_1",)),
     _feature("rv_30", "F03", VOLATILITY, "stddev(1m returns over 30 bars ending at t)", 31, 31, "klines_1m", ("return_1",)),
+    _feature("rv_45", "F03", VOLATILITY, "stddev(1m returns over 45 bars ending at t)", 46, 46, "klines_1m", ("return_1",)),
     _feature("rv_60", "F03", VOLATILITY, "stddev(1m returns over 60 bars ending at t)", 61, 61, "klines_1m", ("return_1",)),
     _feature("rv_120", "F03", VOLATILITY, "stddev(1m returns over 120 bars ending at t)", 121, 121, "klines_1m", ("return_1",)),
     _feature("atr_pct", "F03", VOLATILITY, "SMA(true_range,14) / close_t", 15, 15, "klines_1m"),
     _feature("atr_pct_30", "F03", VOLATILITY, "SMA(true_range,30) / close_t", 31, 31, "klines_1m"),
+    _feature("atr_pct_45", "F03", VOLATILITY, "SMA(true_range,45) / close_t", 46, 46, "klines_1m"),
     _feature("parkinson_vol_20", "F03", VOLATILITY, "sqrt(mean(ln(high/low)^2,last 20 bars) / (4*ln(2)))", 20, 20, "klines_1m"),
     _feature("garman_klass_vol_20", "F03", VOLATILITY, "sqrt(mean(0.5*ln(high/low)^2 - (2*ln(2)-1)*ln(close/open)^2,last 20 bars))", 20, 20, "klines_1m"),
     _feature("range_vol_20", "F03", VOLATILITY, "stddev((high-low)/close over last 20 bars)", 20, 20, "klines_1m", ("high_low_range",)),
@@ -296,6 +299,15 @@ FEATURE_DEFINITIONS: list[FeatureDefinition] = [
     _feature("bb_width_15m", "F17", MULTI_TIMEFRAME, "4*stddev(close,20)/mean(close,20), on 15m closed bars", 300, 300, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("adx_15m", "F17", MULTI_TIMEFRAME, "Wilder ADX(14, 15m closed bars)", 225, 225, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("volume_z_15m", "F17", MULTI_TIMEFRAME, "(volume_t - mean(volume,20)) / std(volume,20), on 15m closed bars", 300, 300, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("trend_slope_45m", "F17", MULTI_TIMEFRAME, "linreg_slope(close, last <=10 closed 45m bars) / close", 450, 450, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("return_45m", "F17", MULTI_TIMEFRAME, "(close_t - close_t-10bars) / close_t-10bars, on 45m closed bars", 450, 450, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("ema_gap_45m", "F17", MULTI_TIMEFRAME, "(close_t - EMA20(45m closed bars)) / close_t", 900, 900, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("ma_slope_45m", "F17", MULTI_TIMEFRAME, "(MA10_t - MA10_t-1) / MA10_t-1, on 45m closed bars", 495, 495, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("rsi_45m", "F17", MULTI_TIMEFRAME, "RSI(14, 45m closed bars)", 675, 675, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("atr_pct_45m", "F17", MULTI_TIMEFRAME, "ATR(14, 45m closed bars) / close", 675, 675, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("bb_width_45m", "F17", MULTI_TIMEFRAME, "4*stddev(close,20)/mean(close,20), on 45m closed bars", 900, 900, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("adx_45m", "F17", MULTI_TIMEFRAME, "Wilder ADX(14, 45m closed bars)", 675, 675, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
+    _feature("volume_z_45m", "F17", MULTI_TIMEFRAME, "(volume_t - mean(volume,20)) / std(volume,20), on 45m closed bars", 900, 900, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("trend_slope_1h", "F17", MULTI_TIMEFRAME, "linreg_slope(close, last <=10 closed 1h bars) / close", 600, 600, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("return_1h", "F17", MULTI_TIMEFRAME, "(close_t - close_t-10bars) / close_t-10bars, on 1h closed bars", 600, 600, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
     _feature("ema_gap_1h", "F17", MULTI_TIMEFRAME, "(close_t - EMA20(1h closed bars)) / close_t", 1200, 1200, "klines_1m", warmup_rule="strict", leakage_risk="low_past_only"),
@@ -372,6 +384,8 @@ INACTIVE_SCAFFOLD_STATUSES: frozenset[str] = frozenset({
     "disabled_scale_dependent",
 })
 
+EXPECTED_ACTIVE_FEATURE_COUNT = 201
+
 
 def _is_active_status(status: object) -> bool:
     """Single source of truth for whether a scaffold_status is model-active.
@@ -388,7 +402,12 @@ def _is_active_status(status: object) -> bool:
 
 
 def active_feature_names(definitions: Sequence[FeatureDefinition] = FEATURE_DEFINITIONS) -> tuple[str, ...]:
-    return tuple(definition.feature_name for definition in definitions if _is_active_status(definition.scaffold_status))
+    active = tuple(definition.feature_name for definition in definitions if _is_active_status(definition.scaffold_status))
+    if definitions is FEATURE_DEFINITIONS and len(active) != EXPECTED_ACTIVE_FEATURE_COUNT:
+        raise AssertionError(
+            f"active feature registry count changed: expected {EXPECTED_ACTIVE_FEATURE_COUNT}, got {len(active)}"
+        )
+    return active
 
 
 def feature_formula_registry(definitions: Sequence[FeatureDefinition] = FEATURE_DEFINITIONS) -> dict[str, object]:

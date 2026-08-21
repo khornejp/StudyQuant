@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BTCUSDT Quant v7.18 - Regime Threshold & Feature Selection Experiment Runner
+BTCUSDT Quant v7.18 - Regime Threshold Experiment Runner
 
 다른 PC에서도 돌릴 수 있도록 만든 실험 자동화 스크립트.
 F1뿐만 아니라 Sharpe, MDD, Calmar 등 트레이딩 지표도 함께 비교.
@@ -32,9 +32,6 @@ class ExperimentConfig:
     trend_percentile: float
     low_vol_multiplier: float
     min_run_bars: int
-    feature_selection: bool = False
-    fs_target_min: int = 0
-    fs_target_max: int = 0
 
 
 @dataclass  
@@ -60,9 +57,6 @@ class ExperimentResult:
     regime_high_vol_rows: int = 0
     regime_ranging_rows: int = 0
     regime_trending_rows: int = 0
-    # Feature selection
-    fs_original_count: int = 0
-    fs_selected_count: int = 0
     # Timing
     elapsed_seconds: float = 0.0
 
@@ -87,13 +81,6 @@ def run_experiment(
         "--regime-low-vol-multiplier", str(config.low_vol_multiplier),
         "--regime-min-run-bars", str(config.min_run_bars),
     ]
-    
-    if config.feature_selection:
-        cmd.extend([
-            "--feature-selection",
-            "--feature-selection-target-min", str(config.fs_target_min),
-            "--feature-selection-target-max", str(config.fs_target_max),
-        ])
     
     print(f"\n{'='*70}")
     print(f"[실험 시작] {config.name}")
@@ -197,13 +184,6 @@ def _parse_results(output_dir: Path, config: ExperimentConfig, elapsed: float) -
                 result.mean_test_mdd = _mean_field(test_rows, "mdd")
                 result.mean_test_calmar = _mean_field(test_rows, "calmar")
     
-    # Parse feature selection report
-    fs_report_path = output_dir / "feature_selection_report.json"
-    if fs_report_path.exists():
-        fs_report = json.loads(fs_report_path.read_text(encoding="utf-8"))
-        result.fs_original_count = int(fs_report.get("feature_count_original", 0))
-        result.fs_selected_count = int(fs_report.get("feature_count_bounded" if fs_report.get("bounds_applied") else "feature_count_core", 0))
-    
     print(f"[완료] {config.name} | F1={result.mean_test_f1:.4f} | Sharpe={result.mean_test_sharpe:.4f} | MDD={result.mean_test_mdd:.4f} | 시간={elapsed:.1f}초")
     return result
 
@@ -259,8 +239,6 @@ def main():
     parser.add_argument("--output", default="experiments", help="실험 결과 출력 폴더")
     parser.add_argument("--quick", action="store_true", help="빠른 실험 (4개 조합만)")
     parser.add_argument("--full", action="store_true", help="전체 실험 (20개 조합)")
-    parser.add_argument("--with-fs", action="store_true", help="Feature Selection 20~30 실험도 포함")
-    parser.add_argument("--fs-only", action="store_true", help="Feature Selection만 실험")
     args = parser.parse_args()
     
     input_path = Path(args.input)
@@ -272,14 +250,7 @@ def main():
     output_base.mkdir(parents=True, exist_ok=True)
     
     # Experiment configurations
-    if args.fs_only:
-        experiments = [
-            ExperimentConfig("fs_baseline", 0.75, 0.70, 2.0, 3, False),
-            ExperimentConfig("fs_20_30", 0.75, 0.70, 2.0, 3, True, 20, 30),
-            ExperimentConfig("fs_25_35", 0.75, 0.70, 2.0, 3, True, 25, 35),
-            ExperimentConfig("fs_15_25", 0.75, 0.70, 2.0, 3, True, 15, 25),
-        ]
-    elif args.quick:
+    if args.quick:
         experiments = [
             ExperimentConfig("baseline", 0.75, 0.70, 2.0, 3),
             ExperimentConfig("rv80_trend70", 0.80, 0.70, 2.0, 3),
@@ -306,14 +277,6 @@ def main():
             ExperimentConfig("rv75_trend70_run1", 0.75, 0.70, 2.0, 1),
             ExperimentConfig("rv75_trend70_run5", 0.75, 0.70, 2.0, 5),
         ]
-    
-    # Add feature selection experiments if requested
-    if args.with_fs or args.full:
-        experiments.extend([
-            ExperimentConfig("fs_baseline", 0.75, 0.70, 2.0, 3, True, 20, 30),
-            ExperimentConfig("fs_rv80", 0.80, 0.70, 2.0, 3, True, 20, 30),
-            ExperimentConfig("fs_rv75_trend65", 0.75, 0.65, 2.0, 3, True, 20, 30),
-        ])
     
     print("BTCUSDT Quant v7.18 실험 자동화")
     print(f"입력 데이터: {input_path}")
@@ -359,9 +322,6 @@ def _result_to_dict(r: ExperimentResult) -> dict[str, Any]:
             "trend_percentile": r.config.trend_percentile,
             "low_vol_multiplier": r.config.low_vol_multiplier,
             "min_run_bars": r.config.min_run_bars,
-            "feature_selection": r.config.feature_selection,
-            "fs_target_min": r.config.fs_target_min,
-            "fs_target_max": r.config.fs_target_max,
         },
         "success": r.success,
         "error": r.error,
@@ -383,10 +343,6 @@ def _result_to_dict(r: ExperimentResult) -> dict[str, Any]:
             "ranging_rows": r.regime_ranging_rows,
             "trending_f1": r.regime_trending_f1,
             "trending_rows": r.regime_trending_rows,
-        },
-        "feature_selection": {
-            "original_count": r.fs_original_count,
-            "selected_count": r.fs_selected_count,
         },
         "elapsed_seconds": r.elapsed_seconds,
     }

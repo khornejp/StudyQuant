@@ -39,7 +39,6 @@ def run_demo(output: Path) -> dict[str, object]:
     rolling = features.RollingFeatureEngine().rolling_mean([1.0, 2.0, 3.0], 2)
     calibrator = features.CalibrationModule().select_method(40)
     splits = features.PurgedWalkForwardSplit().split(20, 5, 3, 3, 1)
-    core_features = features.FeatureSelectionPipeline().core_features([["return_1", "rv"], ["return_1"], ["return_1", "basis"]])
     ci_lower, ci_upper = features.BootstrapCIEngine().ci95([-0.1, 0.0, 0.1])
     budget = features.OptunaBudgetProfiles().get("practical_start")
     promotion, promotion_reason = features.ChampionChallengerManager().can_promote(
@@ -96,7 +95,6 @@ def run_demo(output: Path) -> dict[str, object]:
         "rolling_warmup_first": rolling[0],
         "calibration_method_low_sample": calibrator,
         "purged_split_count": len(splits),
-        "core_features": core_features,
         "bootstrap_ci": [ci_lower, ci_upper],
         "optuna_practical_trials": budget["trials"],
         "challenger_promotion_allowed": promotion,
@@ -524,7 +522,6 @@ def run_train(
     fallback_allowed: bool = True,
     allow_unpinned_runtime: bool = False,
     model_params: Mapping[str, object] | None = None,
-    feature_selection_enabled: bool = False,
     optuna_enabled: bool = False,
     optuna_trials: int = 0,
     optuna_budget_profile: str = "practical_start",
@@ -550,8 +547,6 @@ def run_train(
     regime_classifier_model_path: str | None = None,
     multi_feature_regime: bool = False,
     multi_feature_regime_config: dict | None = None,
-    feature_selection_target_min: int = 0,
-    feature_selection_target_max: int = 0,
     ensemble_enabled: bool = False,
     ensemble_direction_family: str = "catboost",
     ensemble_profitability_family: str = "catboost",
@@ -607,7 +602,6 @@ def run_train(
         model_params=dict(model_params or {}),
         fallback_allowed=fallback_allowed,
         allow_unpinned_runtime=allow_unpinned_runtime,
-        feature_selection_enabled=feature_selection_enabled,
         optuna_enabled=optuna_enabled,
         optuna_trials=optuna_trials,
         optuna_budget_profile=optuna_budget_profile,
@@ -633,8 +627,6 @@ def run_train(
         regime_classifier_model_path=regime_classifier_model_path,
         multi_feature_regime=multi_feature_regime,
         multi_feature_regime_config=multi_feature_regime_config,
-        feature_selection_target_min=feature_selection_target_min,
-        feature_selection_target_max=feature_selection_target_max,
         ensemble_enabled=ensemble_enabled,
         ensemble_direction_family=ensemble_direction_family,
         ensemble_profitability_family=ensemble_profitability_family,
@@ -1675,7 +1667,6 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--test-group-count", type=int, default=1, help="number of groups selected for each combinatorial test fold")
     train.add_argument("--no-model-fallback", action="store_true", help="disable optional model fallback and fail if the requested family is unavailable")
     train.add_argument("--allow-unpinned-runtime", action="store_true", help="permit a run-of-record artifact on a runtime whose installed distribution fingerprint differs from the pinned venv; recorded in provenance and resolved_config for deliberate experiments")
-    train.add_argument("--feature-selection", action="store_true", help="enable 6-stage feature selection pipeline (Spearman, gain, permutation, SHAP, ablation, core set)")
     train.add_argument("--optuna", action="store_true", help="enable Optuna hyperparameter tuning for threshold and signal scale")
     train.add_argument("--optuna-trials", type=int, default=0, help="number of Optuna trials (0 uses budget profile default)")
     train.add_argument("--optuna-budget", default="practical_start", choices=("research_fast", "practical_start", "full_audit_budget"), help="Optuna budget profile")
@@ -1694,8 +1685,6 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--regime-min-trend-abs", type=float, default=0.00001, help="minimum absolute trend slope to qualify as trending")
     train.add_argument("--regime-low-vol-multiplier", type=float, default=2.0, help="multiplier for trend threshold in low-volatility periods")
     train.add_argument("--regime-min-run-bars", type=int, default=3, help="minimum consecutive bars to confirm a regime change")
-    train.add_argument("--feature-selection-target-min", type=int, default=0, help="minimum number of features to select (0 disables lower bound)")
-    train.add_argument("--feature-selection-target-max", type=int, default=0, help="maximum number of features to select (0 disables upper bound)")
     train.add_argument("--ensemble", action="store_true", help="enable stacking ensemble: train direction + profitability + meta model")
     train.add_argument("--ensemble-direction-family", default="catboost", help="base model family for direction prediction")
     train.add_argument("--ensemble-profitability-family", default="catboost", help="base model family for profitability prediction")
@@ -2094,8 +2083,6 @@ def main(argv: list[str] | None = None) -> int:
                 ignored_flags.append(f"--n-groups {args.n_groups}")
             if args.test_group_count != 1:
                 ignored_flags.append(f"--test-group-count {args.test_group_count}")
-            if args.feature_selection:
-                ignored_flags.append("--feature-selection")
             if ignored_flags:
                 print(
                     "WARNING: --regime-aware trains one CatBoost model per "
@@ -2194,7 +2181,6 @@ def main(argv: list[str] | None = None) -> int:
                 output, input_path, args.model_family, args.cv_mode, args.embargo_size, args.n_groups, args.test_group_count,
                 not args.no_model_fallback,
                 allow_unpinned_runtime=args.allow_unpinned_runtime,
-                feature_selection_enabled=args.feature_selection,
                 optuna_enabled=args.optuna,
                 optuna_trials=args.optuna_trials,
                 optuna_budget_profile=args.optuna_budget,
@@ -2214,8 +2200,6 @@ def main(argv: list[str] | None = None) -> int:
                     json.loads(Path(args.rule_regime_config).read_text(encoding="utf-8"))
                     if args.rule_regime_config else None
                 ),
-                feature_selection_target_min=args.feature_selection_target_min,
-                feature_selection_target_max=args.feature_selection_target_max,
                 ensemble_enabled=args.ensemble,
                 ensemble_direction_family=args.ensemble_direction_family,
                 ensemble_profitability_family=args.ensemble_profitability_family,
