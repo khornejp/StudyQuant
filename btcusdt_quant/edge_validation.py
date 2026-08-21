@@ -67,8 +67,8 @@ def trading_metrics(result: "_bt.BacktestResult") -> dict[str, object]:
     "no answer" (too few trades, zero dispersion), not zero performance.
     """
     payload = result.as_dict()
-    long_trades = sum(1 for t in result.trades if t.side == "BUY")
-    short_trades = sum(1 for t in result.trades if t.side == "SELL")
+    long_trade_count = sum(1 for t in result.trades if t.side == "BUY")
+    short_trade_count = sum(1 for t in result.trades if t.side == "SELL")
     subset = {
         "trade_count": payload.get("trade_count", 0),
         "net_total_return": payload.get("total_return"),
@@ -85,8 +85,8 @@ def trading_metrics(result: "_bt.BacktestResult") -> dict[str, object]:
         # backtest, so retain the same provenance rather than asking readers to
         # infer which executable run supplied each metric row.
         "provenance": payload.get("provenance"),
-        "long_trades": long_trades,
-        "short_trades": short_trades,
+        "long_trade_count": long_trade_count,
+        "short_trade_count": short_trade_count,
     }
     return _bt.json_safe(subset)
 

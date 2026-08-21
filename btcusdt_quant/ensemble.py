@@ -106,6 +106,8 @@ def _load_submodel(payload: object) -> models.ModelAdapter | None:
         return models.LightGBMAdapter.from_dict(payload)
     if model_family == "catboost":
         return models.CatBoostAdapter.from_dict(payload)
+    if model_family == "catboost_regressor":
+        return models.CatBoostRegressorAdapter.from_dict(payload)
     if model_family == "pytorch_multitask":
         from . import multitask_nn
         return multitask_nn.MultitaskNNAdapter.from_dict(payload)

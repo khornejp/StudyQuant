@@ -146,7 +146,7 @@ explicitly.
 - **Primary metric**: `*_net_bps_trade_weighted_mean`. The equal-weight figure survives
   as `*_net_bps_plain_fold_mean` and is not primary — a four-trade fold once made the
   plain mean read `+11.39` where the trade-weighted figure was `-3.24`.
-- **Removed**: `long_net_bps_mean` and `long_folds_profitable`. The latter counted a
+- **Removed**: the former directional net-mean field and fold-profit count. The latter counted a
   four-trade fold equal to a 956-trade one and is replaced by
   `*_profitable_trade_share`, which weights by trades.
 - **Zero-trade folds** appear in `*_folds_with_no_trades` rather than vanishing from a

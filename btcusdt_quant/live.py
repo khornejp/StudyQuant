@@ -1587,6 +1587,8 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> models.Model
             return _with_side(models.LightGBMAdapter.from_dict(payload))
         if model_family == "catboost":
             return _with_side(models.CatBoostAdapter.from_dict(payload))
+        if model_family == "catboost_regressor":
+            return _with_side(models.CatBoostRegressorAdapter.from_dict(payload))
         if model_family == models.CentroidLinearClassifier.model_family_name:
             return _with_side(models.CentroidLinearClassifier.from_dict(payload))
         if model_family == "ensemble":

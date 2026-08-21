@@ -91,7 +91,6 @@ class TrainingConfig:
     # value so an override cannot be mistaken for a pinned run.
     allow_unpinned_runtime: bool = False
     lineage_enabled: bool = True
-    feature_selection_enabled: bool = False
     optuna_enabled: bool = False
     optuna_budget_profile: str = "practical_start"
     optuna_trials: int = 0
@@ -179,8 +178,6 @@ class TrainingConfig:
     # fitted detector (with these overrides) is saved to the artifact, so
     # backtest/live inherit the same rule config automatically.
     multi_feature_regime_config: dict | None = None
-    feature_selection_target_min: int = 0
-    feature_selection_target_max: int = 0
     ensemble_enabled: bool = False
     ensemble_direction_family: str = "catboost"
     ensemble_profitability_family: str = "catboost"
@@ -406,6 +403,7 @@ MIN_ENTRIES_FOR_AN_INDEPENDENT_YEAR = 200
 _PERSISTED_VOLATILITY_FEATURES: tuple[str, ...] = ("rv_15", "rv_30", "rv_60", "rv_120", "atr_pct")
 
 _TRAIN_TARGET_KEYS: tuple[str, ...] = ("profitability", "long_success", "short_success", "short_profitability", "direction")
+RUN_SUMMARY_SCHEMA_VERSION = 3
 
 
 def label_geometry(config: "TrainingConfig") -> dict[str, dict[str, float]]:
@@ -477,7 +475,15 @@ def realized_payoffs(
         reason = str(row.target_reasons.get(target, row.label_reason) or "")
         if reason.endswith("tp_first"):
             out.append(float(tp_pct))
-        elif reason.endswith("sl_first") or reason == "ambiguous_path" or reason.startswith("gap_cross_sl"):
+        elif reason.startswith("gap_cross_sl"):
+            try:
+                out.append(float(row.target_gap_stop_returns[target]))
+            except KeyError as exc:
+                raise ValueError(
+                    f"gap-crossed stop for target {target!r} lacks its adverse-open settlement; "
+                    "rebuild the labeled dataset cache"
+                ) from exc
+        elif reason.endswith("sl_first") or reason == "ambiguous_path":
             out.append(-float(sl_pct))
         else:
             r = float(row.target_return)
@@ -608,13 +614,17 @@ def oos_trading_metrics(
     # consumers.  Keep the fold, entry count, and coverage so aggregates can
     # count the abstention while excluding it from entry-weighted figures.
     no_entries = not longs
-    long_gross = _mean_bps(longs) if longs else None
+    primary_gross = _mean_bps(longs) if longs else None
     # The opposite book: take the least-confident decile the other way. The
     # payoffs are already signed for `target`, so negating gives the return of
     # trading against the model's low-confidence bars.
-    short_gross = -_mean_bps(bottom)
+    opposite_decile_gross = -_mean_bps(bottom)
+    primary_side = "short" if target in ("short_success", "short_profitability") else "long"
+    opposite_side = "long" if primary_side == "short" else "short"
     result: dict[str, object] = {
         "target": target,
+        "primary_side": primary_side,
+        "opposite_side": opposite_side,
         "rows": float(n),
         "eligible_share": eligible_share,
         "coverage": coverage,
@@ -622,17 +632,32 @@ def oos_trading_metrics(
         "cost_bps": cost_bps,
         "entry_rate": len(longs) / n,
         "no_entries": no_entries,
-        "long_trades": float(len(longs)),
+        "primary_trades": float(len(longs)),
         "top_decile_gross_bps": _mean_bps(top),
-        "short_gross_bps": short_gross,
-        "short_net_bps": short_gross - cost_bps,
-        "short_trades": float(len(bottom)),
+        "opposite_decile_gross_bps": opposite_decile_gross,
+        "opposite_decile_net_bps": opposite_decile_gross - cost_bps,
+        "opposite_decile_trades": float(len(bottom)),
         "all_rows_mean_bps": _mean_bps(r),
     }
-    if long_gross is not None:
-        result["long_gross_bps"] = long_gross
-        result["long_net_bps"] = long_gross - cost_bps
+    if primary_gross is not None:
+        result["primary_gross_bps"] = primary_gross
+        result["primary_net_bps"] = primary_gross - cost_bps
     return result
+
+
+def format_oos_trading_log(metrics: Mapping[str, object]) -> str:
+    """Render an unambiguous fold-test trading log record."""
+    primary_net = (
+        f"{float(metrics['primary_net_bps']):+.2f}bps"
+        if "primary_net_bps" in metrics else "not-measured (no entries)"
+    )
+    return (
+        f"[TRAIN]     OOS trading (fold test slice): entries {float(metrics['entry_rate']):.1%} "
+        f"primary_net[{metrics['primary_side']}]={primary_net} "
+        f"opposite_decile_net[{metrics['opposite_side']}]="
+        f"{float(metrics['opposite_decile_net_bps']):+.2f}bps "
+        f"(cost {float(metrics['cost_bps']):.1f}bps, all-rows {float(metrics['all_rows_mean_bps']):+.2f}bps)"
+    )
 
 
 def apply_training_target(rows: Sequence[dataset.LabeledRow], target: str) -> list[dataset.LabeledRow]:
@@ -842,33 +867,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     splits = configured_splits(len(build.labeled_rows), build.label_horizon, training_config, sample_intervals)
     if not splits:
         raise ValueError("not enough labeled rows for configured split")
-    # Optional feature selection pipeline (6-stage: Spearman, gain, permutation, SHAP, ablation, core set)
-    # Nested selection: use only the first fold's training data to avoid leakage
-    feature_selection_report: dict[str, object] | None = None
     effective_feature_names = build.feature_names
-    if training_config.feature_selection_enabled:
-        selection_pipeline = features.FeatureSelectionPipeline(
-            target_min_features=training_config.feature_selection_target_min,
-            target_max_features=training_config.feature_selection_target_max,
-        )
-        # Use first fold's training data only to prevent test-data leakage
-        first_fold_train_indices = _split_indices(splits[0].train) if splits else list(range(len(build.labeled_rows)))
-        first_train_rows = [build.labeled_rows[index] for index in first_fold_train_indices]
-        baseline_selection = fit_model_adapter(
-            first_train_rows, build.feature_names, training_config,
-            _weights_for_indices(uniqueness, first_fold_train_indices),
-        )
-        feature_selection_report = selection_pipeline.run_full_pipeline(
-            model=baseline_selection.adapter,
-            feature_matrix=feature_matrix(first_train_rows, build.feature_names),
-            labels=[row.label for row in first_train_rows],
-            feature_names=build.feature_names,
-        )
-        bounded_core = feature_selection_report.get("core_features_bounded", [])
-        unbounded_core = feature_selection_report.get("core_features", [])
-        selected_core = bounded_core if bounded_core else unbounded_core
-        if selected_core and len(selected_core) >= 10:
-            effective_feature_names = selected_core
     # Optional Optuna hyperparameter tuning
     optuna_report: dict[str, object] | None = None
     optuna_threshold: float | None = None
@@ -1158,15 +1157,7 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         )
         _tt = fold_results[-1].test_trading
         if _tt:
-            _primary_net = (
-                f"{float(_tt['long_net_bps']):+.2f}bps"
-                if "long_net_bps" in _tt else "not-measured (no entries)"
-            )
-            print(
-                f"[TRAIN]     OOS trading (fold test slice): entries {_tt['entry_rate']:.1%} "
-                f"long_net={_primary_net} short_net={_tt['short_net_bps']:+.2f}bps "
-                f"(cost {_tt['cost_bps']:.1f}bps, all-rows {_tt['all_rows_mean_bps']:+.2f}bps)"
-            )
+            print(format_oos_trading_log(_tt))
     final_indices = list(range(len(build.labeled_rows)))
     with models.training_runtime_context(fit_role="final_refit"):
         final_selection = fit_model_adapter(build.labeled_rows, effective_feature_names, training_config, _weights_for_indices(uniqueness, final_indices))
@@ -1196,17 +1187,6 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     else:
         run_summary["lineage_run_id"] = None
         run_summary["lineage_artifacts"] = []
-    # Add feature selection and Optuna reports to summary
-    if feature_selection_report is not None:
-        run_summary["feature_selection"] = {
-            "enabled": True,
-            "original_feature_count": len(build.feature_names),
-            "selected_core_count": len(effective_feature_names),
-            "selected_core_features": list(effective_feature_names),
-            "report": feature_selection_report,
-        }
-    else:
-        run_summary["feature_selection"] = {"enabled": False, "original_feature_count": len(build.feature_names), "selected_core_count": len(build.feature_names)}
     if optuna_report is not None:
         run_summary["optuna"] = {
             "enabled": True,
@@ -3157,12 +3137,12 @@ def summarise_fold_trading(
     # A net bps figure is a measurement only when that side traded. Keep the
     # zero-trade fold in ``folds`` and count it below, but do not manufacture a
     # zero observation for either mean.
-    long_rows = [t for t in per_fold if _has(t, "long_net_bps") and float(t.get("long_trades", 0.0)) > 0.0]
-    short_rows = [t for t in per_fold if _has(t, "short_net_bps") and float(t.get("short_trades", 0.0)) > 0.0]
-    long_net = [float(t["long_net_bps"]) for t in long_rows]
-    short_net = [float(t["short_net_bps"]) for t in short_rows]
-    long_trades = [float(t.get("long_trades", 0.0)) for t in long_rows]
-    short_trades = [float(t.get("short_trades", 0.0)) for t in short_rows]
+    primary_rows = [t for t in per_fold if _has(t, "primary_net_bps") and float(t.get("primary_trades", 0.0)) > 0.0]
+    opposite_rows = [t for t in per_fold if _has(t, "opposite_decile_net_bps") and float(t.get("opposite_decile_trades", 0.0)) > 0.0]
+    primary_net = [float(t["primary_net_bps"]) for t in primary_rows]
+    opposite_net = [float(t["opposite_decile_net_bps"]) for t in opposite_rows]
+    primary_trades = [float(t.get("primary_trades", 0.0)) for t in primary_rows]
+    opposite_trades = [float(t.get("opposite_decile_trades", 0.0)) for t in opposite_rows]
     # Copy the identities out of the reported folds rather than deleting them
     # from the caller's data. Popping in place made this function destructive:
     # a second call on the same list saw no keys, computed overlap 0.0 and
@@ -3176,14 +3156,18 @@ def summarise_fold_trading(
         if isinstance(cov, dict) and "entry_keys" in cov:
             row = {**row, "coverage": {k: v for k, v in cov.items() if k != "entry_keys"}}
         reported_folds.append(row)
+    primary_side = next((str(row["primary_side"]) for row in per_fold if "primary_side" in row), None)
+    opposite_side = next((str(row["opposite_side"]) for row in per_fold if "opposite_side" in row), None)
     return {
+        "primary_side": primary_side,
+        "opposite_side": opposite_side,
         "folds": reported_folds,
         "fold_count": len(per_fold),
         "folds_without_eligible_rows": sum(1 for t in per_fold if t.get("no_eligible_rows")),
-        "long_net_bps_by_fold": long_net,
-        "short_net_bps_by_fold": short_net,
-        "long_trades_by_fold": long_trades,
-        "short_trades_by_fold": short_trades,
+        "primary_net_bps_by_fold": primary_net,
+        "opposite_decile_net_bps_by_fold": opposite_net,
+        "primary_trades_by_fold": primary_trades,
+        "opposite_decile_trades_by_fold": opposite_trades,
         # Read these BEFORE the fold vote below. All year figures are over
         # DEDUPLICATED entries: a row that appears in four CPCV folds counts
         # once here and four times in entries_total.
@@ -3215,28 +3199,28 @@ def summarise_fold_trading(
         ),
         # The trade-weighted figure is the decision metric. The plain fold mean
         # remains descriptive only, with its equal-fold weighting made explicit.
-        "long_net_bps_trade_weighted_mean": _weighted(long_net, long_trades),
-        "short_net_bps_trade_weighted_mean": _weighted(short_net, short_trades),
-        "long_net_bps_plain_fold_mean": mean(long_net) if long_net else 0.0,
-        "short_net_bps_plain_fold_mean": mean(short_net) if short_net else 0.0,
-        "long_trade_weighted_mean_folds_with_trades": len(long_rows),
-        "short_trade_weighted_mean_folds_with_trades": len(short_rows),
-        "long_plain_fold_mean_folds_with_trades": len(long_rows),
-        "short_plain_fold_mean_folds_with_trades": len(short_rows),
-        "long_folds_with_no_trades": len(per_fold) - len(long_rows),
-        "short_folds_with_no_trades": len(per_fold) - len(short_rows),
+        "primary_net_bps_trade_weighted_mean": _weighted(primary_net, primary_trades),
+        "opposite_decile_net_bps_trade_weighted_mean": _weighted(opposite_net, opposite_trades),
+        "primary_net_bps_plain_fold_mean": mean(primary_net) if primary_net else 0.0,
+        "opposite_decile_net_bps_plain_fold_mean": mean(opposite_net) if opposite_net else 0.0,
+        "primary_trade_weighted_mean_folds_with_trades": len(primary_rows),
+        "opposite_decile_trade_weighted_mean_folds_with_trades": len(opposite_rows),
+        "primary_plain_fold_mean_folds_with_trades": len(primary_rows),
+        "opposite_decile_plain_fold_mean_folds_with_trades": len(opposite_rows),
+        "primary_folds_with_no_trades": len(per_fold) - len(primary_rows),
+        "opposite_decile_folds_with_no_trades": len(per_fold) - len(opposite_rows),
         # A profitable-fold count gives a tiny fold the same vote as a large
         # fold. Report the profitable share of trades instead.
-        "long_profitable_trade_share": (
-            sum(w for v, w in zip(long_net, long_trades) if v > 0.0) / sum(long_trades)
-            if long_trades else 0.0
+        "primary_profitable_trade_share": (
+            sum(w for v, w in zip(primary_net, primary_trades) if v > 0.0) / sum(primary_trades)
+            if primary_trades else 0.0
         ),
-        "short_profitable_trade_share": (
-            sum(w for v, w in zip(short_net, short_trades) if v > 0.0) / sum(short_trades)
-            if short_trades else 0.0
+        "opposite_decile_profitable_trade_share": (
+            sum(w for v, w in zip(opposite_net, opposite_trades) if v > 0.0) / sum(opposite_trades)
+            if opposite_trades else 0.0
         ),
-        "long_net_bps_worst": min(long_net) if long_net else 0.0,
-        "short_net_bps_worst": min(short_net) if short_net else 0.0,
+        "primary_net_bps_worst": min(primary_net) if primary_net else 0.0,
+        "opposite_decile_net_bps_worst": min(opposite_net) if opposite_net else 0.0,
     }
 
 def training_summary(
@@ -3302,6 +3286,7 @@ def training_summary(
     selection = final_selection.as_dict() if final_selection is not None else default_model_selection(training_config, None)
     latency = dict(latency_report or {})
     return {
+        "schema_version": RUN_SUMMARY_SCHEMA_VERSION,
         "run_id": "offline_btcusdt_training_v1",
         "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
         "shuffled_labels": training_config.shuffle_labels,

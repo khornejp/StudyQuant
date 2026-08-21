@@ -8,28 +8,30 @@ import math
 from pathlib import Path
 from typing import Mapping
 
-from .training import summarise_fold_trading
+from .training import RUN_SUMMARY_SCHEMA_VERSION, summarise_fold_trading
 
 
 _METRIC_KEYS = (
+    "primary_side",
+    "opposite_side",
     "fold_count",
     "folds_without_eligible_rows",
-    "long_net_bps_trade_weighted_mean",
-    "short_net_bps_trade_weighted_mean",
-    "long_net_bps_plain_fold_mean",
-    "short_net_bps_plain_fold_mean",
-    "long_trade_weighted_mean_folds_with_trades",
-    "short_trade_weighted_mean_folds_with_trades",
-    "long_plain_fold_mean_folds_with_trades",
-    "short_plain_fold_mean_folds_with_trades",
-    "long_folds_with_no_trades",
-    "short_folds_with_no_trades",
-    "long_profitable_trade_share",
-    "short_profitable_trade_share",
-    "long_trades_by_fold",
-    "short_trades_by_fold",
-    "long_net_bps_by_fold",
-    "short_net_bps_by_fold",
+    "primary_net_bps_trade_weighted_mean",
+    "opposite_decile_net_bps_trade_weighted_mean",
+    "primary_net_bps_plain_fold_mean",
+    "opposite_decile_net_bps_plain_fold_mean",
+    "primary_trade_weighted_mean_folds_with_trades",
+    "opposite_decile_trade_weighted_mean_folds_with_trades",
+    "primary_plain_fold_mean_folds_with_trades",
+    "opposite_decile_plain_fold_mean_folds_with_trades",
+    "primary_folds_with_no_trades",
+    "opposite_decile_folds_with_no_trades",
+    "primary_profitable_trade_share",
+    "opposite_decile_profitable_trade_share",
+    "primary_trades_by_fold",
+    "opposite_decile_trades_by_fold",
+    "primary_net_bps_by_fold",
+    "opposite_decile_net_bps_by_fold",
 )
 
 
@@ -52,6 +54,11 @@ def corrected_trading_metrics(block: Mapping[str, object]) -> dict[str, object]:
 def derive(run_summary_path: Path, output_path: Path) -> dict[str, object]:
     raw = run_summary_path.read_bytes()
     run_summary = json.loads(raw)
+    if run_summary.get("schema_version") != RUN_SUMMARY_SCHEMA_VERSION:
+        raise ValueError(
+            f"unsupported run summary schema version: {run_summary.get('schema_version')!r}; "
+            f"expected {RUN_SUMMARY_SCHEMA_VERSION}"
+        )
     oos = run_summary.get("oos_trading")
     if not isinstance(oos, dict):
         raise ValueError("run summary has no oos_trading block")
@@ -65,9 +72,9 @@ def derive(run_summary_path: Path, output_path: Path) -> dict[str, object]:
             "run_summary_sha256": hashlib.sha256(raw).hexdigest(),
         },
         "reading_rule": {
-            "primary": "*_net_bps_trade_weighted_mean",
-            "descriptive_only": "*_net_bps_plain_fold_mean",
-            "profitable_vote": "*_profitable_trade_share",
+            "primary": "primary_net_bps_trade_weighted_mean",
+            "descriptive_only": "primary_net_bps_plain_fold_mean",
+            "profitable_vote": "primary_profitable_trade_share",
         },
         "ungated": corrected_trading_metrics(oos),
         "gated": corrected_trading_metrics(gated),

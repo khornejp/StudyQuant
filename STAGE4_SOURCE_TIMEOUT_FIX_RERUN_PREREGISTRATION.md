@@ -16,7 +16,7 @@ geometry, cost, gate, data period, model defaults, or hyperparameters.
 
 Each arm uses the same four disjoint walk-forward test windows.  The primary
 measure is `run_summary.json` at `oos_trading.gated`: the trade-weighted
-`long_net_bps_trade_weighted` and `entries_total`.  It is a fold-test-slice
+the primary trade-weighted net-bps metric and `entries_total`.  It is a fold-test-slice
 score, not a position-constrained backtest or a claim of live performance.
 
 | arm | sources | geometry | output directory |
