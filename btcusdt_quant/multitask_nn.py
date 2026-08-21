@@ -31,7 +31,7 @@ class _MultitaskBackbone(nn.Module):
         return self.net(x)
 
 
-class _MultitaskHead(nn.Module):
+class _BinaryHead(nn.Module):
     """Single binary classification head."""
 
     def __init__(self, input_dim: int) -> None:
@@ -43,33 +43,31 @@ class _MultitaskHead(nn.Module):
 
 
 class MultitaskNN(nn.Module):
-    """Shared backbone with direction and profitability heads."""
+    """A single binary classifier with a shared feature backbone.
+
+    The original adapter exposed direction and profitability heads, but the
+    training API supplies one label vector only.  No second target was ever
+    constructed, so two heads merely learned the same task.  Keep the public
+    class name for artifact compatibility while representing the actual,
+    single task honestly.
+    """
 
     def __init__(self, input_dim: int, hidden_dims: tuple[int, ...] = (128, 64)) -> None:
         super().__init__()
         self.backbone = _MultitaskBackbone(input_dim, hidden_dims)
-        self.direction_head = _MultitaskHead(self.backbone.output_dim)
-        self.profitability_head = _MultitaskHead(self.backbone.output_dim)
+        self.head = _BinaryHead(self.backbone.output_dim)
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        shared = self.backbone(x)
-        direction_logit = self.direction_head(shared)
-        profitability_logit = self.profitability_head(shared)
-        return direction_logit, profitability_logit
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.head(self.backbone(x))
 
 
 class MultitaskNNAdapter(models.ModelAdapter):
-    """Adapter for MultitaskNN to fit ModelAdapter protocol.
-
-    ``task`` controls which head's probability is returned by ``probability()``:
-    ``direction`` or ``profitability``.
-    """
+    """Adapter for the legacy-named, single-task PyTorch classifier."""
 
     def __init__(
         self,
         input_dim: int = 0,
         hidden_dims: tuple[int, ...] = (128, 64),
-        task: str = "profitability",
         feature_names: tuple[str, ...] = (),
         epochs: int = 100,
         batch_size: int = 256,
@@ -80,7 +78,6 @@ class MultitaskNNAdapter(models.ModelAdapter):
     ) -> None:
         self.input_dim = input_dim
         self.hidden_dims = hidden_dims
-        self.task = task
         self.feature_names = tuple(feature_names)
         self.epochs = epochs
         self.batch_size = batch_size
@@ -128,15 +125,22 @@ class MultitaskNNAdapter(models.ModelAdapter):
         optimizer = torch.optim.AdamW(model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
 
-        # Prepare direction and profitability labels from sample_weight if available,
-        # otherwise fall back to using ``y`` for both tasks.
-        direction_labels = torch.tensor(y, dtype=torch.float32, device=self.device)
-        profitability_labels = torch.tensor(y, dtype=torch.float32, device=self.device)
+        labels = torch.tensor(y, dtype=torch.float32, device=self.device)
+        if sample_weight is None:
+            weights = torch.ones(len(y), dtype=torch.float32, device=self.device)
+        else:
+            if len(sample_weight) != len(y):
+                raise ValueError("sample_weight must match labels length")
+            weights = torch.tensor(sample_weight, dtype=torch.float32, device=self.device)
+            if not bool(torch.isfinite(weights).all()) or bool((weights < 0).any()):
+                raise ValueError("sample_weight must be finite and non-negative")
+            if float(weights.sum()) <= 0.0:
+                raise ValueError("sample_weight must contain a positive weight")
 
         dataset = torch.utils.data.TensorDataset(
             torch.tensor(X, dtype=torch.float32, device=self.device),
-            direction_labels,
-            profitability_labels,
+            labels,
+            weights,
         )
         loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
@@ -146,12 +150,14 @@ class MultitaskNNAdapter(models.ModelAdapter):
         for epoch in range(self.epochs):
             model.train()
             epoch_losses: list[float] = []
-            for batch_X, batch_dir, batch_prof in loader:
+            for batch_X, batch_labels, batch_weights in loader:
                 optimizer.zero_grad()
-                dir_logit, prof_logit = model(batch_X)
-                dir_loss = F.binary_cross_entropy_with_logits(dir_logit.squeeze(1), batch_dir)
-                prof_loss = F.binary_cross_entropy_with_logits(prof_logit.squeeze(1), batch_prof)
-                loss = dir_loss + prof_loss
+                logits = model(batch_X).squeeze(1)
+                per_example = F.binary_cross_entropy_with_logits(logits, batch_labels, reduction="none")
+                # Normalize within the batch, matching the weighted empirical
+                # objective used by tree siblings instead of changing the loss
+                # scale merely because uniqueness weights are supplied.
+                loss = (per_example * batch_weights).sum() / batch_weights.sum()
                 loss.backward()
                 optimizer.step()
                 epoch_losses.append(float(loss.item()))
@@ -172,11 +178,8 @@ class MultitaskNNAdapter(models.ModelAdapter):
         model.eval()
         X = torch.tensor(np.array(feature_matrix, dtype=np.float32), device=self.device)
         with torch.no_grad():
-            dir_logit, prof_logit = model(X)
-        if self.task == "direction":
-            probs = torch.sigmoid(dir_logit).cpu().numpy().flatten().tolist()
-        else:
-            probs = torch.sigmoid(prof_logit).cpu().numpy().flatten().tolist()
+            logits = model(X)
+        probs = torch.sigmoid(logits).cpu().numpy().flatten().tolist()
         return [float(p) for p in probs]
 
     def probability(self, values: Mapping[str, float]) -> float:
@@ -192,7 +195,7 @@ class MultitaskNNAdapter(models.ModelAdapter):
             "model_family": self.model_family,
             "input_dim": self.input_dim,
             "hidden_dims": list(self.hidden_dims),
-            "task": self.task,
+            "task": "single_binary_label",
             "feature_names": list(self.feature_names),
             "epochs": self.epochs,
             "batch_size": self.batch_size,
@@ -207,7 +210,6 @@ class MultitaskNNAdapter(models.ModelAdapter):
         adapter = cls(
             input_dim=int(payload.get("input_dim", 0)),
             hidden_dims=tuple(int(v) for v in payload.get("hidden_dims", [128, 64])),
-            task=str(payload.get("task", "profitability")),
             feature_names=tuple(str(v) for v in payload.get("feature_names", [])),
             epochs=int(payload.get("epochs", 100)),
             batch_size=int(payload.get("batch_size", 256)),
@@ -220,5 +222,16 @@ class MultitaskNNAdapter(models.ModelAdapter):
             buffer = io.BytesIO(bytes.fromhex(state_hex))
             state = torch.load(buffer, map_location=adapter.device, weights_only=True)
             adapter._model = MultitaskNN(adapter.input_dim, adapter.hidden_dims).to(adapter.device)
+            # Old artifacts contain two identically supervised heads.  Select
+            # the historical requested head (profitability by default) when
+            # loading them; new artifacts contain only ``head``.
+            if "head.linear.weight" not in state:
+                legacy_task = str(payload.get("task", "profitability"))
+                prefix = "direction_head" if legacy_task == "direction" else "profitability_head"
+                state["head.linear.weight"] = state.pop(f"{prefix}.linear.weight")
+                state["head.linear.bias"] = state.pop(f"{prefix}.linear.bias")
+                for key in list(state):
+                    if key.startswith("direction_head.") or key.startswith("profitability_head."):
+                        del state[key]
             adapter._model.load_state_dict(state)
         return adapter

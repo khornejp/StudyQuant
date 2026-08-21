@@ -531,6 +531,7 @@ def run_train(
     vol_gate_feature: str | None = None,
     vol_gate_min: float = 0.0,
     vol_gate_train_quantile: float | None = None,
+    vol_gate_derivation: str = "shared_prior_reserve",
     vol_gate_screen_reference_report: str | None = None,
     walk_forward_test_gap: int = 0,
     walk_forward_train_size: int | None = None,
@@ -614,6 +615,7 @@ def run_train(
         vol_gate_feature=vol_gate_feature,
         vol_gate_min=vol_gate_min,
         vol_gate_train_quantile=vol_gate_train_quantile,
+        vol_gate_derivation=vol_gate_derivation,
         vol_gate_screen_reference_report=vol_gate_screen_reference_report,
         vol_gate_train_only=vol_gate_train_only,
         champion_challenger_enabled=champion_challenger_enabled,
@@ -1699,7 +1701,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--short-threshold", type=float, default=0.55, help="minimum probability threshold for SHORT entry signals")
     train.add_argument("--vol-gate-feature", default=None, help='report the fold OOS trading metrics a SECOND time, restricted to bars where this volatility feature is at least --vol-gate-min. Does not touch fitting, labelling or threshold selection -- it is a question asked of the model, not a change to it. Needed because the ungated fold metric averages in the bars a gate would refuse, so a gated strategy cannot be judged from it. Fold test predictions are written to fold_test_predictions.csv either way, so a different gate can be scored offline without refitting.')
     train.add_argument("--vol-gate-min", type=float, default=0.0, help='minimum value of --vol-gate-feature for a fold test row to count in the gated metrics. Example: rv_60 >= 0.000961841 is the top-quintile boundary measured on 2020-2025.')
-    train.add_argument("--vol-gate-train-quantile", type=float, default=None, help='derive --vol-gate-min from data without letting it see a test row: the cutoff is this quantile of --vol-gate-feature over the FIRST fold train slice, which in walk-forward precedes every fold test slice, and the same absolute number is used for all folds. Not recomputed per fold on purpose -- a quantile is relative while the cost is absolute, so in a calm stretch the local top 20%% still cannot move far enough to pay 4 bps. Measured on a 700k-row slice, per-fold cutoffs ran 0.00047-0.00083 against an absolute 0.00096, eligible share rose to 16-66%% from 8-19%%, and the gated result went from better than ungated to worse. The cutoff used is printed and recorded in run_summary.')
+    train.add_argument("--vol-gate-train-quantile", type=float, default=None, help='derive --vol-gate-min from a strictly prior window; by default the 45-day shared-prior reserve, with one absolute cutoff applied to every fold.')
+    train.add_argument("--vol-gate-derivation", choices=("shared_prior_reserve", "fold0_train"), default="shared_prior_reserve", help="derivation window for --vol-gate-train-quantile. shared_prior_reserve is the default 45-day pre-fold reserve; fold0_train reproduces the historical behavior.")
     train.add_argument("--vol-gate-screen-reference-report", default=None, help="path to a provenance-captured barrier_screen_report.json. Its gate.cutoff is recorded descriptively beside the fold-derived cutoff and its SHA-256 is captured as an input; it NEVER gates fitting, validation, threshold selection, or fold metrics.")
     train.add_argument("--vol-gate-train-only", action="store_true", help="train on gated bars ONLY, rather than training on everything and gating at inference. Requires --vol-gate-feature and an absolute --vol-gate-min. Measured on the first gated run, model confidence and the gate are near mutually exclusive: no gated bar reached the all-bar 99th percentile of probability in any fold, so the model spends its capacity on low-volatility rows whose 45-bar move disperses 22 bps and cannot pay a 4 bps round trip. Folds then cover different calendar spans than an ungated run, so fold indices are not comparable across the two.")
     train.add_argument("--min-ev", type=float, default=0.0001, help="minimum expected value for entry signals (0.01%% = 0.0001)")
@@ -2230,6 +2233,7 @@ def main(argv: list[str] | None = None) -> int:
                 vol_gate_feature=args.vol_gate_feature,
                 vol_gate_min=args.vol_gate_min,
                 vol_gate_train_quantile=args.vol_gate_train_quantile,
+                vol_gate_derivation=args.vol_gate_derivation,
                 vol_gate_screen_reference_report=args.vol_gate_screen_reference_report,
                 walk_forward_test_gap=args.walk_forward_test_gap,
                 walk_forward_train_size=args.walk_forward_train_size,

@@ -96,8 +96,10 @@ a missing or short vector raises instead of falling back to labels.
 1. **Feature construction** over the whole file; the longest warmup needs roughly 350
    days of history before the first usable row.
 2. **Volatility gate** on `rv_60`. The cutoff is derived, not typed:
-   `--vol-gate-train-quantile 0.8` takes the 0.80 quantile of **fold 0's training slice
+   `--vol-gate-train-quantile 0.8` takes the 0.80 quantile of the **45-day shared-prior reserve**
    only**, which precedes every test slice, and applies that single number to all folds.
+   `--vol-gate-derivation fold0_train` preserves the historical fold-0-train
+   derivation for reproducible reruns; the emitted artifact names the choice.
    Recent runs used `rv_60 >= 0.0013057161` (`artifacts/rerun_S3A.log`). An absolute
    `--vol-gate-min` exists but must not be set from a whole-span quantile under
    walk-forward: later folds' test rows would then help choose the gate.

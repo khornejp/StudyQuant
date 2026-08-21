@@ -116,10 +116,9 @@ class TrainingConfig:
     # asked of the model, not a change to it.
     vol_gate_feature: str | None = None
     vol_gate_min: float = 0.0
-    # Derives vol_gate_min from data instead of taking it on faith, without
-    # letting it see a test row: the cutoff is this quantile of the feature over
-    # the FIRST fold's train slice, which in walk-forward precedes every fold's
-    # test slice, and the same absolute number is then used for all folds.
+    # Derives vol_gate_min from data instead of taking it on faith.  By default
+    # it uses the 45-day shared-prior reserve, strictly before every fold; the
+    # historical fold-0 train derivation remains available for reproduction.
     #
     # Not recomputed per fold, though that is the more obvious reading of
     # "selected within the fold". A quantile is relative and the cost is
@@ -129,6 +128,7 @@ class TrainingConfig:
     # absolute 0.00096, eligible share rose to 16-66% from 8-19%, and the gated
     # result went from better than ungated to worse.
     vol_gate_train_quantile: float | None = None
+    vol_gate_derivation: str = "shared_prior_reserve"
     # Resolved only from vol_gate_screen_reference_report; descriptive only.
     vol_gate_screen_reference_min: float | None = None
     # A provenance-captured barrier screen report. Its gate.cutoff is recorded
@@ -246,6 +246,8 @@ class TrainingConfig:
                 "train slice, which under combinatorial_purged is not earlier than the other "
                 "folds' test slices. Pass an absolute vol_gate_min."
             )
+        if self.vol_gate_derivation not in {"shared_prior_reserve", "fold0_train"}:
+            raise ValueError("vol_gate_derivation must be 'shared_prior_reserve' or 'fold0_train'")
         if self.vol_gate_screen_reference_min is not None:
             if not self.vol_gate_feature:
                 raise ValueError("vol_gate_screen_reference_min requires vol_gate_feature")
@@ -652,11 +654,14 @@ def format_oos_trading_log(metrics: Mapping[str, object]) -> str:
         if "primary_net_bps" in metrics else "not-measured (no entries)"
     )
     return (
-        f"[TRAIN]     OOS trading (fold test slice): entries {float(metrics['entry_rate']):.1%} "
+        f"[TRAIN]     OOS trading (fold test slice): rows {int(float(metrics['rows']))}, "
+        f"entries {int(float(metrics['primary_trades']))} "
+        f"({float(metrics['entry_rate']):.3%}) "
         f"primary_net[{metrics['primary_side']}]={primary_net} "
         f"opposite_decile_net[{metrics['opposite_side']}]="
         f"{float(metrics['opposite_decile_net_bps']):+.2f}bps "
-        f"(cost {float(metrics['cost_bps']):.1f}bps, all-rows {float(metrics['all_rows_mean_bps']):+.2f}bps)"
+        f"(opposite entries {int(float(metrics['opposite_decile_trades']))}, "
+        f"cost {float(metrics['cost_bps']):.1f}bps, all-rows {float(metrics['all_rows_mean_bps']):+.2f}bps)"
     )
 
 
@@ -928,9 +933,10 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         _PERSISTED_VOLATILITY_FEATURES
         + ((training_config.vol_gate_feature,) if training_config.vol_gate_feature else ())
     ))
-    # Fixed once, on the earliest train slice, then held constant -- see
-    # TrainingConfig.vol_gate_train_quantile for why not per fold.
+    # Fixed once on a strictly prior derivation window and held constant -- a
+    # quantile is relative while the trading cost is absolute.
     _gate_min_from_first_fold: float | None = None
+    _vol_gate_proof: dict[str, object] | None = None
     _target_tp_pct, _target_sl_pct = target_geometry(training_config, training_config.train_target)
     _shared_calibrator: features.CalibrationModule | None = None
     _shared_threshold: float | None = None
@@ -955,6 +961,23 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
         _shared_rolling_rule = seeded_rolling_threshold_rule(
             _shared_threshold_record.probabilities,
             [row.open_time for row in _calibration_rows],
+        )
+    if (
+        training_config.vol_gate_train_quantile is not None
+        and training_config.vol_gate_derivation == "shared_prior_reserve"
+    ):
+        if not training_config.vol_gate_feature:
+            raise ValueError("vol_gate_train_quantile requires vol_gate_feature")
+        if training_config.vol_gate_feature not in effective_feature_names:
+            raise ValueError(f"--vol-gate-feature {training_config.vol_gate_feature!r} is not a trained feature")
+        _gate_min_from_first_fold, _vol_gate_proof = derive_shared_prior_volatility_gate(
+            build.labeled_rows, training_config.vol_gate_feature,
+            training_config.vol_gate_train_quantile, training_config, splits,
+        )
+        print(
+            f"[TRAIN] volatility gate: {training_config.vol_gate_feature} >= {_gate_min_from_first_fold:.8g} "
+            f"(quantile {training_config.vol_gate_train_quantile} of the shared-prior reserve; "
+            "applied to all folds)"
         )
     for fold_index, split in enumerate(splits):
         print(f"[TRAIN]   Fold {fold_index + 1}/{len(splits)}: train={len(split.train)}, val={len(split.validation)}, test={len(split.test)}")
@@ -1080,7 +1103,8 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
                     _gate_min_from_first_fold = _train_values[_rank]
                     print(
                         f"[TRAIN] volatility gate: {_key} >= {_gate_min_from_first_fold:.8g} "
-                        f"(quantile {training_config.vol_gate_train_quantile} of fold 0's train slice, "
+                        f"(quantile {training_config.vol_gate_train_quantile} of fold 0's train slice "
+                        "[historical fold0_train derivation], "
                         f"which precedes every test slice; applied to all folds)"
                     )
                 _fold_gate_min = _gate_min_from_first_fold
@@ -1164,10 +1188,13 @@ def run_training(input_path: Path | None, output_dir: Path, config: TrainingConf
     latency_report = inference_latency_report(final_selection.adapter, feature_matrix(build.labeled_rows, effective_feature_names))
     artifacts = write_training_artifacts(output_dir, build, splits, fold_results, final_selection.adapter, training_config, sample_intervals, uniqueness, final_selection, latency_report, captured_provenance)
     run_summary = training_summary(build, splits, fold_results, artifacts, training_config, uniqueness, final_selection, latency_report)
-    if _shared_threshold_proof is not None:
-        governance.ArtifactWriter(output_dir).write_json("shared_threshold_rule.json", _shared_threshold_proof)
+    if _shared_threshold_proof is not None or _vol_gate_proof is not None:
+        _derivation_proof = dict(_shared_threshold_proof or {})
+        if _vol_gate_proof is not None:
+            _derivation_proof["volatility_gate"] = _vol_gate_proof
+        governance.ArtifactWriter(output_dir).write_json("shared_threshold_rule.json", _derivation_proof)
         artifacts.append("shared_threshold_rule.json")
-        run_summary["shared_threshold_rule"] = _shared_threshold_proof
+        run_summary["shared_threshold_rule"] = _derivation_proof
         run_summary["artifacts"] = list(artifacts)
     print(f"[TRAIN] Training complete: {len(build.labeled_rows):,} rows, {len(splits)} folds, test_f1={run_summary.get('mean_test_f1', 0.0):.4f}")
     model_metadata = model_version_metadata(build, final_selection.adapter, training_config, final_selection)
@@ -2284,7 +2311,10 @@ def default_splits(n_rows: int, purge_gap: int, test_gap: int = 0) -> list[featu
 
 def configured_splits(n_rows: int, label_horizon: int, config: TrainingConfig, sample_intervals: Sequence[cv.SampleInterval]) -> list[object]:
     manager = cv.SplitManager()
-    reserve_rows = config.shared_prior_reserve_rows if config.shared_prior_threshold else 0
+    reserve_rows = config.shared_prior_reserve_rows if (
+        config.shared_prior_threshold
+        or (config.vol_gate_train_quantile is not None and config.vol_gate_derivation == "shared_prior_reserve")
+    ) else 0
     if reserve_rows >= n_rows:
         raise ValueError("shared_prior_reserve_rows must leave rows for walk-forward folds")
     splits = manager.get_splits(
@@ -2309,6 +2339,46 @@ def configured_splits(n_rows: int, label_horizon: int, config: TrainingConfig, s
         range(split.validation.start + reserve_rows, split.validation.stop + reserve_rows),
         range(split.test.start + reserve_rows, split.test.stop + reserve_rows),
     ) for split in splits if isinstance(split, features.Split)]
+
+
+def derive_shared_prior_volatility_gate(
+    rows: Sequence[dataset.LabeledRow], feature: str, quantile: float,
+    config: TrainingConfig, splits: Sequence[object],
+) -> tuple[float, dict[str, object]]:
+    """Derive one gate floor from the strictly pre-fold shared-prior reserve."""
+    if not splits or not isinstance(splits[0], features.Split):
+        raise ValueError("shared-prior volatility gate requires ordinary walk-forward splits")
+    reserve_stop = _min_index(_split_indices(splits[0].train))
+    if reserve_stop != config.shared_prior_reserve_rows:
+        raise AssertionError("shared-prior volatility reserve must end exactly at fold 0 train start")
+    values = sorted(
+        float(row.features[feature]) for row in rows[:reserve_stop]
+        if row.features.get(feature) is not None and isfinite(float(row.features[feature]))
+    )
+    if not values:
+        raise ValueError(f"--vol-gate-train-quantile needs finite {feature!r} values in the shared-prior reserve")
+    rank = min(len(values) - 1, int(quantile * len(values)))
+    cutoff = values[rank]
+    first_train = _split_indices(splits[0].train)
+    first_validation = _split_indices(splits[0].validation)
+    purge_gap = _min_index(first_validation) - _stop_exclusive(first_train)
+    test_starts = [_min_index(_split_indices(split.test)) for split in splits]
+    first_forbidden = min(test_starts) - purge_gap
+    if reserve_stop > first_forbidden:
+        raise AssertionError("shared-prior volatility reserve overlaps a test purge zone")
+    return cutoff, {
+        "rule": "quantile_of_shared_prior_reserve",
+        "derivation": "shared_prior_reserve",
+        "feature": feature,
+        "quantile": quantile,
+        "cutoff": cutoff,
+        "derivation_indices": {"start": 0, "stop_exclusive": reserve_stop, "count": reserve_stop},
+        "finite_feature_values": len(values),
+        "test_purge_boundary": first_forbidden,
+        "fold_test_starts": test_starts,
+        "assertion": "derivation_stop_exclusive <= min(fold_test_start) - purge_gap",
+        "assertion_passed": True,
+    }
 
 
 def fit_shared_prior_threshold_rule(
@@ -3274,6 +3344,10 @@ def training_summary(
             "minimum": training_config.vol_gate_min,
             "configured_minimum": training_config.vol_gate_min,
             "train_quantile": training_config.vol_gate_train_quantile,
+            "derivation": (
+                training_config.vol_gate_derivation
+                if training_config.vol_gate_train_quantile is not None else "configured_absolute_minimum"
+            ),
             # Per fold when the cutoff came from that fold's own train slice, so
             # the number that gated each result is on the record rather than
             # reconstructed from a config value that may not have been used.
