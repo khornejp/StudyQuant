@@ -23,7 +23,17 @@ UNTRACKED_CONTENT_MAX_BYTES = 1024 * 1024
 # sorted, normalized ``distribution==version`` set, not ``pip freeze`` text:
 # it is independent of install order and captures every installed wheel that
 # could affect imports or numerical/native behavior.
-PINNED_ENVIRONMENT_FINGERPRINT = "734b2e0ce8508d6ce7432914ee04f6dd32b7887083d2d5a488c69a9afc2477ef"
+#
+# Re-pinned 2026-08-21 after the deliberate CUDA enablement of venv_btcusdt:
+# ``torch==2.13.0+cu126`` was installed with
+# ``venv_btcusdt\\Scripts\\python.exe -m pip install torch==2.13.0+cu126
+# --index-url https://download.pytorch.org/whl/cu126``.  The added set was
+# torch 2.13.0+cu126 plus filelock 3.32.3, fsspec 2026.7.0, networkx 3.6.1,
+# setuptools 78.1.0, sympy 1.14.0, and sympy's mpmath 1.3.0 dependency.
+# Jinja2, MarkupSafe, and typing_extensions already satisfied torch's graph.
+# This splits run-of-record provenance from the former CPU/no-torch environment
+# ``734b2e0ce8508d6ce7432914ee04f6dd32b7887083d2d5a488c69a9afc2477ef``.
+PINNED_ENVIRONMENT_FINGERPRINT = "b7557fe9da19047e5d5e9135bd796ffe0ac7a26ccd9ac4857d5fc08547d0de7f"
 
 
 PIPELINE_STAGES = [
