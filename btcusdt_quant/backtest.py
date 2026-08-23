@@ -441,9 +441,10 @@ _BARRIER_MATCH_TOL = 1e-9
 # has not been re-pointed. Costs follow the account, not the adapter.)
 DEFAULT_MAKER_FEE_RATE_PER_SIDE = 0.0002
 DEFAULT_TAKER_FEE_RATE_PER_SIDE = 0.0006
+DEFAULT_COOLDOWN_BARS = 30
 # `fee_rate_per_side` throughout this module means the TAKER rate: it is what an
-# immediate fill pays, and the exit is modeled taker on every path. The maker
-# rate applies only to a resting-limit ENTRY (see _close_trade).
+# immediate fill pays.  The maker rate applies to every resting-limit leg
+# (entry and, in the limit-only default, exit; see _close_trade).
 DEFAULT_FEE_RATE_PER_SIDE = DEFAULT_TAKER_FEE_RATE_PER_SIDE
 DEFAULT_SLIPPAGE_RATE_PER_SIDE = 0.0002
 # Every way a trade can close. Which of these rest as limit orders decides the
@@ -1270,7 +1271,7 @@ def run_backtest(
     tp_sl_method: str = "fixed_pct",
     label_horizon: int = 60,
     min_hold_bars: int = 0,
-    cooldown_bars: int = 30,
+    cooldown_bars: int = DEFAULT_COOLDOWN_BARS,
     long_threshold: float | None = None,
     short_threshold: float | None = None,
     exec_tp_pct: float | None = None,
@@ -1441,6 +1442,9 @@ def run_backtest(
         "backtest_start": start_date,
         "backtest_end": end_date,
         "execution_horizon": label_horizon,
+        # The post-exit lockout is independent of the single-position rule and
+        # changes the candidate population, so retain it with the run settings.
+        "cooldown_bars": cooldown_bars,
         # A binary TP-before-SL probability cannot price timeouts. Record this
         # waiver on every replay so a historical result can prove whether it
         # used the binary-only EV admission path.
@@ -2763,6 +2767,7 @@ def compare_strategies(
     short_exec_sl_pct: float | None = None,
     threshold_floor: float = 0.0,
     label_horizon: int = 60,
+    cooldown_bars: int = DEFAULT_COOLDOWN_BARS,
     maker_exit_outcomes: Sequence[str] | None = None,
     range_gate_edge: float = DEFAULT_RANGE_GATE_EDGE,
     allow_barrier_mismatch: bool = False,
@@ -2905,6 +2910,7 @@ def compare_strategies(
             short_exec_sl_pct=short_exec_sl_pct,
             threshold_floor=threshold_floor,
             label_horizon=label_horizon,
+            cooldown_bars=cooldown_bars,
             allow_barrier_mismatch=allow_barrier_mismatch,
         )
 

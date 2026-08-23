@@ -1403,6 +1403,31 @@ def resolve_maker_exit_outcomes(args: argparse.Namespace) -> tuple[str, ...]:
     return tuple(part.strip().upper() for part in args.maker_exit_outcomes.split(",") if part.strip())
 
 
+def validate_backtest_execution_geometry(args: argparse.Namespace) -> None:
+    """Refuse incomplete fixed-barrier flags before loading/building the dataset.
+
+    ``execution_strategies`` repeats this validation for library callers.  The
+    CLI must do it here because a multi-year feature build can otherwise finish
+    before the configuration error is reported, which looks exactly like a run
+    that stopped without producing an artifact.
+    """
+    common = (args.exec_tp_pct, args.exec_sl_pct)
+    per_side = (
+        args.long_exec_tp_pct,
+        args.long_exec_sl_pct,
+        args.short_exec_tp_pct,
+        args.short_exec_sl_pct,
+    )
+    if any(value is not None for value in common) and any(value is None for value in common):
+        raise ValueError("--exec-tp-pct and --exec-sl-pct must be supplied together")
+    if any(value is not None for value in per_side) and any(value is None for value in per_side):
+        raise ValueError(
+            "per-side execution geometry requires all four flags: "
+            "--long-exec-tp-pct, --long-exec-sl-pct, --short-exec-tp-pct, and --short-exec-sl-pct. "
+            "For a short-only run that uses one geometry, use --exec-tp-pct and --exec-sl-pct instead."
+        )
+
+
 def run_edge_validate(
     input_path: str | None,
     output: Path,
@@ -1788,12 +1813,13 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--metrics-dir", default=None, help="directory of downloaded Binance metrics archive (collect-metrics output) -- pass the SAME directory used for training's --metrics-dir. Training with metrics and backtesting without them feeds the model F16 derivatives-metrics features (open interest change rates/z-scores, long/short ratios, taker ratio) as 0.0 -- inputs it never saw in training (train/serve feature skew). Without this flag those features are 0 in the backtest.")
     backtest_parser.add_argument("--funding-dir", default=None, help="directory of downloaded funding-rate archives (collect-funding output). Funding is the only model input that is NOT a transform of OHLCV -- every other feature rearranges the same price series -- so it is the one axis that adds information rather than reshuffling it. Measured 2020-2026H1 its correlation with the forward return is negative in every window and horizon (crowded longs precede weaker returns), small but sign-stable, and strongest exactly where the price features collapsed. Pass the SAME directory to train and to backtest: training with funding and backtesting without it feeds the model fallback constants it never saw (train/serve skew), which is the same trap --metrics-dir carries.")
     backtest_parser.add_argument("--premium-index-dir", default=None, help="directory of downloaded premiumIndexKlines archives used during training; align and merge under premium_index_1m for backtest feature parity.")
-    backtest_parser.add_argument("--fee-rate-per-side", type=float, default=None, help="override the per-side TAKER fee fraction (default 0.0006 = 0.06%%, Bitget USDT-M VIP0 -- the real account). This is what an immediate fill pays, and the exit is modeled taker on every path. Together with --slippage-rate-per-side this sets the executed round-trip cost; keep 2*(fee+slippage) equal to training's --round-trip-cost so the threshold objective and execution share one cost basis.")
+    backtest_parser.add_argument("--fee-rate-per-side", type=float, default=None, help="override the per-side TAKER fee fraction (default 0.0006 = 0.06%%, Bitget USDT-M VIP0). It applies only to legs configured to cross the spread. The default execution is limit-only and pays two maker fees (0.0004 round trip), matching training's default --round-trip-cost.")
     backtest_parser.add_argument("--maker-exit", action="store_true", help="shorthand for --maker-exit-outcomes tp,sl,timeout,open_at_end: price EVERY exit as a resting limit. The most generous assumption available; prefer naming the outcomes you actually believe rest.")
-    backtest_parser.add_argument("--maker-exit-outcomes", default=None, help="comma-separated exit outcomes priced as resting limits (maker fee, no slippage) instead of immediate fills: any of tp,sl,timeout,open_at_end. Default: none, every exit is taker. Bitget lets TP/SL be attached as limit orders at open, so a resting exit is representable -- but the outcomes are not equally credible. tp is honest (price reached your level, your limit was resting there). sl is optimistic in the tail: a resting limit fills only if someone crosses it, and the fast one-way move that triggers a stop is exactly the one that blows through the level, leaving you still in and losing more than sl_pct. timeout is a horizon market-close unless the strategy deliberately rests a limit near the horizon -- that is a different strategy, not a cost setting. On the 30m long the mix is TP 13.4%%/SL 29.8%%/TIMEOUT 56.8%% and break-even needs ~44%% resting, so this flag decides the verdict rather than trimming it. Report which outcomes you assumed.")
+    backtest_parser.add_argument("--maker-exit-outcomes", default=None, help="comma-separated exit outcomes priced as resting limits (maker fee, no slippage) instead of immediate fills: any of tp,sl,timeout,open_at_end. Default: all outcomes (limit-only execution). An explicit empty string requests taker exits. Bitget lets TP/SL be attached as limit orders at open, so a resting exit is representable -- but the outcomes are not equally credible. tp is the clearest case; a resting SL can miss in a fast move, and a timeout limit is a different strategy that can miss its horizon. Report which outcomes you assumed.")
     backtest_parser.add_argument("--maker-fee-rate-per-side", type=float, default=None, help="override the per-side MAKER fee fraction (default 0.0002 = 0.02%%, Bitget USDT-M VIP0). Applies only to a resting-limit ENTRY under --maker-fill-window (and to the exit under --maker-exit); set it negative only if the account genuinely has a maker rebate. Not the same number as --fee-rate-per-side -- charging the maker rate for taker fills under-counted every taker round trip by 8bps before 2026-07-30.")
-    backtest_parser.add_argument("--slippage-rate-per-side", type=float, default=None, help="override the per-side slippage fraction (default 0.0002 = 0.02%%). See --fee-rate-per-side.")
+    backtest_parser.add_argument("--slippage-rate-per-side", type=float, default=None, help="override the per-side slippage fraction for legs that cross the spread (default 0.0002 = 0.02%%). It is not charged to resting maker legs; the limit-only default therefore has zero slippage.")
     backtest_parser.add_argument("--horizon", type=int, default=60, help="max holding bars before forced TIMEOUT exit (minutes for 1m data). MUST match the training --horizon so backtest execution and triple-barrier labels share the same time barrier (a train horizon of 120 with a backtest horizon of 60 silently misaligns label vs execution). Default 60 = training default.")
+    backtest_parser.add_argument("--cooldown-bars", type=int, default=backtest.DEFAULT_COOLDOWN_BARS, help="post-exit bars to lock out before a new entry (default 30, preserving historical backtests). This is separate from the one-position rule: 0 permits a new entry on the bar after exit; use a positive value only as an explicit operational/risk policy.")
     backtest_parser.add_argument("--threshold-floor", type=float, default=0.0, help="hard lower bound on the learned/strategy entry thresholds (does NOT clamp an explicit --long/--short-threshold override). Learned selected_thresholds can drop to ~0.32 on weak models; e.g. --threshold-floor 0.45 keeps entries above a minimum confidence so sub-cost signals don't flood the backtest. Default 0 = disabled.")
     backtest_parser.add_argument("--entry-quantile", type=float, default=None, help='enter the top FRACTION of bars by model probability instead of using a fixed cutoff -- 0.05 means the most confident 5%% of bars. The cutoff is recomputed every bar from the probabilities seen BEFORE it (strictly past-only), so it holds selectivity constant while the score distribution moves. A fixed number does the opposite: on 2026 H1 the horizon-return model kept its ranking (top 2%% still separated from top 10%%) while the level drifted, so the same 0.51 cutoff selected a different slice than it did in training. Requires a two-sided/bundle model: on the single-model path --short-threshold is a LOW cutoff on the same score, where a high-side quantile would be backwards. Cannot be combined with an explicit --long-threshold/--short-threshold.')
     backtest_parser.add_argument("--entry-quantile-window", type=int, default=0, help='bars of history the --entry-quantile cutoff is measured over. 0 = expanding (all history), which is causal but nearly inert here: 2.65M rows are already banked from 2020-2025, so 2026 H1 barely moves the quantile and expanding reproduces a fixed threshold at greater cost. A finite window is what tracks the shift -- e.g. 129600 is 90 days of 1m bars. The length is a free parameter: choose it before looking at the evaluation window, and report it, because sweeping it against the result is threshold fitting under another name.')
@@ -2350,6 +2376,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "backtest":
         output = Path(args.output)
         try:
+            validate_backtest_execution_geometry(args)
             input_path = Path(args.input) if args.input else None
             if input_path is not None:
                 if input_path.suffix.lower() == ".parquet":
@@ -2675,11 +2702,22 @@ def main(argv: list[str] | None = None) -> int:
             # meaningless without the fee tier it assumed, and this project has
             # already published numbers that quietly used the maker rate for
             # taker fills. Show what the run will actually charge.
-            _maker_rt = resolved_maker_fee + resolved_fee + resolved_slippage
+            resolved_maker_exits = resolve_maker_exit_outcomes(args)
+            _entry_is_maker = args.maker_fill_window > 0
+            _all_exits_maker = frozenset(resolved_maker_exits) >= backtest.EXIT_OUTCOMES
+            _executed_rt = (
+                (resolved_maker_fee if _entry_is_maker else resolved_fee)
+                + (resolved_maker_fee if _all_exits_maker else resolved_fee)
+                + (0.0 if _entry_is_maker else resolved_slippage)
+                + (0.0 if _all_exits_maker else resolved_slippage)
+            )
+            _entry_label = "maker" if _entry_is_maker else "taker"
+            _exit_label = "maker" if _all_exits_maker else "mixed/taker"
             print(
                 f"[BACKTEST] cost basis: taker_fee={resolved_fee} maker_fee={resolved_maker_fee} "
-                f"slippage={resolved_slippage} | taker round_trip={2.0 * (resolved_fee + resolved_slippage)}"
-                + (f", maker-entry round_trip={_maker_rt}" if args.maker_fill_window > 0 else "")
+                f"slippage={resolved_slippage} | configured round_trip={_executed_rt} "
+                f"({_entry_label} entry + {_exit_label} exit; resting legs have zero slippage), "
+                f"taker round_trip={2.0 * (resolved_fee + resolved_slippage)}"
             )
             comparison = backtest.compare_strategies(
                 candles,
@@ -2689,7 +2727,7 @@ def main(argv: list[str] | None = None) -> int:
                 range_gate_edge=args.range_gate_edge,
                 fee_rate_per_side=resolved_fee,
                 maker_fee_rate_per_side=resolved_maker_fee,
-                maker_exit_outcomes=resolve_maker_exit_outcomes(args),
+                maker_exit_outcomes=resolved_maker_exits,
                 slippage_rate_per_side=resolved_slippage,
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,
@@ -2707,6 +2745,7 @@ def main(argv: list[str] | None = None) -> int:
                 short_exec_sl_pct=args.short_exec_sl_pct,
                 threshold_floor=args.threshold_floor,
                 label_horizon=args.horizon,
+                cooldown_bars=args.cooldown_bars,
                 feature_rows=shared_feature_rows,
                 allow_barrier_mismatch=args.allow_barrier_mismatch,
                 # Forwarded, not dropped. Without these the comparison scored
@@ -2749,7 +2788,7 @@ def main(argv: list[str] | None = None) -> int:
                 range_gate_edge=args.range_gate_edge,
                 fee_rate_per_side=resolved_fee,
                 maker_fee_rate_per_side=resolved_maker_fee,
-                maker_exit_outcomes=resolve_maker_exit_outcomes(args),
+                maker_exit_outcomes=resolved_maker_exits,
                 slippage_rate_per_side=resolved_slippage,
                 models_by_regime=models_by_regime,
                 user_regime_periods=user_regime_periods,
@@ -2774,6 +2813,7 @@ def main(argv: list[str] | None = None) -> int:
                 long_only=args.long_only,
                 execution_side=execution_side,
                 label_horizon=args.horizon,
+                cooldown_bars=args.cooldown_bars,
                 precomputed_routing_diagnostics=shared_routing_diag,
                 regime_detector=regime_detector,
                 regime_classifier_model=regime_classifier_model,
@@ -2801,6 +2841,9 @@ def main(argv: list[str] | None = None) -> int:
                 # Recorded so a result can be audited against the training
                 # --horizon (label/execution time-barrier alignment).
                 "label_horizon": args.horizon,
+                # Top-level as well as result.run_config/provenance, so a
+                # reader can identify the lockout policy without inference.
+                "cooldown_bars": args.cooldown_bars,
             }
             output.mkdir(parents=True, exist_ok=True)
             persist_backtest_provenance_patch(output, result)

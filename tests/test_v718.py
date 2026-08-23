@@ -2561,6 +2561,12 @@ class TestBacktest(unittest.TestCase):
         args = parser.parse_args(["backtest", "--output", "artifacts/backtest"])
         self.assertEqual(args.command, "backtest")
         self.assertEqual(args.output, "artifacts/backtest")
+        self.assertEqual(args.cooldown_bars, backtest.DEFAULT_COOLDOWN_BARS)
+
+    def test_backtest_cli_accepts_cooldown_bars_override(self) -> None:
+        from btcusdt_quant.cli import build_parser
+        args = build_parser().parse_args(["backtest", "--cooldown-bars", "0"])
+        self.assertEqual(args.cooldown_bars, 0)
 
     def test_backtest_cli_runs(self) -> None:
         from btcusdt_quant.cli import main

@@ -2928,11 +2928,12 @@ class MakerFillTests(unittest.TestCase):
 
         accepted = inspect.signature(_bt.compare_strategies).parameters
         for option in ("entry_quantile", "vol_gate_feature", "trend_filter_sma_bars",
-                       "long_only", "entry_quantile_warmup"):
+                       "long_only", "entry_quantile_warmup", "cooldown_bars"):
             self.assertIn(option, accepted, f"{option} never reaches compare_strategies")
         src = inspect.getsource(_cli.main)
         for arg in ("entry_quantile=args.entry_quantile", "vol_gate_feature=args.vol_gate_feature",
-                    "trend_filter_sma_bars=args.trend_filter_sma_bars", "long_only=args.long_only"):
+                    "trend_filter_sma_bars=args.trend_filter_sma_bars", "long_only=args.long_only",
+                    "cooldown_bars=args.cooldown_bars"):
             self.assertIn(arg, src)
 
         # Every requested arm gets the complete entry configuration.  Stub the
@@ -2942,7 +2943,7 @@ class MakerFillTests(unittest.TestCase):
                 _linear_candles(240), self._AlwaysLong(),
                 entry_quantile=0.02, entry_quantile_window=80,
                 entry_quantile_warmup=40, vol_gate_feature="rv_15",
-                vol_gate_min=0.001, trend_filter_sma_bars=30, long_only=True,
+                vol_gate_min=0.001, trend_filter_sma_bars=30, long_only=True, cooldown_bars=0,
             )
         self.assertEqual(runner.call_count, 3)
         for call in runner.call_args_list:
@@ -2953,6 +2954,7 @@ class MakerFillTests(unittest.TestCase):
             self.assertEqual(call.kwargs["vol_gate_min"], 0.001)
             self.assertEqual(call.kwargs["trend_filter_sma_bars"], 30)
             self.assertTrue(call.kwargs["long_only"])
+            self.assertEqual(call.kwargs["cooldown_bars"], 0)
 
         # Under a quantile the thresholds collapse, so profiles differing ONLY
         # in threshold are indistinguishable...
@@ -4001,6 +4003,21 @@ class ShortOnlyExecutionTests(unittest.TestCase):
                     "backtest", "--model-artifact", str(artifact), "--side", "short",
                     "--output", str(root / "out"),
                 ])
+
+    def test_cli_rejects_incomplete_per_side_geometry_before_loading_input(self) -> None:
+        # This must fail before a multi-year feature build.  Previously the
+        # identical configuration appeared to stop after the cost log because
+        # the rejection happened only inside run_backtest.
+        from btcusdt_quant import cli
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = cli.main([
+                "backtest", "--input", "does-not-need-to-exist.parquet",
+                "--short-exec-tp-pct", "0.006", "--short-exec-sl-pct", "0.012",
+            ])
+        self.assertEqual(code, 1)
+        self.assertIn("all four flags", stderr.getvalue())
+        self.assertIn("--exec-tp-pct and --exec-sl-pct", stderr.getvalue())
 
     def test_loaded_standalone_geometry_enforces_barrier_parity(self) -> None:
         # New payload fields survive load and turn a previously unauditable
