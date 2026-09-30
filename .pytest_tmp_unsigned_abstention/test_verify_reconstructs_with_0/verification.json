@@ -1,0 +1,9 @@
+{
+  "status": "PASS",
+  "verified_phase": "ordering_audit_only",
+  "fit_calls": 0,
+  "new_model_fits": 0,
+  "new_backtests": 0,
+  "new_orders": 0,
+  "aggregate_pnl_computations": 0
+}

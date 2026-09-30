@@ -1509,6 +1509,13 @@ class TestStrategy(unittest.TestCase):
         self.assertEqual(fixed_decision["pricing_method"], "fixed_pct")
         self.assertEqual(atr_decision["pricing_method"], "atr_pct")
 
+    def test_strategy_rejects_non_finite_numeric_values(self) -> None:
+        strategy = live.StrategyConfig("test", 0.5, 0.5, 0.010, 0.005, 2.0, 1.0, 1.0)
+        for field in ("tp_pct", "sl_pct", "atr_multiplier_tp", "atr_multiplier_sl",
+                      "min_reward_risk", "min_tp_floor_pct", "min_sl_floor_pct"):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "finite"):
+                replace(strategy, **{field: float("nan")})
+
     def test_live_summary_includes_strategy(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "live"

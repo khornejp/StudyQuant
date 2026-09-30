@@ -1766,7 +1766,7 @@ def _ohlc_candles(specs):
 
 class MakerFillTests(unittest.TestCase):
     """--maker-fill-window: resting-limit entries with adverse selection and
-    missed (unfilled) orders, vs the default instant taker fill."""
+    missed (unfilled) orders, or 0 for an instant taker fill."""
 
     class _AlwaysLong:
         def probability(self, values) -> float:
@@ -1811,7 +1811,7 @@ class MakerFillTests(unittest.TestCase):
         expected = sum(t.pnl_pct for t in result.trades) / len(result.trades) * 1e4
         self.assertAlmostEqual(result.mean_net_bps_per_trade, expected)
 
-    def test_maker_fills_when_price_returns_and_waives_entry_cost(self) -> None:
+    def test_maker_fills_when_price_returns_and_charges_maker_fee(self) -> None:
         # bar 0 signals BUY -> limit at close 100. bar 1 dips to low 99 <= 100
         # -> fill at 100 on bar 1 (a LATER bar), entry_maker True.
         specs = [(100.0, 100.2, 99.8, 100.0)]              # signal bar
@@ -2914,6 +2914,16 @@ class MakerFillTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run_backtest(candles, model=_ShortModel(), long_only=True, **common)
 
+        class _ShortRising(_Rising):
+            train_target = "short_profitability"
+
+        short = run_backtest(
+            candles, model=_ShortRising(), execution_side="short",
+            entry_quantile=0.5, entry_quantile_warmup=5, **common,
+        )
+        self.assertGreater(short.signal_counts["SELL"], 0)
+        self.assertEqual(short.signal_counts["BUY"], 0)
+
     def test_strategy_comparison_uses_the_options_the_run_uses(self) -> None:
         # compare_strategies took none of the entry-affecting options, so with a
         # gate, a quantile, a trend filter or long-only active it scored
@@ -2928,12 +2938,19 @@ class MakerFillTests(unittest.TestCase):
 
         accepted = inspect.signature(_bt.compare_strategies).parameters
         for option in ("entry_quantile", "vol_gate_feature", "trend_filter_sma_bars",
-                       "long_only", "entry_quantile_warmup", "cooldown_bars"):
+                       "long_only", "entry_quantile_warmup", "cooldown_bars",
+                       "long_threshold", "short_threshold", "maker_fill_window",
+                       "maker_fill_penetration", "maker_gap_pre_correction_replay",
+                       "range_gate_enabled"):
             self.assertIn(option, accepted, f"{option} never reaches compare_strategies")
         src = inspect.getsource(_cli.main)
         for arg in ("entry_quantile=args.entry_quantile", "vol_gate_feature=args.vol_gate_feature",
                     "trend_filter_sma_bars=args.trend_filter_sma_bars", "long_only=args.long_only",
-                    "cooldown_bars=args.cooldown_bars"):
+                    "cooldown_bars=args.cooldown_bars", "long_threshold=args.long_threshold",
+                    "short_threshold=args.short_threshold", "maker_fill_window=args.maker_fill_window",
+                    "maker_fill_penetration=args.maker_fill_penetration_bps / 1e4",
+                    "maker_gap_pre_correction_replay=args.maker_gap_pre_correction_replay",
+                    "range_gate_enabled=not args.disable_range_gate"):
             self.assertIn(arg, src)
 
         # Every requested arm gets the complete entry configuration.  Stub the
@@ -2944,6 +2961,9 @@ class MakerFillTests(unittest.TestCase):
                 entry_quantile=0.02, entry_quantile_window=80,
                 entry_quantile_warmup=40, vol_gate_feature="rv_15",
                 vol_gate_min=0.001, trend_filter_sma_bars=30, long_only=True, cooldown_bars=0,
+                long_threshold=0.7, short_threshold=0.2, maker_fill_window=0,
+                maker_fill_penetration=0.0002, maker_gap_pre_correction_replay=True,
+                range_gate_enabled=False,
             )
         self.assertEqual(runner.call_count, 3)
         for call in runner.call_args_list:
@@ -2955,6 +2975,12 @@ class MakerFillTests(unittest.TestCase):
             self.assertEqual(call.kwargs["trend_filter_sma_bars"], 30)
             self.assertTrue(call.kwargs["long_only"])
             self.assertEqual(call.kwargs["cooldown_bars"], 0)
+            self.assertEqual(call.kwargs["long_threshold"], 0.7)
+            self.assertEqual(call.kwargs["short_threshold"], 0.2)
+            self.assertEqual(call.kwargs["maker_fill_window"], 0)
+            self.assertEqual(call.kwargs["maker_fill_penetration"], 0.0002)
+            self.assertTrue(call.kwargs["maker_gap_pre_correction_replay"])
+            self.assertFalse(call.kwargs["range_gate_enabled"])
 
         # Under a quantile the thresholds collapse, so profiles differing ONLY
         # in threshold are indistinguishable...
@@ -4206,6 +4232,9 @@ if __name__ == "__main__":
 def test_side_specific_geometry_rejects_partial_input_and_refuses_legacy_artifacts() -> None:
     """A side-specific request must never turn into a copied shared barrier."""
     from btcusdt_quant import backtest as _bt, dataset as _ds
+
+    with pytest.raises(ValueError, match="must be supplied together"):
+        _bt.execution_strategies(live.strategy_for_regime(None, "balanced"), 0.004, None)
 
     with pytest.raises(ValueError, match="no side inherits"):
         _ds.attach_labels([], [], horizon=1, label_threshold=0.001, long_tp_pct=0.004)

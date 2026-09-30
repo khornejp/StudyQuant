@@ -1,0 +1,11 @@
+{
+  "source_sha256": {
+    "D:\\StudyQuant\\.pytest_tmp_fixed_fade_a1b\\test_verify_refuses_a_changed_0\\input.txt": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "input_parquet_sha256": {},
+  "input_other_sha256": {},
+  "plan_sha256": "699ba1e45d052426abb5feddd4609e783c9feb4c061883fbc4b4ee626b4dab93",
+  "evaluated_folds": [
+    406
+  ]
+}

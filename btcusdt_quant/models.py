@@ -905,7 +905,7 @@ class CentroidLinearClassifier:
 
 
 class ModelFactory:
-    SUPPORTED_FAMILIES: tuple[str, ...] = ("lightgbm", "catboost", "auto", "stacking_ensemble", "pytorch_multitask")
+    SUPPORTED_FAMILIES: tuple[str, ...] = ("lightgbm", "catboost", "auto", "stacking_ensemble", "pytorch_multitask", "pytorch_gru")
 
     def create(
         self,
@@ -978,7 +978,6 @@ class ModelFactory:
             return multitask_nn.MultitaskNNAdapter(
                 input_dim=int(params.get("input_dim", 0)),
                 hidden_dims=tuple(int(v) for v in params.get("hidden_dims", [128, 64])),
-                task=str(params.get("task", "profitability")),
                 feature_names=tuple(feature_names) if feature_names is not None else (),
                 epochs=int(params.get("epochs", 100)),
                 batch_size=int(params.get("batch_size", 256)),
@@ -986,6 +985,9 @@ class ModelFactory:
                 weight_decay=float(params.get("weight_decay", 1e-5)),
                 early_stopping_patience=int(params.get("early_stopping_patience", 10)),
             )
+        if family == "pytorch_gru":
+            from .gru import GRUAdapter
+            return GRUAdapter() if feature_names is None else GRUAdapter(feature_names=tuple(feature_names))
         raise ValueError(f"unsupported model family: {family}")
 
     def _is_available(self, family: str) -> bool:
@@ -993,7 +995,7 @@ class ModelFactory:
             return LightGBMAdapter.available()
         if family == "catboost":
             return CatBoostAdapter.available()
-        if family == "pytorch_multitask":
+        if family in {"pytorch_multitask", "pytorch_gru"}:
             return _pytorch_available()
         return family in {"stacking_ensemble"}
 
@@ -1027,6 +1029,8 @@ def _candidate_families(requested: str, fallback_allowed: bool) -> tuple[str, ..
         chain = ("catboost", "pytorch_multitask")
     elif requested == "pytorch_multitask":
         chain = ("pytorch_multitask", "catboost")
+    elif requested == "pytorch_gru":
+        chain = ("pytorch_gru",)
     else:
         raise ValueError(f"unsupported model family: {requested}")
     return chain if fallback_allowed else (chain[0],)
@@ -1042,7 +1046,7 @@ def _normalize_family(family: str) -> str:
 
 
 def _module_name(family: str) -> str:
-    return {"lightgbm": "lightgbm", "catboost": "catboost", "pytorch_multitask": "torch"}[family]
+    return {"lightgbm": "lightgbm", "catboost": "catboost", "pytorch_multitask": "torch", "pytorch_gru": "torch"}[family]
 
 
 def _pytorch_available() -> bool:

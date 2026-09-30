@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from collections import deque
 from dataclasses import asdict, dataclass, field
@@ -9,7 +10,7 @@ from math import isfinite
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from . import data, dataset, governance, live, risk
+from . import data, dataset, governance, live, models, risk
 
 
 def _parse_end_exclusive(value: str):
@@ -292,6 +293,8 @@ def execution_strategies(
     short_exec_sl_pct: float | None = None,
 ) -> tuple[live.StrategyConfig, live.StrategyConfig, live.StrategyConfig]:
     """Resolve shared, long, and short execution geometry once."""
+    if (exec_tp_pct is None) != (exec_sl_pct is None):
+        raise ValueError("exec_tp_pct and exec_sl_pct must be supplied together")
     side_values = (long_exec_tp_pct, long_exec_sl_pct, short_exec_tp_pct, short_exec_sl_pct)
     if any(value is not None for value in side_values) and any(value is None for value in side_values):
         raise ValueError("per-side execution geometry requires all four long/short TP/SL values; no side inherits another")
@@ -545,6 +548,16 @@ apply_range_mean_reversion_gate = live.apply_range_mean_reversion_gate
 DEFAULT_RANGE_GATE_EDGE = live.DEFAULT_RANGE_GATE_EDGE
 
 
+def load_model_artifact(path: Path | None, strict: bool = False) -> models.ModelAdapter | None:
+    """Load research-only GRU artifacts here; the live loader refuses them."""
+    if path is not None and path.exists():
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, Mapping) and payload.get("model_family") == "pytorch_gru":
+            from .gru import GRUAdapter
+            return GRUAdapter.from_dict(payload)
+    return live.load_model_artifact(path, strict=strict)
+
+
 @dataclass(frozen=True)
 class CandidateIdentity:
     """Stable signal identity shared by every funnel transition."""
@@ -685,8 +698,8 @@ class BacktestResult:
     # on a clean run; a genuine unapproved mismatch raises instead of landing
     # here.
     barrier_warnings: list[str] = field(default_factory=list)
-    # Maker limit-fill accounting (empty when maker_fill_window == 0, i.e. the
-    # default instant taker fill). placed/filled/unfilled let a reader see the
+    # Maker limit-fill accounting (empty when maker_fill_window == 0 selects an
+    # instant taker fill). placed/filled/unfilled let a reader see the
     # fill rate and how many signals were lost to unfilled limits -- the
     # missed trades that erode a maker strategy's edge.
     maker_fill_diagnostics: dict[str, object] = field(default_factory=dict)
@@ -1342,9 +1355,9 @@ def run_backtest(
     short_threshold: override strategy short threshold (default uses strategy.short_threshold)
     maker_exit_outcomes: which EXIT outcomes price as a resting limit (maker
         fee, no slippage) instead of an immediate fill; any subset of
-        EXIT_OUTCOMES, empty/None = all exits taker. Bitget lets TP/SL be
-        attached as limit orders when the position is opened, so a resting exit
-        is representable there.
+        EXIT_OUTCOMES. None = the limit-only default (all exits maker); an empty
+        sequence makes every exit taker. Bitget lets TP/SL be attached as limit
+        orders when the position is opened, so a resting exit is representable.
 
         It is per-outcome because the outcomes are not equally credible, and
         the mix decides the verdict rather than decorating it:
@@ -1515,10 +1528,9 @@ def run_backtest(
             "kind": "canonical_candle_series",
         })
     # A rolling-quantile cutoff needs its own state per side, built once and
-    # advanced bar by bar. Only the two-sided/bundle path gets one: on the
-    # single-model path `short_threshold` is a LOW cutoff on the same score
-    # ("prob below this => SELL"), so a high-side quantile there would be
-    # backwards, and it is refused at the CLI rather than silently applied.
+    # advanced bar by bar. Explicit one-sided runs use the artifact's recorded
+    # train_target to prove which side a high score represents; an ambiguous
+    # single-model two-sided run is refused at the CLI.
     # Trailing simple moving average of close, for the direction filter. Built
     # with a running sum so a 200-day window over three million 1m bars stays
     # linear. Bars before the window fills get None and are refused, not waved
@@ -1546,10 +1558,8 @@ def run_backtest(
         )
     quantile_thresholds = None
     if entry_quantile is not None:
-        # No short estimator in a long-only run: the short cutoff would be
-        # maintained, reported and never used, and on the single-model path it
-        # is a LOW cutoff on the same score, where a top-fraction quantile
-        # gates backwards.
+        # No short estimator in a long-only run: maintaining and reporting an
+        # unused short cutoff would be misleading.
         quantile_thresholds = QuantileEntryThresholds(
             long=RollingQuantileThreshold(1.0 - entry_quantile, window=entry_quantile_window,
                                           warmup=entry_quantile_warmup),
@@ -1900,6 +1910,8 @@ def run_backtest(
         )
 
     last_in_window_candle = None
+    if getattr(model, "model_family", None) == "pytorch_gru":
+        model.reset_history()
     for i, candle in enumerate(candles):
         filled_resting_order_this_bar = False
         # Trade only inside [start_date, end_date) (features still use full history)
@@ -1939,6 +1951,13 @@ def run_backtest(
         # particular, mapping NaN through the low-score branch used to leave a
         # short-only run as HOLD but crash later when its NaN was bucketed.
         invalid_model_score = False
+        _sequence_probability: float | None = None
+        _sequence_ready = True
+        if getattr(model, "model_family", None) == "pytorch_gru" and i < len(feature_rows):
+            # The volatility gate blocks entry, not market history. A GRU must
+            # still observe every minute or its 60-bar input changes meaning.
+            _sequence_probability = float(model.probability(feature_rows[i].features))
+            _sequence_ready = bool(model.ready)
 
         # Volatility gate. Not a filter on WHICH bar looks best -- a refusal to
         # trade where the horizon's dispersion is too small for any realistic
@@ -1964,7 +1983,7 @@ def run_backtest(
 
         # Model inference (regime-aware if models_by_regime provided)
         signal = "HOLD"
-        if _vol_gated:
+        if _vol_gated or not _sequence_ready:
             pass  # never presented to the model; falls through as HOLD
         elif models_by_regime is not None and i < len(feature_rows):
             regime = feature_rows[i].user_regime
@@ -2101,7 +2120,7 @@ def run_backtest(
                         signal = "HOLD"
         elif model is not None and i < len(feature_rows):
             features_dict = feature_rows[i].features
-            prob = model.probability(features_dict)
+            prob = _sequence_probability if _sequence_probability is not None else model.probability(features_dict)
             try:
                 prob = float(prob)
                 invalid_model_score = not isfinite(prob) or not 0.0 <= prob <= 1.0
@@ -2341,7 +2360,7 @@ def run_backtest(
 
         # ---- Enter new trade ----
         if maker_fill_window <= 0:
-            # Default: instant taker fill at the signal-bar close.
+            # Crossing mode: instant taker fill at the signal-bar close.
             if active_trade is None and signal in {"BUY", "SELL"} and i >= next_entry_index:
                 _record_stage_predicate("admission", candidate_observation["identity"], True)
                 _record_filter_survivor("admission", candidate_observation)
@@ -2657,15 +2676,20 @@ def run_backtest(
                 },
             },
         }
-    if quantile_thresholds is not None and quantile_thresholds.long is not None:
+    if quantile_thresholds is not None:
         # A warmup longer than the stream produces zero trades and no error, and
         # a run that traded nothing reads exactly like a filter working
         # perfectly. Say which it was.
-        seen = quantile_thresholds.long.observations
-        if quantile_thresholds.long.threshold() is None:
+        active_quantile = (
+            quantile_thresholds.short
+            if execution_side == "short"
+            else quantile_thresholds.long
+        )
+        if active_quantile is not None and active_quantile.threshold() is None:
             print(
-                f"WARNING: the entry quantile never left warmup -- {seen:,} observations against a "
-                f"warmup of {quantile_thresholds.long.warmup:,}, so NO bar was ever eligible to trade. "
+                f"WARNING: the entry quantile never left warmup -- {active_quantile.observations:,} "
+                f"observations against a warmup of {active_quantile.warmup:,}, so NO bar was ever eligible "
+                f"to trade. "
                 f"This run says nothing about the strategy. Shorten the warmup or widen the stream "
                 f"(a volatility gate feeds the estimator only the bars it passes).",
                 file=sys.stderr,
@@ -2779,6 +2803,12 @@ def compare_strategies(
     trend_filter_sma_bars: int = 0,
     long_only: bool = False,
     execution_side: str = "both",
+    long_threshold: float | None = None,
+    short_threshold: float | None = None,
+    maker_fill_window: int = DEFAULT_MAKER_FILL_WINDOW,
+    maker_fill_penetration: float = 0.0,
+    maker_gap_pre_correction_replay: bool = False,
+    range_gate_enabled: bool = True,
 ) -> dict[str, object]:
     """Backtest multiple strategies and return comparison.
 
@@ -2850,10 +2880,6 @@ def compare_strategies(
     # a useful fixed-size baseline next to the Kelly-sized main backtest) and say
     # why the other arms were dropped, instead of reporting three identical rows
     # and crowning a winner from a tie.
-    # long/short_threshold are None here on purpose: compare_strategies does not
-    # take the CLI overrides and does not pass them to run_backtest, so the arms
-    # resolve thresholds from the learned values or the profile. The fingerprint
-    # must be computed against the SAME inputs the arms will actually run with.
     degenerate = indistinguishable_profiles(
         strategies,
         models_by_regime=models_by_regime,
@@ -2864,6 +2890,8 @@ def compare_strategies(
         long_exec_sl_pct=long_exec_sl_pct,
         short_exec_tp_pct=short_exec_tp_pct,
         short_exec_sl_pct=short_exec_sl_pct,
+        long_threshold=long_threshold,
+        short_threshold=short_threshold,
         threshold_floor=threshold_floor,
         entry_quantile=entry_quantile,
     )
@@ -2891,6 +2919,8 @@ def compare_strategies(
             trend_filter_sma_bars=trend_filter_sma_bars,
             long_only=long_only,
             execution_side=execution_side,
+            long_threshold=long_threshold,
+            short_threshold=short_threshold,
             fee_rate_per_side=fee_rate_per_side,
             maker_fee_rate_per_side=maker_fee_rate_per_side,
             maker_exit_outcomes=maker_exit_outcomes,
@@ -2911,6 +2941,10 @@ def compare_strategies(
             threshold_floor=threshold_floor,
             label_horizon=label_horizon,
             cooldown_bars=cooldown_bars,
+            maker_fill_window=maker_fill_window,
+            maker_fill_penetration=maker_fill_penetration,
+            maker_gap_pre_correction_replay=maker_gap_pre_correction_replay,
+            range_gate_enabled=range_gate_enabled,
             allow_barrier_mismatch=allow_barrier_mismatch,
         )
 

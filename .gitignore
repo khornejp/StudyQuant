@@ -20,3 +20,25 @@ venv_btcusdt/
 catboost_info/
 .omo/
 test_results*.txt
+out/
+tmp_pytest_*/
+*.log
+*.pdf
+
+# Research notes and per-run plans, not source
+SESSION_STATE_*.md
+TODO_*.md
+*_PLAN_*.md
+*_PROTOCOL.md
+*_DIAGNOSTIC_*.md
+*_REDESIGN_*.md
+*_ANALYSIS.md
+*_CONCLUSION.md
+CODEBASE_LEARNING_*.md
+AUDIT_RESULT_TRUST.md
+QUANT_TRADE_MODEL_IMPROVEMENT.md
+analyze_no_edge.md
+
+# large external datasets and codex probe artifacts
+aoa_public_2021-12-31_with_letter/
+.apply_patch_probe

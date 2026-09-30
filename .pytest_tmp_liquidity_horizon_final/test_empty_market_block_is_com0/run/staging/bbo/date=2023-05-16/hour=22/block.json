@@ -1,0 +1,14 @@
+{
+  "files": [
+    {
+      "bytes": 1544,
+      "path": "part-00000.parquet",
+      "rows": 0,
+      "sha256": "ea29b1da9ccd36d3f25d28f9735a1bc20a0c90fb06884b7f9f58256f755b5a76"
+    }
+  ],
+  "kind": "bbo",
+  "max_time_ms": null,
+  "min_time_ms": null,
+  "rows": 0
+}

@@ -375,6 +375,13 @@ class StrategyConfig:
     use_atr_pricing: bool = True
 
     def __post_init__(self) -> None:
+        numeric_values = (
+            self.long_threshold, self.short_threshold, self.tp_pct, self.sl_pct,
+            self.atr_multiplier_tp, self.atr_multiplier_sl, self.min_reward_risk,
+            self.min_tp_floor_pct, self.min_sl_floor_pct,
+        )
+        if not all(isfinite(value) for value in numeric_values):
+            raise ValueError("strategy numeric values must be finite")
         if not 0.0 <= self.long_threshold <= 1.0:
             raise ValueError("long_threshold must be in [0, 1]")
         if not 0.0 <= self.short_threshold <= 1.0:
@@ -1539,6 +1546,8 @@ def load_model_artifact(path: Path | None, strict: bool = False) -> models.Model
             raise ValueError(f"model artifact is not a JSON object: {path}")
         return None
     model_family = str(payload.get("model_family", ""))
+    if model_family == "pytorch_gru":
+        raise ValueError("pytorch_gru artifacts are research/backtest-only and are explicitly refused by the live loader")
 
     def _with_side(adapter):
         """Carry execution-critical artifact metadata onto the loaded adapter.

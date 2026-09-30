@@ -38,6 +38,9 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
+import numpy as np
+import pandas as pd
+
 __all__ = [
     "FUNDING_BASE_URL",
     "FundingRow",
@@ -47,6 +50,7 @@ __all__ = [
     "dedup_funding_rows",
     "load_funding_dir",
     "funding_features_to_minutes",
+    "estimate_funding_rate_minutes",
 ]
 
 FUNDING_BASE_URL = "https://data.binance.vision/data/futures/um/monthly/fundingRate/BTCUSDT"
@@ -56,6 +60,53 @@ FUNDING_BASE_URL = "https://data.binance.vision/data/futures/um/monthly/fundingR
 # SCHEDULE is public and known in advance, so counting down to it is causal --
 # what is not knowable at time t is the RATE that settlement will print.
 DEFAULT_FUNDING_INTERVAL_MINUTES = 480
+
+
+def estimate_funding_rate_minutes(
+    premium_index: Sequence[float],
+    settled_rate: Sequence[float] | None = None,
+    *,
+    interval_hours: int = 8,
+    interest_rate: float = 0.0001,
+    damper: float = 0.0005,
+    cap: float | None = None,
+) -> np.ndarray:
+    """Causal 1m funding estimate from the trailing time-weighted premium.
+
+    This is an approximation: Binance calculates from 5s premium observations.
+    Missing 1m premium values carry only the last known value; initial missing
+    values fall back to the last settled rate when one is supplied.
+    """
+    if interval_hours <= 0:
+        raise ValueError("interval_hours must be positive")
+    if cap is not None and cap <= 0.0:
+        raise ValueError("cap must be positive")
+    premium = pd.Series(np.asarray(premium_index, dtype=float)).ffill().to_numpy()
+    fallback = None if settled_rate is None else np.asarray(settled_rate, dtype=float)
+    if fallback is not None and len(fallback) != len(premium):
+        raise ValueError("settled_rate must match premium_index length")
+    result = np.full(len(premium), np.nan, dtype=float)
+    finite = np.flatnonzero(np.isfinite(premium))
+    if len(finite):
+        first = int(finite[0])
+        values = premium[first:]
+        positions = np.arange(len(values), dtype=float) + 1.0
+        prefix = np.concatenate(([0.0], np.cumsum(values, dtype=float)))
+        weighted_prefix = np.concatenate(([0.0], np.cumsum(values * positions, dtype=float)))
+        ends = np.arange(len(values))
+        window = interval_hours * 60
+        starts = np.maximum(0, ends - window + 1)
+        count = ends - starts + 1
+        total = prefix[ends + 1] - prefix[starts]
+        weighted_total = weighted_prefix[ends + 1] - weighted_prefix[starts] - starts * total
+        average_premium = weighted_total / (count * (count + 1.0) / 2.0)
+        raw = average_premium + np.clip(interest_rate - average_premium, -damper, damper)
+        estimate = raw / (8.0 / interval_hours)
+        result[first:] = np.clip(estimate, -cap, cap) if cap is not None else estimate
+    if fallback is not None:
+        missing = ~np.isfinite(result)
+        result[missing] = fallback[missing]
+    return result
 
 
 class FundingDownloadError(RuntimeError):

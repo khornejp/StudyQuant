@@ -1683,7 +1683,7 @@ def build_parser() -> argparse.ArgumentParser:
     train = subparsers.add_parser("train", help="run deterministic offline CSV/fixture training pipeline")
     train.add_argument("--output", default="artifacts/training", help="training artifact output directory")
     train.add_argument("--input", default=None, help="optional local CSV candles path; defaults to offline fixture")
-    train.add_argument("--model-family", default="auto", help="model family selector; auto tries lightgbm/catboost/pytorch_multitask first if installed")
+    train.add_argument("--model-family", default="auto", help="model family selector; pytorch_gru runs the fixed short-sequence experiment")
     train.add_argument("--cv-mode", choices=("walk_forward", "combinatorial_purged"), default="walk_forward", help="cross-validation splitter mode")
     train.add_argument("--embargo-size", type=int, default=0, help="bars to embargo after combinatorial test windows")
     train.add_argument("--walk-forward-test-gap", type=int, default=0, help="bars omitted between consecutive walk-forward TEST windows; set to --horizon to prevent forward-label overlap. Does not apply to combinatorial_purged.")
@@ -1821,7 +1821,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--horizon", type=int, default=60, help="max holding bars before forced TIMEOUT exit (minutes for 1m data). MUST match the training --horizon so backtest execution and triple-barrier labels share the same time barrier (a train horizon of 120 with a backtest horizon of 60 silently misaligns label vs execution). Default 60 = training default.")
     backtest_parser.add_argument("--cooldown-bars", type=int, default=backtest.DEFAULT_COOLDOWN_BARS, help="post-exit bars to lock out before a new entry (default 30, preserving historical backtests). This is separate from the one-position rule: 0 permits a new entry on the bar after exit; use a positive value only as an explicit operational/risk policy.")
     backtest_parser.add_argument("--threshold-floor", type=float, default=0.0, help="hard lower bound on the learned/strategy entry thresholds (does NOT clamp an explicit --long/--short-threshold override). Learned selected_thresholds can drop to ~0.32 on weak models; e.g. --threshold-floor 0.45 keeps entries above a minimum confidence so sub-cost signals don't flood the backtest. Default 0 = disabled.")
-    backtest_parser.add_argument("--entry-quantile", type=float, default=None, help='enter the top FRACTION of bars by model probability instead of using a fixed cutoff -- 0.05 means the most confident 5%% of bars. The cutoff is recomputed every bar from the probabilities seen BEFORE it (strictly past-only), so it holds selectivity constant while the score distribution moves. A fixed number does the opposite: on 2026 H1 the horizon-return model kept its ranking (top 2%% still separated from top 10%%) while the level drifted, so the same 0.51 cutoff selected a different slice than it did in training. Requires a two-sided/bundle model: on the single-model path --short-threshold is a LOW cutoff on the same score, where a high-side quantile would be backwards. Cannot be combined with an explicit --long-threshold/--short-threshold.')
+    backtest_parser.add_argument("--entry-quantile", type=float, default=None, help='enter the top FRACTION of bars by model probability instead of using a fixed cutoff -- 0.05 means the most confident 5%% of bars. The cutoff is recomputed every bar from the probabilities seen BEFORE it (strictly past-only), so it holds selectivity constant while the score distribution moves. A fixed number does the opposite: on 2026 H1 the horizon-return model kept its ranking (top 2%% still separated from top 10%%) while the level drifted, so the same 0.51 cutoff selected a different slice than it did in training. Use a two-sided/bundle model, or select --side long/--side short with a standalone artifact whose recorded train_target matches that side. Cannot be combined with an explicit --long-threshold/--short-threshold.')
     backtest_parser.add_argument("--entry-quantile-window", type=int, default=0, help='bars of history the --entry-quantile cutoff is measured over. 0 = expanding (all history), which is causal but nearly inert here: 2.65M rows are already banked from 2020-2025, so 2026 H1 barely moves the quantile and expanding reproduces a fixed threshold at greater cost. A finite window is what tracks the shift -- e.g. 129600 is 90 days of 1m bars. The length is a free parameter: choose it before looking at the evaluation window, and report it, because sweeping it against the result is threshold fitting under another name.')
     backtest_parser.add_argument("--entry-quantile-warmup", type=int, default=None, help="observations the --entry-quantile estimator needs before it will trade. Default scales as 200/min(q,1-q) so the selected tail holds ~200 samples, which assumes a long stream: behind a volatility gate the estimator only sees the bars the gate passes, and on 2026 H1 that was 11,318 bars against a derived warmup of 10,000, so the run made zero trades and looked like a filter working perfectly. The fold analysis used 1000. A run that never leaves warmup now warns.")
     backtest_parser.add_argument("--side", choices=("both", "long", "short"), default="both", help="explicit execution side. --side short accepts exactly one standalone artifact whose recorded train_target is short_success or short_profitability, then emits SELL or HOLD only; it refuses long-target and legacy unmarked artifacts. Use --side long for the corresponding one-sided route. Default both preserves existing behavior.")
@@ -1836,7 +1836,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument("--kelly-multiplier", type=float, default=0.5, help="fraction of full Kelly to bet (default 0.5 = Half-Kelly: ~18.5%% less growth for ~43%% less max drawdown). Only used with --kelly-sizing.")
     backtest_parser.add_argument("--kelly-lookback-bars", type=int, default=1440, help="trailing bars for the Kelly variance estimate (default 1440 = 1 day of 1m bars). Only used with --kelly-sizing.")
     backtest_parser.add_argument("--regime-classifier-dir", default=None, help="output directory from train-regime-classifier (contains regime_classifier_model.cbm). When set, this SAME saved classifier drives regime routing here via F17 multi-timeframe features -- pass the identical directory used for training's --regime-classifier-dir so routing stays consistent with how the up/down/range models were trained. Takes priority over --auto-regime. Ignored if --user-regime-file is given.")
-    backtest_parser.add_argument("--maker-fill-window", type=int, default=backtest.DEFAULT_MAKER_FILL_WINDOW, help="model MAKER (resting limit) entries instead of the default instant taker fill at the signal-bar close. A BUY places a limit at the signal close and fills only when a LATER bar's low returns to it within this many bars (a SELL uses the high); unfilled within the window = the order is cancelled and the trade is MISSED. Maker entries pay no entry-side fee/slippage (only exit). This surfaces the two costs a taker backtest hides: adverse selection (you only fill when price came back to you) and missed trades (the moves that ran away). 0 = disabled (instant taker fill). See maker_fill_diagnostics in the summary for fill rate.")
+    backtest_parser.add_argument("--maker-fill-window", type=int, default=backtest.DEFAULT_MAKER_FILL_WINDOW, help="bars to leave the default MAKER entry resting at the signal-bar close. A BUY fills only when a LATER bar's low returns to it within this window (a SELL uses the high); otherwise the order is cancelled and the trade is missed. Maker entries pay the maker fee but no entry slippage. 0 switches to an instant taker fill. See maker_fill_diagnostics in the summary for fill rate.")
     backtest_parser.add_argument("--maker-fill-penetration-bps", type=float, default=0.0, help="queue-priority stress for --maker-fill-window: require the price to PENETRATE the resting limit by this many bps before it fills, not merely touch it (a resting order sits behind others at its price, so a bare touch may only fill the front of the queue). E.g. 2 = a BUY limit fills only when a bar's low reaches 2bps BELOW the limit. 0 = touch fills (optimistic). Only meaningful with --maker-fill-window > 0.")
     backtest_parser.add_argument("--maker-gap-pre-correction-replay", action="store_true", help="measurement-only probe: reproduce the pre-correction OHLC-containment replay, which expires a resting order when a later candle is wholly beyond its limit. The default book-traversal rule fills the resting BUY/SELL at its limit because the market crossed its order.")
     backtest_parser.add_argument("--record-counterfactual-candidates", action="store_true", help="write counterfactual_candidates.json for eligible signals rejected by the one-position scheduler. Off by default so normal 1m runs allocate and record nothing for rejected candidates.")
@@ -2064,6 +2064,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "train":
         output = Path(args.output)
         input_path = Path(args.input) if args.input else None
+        if args.model_family == "pytorch_gru":
+            if input_path is None or not args.metrics_dir or not args.funding_dir or not args.premium_index_dir:
+                print("pytorch_gru requires --input, --metrics-dir, --funding-dir, and --premium-index-dir", file=sys.stderr)
+                return 1
+            from .short_sequence import RUN_ROOT, run_experiment
+            try:
+                status = run_experiment(
+                    input_path, Path(args.metrics_dir), Path(args.funding_dir), Path(args.premium_index_dir), RUN_ROOT,
+                )
+            except (OSError, RuntimeError, ValueError) as error:
+                print(f"short-sequence experiment failed: {error}", file=sys.stderr)
+                return 1
+            print(f"state={status['state']}")
+            print(f"artifacts={RUN_ROOT}")
+            return 0 if status["state"] in {"complete", "stopped_no_edge"} else 1
         try:
             runtime_decision = governance.require_pinned_runtime(
                 allow_unpinned_runtime=args.allow_unpinned_runtime,
@@ -2429,7 +2444,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.model_artifact:
                 model_path = Path(args.model_artifact)
                 if model_path.is_file():
-                    model = live.load_model_artifact(model_path)
+                    model = backtest.load_model_artifact(model_path)
                 elif model_path.is_dir():
                     if (model_path / "regime_run_summary.json").is_file():
                         regime_bundle = live.load_regime_aware_models(model_path)
@@ -2508,7 +2523,7 @@ def main(argv: list[str] | None = None) -> int:
                         else:
                             models_by_regime = None
                     elif (model_path / "model.json").is_file():
-                        model = live.load_model_artifact(model_path / "model.json")
+                        model = backtest.load_model_artifact(model_path / "model.json")
             if args.short_model_artifact:
                 if regime_bundle is not None:
                     raise SystemExit(
@@ -2519,7 +2534,7 @@ def main(argv: list[str] | None = None) -> int:
                 short_path = Path(args.short_model_artifact)
                 if short_path.is_dir():
                     short_path = short_path / "model.json"
-                short_model = live.load_model_artifact(short_path)
+                short_model = backtest.load_model_artifact(short_path)
                 # A model trained on a LONG target scores P(long wins); read as
                 # a short probability it is exactly backwards, and the run would
                 # look like a working two-sided strategy the whole way through.
@@ -2743,6 +2758,8 @@ def main(argv: list[str] | None = None) -> int:
                 long_exec_sl_pct=args.long_exec_sl_pct,
                 short_exec_tp_pct=args.short_exec_tp_pct,
                 short_exec_sl_pct=args.short_exec_sl_pct,
+                long_threshold=args.long_threshold,
+                short_threshold=args.short_threshold,
                 threshold_floor=args.threshold_floor,
                 label_horizon=args.horizon,
                 cooldown_bars=args.cooldown_bars,
@@ -2764,6 +2781,10 @@ def main(argv: list[str] | None = None) -> int:
                 trend_filter_sma_bars=args.trend_filter_sma_bars,
                 long_only=args.long_only,
                 execution_side=execution_side,
+                maker_fill_window=args.maker_fill_window,
+                maker_fill_penetration=args.maker_fill_penetration_bps / 1e4,
+                maker_gap_pre_correction_replay=args.maker_gap_pre_correction_replay,
+                range_gate_enabled=not args.disable_range_gate,
             )
             kelly_config = None
             if args.kelly_sizing:
