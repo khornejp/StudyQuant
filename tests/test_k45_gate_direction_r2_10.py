@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 
 from out import run_k45_gate_direction_r2_10 as run
@@ -13,8 +15,12 @@ def test_purge_uses_requested_horizon():
 def test_every_matched_model_label_horizon_equals_hold_horizon():
     specs = run.matched_model_specs()
 
-    assert len(specs["R2_1_MATCHED"]) == 64
-    assert len(specs["RESIDUAL_MATCHED"]) == 9
+    assert run.ROOT == Path("out/k45_gate_direction_r2_10b_20261001")
+    assert run.HORIZONS == (5, 15, 30, 45, 60, 90, 120, 180, 240)
+    assert run.RESIDUAL_LONG_HOLDS == (45, 120, 180, 240)
+    assert run.RESIDUAL_SHORT_HOLDS == (5, 15, 60)
+    assert len(specs["R2_1_MATCHED"]) == 81
+    assert len(specs["RESIDUAL_MATCHED"]) == 12
     assert all(spec["label_h_long"] == spec["h_long"] and spec["label_h_short"] == spec["h_short"]
                for group in specs.values() for spec in group)
 
