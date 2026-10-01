@@ -92,3 +92,23 @@ def test_valid_flags_become_numeric_and_other_text_is_rejected():
     assert got.dtypes.tolist() == [np.dtype("int8"), np.dtype("float64")]
     with pytest.raises(TypeError, match="non-numeric"):
         wf.prepare_feature_frame(pd.DataFrame({"f_bad": ["x"]}), ["f_bad"])
+
+
+def test_decile_table_is_monotone_on_perfect_score():
+    from out import run_k45_gate_direction_quality as q
+
+    s = np.arange(1000.)
+    t = q.decile_table(s, s)
+    assert t.decile.tolist() == list(range(10))
+    assert np.all(np.diff(t.r_mean) > 0)
+
+
+def test_choose_side_margin_is_strict():
+    from out import run_k45_gate_direction_backtest as bt
+
+    got = bt.choose_side(
+        np.array([.50, .60, .30, .36]),
+        np.array([.45, .45, .45, .45]),
+        0.10,
+    )
+    assert got.tolist() == [0, 1, -1, 0]
