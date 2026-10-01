@@ -6,6 +6,7 @@ import pytest
 
 from out import k45_trend_side as ts
 from out import run_k45_trend_side as run
+from out import run_k45_trend_side_tp as tp
 
 
 CAND = Path("out/patchtst_k45_causal_admission_ordering_20260930/causal_candidates.parquet")
@@ -155,3 +156,70 @@ def test_segment_report_uses_candidate_dates_and_exit_boundary(monkeypatch):
         "net_bps", pd.Timestamp("2026-01-02", tz="UTC"), pd.Timestamp("2026-06-30", tz="UTC"))
     assert seen["pw"] == (1.0, [1.0], "greater", "HOLD_B_30d_book_net")
     assert seen["baseline"] == [(61, 206, 50)]
+
+
+def test_tp_long_fills_at_tp_price():
+    close = np.array([100., 100., 100., 100.])
+    high = np.array([100., 100.4, 101.0, 100.])
+    low = close.copy()
+    net, ex = ts.tp_exit_net_bps(high, low, close, np.array([0]), np.array([1.]), 50, hold=3)
+    assert ex.tolist() == [2] and net == pytest.approx([50 - 4])
+
+
+def test_tp_not_filled_on_entry_bar():
+    close = np.array([100., 100., 100.])
+    high = np.array([200., 100., 100.])
+    net, ex = ts.tp_exit_net_bps(high, close, close, np.array([0]), np.array([1.]), 50, hold=2)
+    assert ex.tolist() == [2] and net == pytest.approx([-4])
+
+
+def test_tp_short_and_same_bar_as_time_exit():
+    close = np.array([100., 100., 98.])
+    low = np.array([100., 100., 99.4])
+    net, ex = ts.tp_exit_net_bps(close, low, close, np.array([0]), np.array([-1.]), 50, hold=2)
+    assert ex.tolist() == [2] and net == pytest.approx([50 - 4])
+
+
+def test_tp_untouched_uses_time_exit():
+    close = np.array([100., 100., 100.2])
+    net, ex = ts.tp_exit_net_bps(close, close, close, np.array([0]), np.array([1.]), 50, hold=2)
+    assert ex.tolist() == [2] and net == pytest.approx([20 - 4])
+
+
+def test_tp_raises_if_hold_window_exceeds_market_array():
+    close = np.array([100., 100., 100.])
+    with pytest.raises(IndexError):
+        ts.tp_exit_net_bps(close, close, close, np.array([1]), np.array([1.]), 50, hold=2)
+
+
+def test_select_tp_bonferroni():
+    r = {50.0: {"net": 1.0, "p": 0.01},
+         100.0: {"net": 2.0, "p": 0.02},
+         150.0: {"net": 0.5, "p": 0.001}}
+    assert tp.select_tp(r) == 50.0
+    assert tp.select_tp({50.0: {"net": 1.0, "p": 0.02}}) is None
+
+
+def test_tp_segment_keeps_fixed_book_and_reports_both_arms():
+    close = np.r_[100 + np.arange(70) * .1, 107 - np.arange(80) * .1]
+    high, low = close.copy(), close.copy()
+    high[22] = 200
+    low[92] = 0
+    cands = pd.DataFrame({
+        "candidate_id": [0, 1, 2],
+        "pilot_fold": [0, 0, 0],
+        "arm": [ts.LONG, ts.LONG, ts.SHORT],
+        "signal_index": [20, 29, 90],
+        "entry_index": [21, 30, 91],
+        "scheduled_exit_index": [66, 75, 136],
+        "entry_time": pd.to_datetime(["2021-01-01", "2021-01-01", "2021-01-02"], utc=True),
+    })
+
+    grid, paired = tp.evaluate_segment(
+        cands, high, low, close, "DEV", lookback=2, grid=(50.0,))
+
+    assert set(grid.arm) == {tp.BOOK, ts.LONG, ts.SHORT}
+    assert grid.set_index("arm").loc[tp.BOOK, "n"] == 2
+    assert paired.set_index("arm").loc[tp.BOOK, "n"] == 2
+    assert grid.label.unique().tolist() == [tp.LABEL]
+    assert paired.alternative.unique().tolist() == ["two-sided"]
