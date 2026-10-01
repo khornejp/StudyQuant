@@ -29,3 +29,66 @@ def test_microstructure_join_is_exact_time_only():
 
     got = ds.join_exact(bars.iloc[[1]], micro, prefix="m_")
     assert np.isnan(got["m_x"].iloc[0])
+
+
+def test_monthly_sign_test_detects_consistent_relation():
+    rng = np.random.default_rng(0)
+    month = np.repeat(np.arange(24), 100)
+    x = rng.normal(size=len(month))
+    r = x + rng.normal(size=len(month))
+    got = gd.monthly_sign_test(x, r, month)
+    assert got["agree_months"] == 24 and got["p_one_sided"] < 1e-6
+
+
+def test_monthly_sign_test_drops_thin_and_constant_months():
+    month = np.array([0] * 10 + [1] * 50)
+    x = np.r_[np.arange(10.), np.zeros(50)]
+    got = gd.monthly_sign_test(x, np.arange(60.), month)
+    assert got["n_months"] == 0
+
+
+def test_predict_proba3_fills_missing_class():
+    class Stub:
+        classes_ = np.array([0, 2])
+
+        def predict_proba(self, X):
+            return np.tile([0.3, 0.7], (len(X), 1))
+
+    p = gd.predict_proba3(Stub(), np.zeros((2, 1)))
+    assert p.tolist() == [[0.3, 0.0, 0.7], [0.3, 0.0, 0.7]]
+
+
+def test_select_features_uses_only_given_rows_and_falls_back():
+    rng = np.random.default_rng(1)
+    n = 3000
+    df = pd.DataFrame({
+        "month": np.repeat(np.arange(30), 100),
+        "a": rng.normal(size=n),
+        "b": rng.normal(size=n),
+    })
+    df["r45_bps"] = rng.normal(size=n)
+    cols, mode = gd.select_features(df, ["a", "b"], k_min=5, k_fallback=1)
+    assert mode == "FALLBACK" and len(cols) == 1
+
+
+def test_training_rows_are_purged_before_stop():
+    from out import run_k45_gate_direction_walkforward as wf
+
+    ds = pd.DataFrame({"signal_index": [100, 154, 155, 200]})
+    assert wf.train_mask(ds, stop_start_index=200).tolist() == [True, True, False, False]
+
+
+def test_zero_test_rows_are_skipped():
+    from out import run_k45_gate_direction_walkforward as wf
+
+    assert wf.skip_reason(n_train=2000, n_test=0) == "zero_test_rows"
+
+
+def test_valid_flags_become_numeric_and_other_text_is_rejected():
+    from out import run_k45_gate_direction_walkforward as wf
+
+    frame = pd.DataFrame({"m_book_valid": [True, False], "f_x": [1.0, 2.0]})
+    got = wf.prepare_feature_frame(frame, ["m_book_valid", "f_x"])
+    assert got.dtypes.tolist() == [np.dtype("int8"), np.dtype("float64")]
+    with pytest.raises(TypeError, match="non-numeric"):
+        wf.prepare_feature_frame(pd.DataFrame({"f_bad": ["x"]}), ["f_bad"])
