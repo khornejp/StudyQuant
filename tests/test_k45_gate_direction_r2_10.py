@@ -1,0 +1,29 @@
+import pandas as pd
+
+from out import run_k45_gate_direction_r2_10 as run
+
+
+def test_purge_uses_requested_horizon():
+    signal_index = pd.Series([70, 80, 89, 90])
+
+    assert run.purge_mask(signal_index, stop_start_index=100, horizon=10).tolist() == [True, True, True, False]
+    assert run.purge_mask(signal_index, stop_start_index=100, horizon=20).tolist() == [True, False, False, False]
+
+
+def test_every_matched_model_label_horizon_equals_hold_horizon():
+    specs = run.matched_model_specs()
+
+    assert len(specs["R2_1_MATCHED"]) == 64
+    assert len(specs["RESIDUAL_MATCHED"]) == 9
+    assert all(spec["label_h_long"] == spec["h_long"] and spec["label_h_short"] == spec["h_short"]
+               for group in specs.values() for spec in group)
+
+
+def test_single_book_never_has_two_simultaneous_positions():
+    candidates = pd.DataFrame({"signal_index": [0, 2, 5, 7], "hold": [5, 2, 4, 1]})
+
+    admitted, dropped = run.admit_single(candidates)
+
+    assert admitted.signal_index.tolist() == [0, 5]
+    assert dropped.signal_index.tolist() == [2, 7]
+    assert run.max_concurrent(admitted) <= 1
