@@ -3,9 +3,11 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > **Project rule overrides the sub-skill choice:** Codex implements each task (`codex exec` + stdin), Claude reviews, then runs or returns.
 
-**Goal:** Test whether fading only in the direction of the 30-day trend makes both K=45 arms net-positive, then whether a fixed TP raises per-trade net, judged on DEV, HOLD-B, and sealed HOLD-A.
+> **2026-10-01 change: HOLD-A is withdrawn.** Project rule: existing local data only. Task 7, `holda_gate`, and Review Focus item 5 are void; do not implement them. Judging uses DEV and HOLD-B only, and HOLD-B results are labelled exploratory.
 
-**Architecture:** One pure-function module `out/k45_trend_side.py` holds the trend sign, side filter, PnL, TP exit, and gate logic. Three thin runners call it: stage 1, stage 2, HOLD-A judge. Candidates come from the frozen parquet. No new model fits except the HOLD-A walk-forward already dispatched.
+**Goal:** Test whether fading only in the direction of the 30-day trend makes both K=45 arms net-positive, then whether a fixed TP raises per-trade net, judged on DEV and HOLD-B.
+
+**Architecture:** One pure-function module `out/k45_trend_side.py` holds the trend sign, side filter, PnL, TP exit, and gate logic. Two thin runners call it: stage 1 and stage 2. Candidates come from the frozen parquet. No new model fits.
 
 **Tech Stack:** Python 3.14, numpy, pandas, pytest. Reuses `out/run_patchtst_k45_flow_inference.py` (`mean_influence`, `pw_inference`).
 
