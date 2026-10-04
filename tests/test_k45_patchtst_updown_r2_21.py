@@ -95,3 +95,15 @@ def test_backtest_margin_loops_do_not_mutate_gate_columns() -> None:
     events = pd.DataFrame({"time": pd.DatetimeIndex([], tz="UTC"), "rate": np.array([], float)})
     r21.backtests(rows, close, events)
     pd.testing.assert_frame_equal(before, rows[before.columns])
+
+
+@pytest.mark.parametrize("boundary,rate,expected", [("PESS", 0.0001, -1.0),
+                                                     ("OPT", -0.0001, 1.0)])
+def test_attach_funding_boundary_sign(monkeypatch, boundary, rate, expected) -> None:
+    monkeypatch.setattr(r21, "FUNDING_BOUNDARY", boundary)
+    exit_time = pd.Timestamp("2024-01-01 08:00", tz="UTC")
+    trades = pd.DataFrame({"open_time": [exit_time - pd.Timedelta(minutes=15)],
+                           "exit_time": [exit_time], "side": [1], "gross_bps": [0.0]})
+    events = pd.DataFrame({"time": [exit_time], "rate": [rate]})
+    result = r21.attach_funding(trades, events)
+    assert result.funding_bps.iat[0] == pytest.approx(expected)

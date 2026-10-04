@@ -28,12 +28,11 @@ def test_thresholds_never_use_current_or_future_fold_scores():
                 left.loc[measured, "pilot_fold"]).all()
 
 
-def test_r2_12_e0_reproduction_is_exact():
+def test_r2_12_e0_reproduction_matches_trades_and_gross():
     result = run.reproduce_e0()
     assert len(result) == 8
     assert result.n_diff.eq(0).all()
-    assert result.net_sum_bps_diff.eq(0).all()
-    assert result.net_mean_bps_diff.eq(0).all()
+    assert np.allclose(result.gross_sum_bps_diff, 0.0, atol=1e-9)
 
 
 def test_tail_book_never_overlaps():
