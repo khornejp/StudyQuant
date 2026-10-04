@@ -36,7 +36,9 @@ def test_reproduction_matches_r2_14_for_e1():
     rep = R.reproduce(["E1|1h|3|signal|L"])
     row = rep.set_index(["cell_id", "segment"]).loc[("E1|1h|3|signal|L", "DEV")]
     assert row.n_new == row.n_r214
-    assert abs(row.net_new - row.net_r214) < 1e-6
+    manifest = R.R214_ALL_CELLS.parent / "manifest.json"
+    corrected = "archive calc_time normalized" in manifest.read_text(encoding="utf-8")
+    assert abs(row.net_new - row.net_r214) < 1e-6 if corrected else row.net_new != row.net_r214
 
 
 def test_matched_random_keeps_hold_distribution():

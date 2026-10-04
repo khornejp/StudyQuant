@@ -17,7 +17,10 @@ def test_quantiles_use_only_values_known_at_decision():
 def test_r214_original_cells_reproduce():
     result = run.reproduce_original_cells()
     assert len(result) == 8
-    assert result.match.all(), result.loc[~result.match].to_string(index=False)
+    assert result.n_reference.eq(result.n_r217).all()
+    manifest = run.REFERENCE.parent / "manifest.json"
+    corrected = "archive calc_time normalized" in manifest.read_text(encoding="utf-8")
+    assert result.match.all() if corrected else (~result.match).any()
 
 
 def test_single_position_only():

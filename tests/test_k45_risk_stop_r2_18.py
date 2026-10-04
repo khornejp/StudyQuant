@@ -89,5 +89,6 @@ def test_round_trip_cost_and_funding_boundary():
     funding = pd.DataFrame({"time": [start, start + pd.Timedelta(minutes=1)],
                             "rate": [.5, .001]})
     trade = run.simulate_candidates(_candidate(exit_minute=2), _minutes(), funding, None).iloc[0]
-    assert trade.funding_bps == pytest.approx(-10.0)
-    assert trade.net_bps == pytest.approx(trade.gross_bps - 4.0 - 10.0)
+    expected = -5010.0 if run.r214.FUNDING_BOUNDARY == "PESS" else -10.0
+    assert trade.funding_bps == pytest.approx(expected)
+    assert trade.net_bps == pytest.approx(trade.gross_bps - 4.0 + expected)

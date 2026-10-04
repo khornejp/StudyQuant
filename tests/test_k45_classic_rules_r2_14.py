@@ -47,29 +47,18 @@ def test_single_position_cost_and_funding():
     assert first.funding_bps == pytest.approx(-10)
 
 
-def test_settlement_uses_utc_clock_and_previous_minute_rate():
-    times = pd.date_range("2026-01-01 07:58", periods=4, freq="min", tz="UTC")
-    registry = pd.DataFrame({
-        "open_time": times,
-        "minutes_to_next_funding": [2.00001, 1.00001, 480.00003, 479.00003],
-        "funding_rate": [.001, .002, .003, .004],
-    })
-    events, stats = run.settlement_events(registry)
-    assert events.to_dict("records") == [{"time": times[2], "rate": .002}]
-    assert stats == {"scheduled": 1, "missing_previous_minute": 0,
-                     "nonstandard": 0}
+def test_settlement_uses_archive_rate_at_scheduled_t():
+    events, stats = run.settlement_events(pd.DataFrame())
+    rates = events.set_index("time").rate
+    assert rates.loc[pd.Timestamp("2021-01-08 00:00", tz="UTC")] == pytest.approx(0.00213517)
+    assert rates.loc[pd.Timestamp("2021-01-08 08:00", tz="UTC")] == pytest.approx(0.00092044)
+    assert stats["scheduled"] == 7_119
+    assert stats["missing_previous_minute"] == 0
 
 
 def test_actual_day_long_24h_applies_three_settlements():
     start = pd.Timestamp("2026-01-01", tz="UTC")
-    registry = pd.read_parquet(
-        run.REGISTRY,
-        columns=["open_time", "minutes_to_next_funding", "funding_rate"],
-        filters=[("open_time", ">=", start - pd.Timedelta(minutes=1)),
-                 ("open_time", "<=", start + pd.Timedelta(days=1))],
-    )
-    registry["open_time"] = pd.to_datetime(registry.open_time, utc=True)
-    events, _ = run.settlement_events(registry)
+    events, _ = run.settlement_events(pd.DataFrame())
     held = events.loc[events.time.between(start + pd.Timedelta(minutes=1),
                                           start + pd.Timedelta(days=1, minutes=1),
                                           inclusive="both")]
@@ -107,6 +96,19 @@ def test_segment_is_entry_time_even_when_trade_crosses_boundary():
     trade = pd.DataFrame({"entry_time": [pd.Timestamp("2025-12-31 23:59", tz="UTC")],
                           "exit_time": [pd.Timestamp("2026-01-01 01:00", tz="UTC")]})
     assert run.assign_segment(trade).iloc[0] == "DEV"
+
+
+def test_buy_hold_uses_sign_aware_entry_and_exit_boundaries(monkeypatch):
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    end = start + pd.Timedelta(days=1)
+    market = pd.DataFrame({"open_time": pd.date_range(start, end, freq="min", inclusive="left"),
+                           "open": 100.0, "close": 100.0})
+    events = pd.DataFrame({"time": [start, end], "rate": [0.0001, -0.0001]})
+    monkeypatch.setitem(run.SEGMENTS, "DEV", (start, end))
+    monkeypatch.setattr(run, "FUNDING_BOUNDARY", "PESS")
+    assert run.buy_hold(market, events, "DEV")[0]["net_total_bps"] == pytest.approx(-5.0)
+    monkeypatch.setattr(run, "FUNDING_BOUNDARY", "OPT")
+    assert run.buy_hold(market, events, "DEV")[0]["net_total_bps"] == pytest.approx(-3.0)
 
 
 import pytest
