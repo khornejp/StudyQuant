@@ -1,0 +1,801 @@
+{
+  "run_started_utc": "2026-10-01T14:19:23.737801+00:00",
+  "run_finished_utc": "2026-10-01T22:06:02.530736+00:00",
+  "runtime_seconds": 27998.792935,
+  "data_cutoff_utc": "2026-06-30T23:59:00+00:00",
+  "frozen_hypothesis": "STOP 구간으로 fold마다 튜닝하면 고정 파라미터보다 확률 품질과 단일 포지션 net이 모두 높다",
+  "out_of_sample_result": {
+    "quality_mean_spearman_delta_DEV": -0.0023298950942198583,
+    "quality_mean_spearman_delta_HOLD_B": -0.0028756384717150262,
+    "single_grid_mean_net_delta_DEV": -0.3062224355502492,
+    "single_grid_mean_net_delta_HOLD_B": -1.7831141482887234,
+    "hypothesis_all_four_positive": false
+  },
+  "segments": {
+    "DEV": "pilot_fold <= 605",
+    "HOLD_B": "pilot_fold >= 606; exploratory"
+  },
+  "train_rule": "signal_index + h < stop_start_index",
+  "validation_rule": "stop_start_index <= signal_index and signal_index + h < test_start_index",
+  "validation_min_rows": 30,
+  "grid": {
+    "depth": [
+      4,
+      6
+    ],
+    "learning_rate": [
+      0.03,
+      0.1
+    ],
+    "l2_leaf_reg": [
+      3,
+      10
+    ]
+  },
+  "iterations_max": 2000,
+  "early_stopping_rounds": 100,
+  "fallback": {
+    "depth": 4,
+    "learning_rate": 0.05,
+    "l2_leaf_reg": 3,
+    "iterations": 500
+  },
+  "seed": 20261001,
+  "device": "CPU",
+  "model_refit_after_selection": false,
+  "tail_cell_count_per_version": 516,
+  "single_position_max_positions": 1,
+  "random_repetitions": 1000,
+  "cost_bps": 4.0,
+  "local_data_only": true,
+  "downloads": 0,
+  "patchtst_fits": 0,
+  "live_orders": 0,
+  "inputs": {
+    "out\\k45_gate_direction_20261001\\dataset.parquet": "b099a66e6dce89c0c707fce3c3b5e1744248112fcbe3fdf942616ef27e8b260c",
+    "out\\k45_gate_direction_20261001\\predictions.parquet": "31b341e49c421aa9e104319505a2ed1cdc426d0f74a702cc91d1c4424a1b6cb8",
+    "out\\k45_gate_direction_20261001\\selection.parquet": "b9c857f63513c789bdda90eceebe7d163cb8cb232e4576fdfa7fd49192e755b8",
+    "out\\k45_gate_direction_audit_20261001\\c4_predictions.parquet": "ead74194e8342ee1435cdc800747005ff954abf859708a23c4fe38a9b7e855d8",
+    "artifacts\\btcusdt_2020_2026h1.parquet": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "out\\k45_gate_direction_r2_10b_20261001\\manifest.json": "fd1da2f143efeb7446f11090daeba1c66752dceecf0f62c473ad3e518c7fa6c2",
+    "out\\k45_gate_direction_r2_9_20261001\\manifest.json": "45900898e2d29e175e276c9f12688fab120a2c23df462e464d27aa4bdd0ddd0b",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h5_predictions.parquet": "d9bd6757aff6b9813dce0883245dc687c11718d556dcb95ec2cb22164610e41d",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h15_predictions.parquet": "a43f8dd1b5c4e7e13cc2a89a89b3ce52b6defde37f4d033d0508d890b7628688",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h30_predictions.parquet": "3553a01695ad77300b44ef4d4a1e4c060f29a46d4ce000c7341d026bb4779894",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h45_predictions.parquet": "97f70edb51b38330aa9f0c6fc6d9c90158cb161960fd011266ff714bf1eecf2b",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h60_predictions.parquet": "c656ad8a7d022f3808c316cc3107586dfa0179017d00d533bfcdd904c3e2116b",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h90_predictions.parquet": "abc19afb8de88a3360c933249bfc4ec04f76c5eabc72d0997187ab0081dd2757",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h120_predictions.parquet": "c1ac5253d634da774a926f89ecad796ebc45459e1222246fd76ed29206bfc6fa",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h180_predictions.parquet": "76e9b8a090cb30e0e892fdb270157025ae651d779e78233705546b7825f85d94",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h240_predictions.parquet": "b19313c2ed7891691fc48cc0b62a76cfb7f73d6e4cc034bc20c2825d20808a93",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h5_predictions.parquet": "a58d5940516c5237cb119a260ade01c0b828e08452ac343b8df4620a998d0d9a",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h15_predictions.parquet": "2857c564affba037822fb421855481cdee77fbe0b38df40b7a8ab2e59f5ee800",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h30_predictions.parquet": "29ee63eccd01607761180a28a729e5e901d963b0e9cdf5a218059b227b7aed5d",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h45_predictions.parquet": "8d6390a18c37722810f1aeae7e1d640ff991e5ffed7c3b1c277a45927c1e6215",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h60_predictions.parquet": "0539412f4d611877adf368805e5cdbe88adccae95d8c02ac444dc6ba1db5f855",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h90_predictions.parquet": "3d764e16a194157b6420436efa6d77009dd231c5656152c26fe4be8dbc8b0292",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h120_predictions.parquet": "4bfca70631b8e621dca8a5901a2140cb9ee7a7f4ee2b92550aad4da304438328",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h180_predictions.parquet": "d73974f1c8124710aeea416caa5e231d94cd2f7658aec57a46daa11e48b63f48",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h240_predictions.parquet": "9338443136547d52a35beac0276134e8dccb51ca8e94d456abe404dd710562fb",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h5_predictions.parquet": "feb5b377fd77f0c93a0393f94cf9e339d11b25a009a557050ab59bb7856cd4f2",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h15_predictions.parquet": "81ef1813fb35b7c956ed757673714c7b3cf665688261df340af97a1cd978eb52",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h45_predictions.parquet": "9b7c6dedb9d173773483dff7fce80f3b11794af75006ff88579a30cf880b7425",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h60_predictions.parquet": "76df30009009494952ecc8ffc7c843da1808a0f390ff113e0fc0d92b55a389c3",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h120_predictions.parquet": "9826dd0058a5e5e53877700a94f52a6210213763af61f709d644aa2fd220a167",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h180_predictions.parquet": "0eca255de55449dac56edb7305c72217060a60e451bbcb563945cc7ab869f995",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h240_predictions.parquet": "d95b808846a2005ba8ead3ebc889c2f6293a609b37745e88a23318264e2351aa",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-01.zip": "7f81b2f3694d13779e7e896b69d60cd61e9444d7b9f9e90df761935e1c1b76e2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-02.zip": "6599466d108d120c64a078824326c063ed2d4335b3292e52c5e572f79166533a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-03.zip": "eee845fde6336e29d25889563cba3d2cff2d4d640e51fb1f82ae9b28cedaee77",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-04.zip": "d009ce034d08c3dcf3e7f874b0f8b0ec76ba507bc6bb4e007e541df537bafbce",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-05.zip": "3f2b56dd6b9a42457009bb367d0adadd3cf7e2216cd325172d0089e3883125a8",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-06.zip": "30b3470ff98576578973d75e3c157a5cbf1778b11e4c26b4b4ff70a3cbb348ec",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-07.zip": "18dae7b11075fc0fba79ad47df46683415cba5d027caa69c66bc2a5c9d9b459a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-08.zip": "e6f6d1749f674c85d4766e0eb36af6ea40d91a0674234d30df80eb9876b094e3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-09.zip": "7ae9a3b6afb2dc06e46080582908ec8c27063b707a14c7f1e679dc991ff48032",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-10.zip": "4c55b191c101f39c7fb193a6529665dd9e83302ca21876521e4c93b3902e9fb1",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-11.zip": "676356a2d075caa51b4f8ada026e9430dc320ffd23d2343b13b7aa25324ed6d1",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-12.zip": "d7390f90edf54cc4ad9bbe78e2f6b291ae06ad9539f591a2d0fce445873bbd63",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-01.zip": "cff916dc4b638ec3de97828e8911cd91cf7d7a3d0836ec0175869c374e66823d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-02.zip": "819a7b107443686adb313fc5fc223302a29f3981e1d1bd9828ad0ade65a8a8af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-03.zip": "2125fd300848938c7b992b8f7b7b5007d5b277a4ff1ebda7da083b40242729da",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-04.zip": "9cd888e3b0a1954813d0062c2e60426fdc8e34a7f258f6838371ec67f535b028",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-05.zip": "ed934afb9cf84df6ecae742e755147333a84244836a66b51523abc66dd5f63af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-06.zip": "7b8d9bfb8816636b800764dafb2aa2307d19166c695bfa245adbf7d01d61f766",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-07.zip": "8ab3df641d3bcf40527491f8e26d046ad2b662d1950ead9555ad32975571b7fe",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-08.zip": "7eb681cc45b94176f4b9192a62c3a1925d79031ba001cea2d8dec6ff6e5b9c35",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-09.zip": "03f25a7c25eef18d5f5b5b7bb0b664cab7a210b409f37e95a54e141808a0752d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-10.zip": "f25820d6add687addbca3ef43bee58f70853a6da53832a0c1bc22d00dc8ec64a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-11.zip": "e2e6b2d7218607e7e4a38137d50f553c2cfb901275c19edf567024c1cc6de85f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-12.zip": "bf3ce484faf41d7dccfd38c5cc3d8de34d8297df30ab10784e874cc10fd1b310",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-01.zip": "22ee19079b620f5c6d820e7d7f8bafa7fde866d89bd664863b8bd527749c12cb",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-02.zip": "fa95088258a905c79ab79e8984d2f6f66933ec2e814dbab4ef9da89b01ab484a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-03.zip": "4cf0883bc07f4ed4cdd3b0d8c0d166b4d15d21e666ab752f9f44401af4d6172f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-04.zip": "57e2776cc68b3169fc9f8632dad67278f470cd453407a8ebe6c87963c8a31357",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-05.zip": "bced8a5013d09742b96682e6fd01ad4456213515a03d7586ec2b1f2689af5255",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-06.zip": "0cd0708f8903829eb46f98cf60f4b2516c986e1ccddf6620a5912b48e16baf93",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-07.zip": "29d58cce0cd45f74c6a112039835c6d9ee5a7e60e7c38c2503beb7930453a4fe",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-08.zip": "6f4f0c6c84c05694b4b4a5c085776730fd4059723eecd98ee6ffeb3fde4da811",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-09.zip": "d62cd4e13009de37add446dc4f63ead4c56dcc4955a1e60f6726bcadc5a68fa9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-10.zip": "ad9efed10d4ca1567b865d7a158790977cec1b925395634217069df6696c8bc9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-11.zip": "8febe5bec1a029e993bbf27490761f8c47c32849bf7dd13441b2b2f6ec1ffb51",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-12.zip": "4218c78331bcc4dbeb5768fa112242a880971c1f2cfd1d3f32aaa26ca34069af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-01.zip": "05e3df32f28d0d50f4c5a280adee9368b4a66fc68c6ddca1b3277087ac0d19f5",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-02.zip": "5227accd9aaa59f71f5e682abffb58be5f99573ed208ab968b1704c81ac11345",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-03.zip": "ab022adff9b853d2f33cf80154e77c770f57c3392f0bbc36564b2e2cdbd0e872",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-04.zip": "2931039d26818edc65d4faefba84945fd1ba52989dd58fb127dc3cd7a12c7fbf",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-05.zip": "5d026fece46df86293054c8c56c2c8de575d30161b82979b11831831217a246e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-06.zip": "3ffdde6f1dc9c3c065d77ae43f3ba64d19d4cb76512d4bc1d541933d4fb2e6f7",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-07.zip": "0304baed9fd407293a8a8040b30a1b68bd344803b630d33530375b421733a930",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-08.zip": "516a8f50631c6ede6a9642f6d1590b6a22c33ba09935501d2ace8dc1396501fd",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-09.zip": "3fd9df6fd1eef33cf5fe625c27012359bc6d64a68c109305d7b44a0354f533c2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-10.zip": "03105cc140150bffca834bcccbddc6cfee245e079d2df1759653243bd6e92448",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-11.zip": "8015d2997f8d5e757ff3707ee87800ca30a74da0129daa747b64117f07bcc186",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-12.zip": "8f02fdd2a2da261bbf13ab301c74bdb57fae005f19d5088e9ece5f8824c1a2a7",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-01.zip": "3e0d30870672aa8f0f937881056e3cfd55913ae5c780cd50b33f2763aa0ba58e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-02.zip": "daf1e4901e3d6436d82ad60f90d007eb5300be8047cfef121007203a7212cde6",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-03.zip": "711dcaf2a341aedfd06447b4117b540f60adb0784c5e64a313c718e4cf092bc3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-04.zip": "6d220b8e2815362a11d294d35dbca28568370d8295351937eceec10f2b359b85",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-05.zip": "aef8c5fdce1493fd570b5829a72f2f17c7e459483390f25544d16c2a30be592e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-06.zip": "43fc4473820d1fb4fe340d1b1951a87555f6841aa352e684fa95d6adffce04c6",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-07.zip": "acab0593c1452660ce74a6c239fb215c1192b0a9c6e8c1689e6495de40a0174b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-08.zip": "7003d29a43dd5f9357f838da8766834954939e22c1d80af682d9f33984f67b71",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-09.zip": "6ef23b02392b481ef9c3855434bf3644289fb6e228b4f7d9a0dfc6d3cdff1116",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-10.zip": "26db65ac8020d80ece35df79c254c5f7e24427529bcceeb2972748c4fe2d2707",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-11.zip": "e1b19cccfe2cdcba48b022790789b7b01edd86c075f39bc152e44c267d43bd51",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-12.zip": "069409f525ebf6370ee1c7defe475167de4b97284c5ac8e68768652968cd3dc9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-01.zip": "df725010d55458866eb5a47e9ee708c6796c9d7e77b14c38342cea11f381815e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-02.zip": "e918b90fb33df3a3317feea13807a892047f1ec86eeac100bdb7b3dd83285d46",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-03.zip": "a3b95cfb315641fbfddc61eb32adf2a2588afb7a3973a61f464aca007ad43e3f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-04.zip": "01dbb7bd0135f98bd63bdde6b943cde1accc1770cabf92f68a1ec0653ced3888",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-05.zip": "e7355e2775b88009c984db1783bb8ed6b5f24ede2b52bb764151b5722d6a5e42",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-06.zip": "a1f4a40953740fa83ee9ad97776ff8325d1958654a67f1325614071a983819d4",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-07.zip": "b097dff828f6e43fece23db0d3cb98042a9d7bc19693b8cbfd051d88eb973b7b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-08.zip": "1180129860b6e196e8d70bb9719e81573aa6b4acb423ba5ee7f82f10c836f7ab",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-09.zip": "21dc6570fc6bffad0e7b5f9e99211b82ad07c95ab4f18c3a2daa3b95ec98344c",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-10.zip": "9ecdedab6344fc4cdb154763266b8e09627a71c3cc5574cf868158b541c259c2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-11.zip": "23735400405627d610123e3a43db3e98ae7addb93459cd670e65a7659a5f081b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-12.zip": "35318b789f020b0e04c9043112480743855554e52e1d188437cbdaa67246d51d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-01.zip": "fcdc796484f395830d418588a34a26baed8849dbef0ff2b56173247e493ff51f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-02.zip": "80df1dd669dc1e3afc360c9da8b9a949a127fce088eedbf5bf708bd37b0a1f58",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-03.zip": "5c069d5e9597a44fd0e213395082e59ff223fb99c9eab3a2a5a2a5622ba7867c",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-04.zip": "51cdeb4de7d5ef1d4eece80b6115e391bdf7a2d0803bf9ad8371ab23340b22d3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-05.zip": "445b65fd6b17bfcfb5e4d035db29fad34f729fa078f0449024db42621be84e6e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-06.zip": "cff97ce688329592bccbbf5873b5c7021649e093f5f5806e332c5b4fb7fd6a00"
+  },
+  "sources": {
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_11.py": "72daf8d98c2071a3d900e7911716c7a42692bf2b455db8dbbc6bc5235150b465",
+    "tests\\test_k45_gate_direction_r2_11.py": "2b6496f4f2cdc90cc83103d14abbd9ea6b7a474bda187019fa6e8a0391ba0fe0",
+    "D:\\StudyQuant\\out\\k45_gate_direction.py": "69deb6e4d7d87d063a4d9e169fcd47666a96b296b1c9a86b5e1b14256d4a04cd",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2.py": "a9fa8d49d743872b932ded087d8abe5bd01fbf54ff5cd85da72960964b8c5246",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_6.py": "ffaa3d86a38424267a45ea1947bb578680aa0b8a36bacf2f2a4100d61db4659b",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_8.py": "cf7378d9f2c10e4dd62b195c0ba8c3330881f26bd7fecc24097b4643f98ee0a8",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_9.py": "a9fb11adbb14001fdf5f8fa25aee605a247dd70a3d046b4c3db65ec508488f20",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_10.py": "57bcfeee8d1b039e0eb402c8263e915b14b5907a7818d02dbefc19cae946a298",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_walkforward.py": "953286b40afebebb9e81ad70bf61ba8e345af6fd5c0034b2fc6f057b55bfc31e",
+    "D:\\StudyQuant\\out\\k45_defect_audit_20260930\\run_audit.py": "f9af03660f7987812ed7d26724dbf7102d145382d9b610cd294478d876f33729"
+  },
+  "outputs": {
+    "out\\k45_gate_direction_r2_11_20261001\\calibration.parquet": {
+      "sha256": "f374dcf923244f976ed302c939c8dcea1114306b47f6e7371f906fa071d79452",
+      "rows": 1375
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\original_h45_tuned_candidates.parquet": {
+      "sha256": "747d72ef066493082c460950258e2a205a586cbb28fef5b64f061d1ae3f43674",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\original_h45_tuned_predictions.parquet": {
+      "sha256": "b4a65fec3811ee7978014cecb89864bea0c6a9ec4cca295604a4b448d8d40260",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\original_h45_tuned_selection.parquet": {
+      "sha256": "f5bf09e2b086552b9e088d3607111d369de7265ce7b89e40fd2e7b86e6bbd373",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\original_h45_tuned_tuning.parquet": {
+      "sha256": "f26b0c089eb213d9c395f5d404a5608c91e28dec23f42ed8f93275995dbce96b",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\probability_deciles.parquet": {
+      "sha256": "c02d74e14a8d37325d3825baae241a6bd14f890c8670f1d4185a6d8c5e296cd8",
+      "rows": 1200
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\probability_quality.parquet": {
+      "sha256": "87fb26071454fce17f077d843a40cfa4b09e7af7657945086353eb81f47ad7aa",
+      "rows": 120
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\quality_comparison.parquet": {
+      "sha256": "a9ef7c227f0fbc39b8429ceab95e1c91b58d4b9312dace897f54265a8dad0d0c",
+      "rows": 60
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h120_tuned_candidates.parquet": {
+      "sha256": "144e4f8ef4e12bf0bb8e9d607b77fc6a415408dac9ca173a094f79ecae52bc11",
+      "rows": 2264
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h120_tuned_predictions.parquet": {
+      "sha256": "92089495dca54890f3705615477e47aeb6a7979b9b798a9e42932b85d3923614",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h120_tuned_selection.parquet": {
+      "sha256": "cfffefc2e0e04488f4c90f3fbe7c45fec9682ee3b94cb9af500ce443ed947770",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h120_tuned_tuning.parquet": {
+      "sha256": "e794c9aba5d2d8aa3721c57193c43698e3220afacb0ce52ec796613b165d916e",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h15_tuned_candidates.parquet": {
+      "sha256": "10d8162d4d6aaca0ea4f1f990525ebaec613c223b4417ceb03fb185d69c8944d",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h15_tuned_predictions.parquet": {
+      "sha256": "12e34784fdad937b247b5dc8dd02fcb2a858be04487c593da52b82e373d19138",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h15_tuned_selection.parquet": {
+      "sha256": "66af0b6935aa0145a2246ca06abff640aa9df10155a0d6ddb05a3c516de2e2dd",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h15_tuned_tuning.parquet": {
+      "sha256": "1c1ce60b482fd2fc0f1a88d51a49683744008dd7175851dabeb4e573d18878f9",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h180_tuned_candidates.parquet": {
+      "sha256": "db888ceffddd888ed3616d291f2af5f0021cdd0ae4512c4a80aa5641f263fe0c",
+      "rows": 2256
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h180_tuned_predictions.parquet": {
+      "sha256": "1eebfbf6cecf2bf45cf39428abd0c0e41d684cc82c3b4144d4f02d382a76bc8f",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h180_tuned_selection.parquet": {
+      "sha256": "e7791bc145f6f0d64225e02cec9650d3ff315b43d1bad7d25adc2e15491949c6",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h180_tuned_tuning.parquet": {
+      "sha256": "94901a3b28122747d06ce6a60a54665107a853d13df9745b626a4cc5b7d9bd4d",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h240_tuned_candidates.parquet": {
+      "sha256": "3be0b6dcc474dbda6ef9493e6fd4f04b8b7505dc47732d88f9cc445584aebb8f",
+      "rows": 2240
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h240_tuned_predictions.parquet": {
+      "sha256": "83937ac27ccac30fcf7e4ba9c71fce71d7d6e3b67c0e1066ca8333b6665fc15f",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h240_tuned_selection.parquet": {
+      "sha256": "57db36f053fb78d489ca4a81cb93f027b25a4b296570d5aef39bf7c530685353",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h240_tuned_tuning.parquet": {
+      "sha256": "84491ac295c45bac6a26103b174cf167f9be356b71941888a422d6f69f78583f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h30_tuned_candidates.parquet": {
+      "sha256": "7a6e575460ef1e79fb057bae8e686ddfe929bf139b0b60d762cd8a0926320cf9",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h30_tuned_predictions.parquet": {
+      "sha256": "d8650283666c17bd485289c3702c6c6bbf74fe1ed1ccafc714f1ebcb6dacac13",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h30_tuned_selection.parquet": {
+      "sha256": "48cd922acd48ec8625823a0e13fe813494aca42fa4304ca67996951a9240350a",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h30_tuned_tuning.parquet": {
+      "sha256": "7cc834ebc14b598101c76190a1745219e5374ee83a9804ef970072d1ad710fe9",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h45_tuned_candidates.parquet": {
+      "sha256": "d1948a8161ceb1ca293c6485ac81c7317c89a800df7bd04e14d485668d8596db",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h45_tuned_predictions.parquet": {
+      "sha256": "f8d178b3a00e2c519e262d2da686bd50a376881320c269dfa1ec8eec79d5d9e8",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h45_tuned_selection.parquet": {
+      "sha256": "1006fd83ac17569003746f634cf2757ded36742cae3cbae12cb543fbb490cb9c",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h45_tuned_tuning.parquet": {
+      "sha256": "60ad436184fdcf72196e6457dc46afbb6ce88cd13fd8d96fe1972e51ea93f749",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h5_tuned_candidates.parquet": {
+      "sha256": "47baf59fbed668d5485a1f00a5da79ed6ebbb6ebc62e4a4c6dc1345bb25988b1",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h5_tuned_predictions.parquet": {
+      "sha256": "bc5f04b055b39a81a6ba4632fe61c70a8e5ea332c7b80d39b0a02be10341e7a6",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h5_tuned_selection.parquet": {
+      "sha256": "66e345ec8c208bb43abcee5c0e33571fd266dc420434c3303816b78e0d47a607",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h5_tuned_tuning.parquet": {
+      "sha256": "fc9bb809d6d90b61c5e0626413f48b48df7996d46026216565c8eea7c1c082df",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h60_tuned_candidates.parquet": {
+      "sha256": "fae4dc248dd11feb3c70731adc9abf34826b81e919dfdccd837515ad31e9a3a9",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h60_tuned_predictions.parquet": {
+      "sha256": "2a51ed068ab0f83407a12f7dd1c25c05e6907d94272dfcf7d9df4407d0474639",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h60_tuned_selection.parquet": {
+      "sha256": "271c5d31aa4e13675841e0182c568e91aac7c794139bcc3065b91634b22714cf",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h60_tuned_tuning.parquet": {
+      "sha256": "858b9eea940c12f9ec18273b9a8ec52d10e166112d29b604504af7b9c72f3e67",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h90_tuned_candidates.parquet": {
+      "sha256": "59d4954c563f6aac4aa02b586326b923a5711b147c2218bf880e1f85c7d9aa0f",
+      "rows": 2264
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h90_tuned_predictions.parquet": {
+      "sha256": "34ecb9eeaf9bceb914d935daf460483f6ea8280988b6013ddb2a9bbbffd0d996",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h90_tuned_selection.parquet": {
+      "sha256": "1b340bba2cbde55421e33dab9eff3cc6566ef932d707609fac5dd25f9b1d841b",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h90_tuned_tuning.parquet": {
+      "sha256": "88d110773db699a8d6aa7695d152e809f3d817575ae63f5279b5e0b140b51de4",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h120_tuned_candidates.parquet": {
+      "sha256": "06257d70398e6abfad9a8947d9dbabe8777b6baf7570c063f3892f9bcd49791e",
+      "rows": 2264
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h120_tuned_predictions.parquet": {
+      "sha256": "b94ea79b23844b455ab51e17f37a099ad634f389ed3cabfbb73b2a588d5a4c7c",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h120_tuned_selection.parquet": {
+      "sha256": "aab7e1096d91c7f27f5d227e28e13c73ddee6e878f31abc5a1b278b7217d30a2",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h120_tuned_tuning.parquet": {
+      "sha256": "9307a557fbd56451996426eb58a96a998af704bdf7373f94fb27be1ef0e6cb3f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h15_tuned_candidates.parquet": {
+      "sha256": "44dfbef87406e50358a779e6833548c63ac47e44e1a123f0caf4a2e625cc03fb",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h15_tuned_predictions.parquet": {
+      "sha256": "7599714be0064fef911661fae60c94237c965d525407120bfc550890e5280ca4",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h15_tuned_selection.parquet": {
+      "sha256": "2efdbcbce3e7792aebee2c118b2f20a257e9681f0e123e26938ac4b54dcba055",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h15_tuned_tuning.parquet": {
+      "sha256": "09c8e1cb690922be84f71ffe5c54eade0ae7229a8c32e2d8641dd1030a31d3c0",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h180_tuned_candidates.parquet": {
+      "sha256": "8e0244e430c7858a26f91f50cb7fb92dbf676800940d7819018fbb62ae25f907",
+      "rows": 2256
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h180_tuned_predictions.parquet": {
+      "sha256": "a74b402279a768e6f650c2023ade88c886acec5b8a306e4682ac9515031c4d99",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h180_tuned_selection.parquet": {
+      "sha256": "f1ad85a4986e9cb64368c693fc04ebcf7e1b3a68b8968342d034367e220ed536",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h180_tuned_tuning.parquet": {
+      "sha256": "8e758c2a51d55d0c59f006be9ca6c2ab3e5dc461ddef2ef951bdc2a50d3348f1",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h240_tuned_candidates.parquet": {
+      "sha256": "0791043997c798f942e37438a78ed8a00f60d895c834d8b43c879f560f187600",
+      "rows": 2240
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h240_tuned_predictions.parquet": {
+      "sha256": "fed91be55d8483a20918447b8b30133e53fb5f94dfd501c5c72777ed257c7981",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h240_tuned_selection.parquet": {
+      "sha256": "69c2d02d2cc4f31d8e9ee4dfc657c778d3444062fc8a442134b200dbadd55529",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h240_tuned_tuning.parquet": {
+      "sha256": "629bf8b488f67acc496c8a66157d2f290b6c8564ca340b50c815e9a3b3f13c2a",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h30_tuned_candidates.parquet": {
+      "sha256": "7bc09a178069c994579030fcc37af38df3b957ea40b2551c6d89f6ae3e1c8af5",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h30_tuned_predictions.parquet": {
+      "sha256": "b086e3be9e03f9999dfc532d73e0833f309db7f126efaaa5ace64d3b18126e20",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h30_tuned_selection.parquet": {
+      "sha256": "28bb363232d73ee453a40ea290ad30bb5bcc840d50cdbfed6dc7752072026fdc",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h30_tuned_tuning.parquet": {
+      "sha256": "ce4e313c2fc5b62a31a9767eab262a1cad290fe5d1d8fcd380258a737f367499",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h45_tuned_candidates.parquet": {
+      "sha256": "14327600fb1e3f9ad66df19d3d595257fb6157aba65f77bfed785b859d468d98",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h45_tuned_predictions.parquet": {
+      "sha256": "1f0c0e656aaea1f03813302fb1485d290380b52ccf5717b75578dd53412a44e0",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h45_tuned_selection.parquet": {
+      "sha256": "b6012b9e3ea00bdd47905e099b241063651adfb125c29e949fb1c354ddc2f2dc",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h45_tuned_tuning.parquet": {
+      "sha256": "97d9d5407de227b3c35c35f765712e1a7a8d1b1e80411edde1021582b2e24ba8",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h5_tuned_candidates.parquet": {
+      "sha256": "612e5002e97784f0d5089d535f3512c0877de6141eacd25691ba88039eaff1f6",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h5_tuned_predictions.parquet": {
+      "sha256": "cc9ae92227ad44a426591820798ad84a0aecffa9e4e8d5a2949e0cdbc578fb57",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h5_tuned_selection.parquet": {
+      "sha256": "234e143997bd58bcd9c43229341b4eec3327e85220e009a4071ea425d0bbfa7a",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h5_tuned_tuning.parquet": {
+      "sha256": "572be7346e82ce5cf66a79a2103c78ad7f73949e0eb4bb5987b781eeea743138",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h60_tuned_candidates.parquet": {
+      "sha256": "fcab93726061fcdc6529794d7ef194750a67d7baa467cd69fcdca9043b3cd2f3",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h60_tuned_predictions.parquet": {
+      "sha256": "617d224c10c91f920a7f1fa57ac0c6d066841733f100a7557a4f123d31b61408",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h60_tuned_selection.parquet": {
+      "sha256": "c6c93116c7717f84ec5424cf60c0dffc99dc4302b0eb2d1cbf1206dbb82bee42",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h60_tuned_tuning.parquet": {
+      "sha256": "f7da80cf225f0c367661a50bd1820e63548de83259469316a6cf670093165ff9",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h90_tuned_candidates.parquet": {
+      "sha256": "d128346489d883d950309ec43b41a6e412cddfe84aa3221371eac422c0c5e810",
+      "rows": 2264
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h90_tuned_predictions.parquet": {
+      "sha256": "2b5c36101e5582b035ed8060e6ab6b771c7b595498d1531ad487a733a2f96e98",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h90_tuned_selection.parquet": {
+      "sha256": "c20d596927d919c417f215c1fcf1b675f4f2c5d51c7fcd0a1f497ce3233910c2",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h90_tuned_tuning.parquet": {
+      "sha256": "3d0fd25a1ae219465b25c15424d32504f47464026627d93c5670916e28a8a667",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\regression_h45_tuned_candidates.parquet": {
+      "sha256": "9e0cefd2ea7d7709308f07598c3d683479f9fe5d26277b674afef84ae011638a",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\regression_h45_tuned_predictions.parquet": {
+      "sha256": "81d50af2e83a5e12448040c12ab8087fa970aede5016ac827c49e26f1a734bef",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\regression_h45_tuned_selection.parquet": {
+      "sha256": "ea55ed4189e2f445de1ae8cbf5a11840e59fdb434783e878592710bd70e5f00a",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\regression_h45_tuned_tuning.parquet": {
+      "sha256": "b0c16b0825c5628decb4b64dd23ca24ee2aac9654d01f26b33956ba8471c2b4c",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\REPORT.md": {
+      "sha256": "f0cdc1ad3059d3aea362b4705bdaa7b98d59b6f0a0bda7781c0ff6953041cbbd"
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h120_tuned_candidates.parquet": {
+      "sha256": "daebd50c8c41d901928033876902f6e622e0ff4838c752a2879a0970423b3f03",
+      "rows": 2264
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h120_tuned_predictions.parquet": {
+      "sha256": "e4fdd8bf302fa55ad16a3b9c41689ec94508a4cbc9f79559f84999128007467b",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h120_tuned_selection.parquet": {
+      "sha256": "02a08226a17d6f9eef1e99a3509cc88446edeff26191b789febd7e4e5b2ab565",
+      "rows": 10505
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h120_tuned_tuning.parquet": {
+      "sha256": "b2360b8d3f826783249925243dec109a8093536f741746d15f08c77594954f25",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h15_tuned_candidates.parquet": {
+      "sha256": "83fda7ac3ce9a91e5cd6abac1c17287fb18fa1d431f5393ca15482442bbccb72",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h15_tuned_predictions.parquet": {
+      "sha256": "9143488848f794b3862b0032417b33a461638369f6399a59e7b915906e16e270",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h15_tuned_selection.parquet": {
+      "sha256": "a9f4458bc5cb89410ac70c58b14126fa12428635c1ae8388d66db18ce522dc47",
+      "rows": 11504
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h15_tuned_tuning.parquet": {
+      "sha256": "51da25eb46c5859fc123076c572e3f19623ad35d646b350a5c97a5fbef900ecf",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h180_tuned_candidates.parquet": {
+      "sha256": "78e3c73ca37da552a4f50e7c012fbd15f6789fcf8dc89f2c3d1a21f574fcb9e3",
+      "rows": 2256
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h180_tuned_predictions.parquet": {
+      "sha256": "c62c2157207dd364f9eb2628c7aa73c9fbb89bcad2e08d32e9beeae674954807",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h180_tuned_selection.parquet": {
+      "sha256": "0263fdee6ea8d3bc7a6523d3e1c06c4ca839a5afce63acb9ba4f2fbf0bcc1bd2",
+      "rows": 10181
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h180_tuned_tuning.parquet": {
+      "sha256": "b4a20f2428cf910443a861b3447a9989d8944ab0f0c06f4b922e6cc459e38658",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h240_tuned_candidates.parquet": {
+      "sha256": "e9c12639723dd171a405f232633f9c7c893050e41b5ddf9697852057809eb9c3",
+      "rows": 2240
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h240_tuned_predictions.parquet": {
+      "sha256": "71857de1786e7724ef78c7125f040a576d6a6ce8e2dc9a8d856d98a226e6507b",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h240_tuned_selection.parquet": {
+      "sha256": "05c63cc23e3cba5bf69322c14e8f5bdaabaf4474291af4ea2d40144099c8429f",
+      "rows": 10041
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h240_tuned_tuning.parquet": {
+      "sha256": "5233928602eae8839c5969b024af09b156cf6892ce72bbd856d5098716e26357",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h30_fixed_predictions.parquet": {
+      "sha256": "df65cc25a40e4dc297d7cbc899f1caa6a25d9373aebc9a6b3e4da5610886d7ca",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h30_fixed_selection.parquet": {
+      "sha256": "88c966871de81c35201b659f2a623d1e1ebf03e636c927364e0d4107f8d400c6",
+      "rows": 11834
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h30_fixed_tuning.parquet": {
+      "sha256": "a2315ca0ef5345a0b8c398cced0047c66baaea2cbec9b3cf2319aeced3db11d5",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h30_tuned_candidates.parquet": {
+      "sha256": "f87e04fc45d187474621b3bc69b6d8e46e54a12f9c26b8dd29358c6b702bd3c2",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h30_tuned_predictions.parquet": {
+      "sha256": "35b8709ffc715b18029e82dcf19682bbe0372d8491bde092356220ed6f581c7a",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h30_tuned_selection.parquet": {
+      "sha256": "3fe52919409d4a85be3a4d658ac39bce33a3ac520fd78f960be03411586981a3",
+      "rows": 11834
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h30_tuned_tuning.parquet": {
+      "sha256": "fae25f387553f90936ad27a6adb9d73162c1155077ddfc72f7088f0e594cfc07",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h45_tuned_candidates.parquet": {
+      "sha256": "d359572861be6af0a36253117d1713d30090855441e5ef6d8fd6f69b96649199",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h45_tuned_predictions.parquet": {
+      "sha256": "f9373b4f9a3975ba32f1de15b8c20f20ccb3dab75996f5607fefa497905de8e0",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h45_tuned_selection.parquet": {
+      "sha256": "3e67c663a4b0de973ca639177b76c79297f328ce678bb6a4927af820fb20a0ea",
+      "rows": 11438
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h45_tuned_tuning.parquet": {
+      "sha256": "ea8352f6661eb4a4bcce55ee3d8eb69e6c657e270d47dca11073a8d48c8908cc",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h5_tuned_candidates.parquet": {
+      "sha256": "1c7bc9a637ec1f5160228df7ef3040a63aee6a159a29cf941a89369ef9bcf0a2",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h5_tuned_predictions.parquet": {
+      "sha256": "c022ba6adc2842ff15cd50f99a2b40690742d2622caa76bc4942f8d31aad040d",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h5_tuned_selection.parquet": {
+      "sha256": "e8b4cb4d62ef49881d6ea7e3373913108bb351980fd63890eacc2f4e25c98135",
+      "rows": 9365
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h5_tuned_tuning.parquet": {
+      "sha256": "da15df49945be513e9743fb01c2c9d2e0820cb5b595e22158938d40e4d834f7a",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h60_tuned_candidates.parquet": {
+      "sha256": "d296f30ddc9fef1ee98b95a1e42fd45d0ec7742f48268e24451f4f83970b15a7",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h60_tuned_predictions.parquet": {
+      "sha256": "c7d6927cf630e1caea7ea17d7e21122fa8caa55da3d8b61b9c2ecc40000d1ee3",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h60_tuned_selection.parquet": {
+      "sha256": "7bdcda78e5ed849c6fbb723a38c814f16a822e47ad19a7e77ae14adc86d23824",
+      "rows": 10641
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h60_tuned_tuning.parquet": {
+      "sha256": "5ada4b64eaf152c2fb6e8f75e376ce4886f2e45ba8835631363b25704e1a3ca5",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h90_fixed_predictions.parquet": {
+      "sha256": "fab92466f6a40dc61fc9edc12cc9966e4d9732d2bba8241b49b08cc7a77415a9",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h90_fixed_selection.parquet": {
+      "sha256": "2f7fa38eba3bd507ec06e95cf007c45c0ca5e161edb8bc53d58ff12050a75ecf",
+      "rows": 10412
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h90_fixed_tuning.parquet": {
+      "sha256": "a915817357038897235a554381287f157cf55e3feb0e38cab13d80eaf9c3bda7",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h90_tuned_candidates.parquet": {
+      "sha256": "94b0abcb001dcfca3f26a3454d4f67cd9171d850fd14675da7e4896423750ba8",
+      "rows": 2264
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h90_tuned_predictions.parquet": {
+      "sha256": "67e3e0ea7a7ef84e6b167c3e9c205548625e99ae121f1278fbba1ef19471e3c1",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h90_tuned_selection.parquet": {
+      "sha256": "8224dadb4742df2fdf042558256d7dd59d3fe28a218fc743d43b2234bf3f528b",
+      "rows": 10412
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h90_tuned_tuning.parquet": {
+      "sha256": "c6b7b8c943638394d4caf2ea7056617ce6d51bc2adec9f7f8e0062c9b4c1fdfc",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\run.log": {
+      "sha256": "c201fc4baf6b6b1c7a8ec459390d7a974945709de4912147c279bd8c59ab157d"
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\single_position_arms.parquet": {
+      "sha256": "2dee884d73e4d52ee97a02d9771ed651171eaa88fac7f04931a6825515589463",
+      "rows": 468
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\single_position_baselines.parquet": {
+      "sha256": "febb13db794d446da13d616da9312163d2b3a85525ba72963dbe0e2ec2c00bbb",
+      "rows": 468
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\single_position_comparison.parquet": {
+      "sha256": "1889c951484a96e5f4fdbc5d287f762cea39dabd8117ea03bdfe6999cfd0b85c",
+      "rows": 234
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\single_position_funding.parquet": {
+      "sha256": "d3a8e7875401340b96b7f047532df5d9202366ab16f1660be05655b4743e5409",
+      "rows": 468
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\single_position_metrics.parquet": {
+      "sha256": "00a785f60498988713fa49e0d12ede9ef62bb67e6b82888ebc0c661a2fdfd9da",
+      "rows": 468
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\single_position_monthly.parquet": {
+      "sha256": "94a93b2e43ffe279f848b140743a3ab65a5450809e1bcc5fd624896545ccfb46",
+      "rows": 14976
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\single_position_random.parquet": {
+      "sha256": "a93cecef5285d3230df452c390a77ce366e864c974f8a42d7cdfc0f1342bcc7e",
+      "rows": 468000
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\single_position_yearly.parquet": {
+      "sha256": "3f9dad5dcc86eca46e2e49777bf6dff9a31bc3ccc1ed1524556fa8bb1c464de2",
+      "rows": 1404
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\started_utc.txt": {
+      "sha256": "fad60c6f2aa14bc1fb7643e8d71e91dea1faaf90d48d1bf686b04180896817d3"
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tail_baselines.parquet": {
+      "sha256": "847c8aa48441c869a0ce7ed6f335ebe7bafb4b5ba419bbb53438f16ecc6a7d08",
+      "rows": 2064
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tail_comparison.parquet": {
+      "sha256": "ea1d8189793e128357f93854ad5c98ab2f35fd16bfa841a23d8daed09802cbbe",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tail_funding.parquet": {
+      "sha256": "3246ffedeae3a09761e0997d9b0bd1454606684ac387acd1d92a9db651aa655f",
+      "rows": 2064
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tail_metrics.parquet": {
+      "sha256": "842986004b6fefcfc7a4294f7b8c0280e23390c3f5f8eaaefe4884306b54cb9b",
+      "rows": 2064
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tail_monthly.parquet": {
+      "sha256": "ffd9068a25f00242f65665d4509b1fd3dc840ef39a90b5de9ee39cbeb17c270a",
+      "rows": 66048
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tail_random.parquet": {
+      "sha256": "e9908f62d7fb6bd55635d46c76c629ea4a7b0234fded9d4cee31d9aa67edaba7",
+      "rows": 2064000
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tail_thresholds.parquet": {
+      "sha256": "f0a77465f0300dabb8f3d839962f2fb09bb82064c3ec257c500084a22ae9fdfb",
+      "rows": 144072
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tail_yearly.parquet": {
+      "sha256": "f7fc07bd052695d0ea8d3637794c882c7b465684d9452d10f47f5ebaa833b90c",
+      "rows": 6192
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tuning_candidates.parquet": {
+      "sha256": "2c3eb3b55cfba8036222482cd1d0268c8595389be93dcdd433c1c3d5d43789dc",
+      "rows": 67968
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tuning_folds.parquet": {
+      "sha256": "a2d2a1447902675c302fd8afda4798e6794f62dd59d0e9e393f7f35bc3a40fab",
+      "rows": 18630
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tuning_iteration_distribution.parquet": {
+      "sha256": "60f715d1046d6ccd0f538e1fa22806e3c2b9ec291d6efd3280b7b70d4dd28230",
+      "rows": 60
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tuning_loss_correlation.parquet": {
+      "sha256": "8c5165db7bc794defb4fa81b195eeabd10730a74da65fec8d095ab265b4a84b6",
+      "rows": 62
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\tuning_parameter_distribution.parquet": {
+      "sha256": "d85f105f0e8e485af10d5ffa62edaf47210b5b94d0290a1da147953ec57b23f0",
+      "rows": 270
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\weighted_h45_tuned_candidates.parquet": {
+      "sha256": "55d69f2379211fbf544e92262a4af72eeb03e8717a233cc4e270717acc5fa3c2",
+      "rows": 2272
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\weighted_h45_tuned_predictions.parquet": {
+      "sha256": "9346d291ad875821f29dbd3d8016a11ec496c18691075b4e93b9223808d60170",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\weighted_h45_tuned_selection.parquet": {
+      "sha256": "1d13c8b473b0be107c4da06913a6c7f181e1d29a141ee26361737e83c4ff2df4",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_11_20261001\\weighted_h45_tuned_tuning.parquet": {
+      "sha256": "73345731ab63a72725f72fe7b9e04ed5bd4488bc1068f6d5041655a7de232f9a",
+      "rows": 621
+    }
+  }
+}

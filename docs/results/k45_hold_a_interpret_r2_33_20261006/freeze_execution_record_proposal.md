@@ -1,0 +1,3 @@
+### 실행 기록 (제안 문구; 고정 문서 미수정)
+
+사용자 결정으로 DRAFT v3를 FROZEN으로 전환하지 않은 채 1회 평가했다. HOLD_A 후보·파라미터는 변경하지 않았고, Q3 bookTicker 부재 때문에 해당 feature를 제외했다. 값을 열기 전 기술 실패는 3건(과거-fold bridge 부재, premium 중복 열, funding timestamp 1–47ms 정규화)이었으며 각 실패 실행은 결과값을 열지 않았다. 최종 성공 산출물 `hold_a/manifest.json` SHA256은 `8f3a371298273fdc17802381b6a6526d3ec0fae31fc9f8e83aec6c204db5d80c`이고, R2-32 최상위 `manifest.json` SHA256은 `eb1eb6b5026d20ccd23822a994d12578f9ba07a20252acb838e3a6d07a6d83f5`이다. 여섯 가설은 PESS/OPT 모두 CONFIRMED였으나, 본 R2-33 해석은 이미 본 HOLD_A의 사후 서술이며 새 OOS 증거가 아니다.

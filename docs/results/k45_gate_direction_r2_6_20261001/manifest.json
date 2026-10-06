@@ -1,0 +1,1621 @@
+{
+  "run_started_utc": "2026-10-01T05:38:36.949836+00:00",
+  "run_finished_utc": "2026-10-01T05:48:18.666044+00:00",
+  "runtime_seconds": 581.716208,
+  "data_cutoff_utc": "2026-06-30T23:59:00+00:00",
+  "frozen_hypothesis": "보유 시간을 늘리면 롱 net이 오르고 숏은 짧을수록 낫다",
+  "segments": {
+    "DEV": "pilot_fold <= 605",
+    "HOLD_B": "pilot_fold >= 606; exploratory"
+  },
+  "entry": "close[t]",
+  "exit": "close[t+h] time-only",
+  "cost_bps": 4.0,
+  "horizons": {
+    "LONG": [
+      5,
+      15,
+      30,
+      45,
+      60,
+      90,
+      120,
+      180,
+      240
+    ],
+    "SHORT": [
+      5,
+      15,
+      30,
+      45,
+      60,
+      90,
+      120,
+      180,
+      240
+    ]
+  },
+  "books": [
+    "SINGLE",
+    "ALL"
+  ],
+  "source_rules": {
+    "THREE_CLASS_M010": "p_long-p_short > 0.10 LONG; < -0.10 SHORT",
+    "THREE_CLASS_M020": "p_long-p_short > 0.20 LONG; < -0.20 SHORT",
+    "REGRESSION_ABS4": "yhat > 4 LONG; yhat < -4 SHORT",
+    "WEIGHTED_M010": "weighted p_long-p_short > 0.10 LONG; < -0.10 SHORT",
+    "R2_1_PSTAR": "arm p>p*; both eligible selects larger p-p*"
+  },
+  "funding_interval": "entry_time < funding_time <= exit_time",
+  "funding_cost_bps": "side * sum(actual funding rate) * 10000",
+  "random_seed": 20261001,
+  "random_direction_match": "same entry bars, horizon, and n",
+  "long_pure_effect_random_match": "pilot_fold+horizon+n",
+  "pw_bootstrap_reps": 20000,
+  "pw_bootstrap_seed": 20260930,
+  "fixed_bootstrap_reps": 999,
+  "fixed_daily_blocks": [
+    7,
+    14,
+    30
+  ],
+  "fixed_event_blocks": [
+    20,
+    50
+  ],
+  "local_data_only": true,
+  "new_model_fits": 0,
+  "live_orders": 0,
+  "winner_selection": 0,
+  "input_sha256": {
+    "out\\k45_gate_direction_20261001\\predictions.parquet": "31b341e49c421aa9e104319505a2ed1cdc426d0f74a702cc91d1c4424a1b6cb8",
+    "out\\k45_gate_direction_audit_20261001\\c4_predictions.parquet": "ead74194e8342ee1435cdc800747005ff954abf859708a23c4fe38a9b7e855d8",
+    "out\\k45_gate_direction_r2_20261001\\r21_predictions.parquet": "85cd9d0495e02aa1a49a6a3e58c20cc993f77c88ead782a47901d0e77f96a366",
+    "out\\k45_gate_direction_r2_20261001\\manifest.json": "cba80925cb3e6589362708bf776bdd2f09d7b42b115a87eba7de07d10713e878",
+    "out\\k45_gate_direction_r2_20261001\\REPORT.md": "1a6ccec9e0340492797b86c928990ea37d3b97b80c0757901ef7f27895eddddf",
+    "artifacts\\btcusdt_2020_2026h1.parquet": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-01.zip": "7f81b2f3694d13779e7e896b69d60cd61e9444d7b9f9e90df761935e1c1b76e2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-02.zip": "6599466d108d120c64a078824326c063ed2d4335b3292e52c5e572f79166533a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-03.zip": "eee845fde6336e29d25889563cba3d2cff2d4d640e51fb1f82ae9b28cedaee77",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-04.zip": "d009ce034d08c3dcf3e7f874b0f8b0ec76ba507bc6bb4e007e541df537bafbce",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-05.zip": "3f2b56dd6b9a42457009bb367d0adadd3cf7e2216cd325172d0089e3883125a8",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-06.zip": "30b3470ff98576578973d75e3c157a5cbf1778b11e4c26b4b4ff70a3cbb348ec",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-07.zip": "18dae7b11075fc0fba79ad47df46683415cba5d027caa69c66bc2a5c9d9b459a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-08.zip": "e6f6d1749f674c85d4766e0eb36af6ea40d91a0674234d30df80eb9876b094e3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-09.zip": "7ae9a3b6afb2dc06e46080582908ec8c27063b707a14c7f1e679dc991ff48032",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-10.zip": "4c55b191c101f39c7fb193a6529665dd9e83302ca21876521e4c93b3902e9fb1",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-11.zip": "676356a2d075caa51b4f8ada026e9430dc320ffd23d2343b13b7aa25324ed6d1",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-12.zip": "d7390f90edf54cc4ad9bbe78e2f6b291ae06ad9539f591a2d0fce445873bbd63",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-01.zip": "cff916dc4b638ec3de97828e8911cd91cf7d7a3d0836ec0175869c374e66823d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-02.zip": "819a7b107443686adb313fc5fc223302a29f3981e1d1bd9828ad0ade65a8a8af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-03.zip": "2125fd300848938c7b992b8f7b7b5007d5b277a4ff1ebda7da083b40242729da",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-04.zip": "9cd888e3b0a1954813d0062c2e60426fdc8e34a7f258f6838371ec67f535b028",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-05.zip": "ed934afb9cf84df6ecae742e755147333a84244836a66b51523abc66dd5f63af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-06.zip": "7b8d9bfb8816636b800764dafb2aa2307d19166c695bfa245adbf7d01d61f766",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-07.zip": "8ab3df641d3bcf40527491f8e26d046ad2b662d1950ead9555ad32975571b7fe",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-08.zip": "7eb681cc45b94176f4b9192a62c3a1925d79031ba001cea2d8dec6ff6e5b9c35",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-09.zip": "03f25a7c25eef18d5f5b5b7bb0b664cab7a210b409f37e95a54e141808a0752d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-10.zip": "f25820d6add687addbca3ef43bee58f70853a6da53832a0c1bc22d00dc8ec64a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-11.zip": "e2e6b2d7218607e7e4a38137d50f553c2cfb901275c19edf567024c1cc6de85f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-12.zip": "bf3ce484faf41d7dccfd38c5cc3d8de34d8297df30ab10784e874cc10fd1b310",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-01.zip": "22ee19079b620f5c6d820e7d7f8bafa7fde866d89bd664863b8bd527749c12cb",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-02.zip": "fa95088258a905c79ab79e8984d2f6f66933ec2e814dbab4ef9da89b01ab484a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-03.zip": "4cf0883bc07f4ed4cdd3b0d8c0d166b4d15d21e666ab752f9f44401af4d6172f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-04.zip": "57e2776cc68b3169fc9f8632dad67278f470cd453407a8ebe6c87963c8a31357",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-05.zip": "bced8a5013d09742b96682e6fd01ad4456213515a03d7586ec2b1f2689af5255",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-06.zip": "0cd0708f8903829eb46f98cf60f4b2516c986e1ccddf6620a5912b48e16baf93",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-07.zip": "29d58cce0cd45f74c6a112039835c6d9ee5a7e60e7c38c2503beb7930453a4fe",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-08.zip": "6f4f0c6c84c05694b4b4a5c085776730fd4059723eecd98ee6ffeb3fde4da811",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-09.zip": "d62cd4e13009de37add446dc4f63ead4c56dcc4955a1e60f6726bcadc5a68fa9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-10.zip": "ad9efed10d4ca1567b865d7a158790977cec1b925395634217069df6696c8bc9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-11.zip": "8febe5bec1a029e993bbf27490761f8c47c32849bf7dd13441b2b2f6ec1ffb51",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-12.zip": "4218c78331bcc4dbeb5768fa112242a880971c1f2cfd1d3f32aaa26ca34069af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-01.zip": "05e3df32f28d0d50f4c5a280adee9368b4a66fc68c6ddca1b3277087ac0d19f5",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-02.zip": "5227accd9aaa59f71f5e682abffb58be5f99573ed208ab968b1704c81ac11345",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-03.zip": "ab022adff9b853d2f33cf80154e77c770f57c3392f0bbc36564b2e2cdbd0e872",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-04.zip": "2931039d26818edc65d4faefba84945fd1ba52989dd58fb127dc3cd7a12c7fbf",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-05.zip": "5d026fece46df86293054c8c56c2c8de575d30161b82979b11831831217a246e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-06.zip": "3ffdde6f1dc9c3c065d77ae43f3ba64d19d4cb76512d4bc1d541933d4fb2e6f7",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-07.zip": "0304baed9fd407293a8a8040b30a1b68bd344803b630d33530375b421733a930",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-08.zip": "516a8f50631c6ede6a9642f6d1590b6a22c33ba09935501d2ace8dc1396501fd",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-09.zip": "3fd9df6fd1eef33cf5fe625c27012359bc6d64a68c109305d7b44a0354f533c2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-10.zip": "03105cc140150bffca834bcccbddc6cfee245e079d2df1759653243bd6e92448",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-11.zip": "8015d2997f8d5e757ff3707ee87800ca30a74da0129daa747b64117f07bcc186",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-12.zip": "8f02fdd2a2da261bbf13ab301c74bdb57fae005f19d5088e9ece5f8824c1a2a7",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-01.zip": "3e0d30870672aa8f0f937881056e3cfd55913ae5c780cd50b33f2763aa0ba58e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-02.zip": "daf1e4901e3d6436d82ad60f90d007eb5300be8047cfef121007203a7212cde6",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-03.zip": "711dcaf2a341aedfd06447b4117b540f60adb0784c5e64a313c718e4cf092bc3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-04.zip": "6d220b8e2815362a11d294d35dbca28568370d8295351937eceec10f2b359b85",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-05.zip": "aef8c5fdce1493fd570b5829a72f2f17c7e459483390f25544d16c2a30be592e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-06.zip": "43fc4473820d1fb4fe340d1b1951a87555f6841aa352e684fa95d6adffce04c6",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-07.zip": "acab0593c1452660ce74a6c239fb215c1192b0a9c6e8c1689e6495de40a0174b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-08.zip": "7003d29a43dd5f9357f838da8766834954939e22c1d80af682d9f33984f67b71",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-09.zip": "6ef23b02392b481ef9c3855434bf3644289fb6e228b4f7d9a0dfc6d3cdff1116",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-10.zip": "26db65ac8020d80ece35df79c254c5f7e24427529bcceeb2972748c4fe2d2707",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-11.zip": "e1b19cccfe2cdcba48b022790789b7b01edd86c075f39bc152e44c267d43bd51",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-12.zip": "069409f525ebf6370ee1c7defe475167de4b97284c5ac8e68768652968cd3dc9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-01.zip": "df725010d55458866eb5a47e9ee708c6796c9d7e77b14c38342cea11f381815e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-02.zip": "e918b90fb33df3a3317feea13807a892047f1ec86eeac100bdb7b3dd83285d46",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-03.zip": "a3b95cfb315641fbfddc61eb32adf2a2588afb7a3973a61f464aca007ad43e3f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-04.zip": "01dbb7bd0135f98bd63bdde6b943cde1accc1770cabf92f68a1ec0653ced3888",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-05.zip": "e7355e2775b88009c984db1783bb8ed6b5f24ede2b52bb764151b5722d6a5e42",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-06.zip": "a1f4a40953740fa83ee9ad97776ff8325d1958654a67f1325614071a983819d4",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-07.zip": "b097dff828f6e43fece23db0d3cb98042a9d7bc19693b8cbfd051d88eb973b7b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-08.zip": "1180129860b6e196e8d70bb9719e81573aa6b4acb423ba5ee7f82f10c836f7ab",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-09.zip": "21dc6570fc6bffad0e7b5f9e99211b82ad07c95ab4f18c3a2daa3b95ec98344c",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-10.zip": "9ecdedab6344fc4cdb154763266b8e09627a71c3cc5574cf868158b541c259c2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-11.zip": "23735400405627d610123e3a43db3e98ae7addb93459cd670e65a7659a5f081b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-12.zip": "35318b789f020b0e04c9043112480743855554e52e1d188437cbdaa67246d51d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-01.zip": "fcdc796484f395830d418588a34a26baed8849dbef0ff2b56173247e493ff51f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-02.zip": "80df1dd669dc1e3afc360c9da8b9a949a127fce088eedbf5bf708bd37b0a1f58",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-03.zip": "5c069d5e9597a44fd0e213395082e59ff223fb99c9eab3a2a5a2a5622ba7867c",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-04.zip": "51cdeb4de7d5ef1d4eece80b6115e391bdf7a2d0803bf9ad8371ab23340b22d3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-05.zip": "445b65fd6b17bfcfb5e4d035db29fad34f729fa078f0449024db42621be84e6e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-06.zip": "cff97ce688329592bccbbf5873b5c7021649e093f5f5806e332c5b4fb7fd6a00"
+  },
+  "source_sha256": {
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_6.py": "ffaa3d86a38424267a45ea1947bb578680aa0b8a36bacf2f2a4100d61db4659b",
+    "tests\\test_k45_gate_direction_r2_6.py": "2ea4e3375ffc320f44ffff868ed2e0e35e7b39e381c1d8e495ec4293a370d110",
+    "D:\\StudyQuant\\out\\k45_trend_side.py": "0dbfca1ce56f680e649e85e50440efb6d87029d816eb113c7a583fea0fd8fb8f",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2.py": "a9fa8d49d743872b932ded087d8abe5bd01fbf54ff5cd85da72960964b8c5246",
+    "D:\\StudyQuant\\out\\run_patchtst_k45_flow_inference.py": "2b298530680ded1d8503fc73a3c1da4a91ace47714d0c3f1d561f55ad7604fe3",
+    "D:\\StudyQuant\\btcusdt_quant\\funding_source.py": "7fa050a21e1e1a429819ce358e337fcab3dc00a2f1060ab837a5cc8762236ba4"
+  },
+  "output_sha256": {
+    "out\\k45_gate_direction_r2_6_20261001\\model_metrics.parquet": "7d2d1f3991de4b96750988fbcb80dea188a80e2d9515f11d114c1a5e332b59a8",
+    "out\\k45_gate_direction_r2_6_20261001\\random_direction_metrics.parquet": "db4a8280d5fff24918d130fac82798352c35e7d299efd31f23392b8f294e0c71",
+    "out\\k45_gate_direction_r2_6_20261001\\long_signal_pure_effect.parquet": "a12111b11feb32b247cc723c4414bb69519b25d38d550911b607ff29f1b63e90",
+    "out\\k45_gate_direction_r2_6_20261001\\core_net.parquet": "b241946d8b490598f358cb9cdb4a1793de238026e3923ba0bc6504067c4289d6",
+    "out\\k45_gate_direction_r2_6_20261001\\extended_horizon_net.parquet": "0fbe6696ac13cf636f258e944bafc52b1ca17a3c5fd1e746e49b4cbc476624cf",
+    "out\\k45_gate_direction_r2_6_20261001\\REPORT.md": "abaa84179aa9e4d3edefaa4132cf2d0eafdf96fa216c8233780457bf22328754"
+  },
+  "row_counts": {
+    "model_metrics.parquet": 360,
+    "random_direction_metrics.parquet": 360,
+    "long_signal_pure_effect.parquet": 90,
+    "core_net.parquet": 180,
+    "extended_horizon_net.parquet": 60
+  },
+  "out_of_sample_result": [
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 5,
+      "ALL_net_bps": -4.0571555394776,
+      "SINGLE_net_bps": -4.0571555394776
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 15,
+      "ALL_net_bps": -2.6279970770983314,
+      "SINGLE_net_bps": -2.6279970770983314
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 30,
+      "ALL_net_bps": -2.4026857411113713,
+      "SINGLE_net_bps": -2.911012863475147
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 45,
+      "ALL_net_bps": -2.794583759606359,
+      "SINGLE_net_bps": -2.6532985307328
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 60,
+      "ALL_net_bps": -2.141388464856215,
+      "SINGLE_net_bps": -1.9422031772533759
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 90,
+      "ALL_net_bps": -1.7851638606953213,
+      "SINGLE_net_bps": -1.2101957760039717
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 120,
+      "ALL_net_bps": -1.6472938837659765,
+      "SINGLE_net_bps": -2.0561575712918825
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 180,
+      "ALL_net_bps": -0.47176105038871713,
+      "SINGLE_net_bps": 0.05273939580406886
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 240,
+      "ALL_net_bps": 0.9845125907199761,
+      "SINGLE_net_bps": 0.18075458199020594
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 5,
+      "ALL_net_bps": -3.2519979520864433,
+      "SINGLE_net_bps": -3.2519979520864433
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 15,
+      "ALL_net_bps": -4.256621977416879,
+      "SINGLE_net_bps": -4.256621977416879
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 30,
+      "ALL_net_bps": -4.644824686279453,
+      "SINGLE_net_bps": -4.343906076152929
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 45,
+      "ALL_net_bps": -4.843931787347693,
+      "SINGLE_net_bps": -4.190149473893564
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 60,
+      "ALL_net_bps": -4.893955132096311,
+      "SINGLE_net_bps": -4.467041944140661
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 90,
+      "ALL_net_bps": -7.060791754386459,
+      "SINGLE_net_bps": -5.874186538849543
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 120,
+      "ALL_net_bps": -9.311983363284561,
+      "SINGLE_net_bps": -6.286543860912384
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 180,
+      "ALL_net_bps": -12.101231555925931,
+      "SINGLE_net_bps": -10.06033523464202
+    },
+    {
+      "segment": "DEV",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 240,
+      "ALL_net_bps": -14.52225904636348,
+      "SINGLE_net_bps": -9.47443381729157
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 5,
+      "ALL_net_bps": -3.4267976747170557,
+      "SINGLE_net_bps": -3.4267976747170557
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 15,
+      "ALL_net_bps": -1.7477652677470734,
+      "SINGLE_net_bps": -1.7477652677470734
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 30,
+      "ALL_net_bps": -0.7194459341693169,
+      "SINGLE_net_bps": -1.4073427226781865
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 45,
+      "ALL_net_bps": 0.035454110351418405,
+      "SINGLE_net_bps": -0.5238036581339258
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 60,
+      "ALL_net_bps": -0.3434387712067836,
+      "SINGLE_net_bps": -0.3339020314640311
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 90,
+      "ALL_net_bps": 0.23095769035043975,
+      "SINGLE_net_bps": -0.484254910299789
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 120,
+      "ALL_net_bps": 1.1873847444893368,
+      "SINGLE_net_bps": -0.053783787643492696
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 180,
+      "ALL_net_bps": 2.504193608322144,
+      "SINGLE_net_bps": 1.5570273050293673
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 240,
+      "ALL_net_bps": 4.090594192133004,
+      "SINGLE_net_bps": 1.3340836773591689
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 5,
+      "ALL_net_bps": -2.698112157264879,
+      "SINGLE_net_bps": -2.698112157264879
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 15,
+      "ALL_net_bps": -3.788234526221254,
+      "SINGLE_net_bps": -3.788234526221254
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 30,
+      "ALL_net_bps": -3.815824905331575,
+      "SINGLE_net_bps": -3.6237080086586473
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 45,
+      "ALL_net_bps": -4.623747402007808,
+      "SINGLE_net_bps": -4.229232309173488
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 60,
+      "ALL_net_bps": -5.4165723810998,
+      "SINGLE_net_bps": -4.263274823484096
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 90,
+      "ALL_net_bps": -8.938160817243539,
+      "SINGLE_net_bps": -4.732265001724322
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 120,
+      "ALL_net_bps": -11.251584607692601,
+      "SINGLE_net_bps": -4.552537926330045
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 180,
+      "ALL_net_bps": -12.634628334911799,
+      "SINGLE_net_bps": -8.081070829195832
+    },
+    {
+      "segment": "DEV",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 240,
+      "ALL_net_bps": -14.599224600829498,
+      "SINGLE_net_bps": -11.664581852366714
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 5,
+      "ALL_net_bps": -3.7592097737225214,
+      "SINGLE_net_bps": -3.7592097737225214
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 15,
+      "ALL_net_bps": -2.6095221389446235,
+      "SINGLE_net_bps": -2.6095221389446235
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 30,
+      "ALL_net_bps": -1.9910133666220926,
+      "SINGLE_net_bps": -2.5927061964891345
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 45,
+      "ALL_net_bps": -1.7062231090158584,
+      "SINGLE_net_bps": -2.3323169900090543
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 60,
+      "ALL_net_bps": -1.4118533062369805,
+      "SINGLE_net_bps": -1.855550544409114
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 90,
+      "ALL_net_bps": -1.1981892409532018,
+      "SINGLE_net_bps": -1.3985855166116157
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 120,
+      "ALL_net_bps": -0.6251285118411745,
+      "SINGLE_net_bps": -1.446615843497842
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 180,
+      "ALL_net_bps": 0.3890147885302214,
+      "SINGLE_net_bps": 0.7560809716880047
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 240,
+      "ALL_net_bps": 1.4636089742085983,
+      "SINGLE_net_bps": -0.16305471383417455
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 5,
+      "ALL_net_bps": -3.3176853591386015,
+      "SINGLE_net_bps": -3.3176853591386015
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 15,
+      "ALL_net_bps": -4.75847064831536,
+      "SINGLE_net_bps": -4.75847064831536
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 30,
+      "ALL_net_bps": -5.936127162616952,
+      "SINGLE_net_bps": -4.945898542064851
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 45,
+      "ALL_net_bps": -6.012137744527611,
+      "SINGLE_net_bps": -4.940652558820401
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 60,
+      "ALL_net_bps": -6.166166610335672,
+      "SINGLE_net_bps": -4.361464986700982
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 90,
+      "ALL_net_bps": -9.461932213208131,
+      "SINGLE_net_bps": -6.338286895422101
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 120,
+      "ALL_net_bps": -11.619704868260373,
+      "SINGLE_net_bps": -5.766607003166868
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 180,
+      "ALL_net_bps": -14.837013337738785,
+      "SINGLE_net_bps": -9.882812009962805
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 240,
+      "ALL_net_bps": -18.60737968285416,
+      "SINGLE_net_bps": -11.418609048985136
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 5,
+      "ALL_net_bps": -2.4155717007519564,
+      "SINGLE_net_bps": -2.4155717007519564
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 15,
+      "ALL_net_bps": -0.15146426823194856,
+      "SINGLE_net_bps": -0.15146426823194856
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 30,
+      "ALL_net_bps": 0.46765088079094536,
+      "SINGLE_net_bps": -0.27026272584289257
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 45,
+      "ALL_net_bps": 0.15954105847475306,
+      "SINGLE_net_bps": -1.8196300630857436
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 60,
+      "ALL_net_bps": 1.0527570441450984,
+      "SINGLE_net_bps": -0.23896516623396816
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 90,
+      "ALL_net_bps": 1.7676866706654768,
+      "SINGLE_net_bps": -0.37976690144376507
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 120,
+      "ALL_net_bps": 3.464642052673545,
+      "SINGLE_net_bps": -1.2628462854092688
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 180,
+      "ALL_net_bps": 7.414628461149597,
+      "SINGLE_net_bps": 3.0111349218587713
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 240,
+      "ALL_net_bps": 11.391687101898512,
+      "SINGLE_net_bps": 5.290002153843059
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 5,
+      "ALL_net_bps": 0.49745778845975636,
+      "SINGLE_net_bps": 0.49745778845975636
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 15,
+      "ALL_net_bps": -0.7850601253381231,
+      "SINGLE_net_bps": -0.7850601253381231
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 30,
+      "ALL_net_bps": -2.280092118749061,
+      "SINGLE_net_bps": -1.659962697255976
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 45,
+      "ALL_net_bps": -0.6294946626688324,
+      "SINGLE_net_bps": -0.7824246447699105
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 60,
+      "ALL_net_bps": 0.3776239036323704,
+      "SINGLE_net_bps": 1.7034447375403385
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 90,
+      "ALL_net_bps": -2.170786937985789,
+      "SINGLE_net_bps": -0.7149936827071923
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 120,
+      "ALL_net_bps": -3.675090516159933,
+      "SINGLE_net_bps": -2.812099543651428
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 180,
+      "ALL_net_bps": -8.273863266357065,
+      "SINGLE_net_bps": -8.700817805791669
+    },
+    {
+      "segment": "DEV",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 240,
+      "ALL_net_bps": -10.376038767151666,
+      "SINGLE_net_bps": -10.895093683214844
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 5,
+      "ALL_net_bps": -3.5492428453741476,
+      "SINGLE_net_bps": -3.5492428453741476
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 15,
+      "ALL_net_bps": -2.314376698324159,
+      "SINGLE_net_bps": -2.314376698324159
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 30,
+      "ALL_net_bps": -0.9448933219262097,
+      "SINGLE_net_bps": -2.206058168086695
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 45,
+      "ALL_net_bps": -0.7647626150244278,
+      "SINGLE_net_bps": -2.4225852906989433
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 60,
+      "ALL_net_bps": -0.26529578360871436,
+      "SINGLE_net_bps": -1.732039882600296
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 90,
+      "ALL_net_bps": 0.928430384696109,
+      "SINGLE_net_bps": -1.3290534278255084
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 120,
+      "ALL_net_bps": 2.1135725638394165,
+      "SINGLE_net_bps": -0.9104246094122382
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 180,
+      "ALL_net_bps": 2.8231910871919337,
+      "SINGLE_net_bps": -2.0716823317682365
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 240,
+      "ALL_net_bps": 6.284608755788905,
+      "SINGLE_net_bps": -1.5935055206129436
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 5,
+      "ALL_net_bps": -1.610251524450676,
+      "SINGLE_net_bps": -1.610251524450676
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 15,
+      "ALL_net_bps": -2.0618326360696835,
+      "SINGLE_net_bps": -2.0618326360696835
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 30,
+      "ALL_net_bps": -1.8976908399144852,
+      "SINGLE_net_bps": -1.3232852253222964
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 45,
+      "ALL_net_bps": -1.991542482945815,
+      "SINGLE_net_bps": -1.7253058257688918
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 60,
+      "ALL_net_bps": -1.9323602741664632,
+      "SINGLE_net_bps": -0.8184818553795793
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 90,
+      "ALL_net_bps": -5.952791719645635,
+      "SINGLE_net_bps": -3.5067382194690864
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 120,
+      "ALL_net_bps": -7.39029576799956,
+      "SINGLE_net_bps": -4.153443795521504
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 180,
+      "ALL_net_bps": -7.273144544675961,
+      "SINGLE_net_bps": -4.440774348570813
+    },
+    {
+      "segment": "DEV",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 240,
+      "ALL_net_bps": -10.63586360835757,
+      "SINGLE_net_bps": -5.575820495173669
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 5,
+      "ALL_net_bps": -2.6964745416167006,
+      "SINGLE_net_bps": -2.6964745416167006
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 15,
+      "ALL_net_bps": -0.8931227587832103,
+      "SINGLE_net_bps": -0.8931227587832103
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 30,
+      "ALL_net_bps": -0.013357468926647718,
+      "SINGLE_net_bps": 1.679839852979684
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 45,
+      "ALL_net_bps": -0.3834944301490073,
+      "SINGLE_net_bps": -0.08637446952305006
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 60,
+      "ALL_net_bps": 3.0088164971418343,
+      "SINGLE_net_bps": -0.3885468265130421
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 90,
+      "ALL_net_bps": 3.6420439333982784,
+      "SINGLE_net_bps": 1.9970200534457982
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 120,
+      "ALL_net_bps": 4.237247384378807,
+      "SINGLE_net_bps": 4.161386270934639
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 180,
+      "ALL_net_bps": 1.818396136668286,
+      "SINGLE_net_bps": -0.06790261684708489
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "LONG",
+      "horizon": 240,
+      "ALL_net_bps": 0.7133657957477559,
+      "SINGLE_net_bps": 4.304526837666833
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 5,
+      "ALL_net_bps": -3.0516875244129835,
+      "SINGLE_net_bps": -3.0516875244129835
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 15,
+      "ALL_net_bps": -1.4252330359595557,
+      "SINGLE_net_bps": -1.4252330359595557
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 30,
+      "ALL_net_bps": -3.0508470549414244,
+      "SINGLE_net_bps": -2.992792553950108
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 45,
+      "ALL_net_bps": -3.2724431304623374,
+      "SINGLE_net_bps": -5.327432398634981
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 60,
+      "ALL_net_bps": -2.8351917521314287,
+      "SINGLE_net_bps": -4.890222434755276
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 90,
+      "ALL_net_bps": -2.4581334012887237,
+      "SINGLE_net_bps": -6.391714107921477
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 120,
+      "ALL_net_bps": -2.0422023381844765,
+      "SINGLE_net_bps": -9.139609751391378
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 180,
+      "ALL_net_bps": -4.835069208477799,
+      "SINGLE_net_bps": -10.008086873483492
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "R2_1_PSTAR",
+      "arm": "SHORT",
+      "horizon": 240,
+      "ALL_net_bps": -11.286372239412723,
+      "SINGLE_net_bps": -15.218355700800783
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 5,
+      "ALL_net_bps": -4.340408257424697,
+      "SINGLE_net_bps": -4.340408257424697
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 15,
+      "ALL_net_bps": -2.656111501663685,
+      "SINGLE_net_bps": -2.656111501663685
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 30,
+      "ALL_net_bps": -3.302032195572185,
+      "SINGLE_net_bps": -4.630764769282495
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 45,
+      "ALL_net_bps": -0.6928052471790215,
+      "SINGLE_net_bps": -6.080222705691674
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 60,
+      "ALL_net_bps": 3.0734827240194207,
+      "SINGLE_net_bps": -9.399969592637282
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 90,
+      "ALL_net_bps": 10.77114713924635,
+      "SINGLE_net_bps": -4.798197669801246
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 120,
+      "ALL_net_bps": 10.264911880025187,
+      "SINGLE_net_bps": -3.1008075072181414
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 180,
+      "ALL_net_bps": -0.8025094007273165,
+      "SINGLE_net_bps": -9.838264118546622
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "LONG",
+      "horizon": 240,
+      "ALL_net_bps": -1.7780747079818753,
+      "SINGLE_net_bps": -17.088140548472502
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 5,
+      "ALL_net_bps": -4.207788072347915,
+      "SINGLE_net_bps": -4.207788072347915
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 15,
+      "ALL_net_bps": -4.006978078750649,
+      "SINGLE_net_bps": -4.006978078750649
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 30,
+      "ALL_net_bps": -6.8310917993182985,
+      "SINGLE_net_bps": -9.357980766597436
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 45,
+      "ALL_net_bps": -9.485167808582881,
+      "SINGLE_net_bps": -13.827912129048546
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 60,
+      "ALL_net_bps": -5.954524670175417,
+      "SINGLE_net_bps": -10.082756279286807
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 90,
+      "ALL_net_bps": -4.355476563763085,
+      "SINGLE_net_bps": -12.088563341023116
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 120,
+      "ALL_net_bps": -6.407173112195951,
+      "SINGLE_net_bps": -14.571436371204141
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 180,
+      "ALL_net_bps": -8.750482347915662,
+      "SINGLE_net_bps": 2.1945176472006285
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "REGRESSION_ABS4",
+      "arm": "SHORT",
+      "horizon": 240,
+      "ALL_net_bps": -12.701506332862728,
+      "SINGLE_net_bps": -6.3799408255785055
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 5,
+      "ALL_net_bps": -3.013605096721435,
+      "SINGLE_net_bps": -3.013605096721435
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 15,
+      "ALL_net_bps": -0.704485373225216,
+      "SINGLE_net_bps": -0.704485373225216
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 30,
+      "ALL_net_bps": 1.1106899759131237,
+      "SINGLE_net_bps": 0.9873225436135608
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 45,
+      "ALL_net_bps": 1.5526638126130763,
+      "SINGLE_net_bps": -0.46920619057371094
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 60,
+      "ALL_net_bps": 4.35225029607116,
+      "SINGLE_net_bps": -0.15546715727774638
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 90,
+      "ALL_net_bps": 4.857022657675889,
+      "SINGLE_net_bps": -0.23886753291847512
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 120,
+      "ALL_net_bps": 4.820836676232249,
+      "SINGLE_net_bps": 1.717773433374327
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 180,
+      "ALL_net_bps": -2.739017274187088,
+      "SINGLE_net_bps": -2.6179544393677463
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "LONG",
+      "horizon": 240,
+      "ALL_net_bps": -5.434262644461468,
+      "SINGLE_net_bps": 3.248525476513954
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 5,
+      "ALL_net_bps": -4.831775445395069,
+      "SINGLE_net_bps": -4.831775445395069
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 15,
+      "ALL_net_bps": -3.2298145145950032,
+      "SINGLE_net_bps": -3.2298145145950032
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 30,
+      "ALL_net_bps": -7.927243992434942,
+      "SINGLE_net_bps": -7.592242209389806
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 45,
+      "ALL_net_bps": -8.549697700775525,
+      "SINGLE_net_bps": -10.269826761489732
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 60,
+      "ALL_net_bps": -6.903394233740544,
+      "SINGLE_net_bps": -11.189945903834369
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 90,
+      "ALL_net_bps": -3.4233952626780058,
+      "SINGLE_net_bps": -7.12052123396187
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 120,
+      "ALL_net_bps": -7.1511430661836775,
+      "SINGLE_net_bps": -13.685176496758071
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 180,
+      "ALL_net_bps": -5.0647133797222335,
+      "SINGLE_net_bps": -10.28363203239302
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M010",
+      "arm": "SHORT",
+      "horizon": 240,
+      "ALL_net_bps": -5.410160122819461,
+      "SINGLE_net_bps": -10.67450807828258
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 5,
+      "ALL_net_bps": -2.0134018354492427,
+      "SINGLE_net_bps": -2.0134018354492427
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 15,
+      "ALL_net_bps": -1.6853202301683816,
+      "SINGLE_net_bps": -1.6853202301683816
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 30,
+      "ALL_net_bps": 3.886310393534161,
+      "SINGLE_net_bps": -0.4904855923588341
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 45,
+      "ALL_net_bps": 7.00333126717262,
+      "SINGLE_net_bps": -4.950385805311663
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 60,
+      "ALL_net_bps": 12.326534328370492,
+      "SINGLE_net_bps": -2.353647768378026
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 90,
+      "ALL_net_bps": 28.550079249243097,
+      "SINGLE_net_bps": 6.503858954069652
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 120,
+      "ALL_net_bps": 28.13154902858065,
+      "SINGLE_net_bps": 3.4819227540040365
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 180,
+      "ALL_net_bps": 9.0277912570958,
+      "SINGLE_net_bps": -20.72357536098724
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "LONG",
+      "horizon": 240,
+      "ALL_net_bps": -3.7446980711580946,
+      "SINGLE_net_bps": -34.11372186154789
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 5,
+      "ALL_net_bps": -4.865451307721755,
+      "SINGLE_net_bps": -4.865451307721755
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 15,
+      "ALL_net_bps": 2.4758368130912745,
+      "SINGLE_net_bps": 2.4758368130912745
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 30,
+      "ALL_net_bps": -15.7087002581282,
+      "SINGLE_net_bps": -15.7087002581282
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 45,
+      "ALL_net_bps": -5.3155933329109795,
+      "SINGLE_net_bps": -5.3155933329109795
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 60,
+      "ALL_net_bps": -2.9789907767837955,
+      "SINGLE_net_bps": -2.9789907767837955
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 90,
+      "ALL_net_bps": 0.5687172830342794,
+      "SINGLE_net_bps": 0.5687172830342794
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 120,
+      "ALL_net_bps": 1.9237070947810708,
+      "SINGLE_net_bps": 1.9237070947810708
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 180,
+      "ALL_net_bps": 3.827784164810747,
+      "SINGLE_net_bps": 1.6581651973095393
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "THREE_CLASS_M020",
+      "arm": "SHORT",
+      "horizon": 240,
+      "ALL_net_bps": 8.833991612823729,
+      "SINGLE_net_bps": 8.408863434735398
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 5,
+      "ALL_net_bps": -3.7210824189164087,
+      "SINGLE_net_bps": -3.7210824189164087
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 15,
+      "ALL_net_bps": -2.2047799876638545,
+      "SINGLE_net_bps": -2.2047799876638545
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 30,
+      "ALL_net_bps": -0.01011420283918386,
+      "SINGLE_net_bps": -3.4978333188749695
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 45,
+      "ALL_net_bps": 2.7185785168199668,
+      "SINGLE_net_bps": -3.863888167924542
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 60,
+      "ALL_net_bps": 6.596734835357857,
+      "SINGLE_net_bps": -4.2972762537453155
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 90,
+      "ALL_net_bps": 8.363527854424447,
+      "SINGLE_net_bps": -7.149313753802266
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 120,
+      "ALL_net_bps": 8.79164859116516,
+      "SINGLE_net_bps": -0.4683278143559
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 180,
+      "ALL_net_bps": -6.203891403668718,
+      "SINGLE_net_bps": -2.5869385127331426
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "LONG",
+      "horizon": 240,
+      "ALL_net_bps": -7.936768802771302,
+      "SINGLE_net_bps": -1.9923498050632482
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 5,
+      "ALL_net_bps": -4.030341690539147,
+      "SINGLE_net_bps": -4.030341690539147
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 15,
+      "ALL_net_bps": -2.2451737909026392,
+      "SINGLE_net_bps": -2.2451737909026392
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 30,
+      "ALL_net_bps": -4.4520821785661076,
+      "SINGLE_net_bps": -8.551932666479711
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 45,
+      "ALL_net_bps": -5.260474852649512,
+      "SINGLE_net_bps": -12.355282010676932
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 60,
+      "ALL_net_bps": -3.9708869639398867,
+      "SINGLE_net_bps": -5.413753632725971
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 90,
+      "ALL_net_bps": -13.039592754430993,
+      "SINGLE_net_bps": -9.48410022375997
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 120,
+      "ALL_net_bps": -12.367898648504267,
+      "SINGLE_net_bps": -13.631602529805184
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 180,
+      "ALL_net_bps": -15.489109169987621,
+      "SINGLE_net_bps": -7.604850257576126
+    },
+    {
+      "segment": "HOLD_B",
+      "source": "WEIGHTED_M010",
+      "arm": "SHORT",
+      "horizon": 240,
+      "ALL_net_bps": -18.92398626414636,
+      "SINGLE_net_bps": -6.958578891693251
+    }
+  ]
+}

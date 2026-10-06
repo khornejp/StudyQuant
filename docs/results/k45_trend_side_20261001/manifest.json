@@ -1,0 +1,15 @@
+{
+ "hypothesis": "\ub290\ub9b0 \ucd94\uc138 \ubc29\ud5a5\uc73c\ub85c\ub9cc fade\ud558\uba74, \ub450 \ud314 \ubaa8\ub450 net\uc774 0\ubcf4\ub2e4 \ud06c\ub2e4.",
+ "run_utc": "2026-10-01T00:19:19.769259+00:00",
+ "data_cutoff_utc": "2026-06-30T23:59:00Z",
+ "inputs": {
+  "out\\patchtst_k45_causal_admission_ordering_20260930\\causal_candidates.parquet": "589a6412cd589a1be522dd0d59e5fde15edecaefb80299def20a373f6ed2205b",
+  "artifacts\\btcusdt_2020_2026h1.parquet": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4"
+ },
+ "source": {
+  "D:\\StudyQuant\\out\\run_k45_trend_side.py": "db030543cab60e93e659d32692aaa22495941b4b7003f176a1db6fac837a4770",
+  "out/k45_trend_side.py": "576f50f1bbdaf3cd2d911e5981c4777df188e169d9b34d208da9496234f7ce19"
+ },
+ "new_model_fits": 0,
+ "live_orders": 0
+}

@@ -1,0 +1,2943 @@
+{
+  "run_started_utc": "2026-10-02T02:25:58.036355+00:00",
+  "run_finished_utc": "2026-10-02T15:13:34.192809+00:00",
+  "runtime_seconds": 46056.156454,
+  "data_cutoff_utc": "2026-06-30T23:59:00+00:00",
+  "frozen_hypothesis": "R2-9 고정 6필터 통과 64칸 중 일부는 교란 7개 변형에서 부호가 유지된다.",
+  "frozen_robust_rule": "DEV net > 0 이 7/7, HOLD_B net > 0 이 ≥ 6/7, HOLD_B n 중앙값 ≥ 30, DEV 변형 간 최소 net > 0.",
+  "frozen_selection_rule": "강건 칸 중 DEV CI 하한의 변형 간 중앙값이 가장 큰 칸. 동률이면 DEV n 큰 칸.",
+  "frozen_six_filter_rule": "V0 DEV net>0; DEV top5 제거 net>0; DEV 무작위 백분위>=95; HOLD_B net>0; HOLD_B net>항상 롱; HOLD_B n>=30",
+  "out_of_sample_result": {
+    "robust_cell_count": 28,
+    "robust_cells": [
+      "AGREE|ROLLING_180D|q=0.02|L=120|S=45",
+      "EITHER|ROLLING_180D|q=0.01|L=120|S=60",
+      "EITHER|ROLLING_180D|q=0.02|L=120|S=60",
+      "REG|ROLLING_180D|q=0.01|L=45|S=45",
+      "SIDE|ROLLING_180D|q=0.01|L=120|S=15",
+      "SIDE|ROLLING_180D|q=0.01|L=120|S=5",
+      "SIDE|ROLLING_180D|q=0.01|L=120|S=60",
+      "SIDE|ROLLING_180D|q=0.01|L=180|S=15",
+      "SIDE|ROLLING_180D|q=0.01|L=180|S=60",
+      "SIDE|ROLLING_180D|q=0.01|L=240|S=15",
+      "SIDE|ROLLING_180D|q=0.01|L=240|S=5",
+      "SIDE|ROLLING_180D|q=0.01|L=240|S=60",
+      "SIDE|ROLLING_180D|q=0.01|L=30|S=60",
+      "SIDE|ROLLING_180D|q=0.01|L=60|S=15",
+      "SIDE|ROLLING_180D|q=0.01|L=60|S=5",
+      "SIDE|ROLLING_180D|q=0.02|L=180|S=15",
+      "SIDE|ROLLING_180D|q=0.02|L=180|S=5",
+      "SIDE|ROLLING_180D|q=0.02|L=180|S=60",
+      "SIDE|ROLLING_180D|q=0.02|L=30|S=15",
+      "SIDE|ROLLING_180D|q=0.02|L=30|S=60",
+      "SIDE|ROLLING_180D|q=0.02|L=60|S=15",
+      "SIDE|ROLLING_180D|q=0.02|L=60|S=5",
+      "SIDE|ROLLING_180D|q=0.02|L=60|S=60",
+      "SIDE|ROLLING_180D|q=0.02|L=90|S=60",
+      "WGT|ROLLING_180D|q=0.01|L=120|S=45",
+      "WGT|ROLLING_180D|q=0.01|L=120|S=60",
+      "WGT|ROLLING_180D|q=0.01|L=45|S=60",
+      "WGT|ROLLING_180D|q=0.02|L=120|S=60"
+    ],
+    "selected_cell": "SIDE|ROLLING_180D|q=0.01|L=120|S=60",
+    "hypothesis_some_robust": true
+  },
+  "variants": {
+    "V0": "reused fixed artifacts",
+    "V1": {
+      "random_seed": 20261002,
+      "depth": 4,
+      "learning_rate": 0.05,
+      "iterations": 500,
+      "l2_leaf_reg": 3
+    },
+    "V2": {
+      "random_seed": 20261003,
+      "depth": 4,
+      "learning_rate": 0.05,
+      "iterations": 500,
+      "l2_leaf_reg": 3
+    },
+    "V3": {
+      "random_seed": 20261004,
+      "depth": 4,
+      "learning_rate": 0.05,
+      "iterations": 500,
+      "l2_leaf_reg": 3
+    },
+    "V4": {
+      "random_seed": 20261001,
+      "depth": 6,
+      "learning_rate": 0.05,
+      "iterations": 500,
+      "l2_leaf_reg": 3
+    },
+    "V5": {
+      "random_seed": 20261001,
+      "depth": 4,
+      "learning_rate": 0.03,
+      "iterations": 833,
+      "l2_leaf_reg": 3
+    },
+    "V6": "reused R2-11 tuned artifacts"
+  },
+  "cell_count": 516,
+  "screen_cell_count": 64,
+  "max_positions": 1,
+  "random_repetitions": 1000,
+  "bonferroni_cells": 516,
+  "cost_bps": 4.0,
+  "device": "CPU",
+  "stop_tuning": false,
+  "local_data_only": true,
+  "downloads": 0,
+  "patchtst_fits": 0,
+  "live_orders": 0,
+  "train_rule": "signal_index + h < stop_start_index",
+  "inputs": {
+    "artifacts\\btcusdt_2020_2026h1.parquet": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-01.zip": "7f81b2f3694d13779e7e896b69d60cd61e9444d7b9f9e90df761935e1c1b76e2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-02.zip": "6599466d108d120c64a078824326c063ed2d4335b3292e52c5e572f79166533a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-03.zip": "eee845fde6336e29d25889563cba3d2cff2d4d640e51fb1f82ae9b28cedaee77",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-04.zip": "d009ce034d08c3dcf3e7f874b0f8b0ec76ba507bc6bb4e007e541df537bafbce",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-05.zip": "3f2b56dd6b9a42457009bb367d0adadd3cf7e2216cd325172d0089e3883125a8",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-06.zip": "30b3470ff98576578973d75e3c157a5cbf1778b11e4c26b4b4ff70a3cbb348ec",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-07.zip": "18dae7b11075fc0fba79ad47df46683415cba5d027caa69c66bc2a5c9d9b459a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-08.zip": "e6f6d1749f674c85d4766e0eb36af6ea40d91a0674234d30df80eb9876b094e3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-09.zip": "7ae9a3b6afb2dc06e46080582908ec8c27063b707a14c7f1e679dc991ff48032",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-10.zip": "4c55b191c101f39c7fb193a6529665dd9e83302ca21876521e4c93b3902e9fb1",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-11.zip": "676356a2d075caa51b4f8ada026e9430dc320ffd23d2343b13b7aa25324ed6d1",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-12.zip": "d7390f90edf54cc4ad9bbe78e2f6b291ae06ad9539f591a2d0fce445873bbd63",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-01.zip": "cff916dc4b638ec3de97828e8911cd91cf7d7a3d0836ec0175869c374e66823d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-02.zip": "819a7b107443686adb313fc5fc223302a29f3981e1d1bd9828ad0ade65a8a8af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-03.zip": "2125fd300848938c7b992b8f7b7b5007d5b277a4ff1ebda7da083b40242729da",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-04.zip": "9cd888e3b0a1954813d0062c2e60426fdc8e34a7f258f6838371ec67f535b028",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-05.zip": "ed934afb9cf84df6ecae742e755147333a84244836a66b51523abc66dd5f63af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-06.zip": "7b8d9bfb8816636b800764dafb2aa2307d19166c695bfa245adbf7d01d61f766",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-07.zip": "8ab3df641d3bcf40527491f8e26d046ad2b662d1950ead9555ad32975571b7fe",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-08.zip": "7eb681cc45b94176f4b9192a62c3a1925d79031ba001cea2d8dec6ff6e5b9c35",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-09.zip": "03f25a7c25eef18d5f5b5b7bb0b664cab7a210b409f37e95a54e141808a0752d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-10.zip": "f25820d6add687addbca3ef43bee58f70853a6da53832a0c1bc22d00dc8ec64a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-11.zip": "e2e6b2d7218607e7e4a38137d50f553c2cfb901275c19edf567024c1cc6de85f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-12.zip": "bf3ce484faf41d7dccfd38c5cc3d8de34d8297df30ab10784e874cc10fd1b310",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-01.zip": "22ee19079b620f5c6d820e7d7f8bafa7fde866d89bd664863b8bd527749c12cb",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-02.zip": "fa95088258a905c79ab79e8984d2f6f66933ec2e814dbab4ef9da89b01ab484a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-03.zip": "4cf0883bc07f4ed4cdd3b0d8c0d166b4d15d21e666ab752f9f44401af4d6172f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-04.zip": "57e2776cc68b3169fc9f8632dad67278f470cd453407a8ebe6c87963c8a31357",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-05.zip": "bced8a5013d09742b96682e6fd01ad4456213515a03d7586ec2b1f2689af5255",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-06.zip": "0cd0708f8903829eb46f98cf60f4b2516c986e1ccddf6620a5912b48e16baf93",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-07.zip": "29d58cce0cd45f74c6a112039835c6d9ee5a7e60e7c38c2503beb7930453a4fe",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-08.zip": "6f4f0c6c84c05694b4b4a5c085776730fd4059723eecd98ee6ffeb3fde4da811",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-09.zip": "d62cd4e13009de37add446dc4f63ead4c56dcc4955a1e60f6726bcadc5a68fa9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-10.zip": "ad9efed10d4ca1567b865d7a158790977cec1b925395634217069df6696c8bc9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-11.zip": "8febe5bec1a029e993bbf27490761f8c47c32849bf7dd13441b2b2f6ec1ffb51",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-12.zip": "4218c78331bcc4dbeb5768fa112242a880971c1f2cfd1d3f32aaa26ca34069af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-01.zip": "05e3df32f28d0d50f4c5a280adee9368b4a66fc68c6ddca1b3277087ac0d19f5",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-02.zip": "5227accd9aaa59f71f5e682abffb58be5f99573ed208ab968b1704c81ac11345",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-03.zip": "ab022adff9b853d2f33cf80154e77c770f57c3392f0bbc36564b2e2cdbd0e872",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-04.zip": "2931039d26818edc65d4faefba84945fd1ba52989dd58fb127dc3cd7a12c7fbf",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-05.zip": "5d026fece46df86293054c8c56c2c8de575d30161b82979b11831831217a246e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-06.zip": "3ffdde6f1dc9c3c065d77ae43f3ba64d19d4cb76512d4bc1d541933d4fb2e6f7",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-07.zip": "0304baed9fd407293a8a8040b30a1b68bd344803b630d33530375b421733a930",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-08.zip": "516a8f50631c6ede6a9642f6d1590b6a22c33ba09935501d2ace8dc1396501fd",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-09.zip": "3fd9df6fd1eef33cf5fe625c27012359bc6d64a68c109305d7b44a0354f533c2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-10.zip": "03105cc140150bffca834bcccbddc6cfee245e079d2df1759653243bd6e92448",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-11.zip": "8015d2997f8d5e757ff3707ee87800ca30a74da0129daa747b64117f07bcc186",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-12.zip": "8f02fdd2a2da261bbf13ab301c74bdb57fae005f19d5088e9ece5f8824c1a2a7",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-01.zip": "3e0d30870672aa8f0f937881056e3cfd55913ae5c780cd50b33f2763aa0ba58e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-02.zip": "daf1e4901e3d6436d82ad60f90d007eb5300be8047cfef121007203a7212cde6",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-03.zip": "711dcaf2a341aedfd06447b4117b540f60adb0784c5e64a313c718e4cf092bc3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-04.zip": "6d220b8e2815362a11d294d35dbca28568370d8295351937eceec10f2b359b85",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-05.zip": "aef8c5fdce1493fd570b5829a72f2f17c7e459483390f25544d16c2a30be592e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-06.zip": "43fc4473820d1fb4fe340d1b1951a87555f6841aa352e684fa95d6adffce04c6",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-07.zip": "acab0593c1452660ce74a6c239fb215c1192b0a9c6e8c1689e6495de40a0174b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-08.zip": "7003d29a43dd5f9357f838da8766834954939e22c1d80af682d9f33984f67b71",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-09.zip": "6ef23b02392b481ef9c3855434bf3644289fb6e228b4f7d9a0dfc6d3cdff1116",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-10.zip": "26db65ac8020d80ece35df79c254c5f7e24427529bcceeb2972748c4fe2d2707",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-11.zip": "e1b19cccfe2cdcba48b022790789b7b01edd86c075f39bc152e44c267d43bd51",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-12.zip": "069409f525ebf6370ee1c7defe475167de4b97284c5ac8e68768652968cd3dc9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-01.zip": "df725010d55458866eb5a47e9ee708c6796c9d7e77b14c38342cea11f381815e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-02.zip": "e918b90fb33df3a3317feea13807a892047f1ec86eeac100bdb7b3dd83285d46",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-03.zip": "a3b95cfb315641fbfddc61eb32adf2a2588afb7a3973a61f464aca007ad43e3f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-04.zip": "01dbb7bd0135f98bd63bdde6b943cde1accc1770cabf92f68a1ec0653ced3888",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-05.zip": "e7355e2775b88009c984db1783bb8ed6b5f24ede2b52bb764151b5722d6a5e42",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-06.zip": "a1f4a40953740fa83ee9ad97776ff8325d1958654a67f1325614071a983819d4",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-07.zip": "b097dff828f6e43fece23db0d3cb98042a9d7bc19693b8cbfd051d88eb973b7b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-08.zip": "1180129860b6e196e8d70bb9719e81573aa6b4acb423ba5ee7f82f10c836f7ab",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-09.zip": "21dc6570fc6bffad0e7b5f9e99211b82ad07c95ab4f18c3a2daa3b95ec98344c",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-10.zip": "9ecdedab6344fc4cdb154763266b8e09627a71c3cc5574cf868158b541c259c2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-11.zip": "23735400405627d610123e3a43db3e98ae7addb93459cd670e65a7659a5f081b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-12.zip": "35318b789f020b0e04c9043112480743855554e52e1d188437cbdaa67246d51d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-01.zip": "fcdc796484f395830d418588a34a26baed8849dbef0ff2b56173247e493ff51f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-02.zip": "80df1dd669dc1e3afc360c9da8b9a949a127fce088eedbf5bf708bd37b0a1f58",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-03.zip": "5c069d5e9597a44fd0e213395082e59ff223fb99c9eab3a2a5a2a5622ba7867c",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-04.zip": "51cdeb4de7d5ef1d4eece80b6115e391bdf7a2d0803bf9ad8371ab23340b22d3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-05.zip": "445b65fd6b17bfcfb5e4d035db29fad34f729fa078f0449024db42621be84e6e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-06.zip": "cff97ce688329592bccbbf5873b5c7021649e093f5f5806e332c5b4fb7fd6a00",
+    "out\\k45_gate_direction_20261001\\dataset.parquet": "b099a66e6dce89c0c707fce3c3b5e1744248112fcbe3fdf942616ef27e8b260c",
+    "out\\k45_gate_direction_20261001\\predictions.parquet": "31b341e49c421aa9e104319505a2ed1cdc426d0f74a702cc91d1c4424a1b6cb8",
+    "out\\k45_gate_direction_audit_20261001\\c4_predictions.parquet": "ead74194e8342ee1435cdc800747005ff954abf859708a23c4fe38a9b7e855d8",
+    "out\\k45_gate_direction_r2_10b_20261001\\manifest.json": "fd1da2f143efeb7446f11090daeba1c66752dceecf0f62c473ad3e518c7fa6c2",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h120_predictions.parquet": "c1ac5253d634da774a926f89ecad796ebc45459e1222246fd76ed29206bfc6fa",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h15_predictions.parquet": "a43f8dd1b5c4e7e13cc2a89a89b3ce52b6defde37f4d033d0508d890b7628688",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h180_predictions.parquet": "76e9b8a090cb30e0e892fdb270157025ae651d779e78233705546b7825f85d94",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h240_predictions.parquet": "b19313c2ed7891691fc48cc0b62a76cfb7f73d6e4cc034bc20c2825d20808a93",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h30_predictions.parquet": "3553a01695ad77300b44ef4d4a1e4c060f29a46d4ce000c7341d026bb4779894",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h45_predictions.parquet": "97f70edb51b38330aa9f0c6fc6d9c90158cb161960fd011266ff714bf1eecf2b",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h5_predictions.parquet": "d9bd6757aff6b9813dce0883245dc687c11718d556dcb95ec2cb22164610e41d",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h60_predictions.parquet": "c656ad8a7d022f3808c316cc3107586dfa0179017d00d533bfcdd904c3e2116b",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h90_predictions.parquet": "abc19afb8de88a3360c933249bfc4ec04f76c5eabc72d0997187ab0081dd2757",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h120_predictions.parquet": "4bfca70631b8e621dca8a5901a2140cb9ee7a7f4ee2b92550aad4da304438328",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h15_predictions.parquet": "2857c564affba037822fb421855481cdee77fbe0b38df40b7a8ab2e59f5ee800",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h180_predictions.parquet": "d73974f1c8124710aeea416caa5e231d94cd2f7658aec57a46daa11e48b63f48",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h240_predictions.parquet": "9338443136547d52a35beac0276134e8dccb51ca8e94d456abe404dd710562fb",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h30_predictions.parquet": "29ee63eccd01607761180a28a729e5e901d963b0e9cdf5a218059b227b7aed5d",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h45_predictions.parquet": "8d6390a18c37722810f1aeae7e1d640ff991e5ffed7c3b1c277a45927c1e6215",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h5_predictions.parquet": "a58d5940516c5237cb119a260ade01c0b828e08452ac343b8df4620a998d0d9a",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h60_predictions.parquet": "0539412f4d611877adf368805e5cdbe88adccae95d8c02ac444dc6ba1db5f855",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h90_predictions.parquet": "3d764e16a194157b6420436efa6d77009dd231c5656152c26fe4be8dbc8b0292",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h120_predictions.parquet": "9826dd0058a5e5e53877700a94f52a6210213763af61f709d644aa2fd220a167",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h15_predictions.parquet": "81ef1813fb35b7c956ed757673714c7b3cf665688261df340af97a1cd978eb52",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h180_predictions.parquet": "0eca255de55449dac56edb7305c72217060a60e451bbcb563945cc7ab869f995",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h240_predictions.parquet": "d95b808846a2005ba8ead3ebc889c2f6293a609b37745e88a23318264e2351aa",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h45_predictions.parquet": "9b7c6dedb9d173773483dff7fce80f3b11794af75006ff88579a30cf880b7425",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h5_predictions.parquet": "feb5b377fd77f0c93a0393f94cf9e339d11b25a009a557050ab59bb7856cd4f2",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h60_predictions.parquet": "76df30009009494952ecc8ffc7c843da1808a0f390ff113e0fc0d92b55a389c3",
+    "out\\k45_gate_direction_r2_11_20261001\\manifest.json": "b811780d396b8ff3fde523b3a6a3adbeba82541826d37723bd1388f02c06cccc",
+    "out\\k45_gate_direction_r2_11_20261001\\original_h45_tuned_predictions.parquet": "b4a65fec3811ee7978014cecb89864bea0c6a9ec4cca295604a4b448d8d40260",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h120_tuned_predictions.parquet": "92089495dca54890f3705615477e47aeb6a7979b9b798a9e42932b85d3923614",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h15_tuned_predictions.parquet": "12e34784fdad937b247b5dc8dd02fcb2a858be04487c593da52b82e373d19138",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h180_tuned_predictions.parquet": "1eebfbf6cecf2bf45cf39428abd0c0e41d684cc82c3b4144d4f02d382a76bc8f",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h240_tuned_predictions.parquet": "83937ac27ccac30fcf7e4ba9c71fce71d7d6e3b67c0e1066ca8333b6665fc15f",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h30_tuned_predictions.parquet": "d8650283666c17bd485289c3702c6c6bbf74fe1ed1ccafc714f1ebcb6dacac13",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h45_tuned_predictions.parquet": "f8d178b3a00e2c519e262d2da686bd50a376881320c269dfa1ec8eec79d5d9e8",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h5_tuned_predictions.parquet": "bc5f04b055b39a81a6ba4632fe61c70a8e5ea332c7b80d39b0a02be10341e7a6",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h60_tuned_predictions.parquet": "2a51ed068ab0f83407a12f7dd1c25c05e6907d94272dfcf7d9df4407d0474639",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_long_h90_tuned_predictions.parquet": "34ecb9eeaf9bceb914d935daf460483f6ea8280988b6013ddb2a9bbbffd0d996",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h120_tuned_predictions.parquet": "b94ea79b23844b455ab51e17f37a099ad634f389ed3cabfbb73b2a588d5a4c7c",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h15_tuned_predictions.parquet": "7599714be0064fef911661fae60c94237c965d525407120bfc550890e5280ca4",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h180_tuned_predictions.parquet": "a74b402279a768e6f650c2023ade88c886acec5b8a306e4682ac9515031c4d99",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h240_tuned_predictions.parquet": "fed91be55d8483a20918447b8b30133e53fb5f94dfd501c5c72777ed257c7981",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h30_tuned_predictions.parquet": "b086e3be9e03f9999dfc532d73e0833f309db7f126efaaa5ace64d3b18126e20",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h45_tuned_predictions.parquet": "1f0c0e656aaea1f03813302fb1485d290380b52ccf5717b75578dd53412a44e0",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h5_tuned_predictions.parquet": "cc9ae92227ad44a426591820798ad84a0aecffa9e4e8d5a2949e0cdbc578fb57",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h60_tuned_predictions.parquet": "617d224c10c91f920a7f1fa57ac0c6d066841733f100a7557a4f123d31b61408",
+    "out\\k45_gate_direction_r2_11_20261001\\r21_short_h90_tuned_predictions.parquet": "2b5c36101e5582b035ed8060e6ab6b771c7b595498d1531ad487a733a2f96e98",
+    "out\\k45_gate_direction_r2_11_20261001\\regression_h45_tuned_predictions.parquet": "81d50af2e83a5e12448040c12ab8087fa970aede5016ac827c49e26f1a734bef",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h120_tuned_predictions.parquet": "e4fdd8bf302fa55ad16a3b9c41689ec94508a4cbc9f79559f84999128007467b",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h15_tuned_predictions.parquet": "9143488848f794b3862b0032417b33a461638369f6399a59e7b915906e16e270",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h180_tuned_predictions.parquet": "c62c2157207dd364f9eb2628c7aa73c9fbb89bcad2e08d32e9beeae674954807",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h240_tuned_predictions.parquet": "71857de1786e7724ef78c7125f040a576d6a6ce8e2dc9a8d856d98a226e6507b",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h30_fixed_predictions.parquet": "df65cc25a40e4dc297d7cbc899f1caa6a25d9373aebc9a6b3e4da5610886d7ca",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h30_fixed_selection.parquet": "88c966871de81c35201b659f2a623d1e1ebf03e636c927364e0d4107f8d400c6",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h30_tuned_predictions.parquet": "35b8709ffc715b18029e82dcf19682bbe0372d8491bde092356220ed6f581c7a",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h45_tuned_predictions.parquet": "f9373b4f9a3975ba32f1de15b8c20f20ccb3dab75996f5607fefa497905de8e0",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h5_tuned_predictions.parquet": "c022ba6adc2842ff15cd50f99a2b40690742d2622caa76bc4942f8d31aad040d",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h60_tuned_predictions.parquet": "c7d6927cf630e1caea7ea17d7e21122fa8caa55da3d8b61b9c2ecc40000d1ee3",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h90_fixed_predictions.parquet": "fab92466f6a40dc61fc9edc12cc9966e4d9732d2bba8241b49b08cc7a77415a9",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h90_fixed_selection.parquet": "2f7fa38eba3bd507ec06e95cf007c45c0ca5e161edb8bc53d58ff12050a75ecf",
+    "out\\k45_gate_direction_r2_11_20261001\\residual_h90_tuned_predictions.parquet": "67e3e0ea7a7ef84e6b167c3e9c205548625e99ae121f1278fbba1ef19471e3c1",
+    "out\\k45_gate_direction_r2_11_20261001\\weighted_h45_tuned_predictions.parquet": "9346d291ad875821f29dbd3d8016a11ec496c18691075b4e93b9223808d60170"
+  },
+  "sources": {
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_9b.py": "e457cbee8f2050993269968f8fd8c2b0a1a51c68f6cadf21f6dcdcf7b15c1112",
+    "tests\\test_k45_gate_direction_r2_9b.py": "735fc3b6f0805be496718beb3bc34f1a59e5a7972433cca32fac79956dbe9e18",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2.py": "c7f7a37a135e6ee2f34214a96b38a2275b73c7d9d56fdb800028ebb576529a77",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_6.py": "ffaa3d86a38424267a45ea1947bb578680aa0b8a36bacf2f2a4100d61db4659b",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_9.py": "a9fb11adbb14001fdf5f8fa25aee605a247dd70a3d046b4c3db65ec508488f20",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_11.py": "368ca3cef44023d00addd8925041d61be7f1bbaf6603c6b170b0753ce6351026",
+    "D:\\StudyQuant\\out\\run_patchtst_k45_flow_inference.py": "2b298530680ded1d8503fc73a3c1da4a91ace47714d0c3f1d561f55ad7604fe3"
+  },
+  "outputs": {
+    "out\\k45_gate_direction_r2_9b_20261002\\cell_variant_metrics.parquet": {
+      "sha256": "aafc631f5769d1923058d9605a228fd71ad74e677443301b8c5d4470692235d2",
+      "rows": 7224
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\baselines.parquet": {
+      "sha256": "8f675ec34980d33a7d3400e723168b33d1524343faf19dd074ad22c63537b042",
+      "rows": 7224
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\random_repetitions.parquet": {
+      "sha256": "c5f7a4e7f886f0d810274fa78d74cc53d7cf5db689897bd0529410e091780649",
+      "rows": 7224000
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\funding.parquet": {
+      "sha256": "9bf4ed2ce77d2aecb4a69e14e7e4c833b75cd377d7baa2288a585b9d9c4f72ed",
+      "rows": 7224
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\yearly.parquet": {
+      "sha256": "6266f35454cc475c8c99c2f4aedd31cafcfb30589ffa58fa85219f09081e1df4",
+      "rows": 21672
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\monthly.parquet": {
+      "sha256": "464b2798e1b7937973ebd8d854ed0e69279129ff4efe0ceaf6071286fba7d1fa",
+      "rows": 231168
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\trade_entries.parquet": {
+      "sha256": "25d867d0bf1e7867c3bfb06c418583727f001842fcc941c476449e941ced5849",
+      "rows": 1081171
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\thresholds.parquet": {
+      "sha256": "12abda296772b6d62e34865d3cc561586df716e868594bcb3c73e0e53bb1054d",
+      "rows": 504252
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\jaccard.parquet": {
+      "sha256": "a1180f4a65da49b0b05b5782a83faee32e1477dffeb3a5c08a247804124577a7",
+      "rows": 3612
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\robustness_summary.parquet": {
+      "sha256": "b92ec067db2b891858ea57b835fe9ece0a5aafd6b1f7ab3bd3a7bbcd5ff94cf3",
+      "rows": 516
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\robust_cells.parquet": {
+      "sha256": "eb81fca28b07bd9e0ac74fcb2e08f1e34dd2bcefe26d08effa75a86383703ea4",
+      "rows": 28
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\selected_cell.parquet": {
+      "sha256": "2214c6c23cc64dd9985afb2e049f4af2709e14bf641a62f08b186addb98347b5",
+      "rows": 1
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\screen_64.parquet": {
+      "sha256": "9cfb05d53ea7aff344e04076c0080050b31c51f448067f1c676b0a9be7e6b393",
+      "rows": 516
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\screen_64_variant_net.parquet": {
+      "sha256": "566020085a3b3857065ffde11217e5d774b952861f587de5b82e32c5b6a67b5e",
+      "rows": 64
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\bonferroni_516.parquet": {
+      "sha256": "e16cafa543d28a43e11e5f3ee1a6552f06147cef589def62c45751e287a864c1",
+      "rows": 14
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\REPORT.md": {
+      "sha256": "88b1153151343000fa5739d1d3a8ab0c8f0a5298039e6221df9c920a85d5a4b4"
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\run.log": {
+      "sha256": "d7d3402101063d2023647d6fa05766ee4145ff206879d8d1bd8a826059d30444"
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\original_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\original_h45_fixed_predictions.parquet": {
+      "sha256": "14a2382c907c8cf865225a2e15ac2fb629dcb12063bc79115a96c85bde2344d9",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\original_h45_fixed_selection.parquet": {
+      "sha256": "cdc974640ae07eb7494fa33c6887a51f575a52d866b64c4e7aab3969c25882c9",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\original_h45_fixed_tuning.parquet": {
+      "sha256": "ca0b736e282c72ef19858cec847daf54d314eeb653b8fc2ad94c8d8752bbf55b",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h120_fixed_predictions.parquet": {
+      "sha256": "c531011f3eb0a28fc94abebade32431da3d76b41cc216a8ead3867d61f40e6a6",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h120_fixed_selection.parquet": {
+      "sha256": "fd836a634d32cd9a6b5fc9c861732b70463de17d4aa4edd8c1afd267022cc963",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h120_fixed_tuning.parquet": {
+      "sha256": "dba9c07127ed0a37bce453ee901aba287ef56ca1b98bf4ee1d669c161c8a7e8f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h15_fixed_predictions.parquet": {
+      "sha256": "27ef70bc2828c68039718679321cd6da6c36b388a03024f6adecffbc9624ef4b",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h15_fixed_selection.parquet": {
+      "sha256": "7e62412b3c137aa523ff712748559d4ae92d8af0007919ca784da1222ea09568",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h15_fixed_tuning.parquet": {
+      "sha256": "8aebfe9d3c3f7905508490b1b1bd12a35931058cd5b1a9bc7fa107fe145af8b7",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h180_fixed_predictions.parquet": {
+      "sha256": "638f30dd63d0f0da8c24755830f25d080cebbdcd263afd3d454989553356f929",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h180_fixed_selection.parquet": {
+      "sha256": "f79a30a4f2491b3b7011362b3e2fc7567c8e50a4ead535dd387789a2a9e50bc9",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h180_fixed_tuning.parquet": {
+      "sha256": "a07cbd01843dc0f68d86596ddc256f620b7a3f6a80881dd6ab998cdc6daf9bb1",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h240_fixed_predictions.parquet": {
+      "sha256": "11eadfc02f97f1fe463e6bbb43ca979bc735cda8291fc8d021a1aad5a51cf86c",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h240_fixed_selection.parquet": {
+      "sha256": "bdce6583272aa8c653af82f3689cf9f1e5d030ec24284b0b2a3759ca1e88fe2c",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h240_fixed_tuning.parquet": {
+      "sha256": "06f239e1472e54d6b37b54a30575e4d2b321324793306b451435248787db8414",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h30_fixed_predictions.parquet": {
+      "sha256": "73242ccd6f364d9f6b109be3a5b941c63303df752e13d4458999ad59fadf8553",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h30_fixed_selection.parquet": {
+      "sha256": "6e573d0ef12b14e627b84a6fdb72549ff41675c4e589f79675fb6acd9837203e",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h30_fixed_tuning.parquet": {
+      "sha256": "611f3dae2877dde2a71ef3066811512b7a864d0318804e8ed85910d917ecdb07",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h45_fixed_predictions.parquet": {
+      "sha256": "c03aac4b4ed8f81bade796453bbe54d1b7a9e98be4b9227e7b3d18b356d80bdc",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h45_fixed_selection.parquet": {
+      "sha256": "d57d90e0acec077bca9b115f0f6cddd2abe95f709af4e9ac5ffcc4b4e29a43a4",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h45_fixed_tuning.parquet": {
+      "sha256": "665d369f56ddf04be0760d56647892a31b971c6a28571d122901ca5d23a26daa",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h5_fixed_predictions.parquet": {
+      "sha256": "0e7cacb49e96ca83aeb47e49eaeef32f6d67212f01dffecb68689652796bbff5",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h5_fixed_selection.parquet": {
+      "sha256": "c9d4dd1143af26ea1540a036de57b09aa6e1de7ab075107df7b0d1dbe9fbf607",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h5_fixed_tuning.parquet": {
+      "sha256": "4d1a12e374b27d4a18690180e8bd1a5b4122c05b927923c9e4204f1796fca002",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h60_fixed_predictions.parquet": {
+      "sha256": "65e79624c45beea92ca80f5f3a3811a09f671b010ef19aa81ee8b942522305ac",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h60_fixed_selection.parquet": {
+      "sha256": "3d99223784bfa78920658479c96c11ff8c0a0400143e07a67bcabb6b25d0c737",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h60_fixed_tuning.parquet": {
+      "sha256": "c22c51db0f0300fa7a3cb0e5b4965731fa113bb6ad0e7020d9e0e0f1c6151dca",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h90_fixed_predictions.parquet": {
+      "sha256": "5af27df93596c006eb31fed9fcb41c089ac2caab4b81c43475ba2d9c6c67e49d",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h90_fixed_selection.parquet": {
+      "sha256": "416054df55c4abe51149c9ed51aa0bfd3a9c908c53d05120d9610d190c38878b",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_long_h90_fixed_tuning.parquet": {
+      "sha256": "17070ec4845095edb4f8e540d6726d9f21aa7ed81dd38380ffb782cd2152c88f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h120_fixed_predictions.parquet": {
+      "sha256": "4547364048b6b535441e5392c0831e6a81f7a5da41534ddd0c3b67a82815b960",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h120_fixed_selection.parquet": {
+      "sha256": "9b619c441db3283af567b72d9b17db5632a8dd87b19d94d3d4a6c329000e451f",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h120_fixed_tuning.parquet": {
+      "sha256": "31bf3e21a8ea58362d967a24241e3030ca0bd56a78bdd651c7205f9641fe6203",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h15_fixed_predictions.parquet": {
+      "sha256": "b4051f3103a7ee72d5691a85684e6afc4f1089ec81089b682c398885d9cb5ac7",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h15_fixed_selection.parquet": {
+      "sha256": "00b78aa8053b70fafce0e60a1341edb0cf5547e668de17a44ba80fc43a7ac841",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h15_fixed_tuning.parquet": {
+      "sha256": "f3984e1e2dd1817ea5f2891d3fd6fb5a559b7d7160bfb8e01fdef468d5627ef9",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h180_fixed_predictions.parquet": {
+      "sha256": "a981f3a1c9adbe1225fe238bb10ef01a11f2096d119c2abc6dfb61753e33b7ae",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h180_fixed_selection.parquet": {
+      "sha256": "b1de5f9ce87b9ea108c50478a192d27d73fbb2271a25a6ad6cf86299cc79b2a6",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h180_fixed_tuning.parquet": {
+      "sha256": "0a8a33e0e11c3fdad188f31a62033d9f61ba9aef80e7448426f4633dd1073f8e",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h240_fixed_predictions.parquet": {
+      "sha256": "ab5dac417d1645791ef77ca25e7303b1bf279a043ff678f27bdaa702525fd3fe",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h240_fixed_selection.parquet": {
+      "sha256": "f1c840da828351730680a9a159f6ed95fd6651880d32f34aa5d1c39e4712179b",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h240_fixed_tuning.parquet": {
+      "sha256": "ce06f0bfeca3d27082a25a87b6677475ca1b9687bdec493e6f5f1c8c7cd13273",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h30_fixed_predictions.parquet": {
+      "sha256": "fee2e38f529ae04ceb9dba3a25ca8bf0e69a90be4f8b72c306e470652826fcd3",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h30_fixed_selection.parquet": {
+      "sha256": "70e5aa0d68d8e37ccddbb98264ec0f92158860cfc8e68e67c28fc94d8b8d3b46",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h30_fixed_tuning.parquet": {
+      "sha256": "e8435c5ce4d120bcf9e47a1fb045907c914023c134b830ca4d9c66402b22ac4f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h45_fixed_predictions.parquet": {
+      "sha256": "e76bda868e644a7a11119d89284a02f9bc59f56b74826661d4f97504a7d22d94",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h45_fixed_selection.parquet": {
+      "sha256": "9cc55be60539f7a4516816b9e9d97a9e38019fa3d7d17fc588e05548d9741f25",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h45_fixed_tuning.parquet": {
+      "sha256": "c30ecad01dc2d60975db6e6d38d8d0f9c0baf68f66b84015240b6bee0fb735b1",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h5_fixed_predictions.parquet": {
+      "sha256": "d9516344232ba43795b242c1f4257632aed46e92578f708c701735c046cd856f",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h5_fixed_selection.parquet": {
+      "sha256": "bb28d50689c7226162a2e15024e5c42417012126ef2838400f8b58dde07d17a8",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h5_fixed_tuning.parquet": {
+      "sha256": "ed44375db90db3ea8ff75b5678bbec5b01a3b564aa20ee52b62f4efba0913a4e",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h60_fixed_predictions.parquet": {
+      "sha256": "b8de3ce0adc599ba9aad52a8eb42a226631239cbfb1c65ea08c4e071bb15ca74",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h60_fixed_selection.parquet": {
+      "sha256": "15222da206e9b3d956e7b428ca5095abe46e1b6191df06545d844bd0c9f932ce",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h60_fixed_tuning.parquet": {
+      "sha256": "2dc1ac82c36ff57fdad4c337b65c3593c434d70e48e21ae031afe66921584ced",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h90_fixed_predictions.parquet": {
+      "sha256": "adb008b6f774d446ecdaf5d46f6aab0447521a235f8893a13cc6edad358d7eeb",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h90_fixed_selection.parquet": {
+      "sha256": "c1b6b323cbbb3eeb0011c7bb57680dcef88646c7e6fe3db4243775809b4fb17a",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\r21_short_h90_fixed_tuning.parquet": {
+      "sha256": "bda99883b8db7a4a04064df1dbb246f0391cc7d11c43db09abd1da75e5378915",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\regression_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\regression_h45_fixed_predictions.parquet": {
+      "sha256": "d8f513d25989284f5caba0952d2d4e4c430ced059cc64ad11dc51784258dd389",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\regression_h45_fixed_selection.parquet": {
+      "sha256": "64d7cb8fc8d56a96840a5fc34b9c163289c8fc6fc8e3824504fc6eff97fec996",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\regression_h45_fixed_tuning.parquet": {
+      "sha256": "2c9986ebd37dc7b70486973b95238cf16ec1f347d51ca3fb0259dcac24ac60ea",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h120_fixed_predictions.parquet": {
+      "sha256": "9383970c6d796fb6d853664fc9364ab46845a3cd9082871eb76fbdc61eed0a44",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h120_fixed_selection.parquet": {
+      "sha256": "fbe567da405b4674baaaf1049a7502ab161cf06264c7cf42150227edaa78e682",
+      "rows": 10505
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h120_fixed_tuning.parquet": {
+      "sha256": "a9692278f6b75dbe4e397e0f02174bcf1fc454b87239621f85b544846cd5053f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h15_fixed_predictions.parquet": {
+      "sha256": "dcb79de710ed13995f8443373949ec36f5136571b9b947499aeb9195595624a5",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h15_fixed_selection.parquet": {
+      "sha256": "538dceec3767abbe8d1f0126c2b0cfe6b4912758808fbbb5a4a875839e2e72e6",
+      "rows": 11504
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h15_fixed_tuning.parquet": {
+      "sha256": "a6464c91ed5f194b3febc0e50f92a1bd274893bc60593566cdd779b2578f5cdc",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h180_fixed_predictions.parquet": {
+      "sha256": "149d87d03cebae84a94372c8a4690c3ca987ca0bf245ba97560bc2f44be64322",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h180_fixed_selection.parquet": {
+      "sha256": "aa3985d0789d818c65a1e5ddb7f0e4566ca674782e5659141bc4a1ff89f07992",
+      "rows": 10181
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h180_fixed_tuning.parquet": {
+      "sha256": "e741801d02977cfbc0cd7156b81d4b90c154365ada5e61211691992e95558ebb",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h240_fixed_predictions.parquet": {
+      "sha256": "e854764c1d2999e39f6080f701f9cb3c30129dea3e6f7dadb20fad9cb8c9c877",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h240_fixed_selection.parquet": {
+      "sha256": "87f1825f5fccc7ee93c429b773690389be0e5ca156373f245b9b80e6db94dfcf",
+      "rows": 10041
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h240_fixed_tuning.parquet": {
+      "sha256": "6c0af39e523e4ee83d7472f1400feb3f04ae346d54b9c1d74a986c426f20ce1d",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h30_fixed_predictions.parquet": {
+      "sha256": "0b758e6ca72de23357011653a0f9288e3a39379f38137b73e1851091bb4b9f8e",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h30_fixed_selection.parquet": {
+      "sha256": "1755f14309c36c52767ea332504284a1b8a7dd68a417d503cfe314f5839c29f9",
+      "rows": 11834
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h30_fixed_tuning.parquet": {
+      "sha256": "92eea4660dd8165dc6bf2f32bbe27c20f7c1ba8341c52fe065a96f42b7c0006b",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h45_fixed_predictions.parquet": {
+      "sha256": "8e2586d7ed4aa7eccba84cce0ed327663979b9695ff753b84da0a07d94b707bf",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h45_fixed_selection.parquet": {
+      "sha256": "dc0793e531ac2be7166d82efe0ca5e762e74e68cc7f80e444399e6ae3c547ce7",
+      "rows": 11438
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h45_fixed_tuning.parquet": {
+      "sha256": "02b810105bb15a3731044b125eb13e122176ea125566aa35722a9902c055e23f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h5_fixed_predictions.parquet": {
+      "sha256": "49155c6fda5749f1a8f674406c4b19141ca03a6b12f6ed33acf101e92e9b7e25",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h5_fixed_selection.parquet": {
+      "sha256": "56e85b3e901fe2556e52346cd284aa1fcb7e0c1f3352c0896c79d54e91b1a8b0",
+      "rows": 9365
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h5_fixed_tuning.parquet": {
+      "sha256": "c610336431b1c8571bb784c318a34568aa0ebebee2121f5a66b27f2464275153",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h60_fixed_predictions.parquet": {
+      "sha256": "b68781e83db38b26d4320e29b7d387f65853d1caa27826c56356c474ccae1863",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h60_fixed_selection.parquet": {
+      "sha256": "2399de1306e1427ac48e397f001b07048104a4809f70e928388dcaf6b8899dba",
+      "rows": 10641
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h60_fixed_tuning.parquet": {
+      "sha256": "d44e2c89af6db2ce7c857e40960d90195434c0d419e55e4370078b007fbff0de",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h90_fixed_predictions.parquet": {
+      "sha256": "58193396790fcb88eea0478a001984066b6936bbb3924776ee4aa3a500ecc254",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h90_fixed_selection.parquet": {
+      "sha256": "3bb2a707d26af79ec982ed7303f8c41c341830ddc701231c8e6749e208698b98",
+      "rows": 10412
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\residual_h90_fixed_tuning.parquet": {
+      "sha256": "648251cf5d164a61e1f3a9200bd51e115201ab4c2d6fb7e0224d7f2131d8f9ff",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\weighted_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\weighted_h45_fixed_predictions.parquet": {
+      "sha256": "4e42f6301c255ecc6dabce88cd58af466fac4cb6b53b22b605c0a7d4a286dfc4",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\weighted_h45_fixed_selection.parquet": {
+      "sha256": "1cbe15597d684ca9362c284b04383b9a93bc8cd17734ca52c503795372b8d64f",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V1\\weighted_h45_fixed_tuning.parquet": {
+      "sha256": "dc2968911662bb598e77107fcc47a7f1afa9c1f5609c5af1584eee449148e760",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\original_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\original_h45_fixed_predictions.parquet": {
+      "sha256": "ced5beeb5c28cd8747325e49070f7c77621c18478f76d5a89f52a8c8e90ae889",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\original_h45_fixed_selection.parquet": {
+      "sha256": "cdc974640ae07eb7494fa33c6887a51f575a52d866b64c4e7aab3969c25882c9",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\original_h45_fixed_tuning.parquet": {
+      "sha256": "cc44d4bfc62d14c0608c3a761f52275e7ab45005559ba1e574cde61d5b78c3e6",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h120_fixed_predictions.parquet": {
+      "sha256": "8c7d126ad45f74eedb2587c012290f0ed285546760185d05570983a63ff8f352",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h120_fixed_selection.parquet": {
+      "sha256": "fd836a634d32cd9a6b5fc9c861732b70463de17d4aa4edd8c1afd267022cc963",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h120_fixed_tuning.parquet": {
+      "sha256": "9270446d653a5c15b39f39e28dcf2955883c1553351968c9b5f9672b3f2fdfb6",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h15_fixed_predictions.parquet": {
+      "sha256": "69d003e0b21e15fa5b97b6879cebe4ac20dce669d94ed626a605a0abfb8dd1b3",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h15_fixed_selection.parquet": {
+      "sha256": "7e62412b3c137aa523ff712748559d4ae92d8af0007919ca784da1222ea09568",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h15_fixed_tuning.parquet": {
+      "sha256": "5c6dcc3ed9d43c67a80a6cf11081cfdd1039fb1b8e6ec04cd95308ed48b046dd",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h180_fixed_predictions.parquet": {
+      "sha256": "01eaa3582342fb78fab584dff42060895d677162692ae71604e755198261b3b1",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h180_fixed_selection.parquet": {
+      "sha256": "f79a30a4f2491b3b7011362b3e2fc7567c8e50a4ead535dd387789a2a9e50bc9",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h180_fixed_tuning.parquet": {
+      "sha256": "244ef176c76abee76ba57ded158f82c3d90569a05476bf341aab7d537cfcf2c0",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h240_fixed_predictions.parquet": {
+      "sha256": "1e013fcd1dcaa3556ffb16d5fb638e20f2ad0a9d2822a95e58e642bbdb234acd",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h240_fixed_selection.parquet": {
+      "sha256": "bdce6583272aa8c653af82f3689cf9f1e5d030ec24284b0b2a3759ca1e88fe2c",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h240_fixed_tuning.parquet": {
+      "sha256": "8774d86f193ff803b1450d7e5f70df64081d5d6e14237b1c729b71dc42d78695",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h30_fixed_predictions.parquet": {
+      "sha256": "bca6f80df5041d403eb3f608fffa4f951df09528a777091c0b42da026d226601",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h30_fixed_selection.parquet": {
+      "sha256": "6e573d0ef12b14e627b84a6fdb72549ff41675c4e589f79675fb6acd9837203e",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h30_fixed_tuning.parquet": {
+      "sha256": "99501ed36b6ddd089dc7a65266cb2f9d629998d1faa6b660fc9f4aab42eec221",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h45_fixed_predictions.parquet": {
+      "sha256": "e2f3602d77422c9e833031af4f3396567fcddda8e8e4ef5ffc637b7051563010",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h45_fixed_selection.parquet": {
+      "sha256": "d57d90e0acec077bca9b115f0f6cddd2abe95f709af4e9ac5ffcc4b4e29a43a4",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h45_fixed_tuning.parquet": {
+      "sha256": "c3272df6a83f54327c919eef383552697adf3f5b049a5093fb80eb0dea7b2ef0",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h5_fixed_predictions.parquet": {
+      "sha256": "dbc7c9d7efeea4c4b31741dee5e706bcf495ffcc3ffa19ece9c7538501610ea6",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h5_fixed_selection.parquet": {
+      "sha256": "c9d4dd1143af26ea1540a036de57b09aa6e1de7ab075107df7b0d1dbe9fbf607",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h5_fixed_tuning.parquet": {
+      "sha256": "ee049d0758dcd3742fcf321a5d3adec72ba342dac14594bc043a66a1e6a6b611",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h60_fixed_predictions.parquet": {
+      "sha256": "81026c57b09e56d3f876be874b092b1e430673a7e1716eb05662aedce9806405",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h60_fixed_selection.parquet": {
+      "sha256": "3d99223784bfa78920658479c96c11ff8c0a0400143e07a67bcabb6b25d0c737",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h60_fixed_tuning.parquet": {
+      "sha256": "3da3d9ae02e425f6a3dcb0fb62d6d439dc95ff56d6134eca002efefa95443e36",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h90_fixed_predictions.parquet": {
+      "sha256": "127412f24ba1d729f6630bd0f2f1264992a74c225cd26c608fca6d8ae8ca0f65",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h90_fixed_selection.parquet": {
+      "sha256": "416054df55c4abe51149c9ed51aa0bfd3a9c908c53d05120d9610d190c38878b",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_long_h90_fixed_tuning.parquet": {
+      "sha256": "73f31ebc2a7966b31915ee4459d7b6e51edbb0a97203256be2516d4f875c78a5",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h120_fixed_predictions.parquet": {
+      "sha256": "b2b3abe70e8680d8abd117f4a72c1825f761953c60d28e7b45ce2078d33dae29",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h120_fixed_selection.parquet": {
+      "sha256": "9b619c441db3283af567b72d9b17db5632a8dd87b19d94d3d4a6c329000e451f",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h120_fixed_tuning.parquet": {
+      "sha256": "76c4cc0ef37b6ecfea6a468b305427d9f32a9b5ba738ceef12d8ec739ecb8b64",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h15_fixed_predictions.parquet": {
+      "sha256": "05d79957d4871241d8dc6f042b4c8894b187fa8b1446ca98e32eecda7ce567fb",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h15_fixed_selection.parquet": {
+      "sha256": "00b78aa8053b70fafce0e60a1341edb0cf5547e668de17a44ba80fc43a7ac841",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h15_fixed_tuning.parquet": {
+      "sha256": "9af8b9c841fa5051cdcbb0dea600550584203002beda3996606fc533ea15ca6f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h180_fixed_predictions.parquet": {
+      "sha256": "dab55ec6b42c2fd090b1dbfb35a50faceb893b3b7f7762a793c21734efbb3e84",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h180_fixed_selection.parquet": {
+      "sha256": "b1de5f9ce87b9ea108c50478a192d27d73fbb2271a25a6ad6cf86299cc79b2a6",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h180_fixed_tuning.parquet": {
+      "sha256": "f23d84d638eb78f71b8c857eb5bc408e9d001d96dad519e5b2bac4ff2c2f6770",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h240_fixed_predictions.parquet": {
+      "sha256": "e560e59a53c09ca916f3eb57eeb992095a02518fb1d1c6158565bd37bce453de",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h240_fixed_selection.parquet": {
+      "sha256": "f1c840da828351730680a9a159f6ed95fd6651880d32f34aa5d1c39e4712179b",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h240_fixed_tuning.parquet": {
+      "sha256": "bee1cdcf2961dab65f5fb01cc7e05cd94785bd31eb76c9d8d7bd28cb2df9d496",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h30_fixed_predictions.parquet": {
+      "sha256": "1fe99dd868e2566759c941e9c5bb07b9ad3264dc4e663edc8eccb8cea38d9149",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h30_fixed_selection.parquet": {
+      "sha256": "70e5aa0d68d8e37ccddbb98264ec0f92158860cfc8e68e67c28fc94d8b8d3b46",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h30_fixed_tuning.parquet": {
+      "sha256": "fb00c11ef638275c8dcca5b4f859fe2e087e22c5a0af925266868f452d886cfd",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h45_fixed_predictions.parquet": {
+      "sha256": "7792cee211ff6590a98e557eac7ad7c3c2f0528eb890f9e5221530bf6e3eaffb",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h45_fixed_selection.parquet": {
+      "sha256": "9cc55be60539f7a4516816b9e9d97a9e38019fa3d7d17fc588e05548d9741f25",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h45_fixed_tuning.parquet": {
+      "sha256": "d05e14e80766a7fb0418279eac5bf43617ac5505783d3bfdc1f0ded11d0ba2cf",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h5_fixed_predictions.parquet": {
+      "sha256": "f840e77bfc469e2b1a32fc9f008576bb2f2a2bd7167f12c74decd8f647813974",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h5_fixed_selection.parquet": {
+      "sha256": "bb28d50689c7226162a2e15024e5c42417012126ef2838400f8b58dde07d17a8",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h5_fixed_tuning.parquet": {
+      "sha256": "6a6540f16a9294c8c741b2dca60df89924ce7f44c090b9800c19976270fca7bc",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h60_fixed_predictions.parquet": {
+      "sha256": "e18e7051be2efd6e20f55126f8f2b4a87d0f945daad6a6cbb41291ec790e368c",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h60_fixed_selection.parquet": {
+      "sha256": "15222da206e9b3d956e7b428ca5095abe46e1b6191df06545d844bd0c9f932ce",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h60_fixed_tuning.parquet": {
+      "sha256": "25a285821ccbd4ee9f405ce02ae5a6e7d4e6174792d27040139d6bada8000079",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h90_fixed_predictions.parquet": {
+      "sha256": "a2f013f238b67d828f94452176034883b34b529d782e1929e9da0785d3552b70",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h90_fixed_selection.parquet": {
+      "sha256": "c1b6b323cbbb3eeb0011c7bb57680dcef88646c7e6fe3db4243775809b4fb17a",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\r21_short_h90_fixed_tuning.parquet": {
+      "sha256": "4e109fdc0c3239f50722a07030b241e51f77c6e7ea954f81b7500469c3a12501",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\regression_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\regression_h45_fixed_predictions.parquet": {
+      "sha256": "4d5dd5939dcd078536452af205bc6b59711e6f2d17699b26444267804a70d328",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\regression_h45_fixed_selection.parquet": {
+      "sha256": "64d7cb8fc8d56a96840a5fc34b9c163289c8fc6fc8e3824504fc6eff97fec996",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\regression_h45_fixed_tuning.parquet": {
+      "sha256": "fe219db6b48a0283ad2e37f26a41f0eb9a6d862860735f1019083c796c0be4bd",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h120_fixed_predictions.parquet": {
+      "sha256": "e9206cffc59c17749716b885b5683fbaf312d07aefb175ba8912fd87bfa16da4",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h120_fixed_selection.parquet": {
+      "sha256": "fbe567da405b4674baaaf1049a7502ab161cf06264c7cf42150227edaa78e682",
+      "rows": 10505
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h120_fixed_tuning.parquet": {
+      "sha256": "b69d72508e78e6c0f9dd0e3d417af3a8471f1771e0b8131e96f6097f29115adf",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h15_fixed_predictions.parquet": {
+      "sha256": "58a687d1f57bdce22803ba477c2088b5af19d9c0cefed7d1c4d067e455a5df87",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h15_fixed_selection.parquet": {
+      "sha256": "538dceec3767abbe8d1f0126c2b0cfe6b4912758808fbbb5a4a875839e2e72e6",
+      "rows": 11504
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h15_fixed_tuning.parquet": {
+      "sha256": "b254a242053d165a189ba4e38507d890ba27222c0d446c372caeda9edafd7b61",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h180_fixed_predictions.parquet": {
+      "sha256": "a82c274a8e6ff11db7b6b9565e2bf0f4999b5cc61094b369e313d5ce7a66e697",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h180_fixed_selection.parquet": {
+      "sha256": "aa3985d0789d818c65a1e5ddb7f0e4566ca674782e5659141bc4a1ff89f07992",
+      "rows": 10181
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h180_fixed_tuning.parquet": {
+      "sha256": "a66bdd6cd40d69a70846ab34d4f2e064391a74262bfdad55e9801dfbd6ea14c7",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h240_fixed_predictions.parquet": {
+      "sha256": "88d2b5167192af4ecc0eb5f94f20db759c4edc36e7e43cb6ac3c0b893e972585",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h240_fixed_selection.parquet": {
+      "sha256": "87f1825f5fccc7ee93c429b773690389be0e5ca156373f245b9b80e6db94dfcf",
+      "rows": 10041
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h240_fixed_tuning.parquet": {
+      "sha256": "866e5a71f065002509fd1d083a851252813016ad56ce1ad3701d212bb0c75876",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h30_fixed_predictions.parquet": {
+      "sha256": "559aedaef9d1c81fbd585aa5f55fd0b18f16dd2883f8a302226f581c65f2ea18",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h30_fixed_selection.parquet": {
+      "sha256": "1755f14309c36c52767ea332504284a1b8a7dd68a417d503cfe314f5839c29f9",
+      "rows": 11834
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h30_fixed_tuning.parquet": {
+      "sha256": "bc7521f6bcb4d816bb78be41eff72ce79ba7b81f584bef7a01af62a12f37fbc9",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h45_fixed_predictions.parquet": {
+      "sha256": "019866e8277947b7a1ecf63713f2c76f0731438c3f9c239e2fe4ad93f6b20a39",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h45_fixed_selection.parquet": {
+      "sha256": "dc0793e531ac2be7166d82efe0ca5e762e74e68cc7f80e444399e6ae3c547ce7",
+      "rows": 11438
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h45_fixed_tuning.parquet": {
+      "sha256": "bc5ab2e4c4a0021792b5f74990963d5206dba563f839cd8c5b41074aad8d09ed",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h5_fixed_predictions.parquet": {
+      "sha256": "825b9c5100792d5c7e9d3ef9e772344d193ec617f432926fb48819e3105f8627",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h5_fixed_selection.parquet": {
+      "sha256": "56e85b3e901fe2556e52346cd284aa1fcb7e0c1f3352c0896c79d54e91b1a8b0",
+      "rows": 9365
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h5_fixed_tuning.parquet": {
+      "sha256": "46544e6deae9c9d3da00dcdb6118a1a45930844df8f225b97593c85a9a572a23",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h60_fixed_predictions.parquet": {
+      "sha256": "281982c4c7610056a75c689a2d7a220751aea5ac384603e81fd0a2222a078e43",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h60_fixed_selection.parquet": {
+      "sha256": "2399de1306e1427ac48e397f001b07048104a4809f70e928388dcaf6b8899dba",
+      "rows": 10641
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h60_fixed_tuning.parquet": {
+      "sha256": "3f256ac299746328a3cc70970bc3accbddcd7aeab1f184aead831b32edb071d2",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h90_fixed_predictions.parquet": {
+      "sha256": "bc3d17ff5ddc5fd6e3fabdbd16e79d01208ee492c8bb38983d03bfa9c605624c",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h90_fixed_selection.parquet": {
+      "sha256": "3bb2a707d26af79ec982ed7303f8c41c341830ddc701231c8e6749e208698b98",
+      "rows": 10412
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\residual_h90_fixed_tuning.parquet": {
+      "sha256": "98f6445581232fc1638cffcb7d4b6eb457f5901886e1ff61123bd76a6db80530",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\weighted_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\weighted_h45_fixed_predictions.parquet": {
+      "sha256": "49dbc8f45ac1ed662cf4e1f9230612fc366e610300db09613576510b22582989",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\weighted_h45_fixed_selection.parquet": {
+      "sha256": "1cbe15597d684ca9362c284b04383b9a93bc8cd17734ca52c503795372b8d64f",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V2\\weighted_h45_fixed_tuning.parquet": {
+      "sha256": "b9693fe299259b690508a07a4ef449c6b00113be5be8c2f4638783b09eaad225",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\original_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\original_h45_fixed_predictions.parquet": {
+      "sha256": "15f34504e5731ef45b083d7fcda73cdbda92184d264fd8bbf1db924b7b1cd35a",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\original_h45_fixed_selection.parquet": {
+      "sha256": "cdc974640ae07eb7494fa33c6887a51f575a52d866b64c4e7aab3969c25882c9",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\original_h45_fixed_tuning.parquet": {
+      "sha256": "e212d5b36d2479038f99d79cb6ac861ed153d64a17a6a3094696a25b449d04b3",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h120_fixed_predictions.parquet": {
+      "sha256": "8a4d4f67bd1fc75a709cf62167ef39175c8e4f55830937580ed08fdd28da9d68",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h120_fixed_selection.parquet": {
+      "sha256": "fd836a634d32cd9a6b5fc9c861732b70463de17d4aa4edd8c1afd267022cc963",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h120_fixed_tuning.parquet": {
+      "sha256": "dec92cb6a9a6a3b75498e037538f38ef1cff08df9162c314df43d4568ab39091",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h15_fixed_predictions.parquet": {
+      "sha256": "0a947117cbf720adadb16d342c3b9c0645bf2c681746c026e646b6aeb350d257",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h15_fixed_selection.parquet": {
+      "sha256": "7e62412b3c137aa523ff712748559d4ae92d8af0007919ca784da1222ea09568",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h15_fixed_tuning.parquet": {
+      "sha256": "4c9e5e93e8c0761a345bd997c9ee58554dfc489ac82f088752e2db38fb46aec0",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h180_fixed_predictions.parquet": {
+      "sha256": "17ef9b15c508e2dc8579bc8f24fbecb413b9045126dd33350befb7d361e9aa11",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h180_fixed_selection.parquet": {
+      "sha256": "f79a30a4f2491b3b7011362b3e2fc7567c8e50a4ead535dd387789a2a9e50bc9",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h180_fixed_tuning.parquet": {
+      "sha256": "0ba675cefe3d761c016e02cad79b47689aa2d5e707260312c5c9c4375f19d8cf",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h240_fixed_predictions.parquet": {
+      "sha256": "a5e9ea36a1fb2ba12a2a68722017a6d36c96447b6d008ea26ccd01330c361efb",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h240_fixed_selection.parquet": {
+      "sha256": "bdce6583272aa8c653af82f3689cf9f1e5d030ec24284b0b2a3759ca1e88fe2c",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h240_fixed_tuning.parquet": {
+      "sha256": "14eb99d1ba22bef52548af827f1b8e4b14e2e4e0c290a08f00e59c6659b8d0ed",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h30_fixed_predictions.parquet": {
+      "sha256": "28603706a916499348697fa45f6ce047c4f8f5dab6ef379b1edbc36624255a2d",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h30_fixed_selection.parquet": {
+      "sha256": "6e573d0ef12b14e627b84a6fdb72549ff41675c4e589f79675fb6acd9837203e",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h30_fixed_tuning.parquet": {
+      "sha256": "12d99e79fc7da951f9eae43f1e350e7cc96dd5b40958c825f4599fbabf2f9a50",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h45_fixed_predictions.parquet": {
+      "sha256": "0a0d59ab4aa70466337a65ec59a2e64cf6b70bc5174f4c261e1cfa39e636b974",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h45_fixed_selection.parquet": {
+      "sha256": "d57d90e0acec077bca9b115f0f6cddd2abe95f709af4e9ac5ffcc4b4e29a43a4",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h45_fixed_tuning.parquet": {
+      "sha256": "c481d4f281b9cbaebd7ef9e05ecdb5506cba07d7c7b9196ca860e4cb415b95a6",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h5_fixed_predictions.parquet": {
+      "sha256": "d9330f8f3447e0b4efd997a354cc75db065e5fa213096d33acf730393672ddfa",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h5_fixed_selection.parquet": {
+      "sha256": "c9d4dd1143af26ea1540a036de57b09aa6e1de7ab075107df7b0d1dbe9fbf607",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h5_fixed_tuning.parquet": {
+      "sha256": "48c0c52789349c0abe7cb040761c5509c731cd1b5600119427ed4fac0bef6e51",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h60_fixed_predictions.parquet": {
+      "sha256": "d9d9ac30f866b31360f47a0e5fea2828608a7e652d8e548d71fc992c605a2148",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h60_fixed_selection.parquet": {
+      "sha256": "3d99223784bfa78920658479c96c11ff8c0a0400143e07a67bcabb6b25d0c737",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h60_fixed_tuning.parquet": {
+      "sha256": "26e056fbf54fcdb1163519e596a855d6d2611a9c641a07a2607a2441ee24bfda",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h90_fixed_predictions.parquet": {
+      "sha256": "139b666e1a766e47f53a43c37c9728e7880b6d3f57d33ef20195fbfa6da43603",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h90_fixed_selection.parquet": {
+      "sha256": "416054df55c4abe51149c9ed51aa0bfd3a9c908c53d05120d9610d190c38878b",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_long_h90_fixed_tuning.parquet": {
+      "sha256": "050b0aa5fce4a0d24b3169adbd9284c750163daf5033af9b9707757641b7f870",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h120_fixed_predictions.parquet": {
+      "sha256": "d7741c91f128b0df4db50427206841db57de5dcde8b06c05fbecd89223deb1ff",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h120_fixed_selection.parquet": {
+      "sha256": "9b619c441db3283af567b72d9b17db5632a8dd87b19d94d3d4a6c329000e451f",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h120_fixed_tuning.parquet": {
+      "sha256": "28459285adbcf459d821f914a02a1cffef59bcdc5481f2443aeb45aa715bbf4e",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h15_fixed_predictions.parquet": {
+      "sha256": "4cdff33475047ba09ff3d56c29adca1a01cce8094648f942432361c78d12b101",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h15_fixed_selection.parquet": {
+      "sha256": "00b78aa8053b70fafce0e60a1341edb0cf5547e668de17a44ba80fc43a7ac841",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h15_fixed_tuning.parquet": {
+      "sha256": "a646cafab450e9ef673926c4eb366845b3a471ac2985cff643344081a5061c10",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h180_fixed_predictions.parquet": {
+      "sha256": "350c3d9d418fc614f6c2c6db398cc14ea88e92fef32b13f74669c70c5a0343f6",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h180_fixed_selection.parquet": {
+      "sha256": "b1de5f9ce87b9ea108c50478a192d27d73fbb2271a25a6ad6cf86299cc79b2a6",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h180_fixed_tuning.parquet": {
+      "sha256": "d3157da90d07fdbb17161011bf440ebadde41c6ece4bf687ffd5443ca78ccc39",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h240_fixed_predictions.parquet": {
+      "sha256": "72939978c4312d08f27b0a6d38abd9c41564ac180c620a4f635d58cad6d094dd",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h240_fixed_selection.parquet": {
+      "sha256": "f1c840da828351730680a9a159f6ed95fd6651880d32f34aa5d1c39e4712179b",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h240_fixed_tuning.parquet": {
+      "sha256": "1e477b52d0705ac8d5ab18e401fcdc29b0e715864ae9776ab3c37eaa6c712553",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h30_fixed_predictions.parquet": {
+      "sha256": "bfb4e7541154e23de0b7429977ab3ec406647846c3bbba50c7a391ff883b94f2",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h30_fixed_selection.parquet": {
+      "sha256": "70e5aa0d68d8e37ccddbb98264ec0f92158860cfc8e68e67c28fc94d8b8d3b46",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h30_fixed_tuning.parquet": {
+      "sha256": "4b82bcb732f2c749bb8acb9ad84b8be67e28d31c6493896f50cf1ace0b697204",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h45_fixed_predictions.parquet": {
+      "sha256": "2c565539e835ef6e6013d0aa11e3bd7104c505a523c3303ba513e67b055dc43a",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h45_fixed_selection.parquet": {
+      "sha256": "9cc55be60539f7a4516816b9e9d97a9e38019fa3d7d17fc588e05548d9741f25",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h45_fixed_tuning.parquet": {
+      "sha256": "9a6fe809ce025f44390523262dc04d99305fa24c4c570aab16fae1a702cf3620",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h5_fixed_predictions.parquet": {
+      "sha256": "d3e2025591d6e2fe692fc59934b39b7029ae44cd7a6c0cb11f757bacfab06297",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h5_fixed_selection.parquet": {
+      "sha256": "bb28d50689c7226162a2e15024e5c42417012126ef2838400f8b58dde07d17a8",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h5_fixed_tuning.parquet": {
+      "sha256": "e900271c50a624d9e578cbd97e8a9bd13fc1ffc8ce3825c023b665b1e44690f1",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h60_fixed_predictions.parquet": {
+      "sha256": "df2c3206f7cbad0a92ff0bcc40046f0ba741bd7926030bc572e772c1ab3fccd2",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h60_fixed_selection.parquet": {
+      "sha256": "15222da206e9b3d956e7b428ca5095abe46e1b6191df06545d844bd0c9f932ce",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h60_fixed_tuning.parquet": {
+      "sha256": "481196593a9ef82805c47d23733c253134854e9bb64c62e11d99ee52451c3afa",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h90_fixed_predictions.parquet": {
+      "sha256": "94de6d995d11e391f4dcf886aea8f069ec54981e04fc01f33c6992200eaef879",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h90_fixed_selection.parquet": {
+      "sha256": "c1b6b323cbbb3eeb0011c7bb57680dcef88646c7e6fe3db4243775809b4fb17a",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\r21_short_h90_fixed_tuning.parquet": {
+      "sha256": "c7285dd2a956def8c0127ed00801a4b8efaaa335430b5b700cf3a87f58118244",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\regression_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\regression_h45_fixed_predictions.parquet": {
+      "sha256": "b5160e2917088885d01a89aec5f1799414b9386b36f9c5fc297a1d040fcfacb7",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\regression_h45_fixed_selection.parquet": {
+      "sha256": "64d7cb8fc8d56a96840a5fc34b9c163289c8fc6fc8e3824504fc6eff97fec996",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\regression_h45_fixed_tuning.parquet": {
+      "sha256": "49e281597b669842eac7ca6635cc0e8dc13c6c243bc45a49821855fbecfb2238",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h120_fixed_predictions.parquet": {
+      "sha256": "7fb8a6cc167cd350a847b4720c1f7d334c5425596c729334000cb185b329ae76",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h120_fixed_selection.parquet": {
+      "sha256": "fbe567da405b4674baaaf1049a7502ab161cf06264c7cf42150227edaa78e682",
+      "rows": 10505
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h120_fixed_tuning.parquet": {
+      "sha256": "8b9f0f9450540b127f8b24f7b81f8cd96520d80a63347d040315efc18e0aee67",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h15_fixed_predictions.parquet": {
+      "sha256": "376f8a485973838e24b045dc0a0036d622d6f98c19366723e37a031ee07eece4",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h15_fixed_selection.parquet": {
+      "sha256": "538dceec3767abbe8d1f0126c2b0cfe6b4912758808fbbb5a4a875839e2e72e6",
+      "rows": 11504
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h15_fixed_tuning.parquet": {
+      "sha256": "d73d63bb33aea91af9c96d40bb542d34beaa7dadee25f6af76a53fd9320cc217",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h180_fixed_predictions.parquet": {
+      "sha256": "baef4fc5c431258c9d88ba4dccf61f0b5ee386a7f39fc9d9c113c60161b4584e",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h180_fixed_selection.parquet": {
+      "sha256": "aa3985d0789d818c65a1e5ddb7f0e4566ca674782e5659141bc4a1ff89f07992",
+      "rows": 10181
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h180_fixed_tuning.parquet": {
+      "sha256": "4e6eee13c83f7dfcf6ce6ac48997eb9a8ebb18bab1652f529670f33f5019a9d6",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h240_fixed_predictions.parquet": {
+      "sha256": "a8f8d6c1c6a2853ed51681855569b2f9fa4ca06546d690d54bb45fcc4b7911f7",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h240_fixed_selection.parquet": {
+      "sha256": "87f1825f5fccc7ee93c429b773690389be0e5ca156373f245b9b80e6db94dfcf",
+      "rows": 10041
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h240_fixed_tuning.parquet": {
+      "sha256": "5b9523e218623601addc481b254fd62c17ed4ef2bc12a956167e6398e545d1ed",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h30_fixed_predictions.parquet": {
+      "sha256": "955324e5c3a1c85fe69b3fcd18b016d1e04c71123f3d7eed7be28ec15a1c22f6",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h30_fixed_selection.parquet": {
+      "sha256": "1755f14309c36c52767ea332504284a1b8a7dd68a417d503cfe314f5839c29f9",
+      "rows": 11834
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h30_fixed_tuning.parquet": {
+      "sha256": "8f3654d315ae79c23fc110dbc673c3e57460d4b3a5f3c3d1ede47231b3aee8a7",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h45_fixed_predictions.parquet": {
+      "sha256": "294b3ca20ff8fbe7896838e62cda69d6c69bf5e4758d66feb01b7c414ad98100",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h45_fixed_selection.parquet": {
+      "sha256": "dc0793e531ac2be7166d82efe0ca5e762e74e68cc7f80e444399e6ae3c547ce7",
+      "rows": 11438
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h45_fixed_tuning.parquet": {
+      "sha256": "15d41c85f13f07def329ad48ac7bcd04c487f51183ee944abfad21da58670117",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h5_fixed_predictions.parquet": {
+      "sha256": "4b5e0b994a619481aa5bb1accd604db0a6685d90fc0a3a295a9a78beec2d05dc",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h5_fixed_selection.parquet": {
+      "sha256": "56e85b3e901fe2556e52346cd284aa1fcb7e0c1f3352c0896c79d54e91b1a8b0",
+      "rows": 9365
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h5_fixed_tuning.parquet": {
+      "sha256": "3d9e2fbea1b3bc8287e35cea89eafb093966ac3b087a5e83ec185eaa2ec4f805",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h60_fixed_predictions.parquet": {
+      "sha256": "1f6454900317af8e8429aae61f0f6acdf063c6541e1820e1c4aea8e2b2c7126c",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h60_fixed_selection.parquet": {
+      "sha256": "2399de1306e1427ac48e397f001b07048104a4809f70e928388dcaf6b8899dba",
+      "rows": 10641
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h60_fixed_tuning.parquet": {
+      "sha256": "2c5990650441f88e799830ad38d890981f8f6338d5e7b82743e607d6263ea80b",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h90_fixed_predictions.parquet": {
+      "sha256": "d4a5e3e3e55b029dda616984f7d5cface2a6e80bd89dab16904260b9dddb4bae",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h90_fixed_selection.parquet": {
+      "sha256": "3bb2a707d26af79ec982ed7303f8c41c341830ddc701231c8e6749e208698b98",
+      "rows": 10412
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\residual_h90_fixed_tuning.parquet": {
+      "sha256": "6e60c15c245b43a45d158855158796a692ed7ccb9dd0bb5f36ca85a1f7cbb2fb",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\weighted_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\weighted_h45_fixed_predictions.parquet": {
+      "sha256": "2fbf72d0a4d68c90075b296fd8ed6c7360be3eda8d4c78dcd9f4034417c1eb32",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\weighted_h45_fixed_selection.parquet": {
+      "sha256": "1cbe15597d684ca9362c284b04383b9a93bc8cd17734ca52c503795372b8d64f",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V3\\weighted_h45_fixed_tuning.parquet": {
+      "sha256": "f5989bc200973bfeca37c1820e2b0e22bde57c275f7cbca904224c63982579bd",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\original_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\original_h45_fixed_predictions.parquet": {
+      "sha256": "7a361f462b7fc560a54b95c79de3bd58ef1aa20cd75cab6adc100c6110019726",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\original_h45_fixed_selection.parquet": {
+      "sha256": "cdc974640ae07eb7494fa33c6887a51f575a52d866b64c4e7aab3969c25882c9",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\original_h45_fixed_tuning.parquet": {
+      "sha256": "9da73e573bac53bd4b938ab68822d6feff8e63ddc3dcf316a61fe02a4731cc06",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h120_fixed_predictions.parquet": {
+      "sha256": "ceeb069e8ac5d8932a0ea26ba43a18dc9698a653ed69cbf02deef493a798c9ae",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h120_fixed_selection.parquet": {
+      "sha256": "fd836a634d32cd9a6b5fc9c861732b70463de17d4aa4edd8c1afd267022cc963",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h120_fixed_tuning.parquet": {
+      "sha256": "41c2e9281e90fdb12b87c6cda282fb9fe32e411cfca93e20f1f682f120c44194",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h15_fixed_predictions.parquet": {
+      "sha256": "edcf4d745c053559373213cbda235e73105e619191c2865a506bb7310dd5bd7e",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h15_fixed_selection.parquet": {
+      "sha256": "7e62412b3c137aa523ff712748559d4ae92d8af0007919ca784da1222ea09568",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h15_fixed_tuning.parquet": {
+      "sha256": "a3d6af927176f029ed1c9b31de37aa5ab6a435c82218d10c61f97737159ff548",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h180_fixed_predictions.parquet": {
+      "sha256": "77b1d6222fb26a4bf029536ac9f8892b999ef65fbaa0f28dd5f2f763bd8fc96c",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h180_fixed_selection.parquet": {
+      "sha256": "f79a30a4f2491b3b7011362b3e2fc7567c8e50a4ead535dd387789a2a9e50bc9",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h180_fixed_tuning.parquet": {
+      "sha256": "f1ab6e909dd1ebc9aa643c1d061ee10009bcd1b6d57e44b503e09b5dcd7ade7b",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h240_fixed_predictions.parquet": {
+      "sha256": "b56b5e01943435658cb71027dc67bfbf411f05201a12c33d2bce59fd8f990bb4",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h240_fixed_selection.parquet": {
+      "sha256": "bdce6583272aa8c653af82f3689cf9f1e5d030ec24284b0b2a3759ca1e88fe2c",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h240_fixed_tuning.parquet": {
+      "sha256": "873d67b70971654ed710297b823110cc7ae035c5e7a601468308017d1aff17c8",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h30_fixed_predictions.parquet": {
+      "sha256": "e2555bd63260b3926eac8857876f47bd230a2a5b20e975d8c2f658c20ab1631f",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h30_fixed_selection.parquet": {
+      "sha256": "6e573d0ef12b14e627b84a6fdb72549ff41675c4e589f79675fb6acd9837203e",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h30_fixed_tuning.parquet": {
+      "sha256": "e0d058616be5acbb550a20e553fdd90c1d888bf92250ad57ec99364e1aaf6b2a",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h45_fixed_predictions.parquet": {
+      "sha256": "0cdfd57a9a662761aad19bffc9455081124ad39030be47bd16c72bee72a40281",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h45_fixed_selection.parquet": {
+      "sha256": "d57d90e0acec077bca9b115f0f6cddd2abe95f709af4e9ac5ffcc4b4e29a43a4",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h45_fixed_tuning.parquet": {
+      "sha256": "0bc678a34bbf7f2461fc21a014a75352e3cd633b0877b5c0a65c7b87f52080f8",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h5_fixed_predictions.parquet": {
+      "sha256": "527aa2d5114079f3426d1aab46c07c7bfb12f653e3b1cc6032c23c10de5fec63",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h5_fixed_selection.parquet": {
+      "sha256": "c9d4dd1143af26ea1540a036de57b09aa6e1de7ab075107df7b0d1dbe9fbf607",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h5_fixed_tuning.parquet": {
+      "sha256": "a3725da2cf538efbad2f16e657cd6c0bb614d600533ee2b8e3e1be55581be38b",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h60_fixed_predictions.parquet": {
+      "sha256": "7d758a9e5f792413b80c9a658349e584851b862036afc6eecbea42e295eac46e",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h60_fixed_selection.parquet": {
+      "sha256": "3d99223784bfa78920658479c96c11ff8c0a0400143e07a67bcabb6b25d0c737",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h60_fixed_tuning.parquet": {
+      "sha256": "62cdcb07f84f94b19d051929cbe7c04dc5163d9d53923540187b857906d95739",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h90_fixed_predictions.parquet": {
+      "sha256": "f0f0672e1333ed40c0e9105ebaf351c4d7909f41015ae4f1db7234b9384a1dd7",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h90_fixed_selection.parquet": {
+      "sha256": "416054df55c4abe51149c9ed51aa0bfd3a9c908c53d05120d9610d190c38878b",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_long_h90_fixed_tuning.parquet": {
+      "sha256": "f8d2962d9827bbae7b02f8865153918595fec4f232348df32f17565158a63503",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h120_fixed_predictions.parquet": {
+      "sha256": "944816428b4c9c2df3a4dac6fe172f13e56158779498f15d94ee5547eeae6850",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h120_fixed_selection.parquet": {
+      "sha256": "9b619c441db3283af567b72d9b17db5632a8dd87b19d94d3d4a6c329000e451f",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h120_fixed_tuning.parquet": {
+      "sha256": "d8974749b5fce839d8c700a3806ca642c68599657adf9a897cc4b39664f54dc2",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h15_fixed_predictions.parquet": {
+      "sha256": "5fd2c9972b996cdc1dd887cbb54ef387bb0e6055aef5497b2f538c60b6dce923",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h15_fixed_selection.parquet": {
+      "sha256": "00b78aa8053b70fafce0e60a1341edb0cf5547e668de17a44ba80fc43a7ac841",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h15_fixed_tuning.parquet": {
+      "sha256": "b3e618414d1cda99035630ed10bb3d6fbf46f4f28de1e8bf5877115b7f22eb8f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h180_fixed_predictions.parquet": {
+      "sha256": "e847ef8769eb85ee1785715eb58dfa12f208d71f0a9d0b2d5b566d12d570d48f",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h180_fixed_selection.parquet": {
+      "sha256": "b1de5f9ce87b9ea108c50478a192d27d73fbb2271a25a6ad6cf86299cc79b2a6",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h180_fixed_tuning.parquet": {
+      "sha256": "78fc01dbcc63f173c5aaa17d2fcb0f9ee20a7ea93ea665761060865dfeda51a1",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h240_fixed_predictions.parquet": {
+      "sha256": "8ad1b87c083371f2671b8af27e2c6792225ef1e2423ae7ae0a07b44d64f2d0f4",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h240_fixed_selection.parquet": {
+      "sha256": "f1c840da828351730680a9a159f6ed95fd6651880d32f34aa5d1c39e4712179b",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h240_fixed_tuning.parquet": {
+      "sha256": "34499698fe24d282e50cae15742dad4fc897cbcf1c06221c7bb36f2c0b1ab034",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h30_fixed_predictions.parquet": {
+      "sha256": "9c77ef0621ff14f0cd87d0f6cb6792006ff3c4f897c0a4f027cf02055389fb62",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h30_fixed_selection.parquet": {
+      "sha256": "70e5aa0d68d8e37ccddbb98264ec0f92158860cfc8e68e67c28fc94d8b8d3b46",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h30_fixed_tuning.parquet": {
+      "sha256": "edd7f1bf892e5dbe2ef3627f80e16d3511ab91d010d8b1e985035037a0f0e0f3",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h45_fixed_predictions.parquet": {
+      "sha256": "02dc4450cd30718978749c8397c53539916996fa5e2f0f321483f9a05adc61f3",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h45_fixed_selection.parquet": {
+      "sha256": "9cc55be60539f7a4516816b9e9d97a9e38019fa3d7d17fc588e05548d9741f25",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h45_fixed_tuning.parquet": {
+      "sha256": "e34d10e50745f6ee5d7a2afee41f821f347c0213f835c057b16731304a034dc7",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h5_fixed_predictions.parquet": {
+      "sha256": "b3a3841806a8a4cfbb0b8644f020949ef00d7735ad7ff8f5ad23c991a83c08a2",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h5_fixed_selection.parquet": {
+      "sha256": "bb28d50689c7226162a2e15024e5c42417012126ef2838400f8b58dde07d17a8",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h5_fixed_tuning.parquet": {
+      "sha256": "b32b0d704eee571a3ce3194c9e691bca828b75a576fe3166d9f0819c5d7db441",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h60_fixed_predictions.parquet": {
+      "sha256": "f191462e3e8beae50420ebc88ade0ba8b00c47f33ebacd6485f392bbda832a70",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h60_fixed_selection.parquet": {
+      "sha256": "15222da206e9b3d956e7b428ca5095abe46e1b6191df06545d844bd0c9f932ce",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h60_fixed_tuning.parquet": {
+      "sha256": "6a1ed8ec207eb64824c98f0e765e9268d0c3e01627d9c019ad3483b8e0ffe576",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h90_fixed_predictions.parquet": {
+      "sha256": "6e9b5862af008b5f6b45899bc4427a289a253c5371a8601ff9082c4072988127",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h90_fixed_selection.parquet": {
+      "sha256": "c1b6b323cbbb3eeb0011c7bb57680dcef88646c7e6fe3db4243775809b4fb17a",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\r21_short_h90_fixed_tuning.parquet": {
+      "sha256": "c5ec24627ead98578f608c9e7babf8fea74db8db49d52147c90c61f5b15eda91",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\regression_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\regression_h45_fixed_predictions.parquet": {
+      "sha256": "67ba9a1895492f67b6d62d7949d6a7da373fde353bfd63a75aa81fa6b4ca4015",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\regression_h45_fixed_selection.parquet": {
+      "sha256": "64d7cb8fc8d56a96840a5fc34b9c163289c8fc6fc8e3824504fc6eff97fec996",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\regression_h45_fixed_tuning.parquet": {
+      "sha256": "32111a2af379e567d0b6cf3d1fde3237151c7beb5bc7ed8eb14920775b1f9f3e",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h120_fixed_predictions.parquet": {
+      "sha256": "3c990e0f7003f6bb9bce734451fadfd368f1e9d455be4a2414dafeefc156af7d",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h120_fixed_selection.parquet": {
+      "sha256": "fbe567da405b4674baaaf1049a7502ab161cf06264c7cf42150227edaa78e682",
+      "rows": 10505
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h120_fixed_tuning.parquet": {
+      "sha256": "bdcdffc350aca0368fa584176cd18bfd4643378232042e7c9d5c7ea8104e9e16",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h15_fixed_predictions.parquet": {
+      "sha256": "16e7c00b4428e0777e9651d07d9edd8bbd0aab32ef3e6e7c1a36fa23074c9ad4",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h15_fixed_selection.parquet": {
+      "sha256": "538dceec3767abbe8d1f0126c2b0cfe6b4912758808fbbb5a4a875839e2e72e6",
+      "rows": 11504
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h15_fixed_tuning.parquet": {
+      "sha256": "3b8ac550adf7652edc20fa430c0582a7ba29015c856d617ca0ed097209c8832a",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h180_fixed_predictions.parquet": {
+      "sha256": "288442035f168061f42333111962d707d8087c8fb94d68013f9a6862b068cbeb",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h180_fixed_selection.parquet": {
+      "sha256": "aa3985d0789d818c65a1e5ddb7f0e4566ca674782e5659141bc4a1ff89f07992",
+      "rows": 10181
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h180_fixed_tuning.parquet": {
+      "sha256": "5ba312c6503fc4cc905a3a44b04855707df9889030903767284eef5169d9b17d",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h240_fixed_predictions.parquet": {
+      "sha256": "4da5fe28b939dc572194a528fd7a4c7e3007cdfe47f3a0957a246b5a7e5ed7b4",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h240_fixed_selection.parquet": {
+      "sha256": "87f1825f5fccc7ee93c429b773690389be0e5ca156373f245b9b80e6db94dfcf",
+      "rows": 10041
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h240_fixed_tuning.parquet": {
+      "sha256": "23459b81520b9b87ed62cf5785847501c35f50a763601cfbe939cbe3a18d8157",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h30_fixed_predictions.parquet": {
+      "sha256": "bab8665e413594773d27feebcb2b9c997eb416330177fcedd4ea9495dac33ebb",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h30_fixed_selection.parquet": {
+      "sha256": "1755f14309c36c52767ea332504284a1b8a7dd68a417d503cfe314f5839c29f9",
+      "rows": 11834
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h30_fixed_tuning.parquet": {
+      "sha256": "04e547ca288761e43f02704bc23e023d67936e2cf5894ea34afb6b4676f14e1f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h45_fixed_predictions.parquet": {
+      "sha256": "e67c9f4db2c51849ec591de3ca94f73b280424a1a28a9e6b55d4cc72cf704c9d",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h45_fixed_selection.parquet": {
+      "sha256": "dc0793e531ac2be7166d82efe0ca5e762e74e68cc7f80e444399e6ae3c547ce7",
+      "rows": 11438
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h45_fixed_tuning.parquet": {
+      "sha256": "65f32191f917731eef329ece28464f367cc5bf8e2795a98a6a0ba84890c0612c",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h5_fixed_predictions.parquet": {
+      "sha256": "d4514db39bc6ab1f3299bef124291083f282b4fbe705a0651c27141d969d45dd",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h5_fixed_selection.parquet": {
+      "sha256": "56e85b3e901fe2556e52346cd284aa1fcb7e0c1f3352c0896c79d54e91b1a8b0",
+      "rows": 9365
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h5_fixed_tuning.parquet": {
+      "sha256": "665fcea4f6715c74a81ab93a2dd2ebef99b9072516ea3320bf4bac77e15ff2a9",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h60_fixed_predictions.parquet": {
+      "sha256": "e6a3b44e7d515f7f87be0eb13df96ac50aab490f3cf6c87890870acf7e0ca920",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h60_fixed_selection.parquet": {
+      "sha256": "2399de1306e1427ac48e397f001b07048104a4809f70e928388dcaf6b8899dba",
+      "rows": 10641
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h60_fixed_tuning.parquet": {
+      "sha256": "cbbcc024d43c3b7be58c725108033b890b6f21afa1d1db37c887bb0e72c75e3d",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h90_fixed_predictions.parquet": {
+      "sha256": "9ba8235d83b1d710f4244c445b2bbcca0566a0a76e0b523c82fd3adcecc8bac3",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h90_fixed_selection.parquet": {
+      "sha256": "3bb2a707d26af79ec982ed7303f8c41c341830ddc701231c8e6749e208698b98",
+      "rows": 10412
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\residual_h90_fixed_tuning.parquet": {
+      "sha256": "0eaa251058fb80545c961e54da7d44013c9342cd49086fa8ad27b2ad5a6b574f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\weighted_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\weighted_h45_fixed_predictions.parquet": {
+      "sha256": "299661a7f81d077d9d28f066c781c9cfa856cdea4a8ffabf18dee3cff6e8bdd8",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\weighted_h45_fixed_selection.parquet": {
+      "sha256": "1cbe15597d684ca9362c284b04383b9a93bc8cd17734ca52c503795372b8d64f",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V4\\weighted_h45_fixed_tuning.parquet": {
+      "sha256": "4fa02505df0bbcbf2a1459257591b60e5e55ddb3ddcbb3cca4ca2beb29ebdc02",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\original_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\original_h45_fixed_predictions.parquet": {
+      "sha256": "396a589e05c8e8de8ae91a32083721fef549c3fdb8cc5ec3c7687117383981ef",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\original_h45_fixed_selection.parquet": {
+      "sha256": "cdc974640ae07eb7494fa33c6887a51f575a52d866b64c4e7aab3969c25882c9",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\original_h45_fixed_tuning.parquet": {
+      "sha256": "c3070d268c1e88e43de24508435d8b8d23d66239959cd34e10703e94f783023b",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h120_fixed_predictions.parquet": {
+      "sha256": "caefa3ce117eebb392b2aa5fbf37d06a0e85098b57b735ac3e285c4093465a37",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h120_fixed_selection.parquet": {
+      "sha256": "fd836a634d32cd9a6b5fc9c861732b70463de17d4aa4edd8c1afd267022cc963",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h120_fixed_tuning.parquet": {
+      "sha256": "0f5404a50c04bf01bf7d79ffa9ad86bc8a0624364644feac29840965dea01d1e",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h15_fixed_predictions.parquet": {
+      "sha256": "82e0cb30edb888190c41be2b608b93a9e2974a97c72a99de082521f98df31c8c",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h15_fixed_selection.parquet": {
+      "sha256": "7e62412b3c137aa523ff712748559d4ae92d8af0007919ca784da1222ea09568",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h15_fixed_tuning.parquet": {
+      "sha256": "c88cb0820fb8da6eea7df334398122451b0c062431dc0ce8e30686bfcf4c3e8e",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h180_fixed_predictions.parquet": {
+      "sha256": "6858121c8d1e2f6be20519e0c203c7d5b088e670bfbd6b7d4a651dd9fab5cfe3",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h180_fixed_selection.parquet": {
+      "sha256": "f79a30a4f2491b3b7011362b3e2fc7567c8e50a4ead535dd387789a2a9e50bc9",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h180_fixed_tuning.parquet": {
+      "sha256": "c51a025b858c0893a23a31a4573e032cb5ae2eaf265a9de562a8602ec5bd09e0",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h240_fixed_predictions.parquet": {
+      "sha256": "dd078a9546b87f78f77f9627a46e79f2c4c192815e3d7befdf1b67994b1ac0dc",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h240_fixed_selection.parquet": {
+      "sha256": "bdce6583272aa8c653af82f3689cf9f1e5d030ec24284b0b2a3759ca1e88fe2c",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h240_fixed_tuning.parquet": {
+      "sha256": "d671fc531e6158003bcbaa91413292d2084b7ea1729749beb2937b86a9d443fa",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h30_fixed_predictions.parquet": {
+      "sha256": "f738f1e3bfe26582cf8cde8187708fdd31f2cfebef5685488c2ac2bf5673a684",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h30_fixed_selection.parquet": {
+      "sha256": "6e573d0ef12b14e627b84a6fdb72549ff41675c4e589f79675fb6acd9837203e",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h30_fixed_tuning.parquet": {
+      "sha256": "c6cad85169aed942a556913966dc127e5b0a630ba9787c57f57f6f53b6c3cbb2",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h45_fixed_predictions.parquet": {
+      "sha256": "79a90de402f755d5955a0abc891af84540477766b0dea71e771e308397c8af8d",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h45_fixed_selection.parquet": {
+      "sha256": "d57d90e0acec077bca9b115f0f6cddd2abe95f709af4e9ac5ffcc4b4e29a43a4",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h45_fixed_tuning.parquet": {
+      "sha256": "cc59f33091bfff250e3f3783ef213789240fc2ff451eba57e0570d757fff186b",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h5_fixed_predictions.parquet": {
+      "sha256": "52b21fcab16323d06fecdd3bccb55b3c782a7c8081fde468bf6695e02b299256",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h5_fixed_selection.parquet": {
+      "sha256": "c9d4dd1143af26ea1540a036de57b09aa6e1de7ab075107df7b0d1dbe9fbf607",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h5_fixed_tuning.parquet": {
+      "sha256": "7fe332378c2fe35eba4345483ce0fd290d0ebf5beeed101ce6cc820bc4b0101c",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h60_fixed_predictions.parquet": {
+      "sha256": "38cb5b7b2aa9d5bbb9307444fa7ea51ff2f0455dbb0ea2eaf308772263a1143e",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h60_fixed_selection.parquet": {
+      "sha256": "3d99223784bfa78920658479c96c11ff8c0a0400143e07a67bcabb6b25d0c737",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h60_fixed_tuning.parquet": {
+      "sha256": "11a7a8ec40c073b0c1393bb947707e4f9685d9f77700c69d96b06be3f8738199",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h90_fixed_predictions.parquet": {
+      "sha256": "e0d0d64033ba451266687e8a579880cb3ec4aaa4f0fee2b9c031e70aa920e6f6",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h90_fixed_selection.parquet": {
+      "sha256": "416054df55c4abe51149c9ed51aa0bfd3a9c908c53d05120d9610d190c38878b",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_long_h90_fixed_tuning.parquet": {
+      "sha256": "87617a8b0fa44d73b2ddf0d0a11c25ae0346483b0199547a85bb2b786485f850",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h120_fixed_predictions.parquet": {
+      "sha256": "3b6b5cb5c6d4e90a9847d406153aa16aee4d39a09d5cef2be1e596262274d7db",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h120_fixed_selection.parquet": {
+      "sha256": "9b619c441db3283af567b72d9b17db5632a8dd87b19d94d3d4a6c329000e451f",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h120_fixed_tuning.parquet": {
+      "sha256": "d9f99feb887258059d683503ac14d53178aa835ff6f64f4e247db4f6599657b7",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h15_fixed_predictions.parquet": {
+      "sha256": "a987ad529af80097d03cbc0f5c5f89f763a13846bcd61297d511b382610f4f07",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h15_fixed_selection.parquet": {
+      "sha256": "00b78aa8053b70fafce0e60a1341edb0cf5547e668de17a44ba80fc43a7ac841",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h15_fixed_tuning.parquet": {
+      "sha256": "d0e5763f52bca35aa524c06a2cc60d3504b4c057e253423721b49be2a72f9253",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h180_fixed_predictions.parquet": {
+      "sha256": "b9d929ce2b03a26d4de44c63839f98bb6593e097ef6330cbcc1cf670e869deb3",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h180_fixed_selection.parquet": {
+      "sha256": "b1de5f9ce87b9ea108c50478a192d27d73fbb2271a25a6ad6cf86299cc79b2a6",
+      "rows": 10776
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h180_fixed_tuning.parquet": {
+      "sha256": "98224fa399f564b8841314609755cc89157b3935ccbdafaa4a3c80ddac8d2559",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h240_fixed_predictions.parquet": {
+      "sha256": "d5022231370c7d1be9f26692ac24a4b00fb1674d4ed41b43716ab5d472eecde1",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h240_fixed_selection.parquet": {
+      "sha256": "f1c840da828351730680a9a159f6ed95fd6651880d32f34aa5d1c39e4712179b",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h240_fixed_tuning.parquet": {
+      "sha256": "1fa39974353dcd5928b161d61eb02c15894ac56fcded858f8399a3ad2e8e8dcf",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h30_fixed_predictions.parquet": {
+      "sha256": "ac552fbca7dceaf495b1d40f685b0edd219fd709609d584ef3487ea88693dce5",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h30_fixed_selection.parquet": {
+      "sha256": "70e5aa0d68d8e37ccddbb98264ec0f92158860cfc8e68e67c28fc94d8b8d3b46",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h30_fixed_tuning.parquet": {
+      "sha256": "281c0613d06feb385a195650f1bfb2869cd5fa0915f9dc4ab429b0a7803871a2",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h45_fixed_predictions.parquet": {
+      "sha256": "470961b124e807f2d0b85e827015351ae4b95648cc40d61a216607e462e81f40",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h45_fixed_selection.parquet": {
+      "sha256": "9cc55be60539f7a4516816b9e9d97a9e38019fa3d7d17fc588e05548d9741f25",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h45_fixed_tuning.parquet": {
+      "sha256": "350477e54b7f67c32b035ef94f0191e12c50c16f6c30df02dcbb40c409d26a87",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h5_fixed_predictions.parquet": {
+      "sha256": "a6b1a13e1ae56aecddd3a883a6d7b363c3709c9c42193c691a24e408aa9da339",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h5_fixed_selection.parquet": {
+      "sha256": "bb28d50689c7226162a2e15024e5c42417012126ef2838400f8b58dde07d17a8",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h5_fixed_tuning.parquet": {
+      "sha256": "c2ee806202b0a51fbfaac8e6446cbf68fdd304876fc9049e2dc8f2c0f2afe6f9",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h60_fixed_predictions.parquet": {
+      "sha256": "aded8160e60329bf2e3c57e30d6b6b7b67b9926e722eca5e451da415a78650a0",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h60_fixed_selection.parquet": {
+      "sha256": "15222da206e9b3d956e7b428ca5095abe46e1b6191df06545d844bd0c9f932ce",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h60_fixed_tuning.parquet": {
+      "sha256": "b401953af9c062851dd210e1fdbf3611ab992376e92942195ab9de5e950dfde0",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h90_fixed_predictions.parquet": {
+      "sha256": "fd6b476b4020b1ea373650b820250f2459bbd7923b64262b26a75cd7ed892480",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h90_fixed_selection.parquet": {
+      "sha256": "c1b6b323cbbb3eeb0011c7bb57680dcef88646c7e6fe3db4243775809b4fb17a",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\r21_short_h90_fixed_tuning.parquet": {
+      "sha256": "01e1654c9914097d6571f607f36268b8ec6df9fa2b4c6e82d91178690ceeb1f8",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\regression_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\regression_h45_fixed_predictions.parquet": {
+      "sha256": "440f9441523a7216fcb595b73334080ea4b3e7967c8961d67cf94148142ab494",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\regression_h45_fixed_selection.parquet": {
+      "sha256": "64d7cb8fc8d56a96840a5fc34b9c163289c8fc6fc8e3824504fc6eff97fec996",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\regression_h45_fixed_tuning.parquet": {
+      "sha256": "77e8b5d38cf9c73fce8141871357e89936020dcd187dddd8716276405ba139c1",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h120_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h120_fixed_predictions.parquet": {
+      "sha256": "39127b868714464a777e191c080726549896f5c2256d70e778d32bf3559c1a14",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h120_fixed_selection.parquet": {
+      "sha256": "fbe567da405b4674baaaf1049a7502ab161cf06264c7cf42150227edaa78e682",
+      "rows": 10505
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h120_fixed_tuning.parquet": {
+      "sha256": "7b6524d021c09a1821225292cef0544901ac1640258835d3dc35fabba4bb2cb2",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h15_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h15_fixed_predictions.parquet": {
+      "sha256": "12c2f1c68c7cefb35e0f7f8f15f96292e8737d4eaf11604f0eeaa16b0592bccb",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h15_fixed_selection.parquet": {
+      "sha256": "538dceec3767abbe8d1f0126c2b0cfe6b4912758808fbbb5a4a875839e2e72e6",
+      "rows": 11504
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h15_fixed_tuning.parquet": {
+      "sha256": "0f51d2389b505724f599214a2022cd079b7a63f2ff1b2757a43f5d35f7718231",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h180_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h180_fixed_predictions.parquet": {
+      "sha256": "4351694cf9bd8cd8b08f042e72d2526e3f7e3cc62816e4d56fbbd36d5bee0433",
+      "rows": 26789
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h180_fixed_selection.parquet": {
+      "sha256": "aa3985d0789d818c65a1e5ddb7f0e4566ca674782e5659141bc4a1ff89f07992",
+      "rows": 10181
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h180_fixed_tuning.parquet": {
+      "sha256": "ebc60ab757b4468e5e1463a07ba4364d3bedd06c56c590bee655c3a186fef8b5",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h240_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h240_fixed_predictions.parquet": {
+      "sha256": "d9b9004046bbd910f4ea96130ffe556e090ecd227b1482eaf7ace8b81c50914c",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h240_fixed_selection.parquet": {
+      "sha256": "87f1825f5fccc7ee93c429b773690389be0e5ca156373f245b9b80e6db94dfcf",
+      "rows": 10041
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h240_fixed_tuning.parquet": {
+      "sha256": "8706839cd978834e95263a9842ae246d5293f328dfb409e3543a2de56f9c4c46",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h30_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h30_fixed_predictions.parquet": {
+      "sha256": "cf4ba5a34d23634b1f83887476e35a80b528998bf58f7e158b0c31e2932717db",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h30_fixed_selection.parquet": {
+      "sha256": "1755f14309c36c52767ea332504284a1b8a7dd68a417d503cfe314f5839c29f9",
+      "rows": 11834
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h30_fixed_tuning.parquet": {
+      "sha256": "762c0457e4edc8309a803d091e41bbe73db8165e601c274043b6f42640d0ef5f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h45_fixed_predictions.parquet": {
+      "sha256": "22039d4170473958a1bd6a70f1fcd96225ab4a6510a64cebc745cf3425df12e3",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h45_fixed_selection.parquet": {
+      "sha256": "dc0793e531ac2be7166d82efe0ca5e762e74e68cc7f80e444399e6ae3c547ce7",
+      "rows": 11438
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h45_fixed_tuning.parquet": {
+      "sha256": "91516093d567045c0febfa8d8c69fd9db9b9df348624b87617c2339d3e096928",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h5_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h5_fixed_predictions.parquet": {
+      "sha256": "63c3f690e7f28f5153b98574726003ed3000425ecb42dc729bb52278a4285ec5",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h5_fixed_selection.parquet": {
+      "sha256": "56e85b3e901fe2556e52346cd284aa1fcb7e0c1f3352c0896c79d54e91b1a8b0",
+      "rows": 9365
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h5_fixed_tuning.parquet": {
+      "sha256": "393089bd742a90b515f8db38bf9ea652b91f9c7cb4fd73ab2f40e7edc8b82994",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h60_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h60_fixed_predictions.parquet": {
+      "sha256": "6a3eee7e20e73f1f2ebd55cb89ab9b150c372c28af0fe531972eac91f7c79ae9",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h60_fixed_selection.parquet": {
+      "sha256": "2399de1306e1427ac48e397f001b07048104a4809f70e928388dcaf6b8899dba",
+      "rows": 10641
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h60_fixed_tuning.parquet": {
+      "sha256": "fc0bb3873d779b37e13dd765a0cc1a47c3ec7f9c01280c6dd08867b5bd1c4c2b",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h90_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h90_fixed_predictions.parquet": {
+      "sha256": "af82da1b4046172552a75d210023cc223854a070a07ccf3eee1bea37f3a0167c",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h90_fixed_selection.parquet": {
+      "sha256": "3bb2a707d26af79ec982ed7303f8c41c341830ddc701231c8e6749e208698b98",
+      "rows": 10412
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\residual_h90_fixed_tuning.parquet": {
+      "sha256": "134c9d06d1cbefda30b98db68c7cb9e75770db29b4d22b6387042be10cbf34ed",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\weighted_h45_fixed_candidates.parquet": {
+      "sha256": "cdc808b1cf99a71114ac62122c1db39568fa9d72acfed447d2c6798a019f8af6",
+      "rows": 0
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\weighted_h45_fixed_predictions.parquet": {
+      "sha256": "50fc083d4acb90dcfcb74909ce5d47a2364dd9b4a8d339b1603aa46c3554ece3",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\weighted_h45_fixed_selection.parquet": {
+      "sha256": "1cbe15597d684ca9362c284b04383b9a93bc8cd17734ca52c503795372b8d64f",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_models\\V5\\weighted_h45_fixed_tuning.parquet": {
+      "sha256": "c462c1ba5c6d5c60753744f1de0be42c5778a75c9e068f84155171881b04f3b7",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V0\\baselines.parquet": {
+      "sha256": "cc272bf84ef531a6a40cfa869992e58a96f056a683fbd61a468776f8e569a477",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V0\\funding.parquet": {
+      "sha256": "c7183f9cb8140fb584511251a11021767c7cf5d48a02597db7004eaed535790d",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V0\\metrics.parquet": {
+      "sha256": "4c05868ec49da594b63de15225e4c43281996be8557d09483847f3d833bcf536",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V0\\monthly.parquet": {
+      "sha256": "9e9ec04089d365dbabd71c3627c8c34e2cb1eae0592c3ba0ceba5f4ba4b91d28",
+      "rows": 33024
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V0\\random.parquet": {
+      "sha256": "dbf7d588d381f49e6eb0e71faefc02917e57e81b616810d991a2827318f84520",
+      "rows": 1032000
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V0\\thresholds.parquet": {
+      "sha256": "9d6a81cd121300465305a90416f6a9a2f0f83c6c6c7d2dd5b08a54d6ae48709d",
+      "rows": 72036
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V0\\trades.parquet": {
+      "sha256": "ea723b586ee6a212c1e90a9ca0aa12c8ccdbffb79d98945c4a1b95257c4e946d",
+      "rows": 151952
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V0\\yearly.parquet": {
+      "sha256": "ab5cd5511e00156660febdfd95b5786ef557438867af31fb9e010d13ee07718f",
+      "rows": 3096
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V1\\baselines.parquet": {
+      "sha256": "d47cbf46756c4162d8225fa9d84f7abb9cb396a0041bd156f1693332c4670183",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V1\\funding.parquet": {
+      "sha256": "b323a8892c68ebf14856291520e3fa78f6a5b4ff97fea97cc0e4abb7e95956a4",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V1\\metrics.parquet": {
+      "sha256": "6723725754aad7c9202c57d4013a84a04ad7119e95db3cec30efbee594689628",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V1\\monthly.parquet": {
+      "sha256": "b2fee3651c316cadeeca1d51f8c1dc79165ece8655d481abc7d4a9d19c038829",
+      "rows": 33024
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V1\\random.parquet": {
+      "sha256": "42f22c6884c18207f012ce866759daa524065750c11300cca5b88118bea62f0d",
+      "rows": 1032000
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V1\\thresholds.parquet": {
+      "sha256": "6966b2e5dd1f208e47532b051a7bac5b70a42ba8b7f5a98d643edbabf20fc54f",
+      "rows": 72036
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V1\\trades.parquet": {
+      "sha256": "0ac4017a8e1aefcd9d94e49483538ac9700c607c811c5b4af2a4a60579abe745",
+      "rows": 154828
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V1\\yearly.parquet": {
+      "sha256": "e1a99d8d1049273ce2de6294653b102e52ccfc0bcd1f9f18184f97396da99f37",
+      "rows": 3096
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V2\\baselines.parquet": {
+      "sha256": "da7982435941ff05e2d4d2576e2ccb30ac4a6085f81ff34761666b2f2c4299ef",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V2\\funding.parquet": {
+      "sha256": "6ec6c95cb843fcdc143a4a5a602a96d6c60140347f13995c668d43d63256f213",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V2\\metrics.parquet": {
+      "sha256": "4ea000935066112d5cb688b40ae38863c73a26164047c3500e7715b7ae6a0f88",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V2\\monthly.parquet": {
+      "sha256": "4d2c7c210c524814b68514783381339cd7054bccf29c317c52395109b9ca7c5f",
+      "rows": 33024
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V2\\random.parquet": {
+      "sha256": "999986655b0f517d8a6b331c8aeaa9178f16900552a07eba9cc3c33544530cfb",
+      "rows": 1032000
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V2\\thresholds.parquet": {
+      "sha256": "2de5b15fef6081c63f81dd54c59304ba88bf5eb82fe96b59fccf1ebde8ccb8e9",
+      "rows": 72036
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V2\\trades.parquet": {
+      "sha256": "1f2059266b67889a6e19bb078827942758aa45d0218410b6f9857cf6a69251fc",
+      "rows": 153305
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V2\\yearly.parquet": {
+      "sha256": "4853a569564b9df35a8f979886a6397671005e717d5503caa29cd67625892ede",
+      "rows": 3096
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V3\\baselines.parquet": {
+      "sha256": "44b0053b109ae0119e5a16eec1d6f758fd1f00b09f2139d11f8a4e92fbd72483",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V3\\funding.parquet": {
+      "sha256": "ac7d3e28be53d92861cc6ec73e483d506de7eebbde5041f4831a6bcaf094ad88",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V3\\metrics.parquet": {
+      "sha256": "87998dd5f47847149c2260f857fe7dcda010663414b1a85865e171dd1865e2f2",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V3\\monthly.parquet": {
+      "sha256": "25c7ec342efbc8a43157ccb1c4506bc3c2d20a5dd83c1877f4af36428b85eb02",
+      "rows": 33024
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V3\\random.parquet": {
+      "sha256": "def07ca30367ad6785de2586752c4872d3aa0ab24a6267a7294f4f612347b06a",
+      "rows": 1032000
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V3\\thresholds.parquet": {
+      "sha256": "586e1b0203df0ffec734518d0ec99d5aefe2c9741b2e34eb40ce62f5bd6386b1",
+      "rows": 72036
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V3\\trades.parquet": {
+      "sha256": "5b7053b5e45231973b639d5750489f0db315c37ddede73192a1c9d7908ec779d",
+      "rows": 151556
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V3\\yearly.parquet": {
+      "sha256": "49a961f0727dd872cdcac3895ea244689c97aa6cc69d8af2675d5fbfa95e095f",
+      "rows": 3096
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V4\\baselines.parquet": {
+      "sha256": "387cd9aeae23bd3dc6c6e1c6c5ea647231e47326afda5909ca1ba6320b6a4672",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V4\\funding.parquet": {
+      "sha256": "c6f12c147025c52e194c098e43316126f67342539811986005b7873b3f92c70e",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V4\\metrics.parquet": {
+      "sha256": "90f8d4ee248fa851247c2aaf3c1c8ebf7f6e0c917ce97e45fb67acd2dc38ed05",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V4\\monthly.parquet": {
+      "sha256": "7d801d5d2204e2ad8afa0b863b5b2bc5f2ceb0a5f2e7bfaa8969a16d8ff5ea4c",
+      "rows": 33024
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V4\\random.parquet": {
+      "sha256": "f01ed43f7a1768d74ad05cdee80f56e8bdfcd1f0ebaed6842bf4a5162abd9ef7",
+      "rows": 1032000
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V4\\thresholds.parquet": {
+      "sha256": "4d3734d2d210265e0d2e35ceac4ec17be0ebb5f111ecefe5ef74f819f74a0350",
+      "rows": 72036
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V4\\trades.parquet": {
+      "sha256": "21ddd5b56b4214b0c768dc39589c7f3ca4668936a451c0e68d49fc2b0a3879a1",
+      "rows": 155904
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V4\\yearly.parquet": {
+      "sha256": "b2f91020d9a76ff5f83f62145cd12fe171fcd091040c5f336dbe284a1053dca5",
+      "rows": 3096
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V5\\baselines.parquet": {
+      "sha256": "0944c0965e4cfc7e994f49438a736626847f31296d4ecbfdc73c49427bf473ec",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V5\\funding.parquet": {
+      "sha256": "5783f468c5571ddfa661051276640077325964e35f7175cd3132fcb0c47d8040",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V5\\metrics.parquet": {
+      "sha256": "1bfddaa87dc60ccc4e31269f5a71336bf7c987aba5c27ce3ebbb477ffb138739",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V5\\monthly.parquet": {
+      "sha256": "e5486c01bd6e3f37a0a15cc80c7ffe96e0be3838aa469665cd9ba9d5dc000cf9",
+      "rows": 33024
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V5\\random.parquet": {
+      "sha256": "f9dc235d143afd474e56bd61fedb622429e6dfc3e42062f69811f990884fbb1a",
+      "rows": 1032000
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V5\\thresholds.parquet": {
+      "sha256": "393c428bbff6584ef6fc9f3ee3537e393b9ac74f9f02037b76d443e1b3d746c1",
+      "rows": 72036
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V5\\trades.parquet": {
+      "sha256": "240aa496e257f867223b3580acfdee5a3d76dc1c8c6e7b08c193d90c9ba08d28",
+      "rows": 153678
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V5\\yearly.parquet": {
+      "sha256": "fcde590b9f532f4eb4653f6f9e9baaaf6c46a106e00d88c5d3cd13c71e5a2841",
+      "rows": 3096
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V6\\baselines.parquet": {
+      "sha256": "d55a67fce174a20523ee0f3b74cef55ab042bfbf956cba69e83eb3b1d0e3785f",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V6\\funding.parquet": {
+      "sha256": "93b6b831bbefe3fed4db7cb314b920c47ae33d3a5f3e6ee9874af51eb5b4a9d6",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V6\\metrics.parquet": {
+      "sha256": "4185b49e90e19e4adcc3acffed47cff3567b50c17eaa07b871d412fd01c9e110",
+      "rows": 1032
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V6\\monthly.parquet": {
+      "sha256": "b9eb63682fd1f099c73add0bccf93e48c06867f38d65b5cb6d1c152c6dd95fe5",
+      "rows": 33024
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V6\\random.parquet": {
+      "sha256": "5a2f4b64b60d8a967d36c7fa1e87b3916d8d65a2678cffdae1e71739a8923a07",
+      "rows": 1032000
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V6\\thresholds.parquet": {
+      "sha256": "979ecc55ef6ff7a5e74f078d3c0307a226e395fc1ecf76e5e6518898ce22e1f1",
+      "rows": 72036
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V6\\trades.parquet": {
+      "sha256": "ca152de54c09ee186c38898b54bde05b1e4557597078afa9e80a330e2f0b2686",
+      "rows": 159948
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\_eval\\V6\\yearly.parquet": {
+      "sha256": "32f08c8abd7040724524fb9093ae5174582036a374f087bffc253ce841e568ba",
+      "rows": 3096
+    }
+  }
+}

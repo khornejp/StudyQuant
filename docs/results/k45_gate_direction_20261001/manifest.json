@@ -1,0 +1,66 @@
+{
+  "run_started_utc": "2026-10-01T01:59:38.649120+00:00",
+  "run_finished_utc": "2026-10-01T01:59:52.506439+00:00",
+  "data_cutoff_utc": "2026-06-30T23:59:00+00:00",
+  "frozen_hypothesis": "On PatchTST-gated bars, CatBoost-chosen direction has positive net results for both LONG and SHORT after 4 bps round-trip cost.",
+  "out_of_sample_result": {
+    "TASK4_DEV_ORDERING": "PASS",
+    "TASK4_HOLD_B_ORDERING": "FAIL",
+    "TASK5_DEV": {
+      "label": "DEV",
+      "status": "FAIL"
+    },
+    "TASK5_HOLD_B": {
+      "label": "HOLD_B exploratory",
+      "status": "FAIL"
+    }
+  },
+  "inputs": {
+    "out\\k45_gate_direction_20261001\\predictions.parquet": "31b341e49c421aa9e104319505a2ed1cdc426d0f74a702cc91d1c4424a1b6cb8",
+    "out\\k45_gate_direction_20261001\\dataset.parquet": "b099a66e6dce89c0c707fce3c3b5e1744248112fcbe3fdf942616ef27e8b260c",
+    "artifacts\\btcusdt_2020_2026h1.parquet": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "docs\\superpowers\\plans\\2026-10-01-gate-direction-catboost.md": "11a1ebd355a0f798266052d21ef2eea3975c470e961cf42e98e6d23001f0e48a"
+  },
+  "primary_margin": 0.1,
+  "report_only_margins": [
+    0.0,
+    0.05,
+    0.2
+  ],
+  "entry_exit_rule": "close[t] to close[t+45]",
+  "round_trip_cost_bps": 4.0,
+  "pw_date_range_rule": "full prediction-row date range within segment",
+  "random_seed": 20261001,
+  "random_direction_rule": "all gated prediction rows; independent +/-1 side; same single-position book",
+  "random_bar_matched_rule": "seeded random prefix of gated rows; same book; exact model trade count; independent +/-1 side",
+  "new_model_fits": 0,
+  "local_data_only": true,
+  "live_orders": 0,
+  "outputs": {
+    "out\\k45_gate_direction_20261001\\quality.json": {
+      "sha256": "3d2906670c1fa18cf0916b5a7966f8ee88bb1f037632da1db233299a84316ec7"
+    },
+    "out\\k45_gate_direction_20261001\\deciles.parquet": {
+      "sha256": "d18734e7c1725781f02cab4922983261be19b89c00f95be309931f2979a4c0eb",
+      "rows": 20
+    },
+    "out\\k45_gate_direction_20261001\\calibration.parquet": {
+      "sha256": "13f2f7afc79075cf37faaeb039cb062ffaaaf87f90bf9bff921bc4ea58aaa418",
+      "rows": 27
+    },
+    "out\\k45_gate_direction_20261001\\backtest.parquet": {
+      "sha256": "69b1fa9df5dfac9d5d7b11804d0b1b4f60affd9dcd2e625dc5832cce607170fb",
+      "rows": 8
+    },
+    "out\\k45_gate_direction_20261001\\book_trades.parquet": {
+      "sha256": "ca67a40f159d672c89edf6a6c7e45c5c9a9db474ff52243d8bb58802a01f285b",
+      "rows": 107964
+    },
+    "out\\k45_gate_direction_20261001\\gates.json": {
+      "sha256": "87f74b85efda8e595983d70b696f4e8336b3bae1fe16fd6b4410527223ac3ea3"
+    },
+    "out\\k45_gate_direction_20261001\\REPORT.md": {
+      "sha256": "49416ac54ccec292401d94d6a55f85dcae6ee42b5672db71bb4c9a57f8f92b3c"
+    }
+  }
+}

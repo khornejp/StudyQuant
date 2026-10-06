@@ -1,0 +1,218 @@
+{
+  "run_started_utc": "2026-10-01T02:16:05.271128+00:00",
+  "run_finished_utc": "2026-10-01T02:39:14.832753+00:00",
+  "runtime_seconds": 1389.561625,
+  "data_cutoff_utc": "2026-06-30T23:59:00+00:00",
+  "frozen_hypothesis": "Audit whether the frozen PatchTST gate selects realized volatility and whether CatBoost long/short direction and label design explain economic results.",
+  "out_of_sample_result": "numbers_only_no_audit_verdict",
+  "local_data_only": true,
+  "downloads": 0,
+  "feature_cache_used": false,
+  "patchtst_new_fits": 0,
+  "catboost_new_fits": 1242,
+  "catboost_training_scope": "C-4 regression RMSE and abs(r45)-weighted MultiClass only",
+  "catboost_params": {
+    "iterations": 500,
+    "depth": 4,
+    "learning_rate": 0.05,
+    "l2_leaf_reg": 3,
+    "random_seed": 20261001,
+    "thread_count": -1,
+    "verbose": false,
+    "allow_writing_files": false
+  },
+  "walk_forward_folds": 621,
+  "live_orders": 0,
+  "source_inputs_unchanged": true,
+  "inputs": {
+    "artifacts\\btcusdt_2020_2026h1.parquet": {
+      "sha256": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+      "bytes": 182249475,
+      "mtime_utc": "2026-07-31T05:10:34.534496+00:00"
+    },
+    "out\\patchtst_backward_k45_validation_20260929\\ensemble_predictions.parquet": {
+      "sha256": "4a892edec8361c1d44bbfa8851bc473539a1c5e200aea0f0e2cc8f41cdca29d8",
+      "bytes": 5357541,
+      "mtime_utc": "2026-09-29T10:10:37.210265+00:00"
+    },
+    "out\\patchtst_excursion_range_20260928\\ensemble_predictions.parquet": {
+      "sha256": "4fa6ab24d4543398d4f595b02765f904f39000a364631c4620edb88d297fa66b",
+      "bytes": 2602307,
+      "mtime_utc": "2026-09-29T03:10:48.662362+00:00"
+    },
+    "out\\patchtst_post_trigger_markout_20260929\\exploration_origins.parquet": {
+      "sha256": "bb0172e74bee42d7585638b9f81cce3e2aabe2b4ef1e9e4b1591bf9dc90bf78e",
+      "bytes": 4927064,
+      "mtime_utc": "2026-09-29T04:57:42.716911+00:00"
+    },
+    "out\\patchtst_post_trigger_markout_20260929\\selection.json": {
+      "sha256": "a3e1cd9978ba2a8bab07799b5c6fe10f69029e28b613899b3217b7fdca9d2258",
+      "bytes": 333780,
+      "mtime_utc": "2026-09-29T04:57:42.350837+00:00"
+    },
+    "out\\patchtst_down_breakout_long_confirmation_20260929\\ensemble_predictions.parquet": {
+      "sha256": "d5e81e9d7f58f070c173eed0ab62870566272e8d71e93cece4ac92fea53865c6",
+      "bytes": 779101,
+      "mtime_utc": "2026-09-29T06:19:33.516301+00:00"
+    },
+    "out\\k45_gate_direction_20261001\\dataset.parquet": {
+      "sha256": "b099a66e6dce89c0c707fce3c3b5e1744248112fcbe3fdf942616ef27e8b260c",
+      "bytes": 24086782,
+      "mtime_utc": "2026-10-01T01:19:59.524812+00:00"
+    },
+    "out\\k45_gate_direction_20261001\\predictions.parquet": {
+      "sha256": "31b341e49c421aa9e104319505a2ed1cdc426d0f74a702cc91d1c4424a1b6cb8",
+      "bytes": 1550216,
+      "mtime_utc": "2026-10-01T01:51:09.254066+00:00"
+    },
+    "out\\k45_gate_direction_20261001\\selection.parquet": {
+      "sha256": "b9c857f63513c789bdda90eceebe7d163cb8cb232e4576fdfa7fd49192e755b8",
+      "bytes": 17818,
+      "mtime_utc": "2026-10-01T01:51:09.261300+00:00"
+    },
+    "docs\\superpowers\\plans\\2026-10-01-gate-direction-catboost.md": {
+      "sha256": "11a1ebd355a0f798266052d21ef2eea3975c470e961cf42e98e6d23001f0e48a",
+      "bytes": 18260,
+      "mtime_utc": "2026-10-01T01:12:58.332721+00:00"
+    },
+    "btcusdt_quant\\feature_registry.py": {
+      "sha256": "19098a70fab952e45442b38955fac0b35c922b68418c8ba5ada16ff22c30aff6",
+      "bytes": 50185,
+      "mtime_utc": "2026-08-21T01:50:04.197055+00:00"
+    },
+    "btcusdt_quant\\dataset.py": {
+      "sha256": "382eb06a96731ff9d7557821987ba0b8dee3948a0ebf3c89f5eaff4ce5cdcec7",
+      "bytes": 190102,
+      "mtime_utc": "2026-08-21T04:45:18.189709+00:00"
+    },
+    "out\\run_k45_gate_direction_backtest.py": {
+      "sha256": "d38da732011a408dec5a3f1d1236dd72b1e1ecb865632728ad0cd0d13bf1b1eb",
+      "bytes": 11390,
+      "mtime_utc": "2026-10-01T01:59:30.281583+00:00"
+    }
+  },
+  "outputs": {
+    "out\\k45_gate_direction_audit_20261001\\a1_gate_realization.parquet": {
+      "sha256": "e473c3edc1a751dc707fd794ce245cf7c44bf2c924fe377c618b9594ef7c4614",
+      "bytes": 4276,
+      "rows": 8
+    },
+    "out\\k45_gate_direction_audit_20261001\\a1_pred_excursion_deciles.parquet": {
+      "sha256": "ae6abb48caae924fdc3118d8ce8e727d13da884f452e422a60a53b4cf499291b",
+      "bytes": 4953,
+      "rows": 10
+    },
+    "out\\k45_gate_direction_audit_20261001\\a1_fold_spearman.parquet": {
+      "sha256": "647cadb09af68eed0e85a67ca9116409dc459f627d0e889b79f8b7961c1d5cc3",
+      "bytes": 19749,
+      "rows": 667
+    },
+    "out\\k45_gate_direction_audit_20261001\\a2_fold_threshold_pass_rate.parquet": {
+      "sha256": "022395353a7c7e7930dd3c1c6d8ec36d6fe4c3064500c153fe8e595729905300",
+      "bytes": 23717,
+      "rows": 667
+    },
+    "out\\k45_gate_direction_audit_20261001\\a3_feature_direction_gate_in_out.parquet": {
+      "sha256": "0f0fd165aef5a72754bb7954e94ecdddc4103265a2f4471141df4f3b20a107a7",
+      "bytes": 7008,
+      "rows": 20
+    },
+    "out\\k45_gate_direction_audit_20261001\\a3_population_summary.parquet": {
+      "sha256": "7fd3775a8641baa111872794af2f212c834ec32a757d1284abe2d4aea908b36e",
+      "bytes": 5188,
+      "rows": 2
+    },
+    "out\\k45_gate_direction_audit_20261001\\a4_gate_opportunity.parquet": {
+      "sha256": "65106b4210188b93ab65ffdcd882e7d1b5c956f67cb4544a68661281ad7de801",
+      "bytes": 5306,
+      "rows": 2
+    },
+    "out\\k45_gate_direction_audit_20261001\\a4_abs_r45_quantiles.parquet": {
+      "sha256": "0269dd96ea1b6c77ffd9dfd2eeca71cf6c5aa98d869ae0748cab2baf68b303eb",
+      "bytes": 3320,
+      "rows": 22
+    },
+    "out\\k45_gate_direction_audit_20261001\\a4_empirical_break_even.parquet": {
+      "sha256": "9d7f1cfe6e0134192ec18ce68b247d683f36344683f41acffba279d8c70582ab",
+      "bytes": 5837,
+      "rows": 4
+    },
+    "out\\k45_gate_direction_audit_20261001\\c1_accuracy_size.parquet": {
+      "sha256": "cca93a8054870cc089211f4b480f928f09a16e1aa5ed0d7866bb744ad4e30527",
+      "bytes": 10495,
+      "rows": 32
+    },
+    "out\\k45_gate_direction_audit_20261001\\c1_loss_tails.parquet": {
+      "sha256": "d3da2d538d276aababb08492b9a14bec6f8fedec2a9049fa7977792fb9213e6d",
+      "bytes": 49470,
+      "rows": 1830
+    },
+    "out\\k45_gate_direction_audit_20261001\\c2_horizon_decay.parquet": {
+      "sha256": "c11ad482cd2119f938da17e74809b3bd14301f71e2c0dbcfe99b2881702cb1c5",
+      "bytes": 6429,
+      "rows": 14
+    },
+    "out\\k45_gate_direction_audit_20261001\\c3_probability_distribution.parquet": {
+      "sha256": "3807b75fc98998259234a46c8a2c7bb4db82af80a5a6344beb25bce82088cc16",
+      "bytes": 10992,
+      "rows": 4
+    },
+    "out\\k45_gate_direction_audit_20261001\\c3_reliability.parquet": {
+      "sha256": "4e3091bd3763904b7d499e7f500402976dca712109ae2cd10eb8bd7bc8340fe1",
+      "bytes": 5389,
+      "rows": 27
+    },
+    "out\\k45_gate_direction_audit_20261001\\c5_book_discarded_vs_adopted.parquet": {
+      "sha256": "e190a10ee34755f7ebbf4bf44ec9e286e7f57815904b6a9a0ab1ede934644e1d",
+      "bytes": 6351,
+      "rows": 16
+    },
+    "out\\k45_gate_direction_audit_20261001\\c6_feature_leakage_registry.parquet": {
+      "sha256": "cc85c23f0adb8a8f2c9e07a7daaf68d15f8b2e26bc1901f4f0490fd66c065436",
+      "bytes": 5626,
+      "rows": 10
+    },
+    "out\\k45_gate_direction_audit_20261001\\c6_entry_timing.parquet": {
+      "sha256": "d0c5f7b5f6952df3c2cf43b80c1e549cbaa9901f2a8765ff4064c77110697fee",
+      "bytes": 7077,
+      "rows": 8
+    },
+    "out\\k45_gate_direction_audit_20261001\\c4_predictions.parquet": {
+      "sha256": "ead74194e8342ee1435cdc800747005ff954abf859708a23c4fe38a9b7e855d8",
+      "bytes": 2251041,
+      "rows": 55004
+    },
+    "out\\k45_gate_direction_audit_20261001\\c4_quality.parquet": {
+      "sha256": "acb9f91108ea9d3b1dfe6e2414419827c645666a23b6010d4de71154ce22688c",
+      "bytes": 5567,
+      "rows": 4
+    },
+    "out\\k45_gate_direction_audit_20261001\\c4_deciles.parquet": {
+      "sha256": "c5d45c4701d24d6c5a41b6f13db91921522a51312a1b4fd3c5eca3115c86d271",
+      "bytes": 5935,
+      "rows": 40
+    },
+    "out\\k45_gate_direction_audit_20261001\\c4_backtest.parquet": {
+      "sha256": "4004d89ecf21d49e02fc825931ee9ba78f41a1e495349fbb4b1a15c119c5fd67",
+      "bytes": 12104,
+      "rows": 4
+    },
+    "out\\k45_gate_direction_audit_20261001\\AUDIT.md": {
+      "sha256": "55ac7e0c34335a73e51044bf1212ac52711d6565bd34f9836f25657cd02a23d0",
+      "bytes": 37983
+    },
+    "D:\\StudyQuant\\out\\k45_gate_direction_audit_20261001\\run_audit.py": {
+      "sha256": "486628d42c2d62dd684bba1b72a33182ab05779f75dfcff4c5547a81d5fe9c0e",
+      "bytes": 47749
+    },
+    "out\\k45_gate_direction_audit_20261001\\audit_progress.log": {
+      "sha256": "3963fb3c1c6f8c0274861f22e5b40d1877fe026eebcd4fb2e075772b804efb0c",
+      "bytes": 5458
+    },
+    "out\\k45_gate_direction_audit_20261001\\repair_audit_report.py": {
+      "sha256": "7ee74a31c0e816e375e7848fe2ed33aa3c94098eefa18fda0194df318061475e",
+      "bytes": 11086
+    }
+  },
+  "report_utf8_repaired_utc": "2026-10-01T02:43:27.501325+00:00"
+}

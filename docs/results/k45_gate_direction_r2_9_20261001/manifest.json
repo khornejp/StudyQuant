@@ -1,0 +1,256 @@
+{
+  "run_started_utc": "2026-10-01T11:34:31.384590+00:00",
+  "run_finished_utc": "2026-10-01T11:46:44.110935+00:00",
+  "runtime_seconds": 732.7224880000576,
+  "data_cutoff_utc": "2026-06-30T23:59:00+00:00",
+  "frozen_hypothesis": "DEV 자동 선정 PRIMARY의 HOLD_B 단일 포지션 net_mean_bps > 0",
+  "out_of_sample_result": {
+    "hold_b_exploratory": true,
+    "primary_hold_b_net_mean_bps": 315.1690446055081,
+    "hypothesis_hold_b_net_gt_zero": true
+  },
+  "segments": {
+    "DEV": "pilot_fold <= 605",
+    "HOLD_B": "pilot_fold >= 606; exploratory"
+  },
+  "primary_selection": {
+    "rule": "maximum DEV single-position net_mean_bps",
+    "cell_count": 504,
+    "cell_id": "AGREE|EXPANDING_OOS|q=0.01|L=120|S=60",
+    "bonferroni_cells": 504,
+    "dev_pw_p_one_sided": 0.034098295085245735,
+    "dev_pw_p_bonferroni": 1.0,
+    "dev_pw_ci95_lower": -5.4215039859002445,
+    "dev_pw_ci95_upper": 133.09270239179028,
+    "pw_bootstrap_reps": 20000,
+    "pw_status": "MEASURABLE"
+  },
+  "thresholds": {
+    "methods": [
+      "EXPANDING_OOS",
+      "ROLLING_180D"
+    ],
+    "q": [
+      0.01,
+      0.02
+    ],
+    "minimum_history": 2000,
+    "rolling_days": 180,
+    "existing_scores": "R2-7 thresholds.parquet exact rows",
+    "new_scores": "R2-7 causal_thresholds definition"
+  },
+  "book": "single position; first come; occupied signals dropped",
+  "max_positions": 1,
+  "same_bar": "one direction; competing SIDE/RESIDUAL margins choose larger; ties abstain",
+  "baseline": "same admitted entry bars and same realized hold; opposite, random +/-1 x1000, always long",
+  "entry_exit": "close[t] / close[t+h]",
+  "cost_bps": 4.0,
+  "funding_interval": "entry_time < funding_time <= exit_time",
+  "funding_cost_bps": "side * sum(actual funding rate) * 10000",
+  "seed": 20261001,
+  "random_repetitions": 1000,
+  "pw_bootstrap_reps": 20000,
+  "fixed_bootstrap_reps": 999,
+  "fixed_daily_blocks": [
+    7,
+    14,
+    30
+  ],
+  "fixed_event_blocks": [
+    20,
+    50
+  ],
+  "local_data_only": true,
+  "downloads": 0,
+  "model_fits": 0,
+  "live_orders": 0,
+  "r2_10b_manifest_finished_utc": "2026-10-01T11:19:53.169840+00:00",
+  "inputs": {
+    "out\\k45_gate_direction_audit_20261001\\c4_predictions.parquet": "ead74194e8342ee1435cdc800747005ff954abf859708a23c4fe38a9b7e855d8",
+    "out\\k45_gate_direction_r2_7_20261001\\thresholds.parquet": "86d08c4e5793e27efe2f38f9586b051da167b7ee6ce0f771eb301b7f2758458c",
+    "out\\k45_gate_direction_r2_7_20261001\\manifest.json": "d1f021c78a95651c57c31f8779ed0ef2a10832d7698327c7a6f7cd58fb80cd8c",
+    "out\\k45_gate_direction_r2_10b_20261001\\manifest.json": "fd1da2f143efeb7446f11090daeba1c66752dceecf0f62c473ad3e518c7fa6c2",
+    "artifacts\\btcusdt_2020_2026h1.parquet": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h5_predictions.parquet": "d9bd6757aff6b9813dce0883245dc687c11718d556dcb95ec2cb22164610e41d",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h15_predictions.parquet": "a43f8dd1b5c4e7e13cc2a89a89b3ce52b6defde37f4d033d0508d890b7628688",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h30_predictions.parquet": "3553a01695ad77300b44ef4d4a1e4c060f29a46d4ce000c7341d026bb4779894",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h45_predictions.parquet": "97f70edb51b38330aa9f0c6fc6d9c90158cb161960fd011266ff714bf1eecf2b",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h60_predictions.parquet": "c656ad8a7d022f3808c316cc3107586dfa0179017d00d533bfcdd904c3e2116b",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h90_predictions.parquet": "abc19afb8de88a3360c933249bfc4ec04f76c5eabc72d0997187ab0081dd2757",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h120_predictions.parquet": "c1ac5253d634da774a926f89ecad796ebc45459e1222246fd76ed29206bfc6fa",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h180_predictions.parquet": "76e9b8a090cb30e0e892fdb270157025ae651d779e78233705546b7825f85d94",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_long_h240_predictions.parquet": "b19313c2ed7891691fc48cc0b62a76cfb7f73d6e4cc034bc20c2825d20808a93",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h5_predictions.parquet": "a58d5940516c5237cb119a260ade01c0b828e08452ac343b8df4620a998d0d9a",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h15_predictions.parquet": "2857c564affba037822fb421855481cdee77fbe0b38df40b7a8ab2e59f5ee800",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h30_predictions.parquet": "29ee63eccd01607761180a28a729e5e901d963b0e9cdf5a218059b227b7aed5d",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h45_predictions.parquet": "8d6390a18c37722810f1aeae7e1d640ff991e5ffed7c3b1c277a45927c1e6215",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h60_predictions.parquet": "0539412f4d611877adf368805e5cdbe88adccae95d8c02ac444dc6ba1db5f855",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h90_predictions.parquet": "3d764e16a194157b6420436efa6d77009dd231c5656152c26fe4be8dbc8b0292",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h120_predictions.parquet": "4bfca70631b8e621dca8a5901a2140cb9ee7a7f4ee2b92550aad4da304438328",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h180_predictions.parquet": "d73974f1c8124710aeea416caa5e231d94cd2f7658aec57a46daa11e48b63f48",
+    "out\\k45_gate_direction_r2_10b_20261001\\r21_short_h240_predictions.parquet": "9338443136547d52a35beac0276134e8dccb51ca8e94d456abe404dd710562fb",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h5_predictions.parquet": "feb5b377fd77f0c93a0393f94cf9e339d11b25a009a557050ab59bb7856cd4f2",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h15_predictions.parquet": "81ef1813fb35b7c956ed757673714c7b3cf665688261df340af97a1cd978eb52",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h45_predictions.parquet": "9b7c6dedb9d173773483dff7fce80f3b11794af75006ff88579a30cf880b7425",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h60_predictions.parquet": "76df30009009494952ecc8ffc7c843da1808a0f390ff113e0fc0d92b55a389c3",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h120_predictions.parquet": "9826dd0058a5e5e53877700a94f52a6210213763af61f709d644aa2fd220a167",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h180_predictions.parquet": "0eca255de55449dac56edb7305c72217060a60e451bbcb563945cc7ab869f995",
+    "out\\k45_gate_direction_r2_10b_20261001\\residual_h240_predictions.parquet": "d95b808846a2005ba8ead3ebc889c2f6293a609b37745e88a23318264e2351aa",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-01.zip": "7f81b2f3694d13779e7e896b69d60cd61e9444d7b9f9e90df761935e1c1b76e2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-02.zip": "6599466d108d120c64a078824326c063ed2d4335b3292e52c5e572f79166533a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-03.zip": "eee845fde6336e29d25889563cba3d2cff2d4d640e51fb1f82ae9b28cedaee77",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-04.zip": "d009ce034d08c3dcf3e7f874b0f8b0ec76ba507bc6bb4e007e541df537bafbce",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-05.zip": "3f2b56dd6b9a42457009bb367d0adadd3cf7e2216cd325172d0089e3883125a8",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-06.zip": "30b3470ff98576578973d75e3c157a5cbf1778b11e4c26b4b4ff70a3cbb348ec",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-07.zip": "18dae7b11075fc0fba79ad47df46683415cba5d027caa69c66bc2a5c9d9b459a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-08.zip": "e6f6d1749f674c85d4766e0eb36af6ea40d91a0674234d30df80eb9876b094e3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-09.zip": "7ae9a3b6afb2dc06e46080582908ec8c27063b707a14c7f1e679dc991ff48032",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-10.zip": "4c55b191c101f39c7fb193a6529665dd9e83302ca21876521e4c93b3902e9fb1",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-11.zip": "676356a2d075caa51b4f8ada026e9430dc320ffd23d2343b13b7aa25324ed6d1",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-12.zip": "d7390f90edf54cc4ad9bbe78e2f6b291ae06ad9539f591a2d0fce445873bbd63",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-01.zip": "cff916dc4b638ec3de97828e8911cd91cf7d7a3d0836ec0175869c374e66823d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-02.zip": "819a7b107443686adb313fc5fc223302a29f3981e1d1bd9828ad0ade65a8a8af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-03.zip": "2125fd300848938c7b992b8f7b7b5007d5b277a4ff1ebda7da083b40242729da",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-04.zip": "9cd888e3b0a1954813d0062c2e60426fdc8e34a7f258f6838371ec67f535b028",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-05.zip": "ed934afb9cf84df6ecae742e755147333a84244836a66b51523abc66dd5f63af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-06.zip": "7b8d9bfb8816636b800764dafb2aa2307d19166c695bfa245adbf7d01d61f766",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-07.zip": "8ab3df641d3bcf40527491f8e26d046ad2b662d1950ead9555ad32975571b7fe",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-08.zip": "7eb681cc45b94176f4b9192a62c3a1925d79031ba001cea2d8dec6ff6e5b9c35",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-09.zip": "03f25a7c25eef18d5f5b5b7bb0b664cab7a210b409f37e95a54e141808a0752d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-10.zip": "f25820d6add687addbca3ef43bee58f70853a6da53832a0c1bc22d00dc8ec64a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-11.zip": "e2e6b2d7218607e7e4a38137d50f553c2cfb901275c19edf567024c1cc6de85f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-12.zip": "bf3ce484faf41d7dccfd38c5cc3d8de34d8297df30ab10784e874cc10fd1b310",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-01.zip": "22ee19079b620f5c6d820e7d7f8bafa7fde866d89bd664863b8bd527749c12cb",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-02.zip": "fa95088258a905c79ab79e8984d2f6f66933ec2e814dbab4ef9da89b01ab484a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-03.zip": "4cf0883bc07f4ed4cdd3b0d8c0d166b4d15d21e666ab752f9f44401af4d6172f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-04.zip": "57e2776cc68b3169fc9f8632dad67278f470cd453407a8ebe6c87963c8a31357",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-05.zip": "bced8a5013d09742b96682e6fd01ad4456213515a03d7586ec2b1f2689af5255",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-06.zip": "0cd0708f8903829eb46f98cf60f4b2516c986e1ccddf6620a5912b48e16baf93",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-07.zip": "29d58cce0cd45f74c6a112039835c6d9ee5a7e60e7c38c2503beb7930453a4fe",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-08.zip": "6f4f0c6c84c05694b4b4a5c085776730fd4059723eecd98ee6ffeb3fde4da811",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-09.zip": "d62cd4e13009de37add446dc4f63ead4c56dcc4955a1e60f6726bcadc5a68fa9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-10.zip": "ad9efed10d4ca1567b865d7a158790977cec1b925395634217069df6696c8bc9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-11.zip": "8febe5bec1a029e993bbf27490761f8c47c32849bf7dd13441b2b2f6ec1ffb51",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-12.zip": "4218c78331bcc4dbeb5768fa112242a880971c1f2cfd1d3f32aaa26ca34069af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-01.zip": "05e3df32f28d0d50f4c5a280adee9368b4a66fc68c6ddca1b3277087ac0d19f5",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-02.zip": "5227accd9aaa59f71f5e682abffb58be5f99573ed208ab968b1704c81ac11345",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-03.zip": "ab022adff9b853d2f33cf80154e77c770f57c3392f0bbc36564b2e2cdbd0e872",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-04.zip": "2931039d26818edc65d4faefba84945fd1ba52989dd58fb127dc3cd7a12c7fbf",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-05.zip": "5d026fece46df86293054c8c56c2c8de575d30161b82979b11831831217a246e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-06.zip": "3ffdde6f1dc9c3c065d77ae43f3ba64d19d4cb76512d4bc1d541933d4fb2e6f7",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-07.zip": "0304baed9fd407293a8a8040b30a1b68bd344803b630d33530375b421733a930",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-08.zip": "516a8f50631c6ede6a9642f6d1590b6a22c33ba09935501d2ace8dc1396501fd",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-09.zip": "3fd9df6fd1eef33cf5fe625c27012359bc6d64a68c109305d7b44a0354f533c2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-10.zip": "03105cc140150bffca834bcccbddc6cfee245e079d2df1759653243bd6e92448",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-11.zip": "8015d2997f8d5e757ff3707ee87800ca30a74da0129daa747b64117f07bcc186",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-12.zip": "8f02fdd2a2da261bbf13ab301c74bdb57fae005f19d5088e9ece5f8824c1a2a7",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-01.zip": "3e0d30870672aa8f0f937881056e3cfd55913ae5c780cd50b33f2763aa0ba58e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-02.zip": "daf1e4901e3d6436d82ad60f90d007eb5300be8047cfef121007203a7212cde6",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-03.zip": "711dcaf2a341aedfd06447b4117b540f60adb0784c5e64a313c718e4cf092bc3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-04.zip": "6d220b8e2815362a11d294d35dbca28568370d8295351937eceec10f2b359b85",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-05.zip": "aef8c5fdce1493fd570b5829a72f2f17c7e459483390f25544d16c2a30be592e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-06.zip": "43fc4473820d1fb4fe340d1b1951a87555f6841aa352e684fa95d6adffce04c6",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-07.zip": "acab0593c1452660ce74a6c239fb215c1192b0a9c6e8c1689e6495de40a0174b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-08.zip": "7003d29a43dd5f9357f838da8766834954939e22c1d80af682d9f33984f67b71",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-09.zip": "6ef23b02392b481ef9c3855434bf3644289fb6e228b4f7d9a0dfc6d3cdff1116",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-10.zip": "26db65ac8020d80ece35df79c254c5f7e24427529bcceeb2972748c4fe2d2707",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-11.zip": "e1b19cccfe2cdcba48b022790789b7b01edd86c075f39bc152e44c267d43bd51",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-12.zip": "069409f525ebf6370ee1c7defe475167de4b97284c5ac8e68768652968cd3dc9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-01.zip": "df725010d55458866eb5a47e9ee708c6796c9d7e77b14c38342cea11f381815e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-02.zip": "e918b90fb33df3a3317feea13807a892047f1ec86eeac100bdb7b3dd83285d46",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-03.zip": "a3b95cfb315641fbfddc61eb32adf2a2588afb7a3973a61f464aca007ad43e3f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-04.zip": "01dbb7bd0135f98bd63bdde6b943cde1accc1770cabf92f68a1ec0653ced3888",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-05.zip": "e7355e2775b88009c984db1783bb8ed6b5f24ede2b52bb764151b5722d6a5e42",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-06.zip": "a1f4a40953740fa83ee9ad97776ff8325d1958654a67f1325614071a983819d4",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-07.zip": "b097dff828f6e43fece23db0d3cb98042a9d7bc19693b8cbfd051d88eb973b7b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-08.zip": "1180129860b6e196e8d70bb9719e81573aa6b4acb423ba5ee7f82f10c836f7ab",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-09.zip": "21dc6570fc6bffad0e7b5f9e99211b82ad07c95ab4f18c3a2daa3b95ec98344c",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-10.zip": "9ecdedab6344fc4cdb154763266b8e09627a71c3cc5574cf868158b541c259c2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-11.zip": "23735400405627d610123e3a43db3e98ae7addb93459cd670e65a7659a5f081b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-12.zip": "35318b789f020b0e04c9043112480743855554e52e1d188437cbdaa67246d51d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-01.zip": "fcdc796484f395830d418588a34a26baed8849dbef0ff2b56173247e493ff51f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-02.zip": "80df1dd669dc1e3afc360c9da8b9a949a127fce088eedbf5bf708bd37b0a1f58",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-03.zip": "5c069d5e9597a44fd0e213395082e59ff223fb99c9eab3a2a5a2a5622ba7867c",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-04.zip": "51cdeb4de7d5ef1d4eece80b6115e391bdf7a2d0803bf9ad8371ab23340b22d3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-05.zip": "445b65fd6b17bfcfb5e4d035db29fad34f729fa078f0449024db42621be84e6e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-06.zip": "cff97ce688329592bccbbf5873b5c7021649e093f5f5806e332c5b4fb7fd6a00"
+  },
+  "sources": {
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_9.py": "a9fb11adbb14001fdf5f8fa25aee605a247dd70a3d046b4c3db65ec508488f20",
+    "tests\\test_k45_gate_direction_r2_9.py": "3962f0594ee2d1921fe05dcc6af974d163dcbaf84380576c50442df82296e36c",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2.py": "a9fa8d49d743872b932ded087d8abe5bd01fbf54ff5cd85da72960964b8c5246",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_6.py": "ffaa3d86a38424267a45ea1947bb578680aa0b8a36bacf2f2a4100d61db4659b",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_7.py": "006131cd58936ecf3f2bc0bb7d115e8b986959f0c238e0ddffa7d75ed25988be",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_8.py": "cf7378d9f2c10e4dd62b195c0ba8c3330881f26bd7fecc24097b4643f98ee0a8",
+    "D:\\StudyQuant\\out\\run_patchtst_k45_flow_inference.py": "2b298530680ded1d8503fc73a3c1da4a91ace47714d0c3f1d561f55ad7604fe3"
+  },
+  "outputs": {
+    "out\\k45_gate_direction_r2_9_20261001\\grid_metrics.parquet": {
+      "sha256": "0de018d89c1bc443763bb7116be04dfce8c96c41fe4aa7e293436198689902ba",
+      "rows": 1008
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\primary_selection.parquet": {
+      "sha256": "f4342bb96979f911bf7c1a6a9b4ec2be66e8e9292be84fb519c05b8bbef4f1a4",
+      "rows": 504
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\h45_summary.parquet": {
+      "sha256": "693bf88832a561e76b6561a0b2438be1496f594a6c8916ecfd05f2004ee6c9ac",
+      "rows": 40
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\baselines.parquet": {
+      "sha256": "e90b9d1c4c58b0b887679547758bd3497c0a80f5a58897e8ff68912fe4ab9147",
+      "rows": 1008
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\random_repetitions.parquet": {
+      "sha256": "413b9227bb668255383a4d011025a39b050ea5d7fbc2e3ff666b8f4d2429c828",
+      "rows": 1008000
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\size_direction.parquet": {
+      "sha256": "ba7785b02e07898171d7dac4b82bd3604a976735fc8ec925c3f750dcd1040fc5",
+      "rows": 1008
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\funding_summary.parquet": {
+      "sha256": "25b87fb4a6def4bd55f8bc410a7b0db8f7f8215bcfbd9b2ec04fbd2a40386d96",
+      "rows": 1008
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\dropped_signals.parquet": {
+      "sha256": "cc28c941b8f1905a3699e42599b0321e2bfdf0a4302d6d6d8caa184c8c7b52dc",
+      "rows": 1008
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\thresholds.parquet": {
+      "sha256": "da87b6bdce6d9baea04a974ed23488463576e681fc1a4d84c738f6c79843995d",
+      "rows": 67068
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\trades.parquet": {
+      "sha256": "e9b1152fd0c228ea2b64e9925d4da6673fcf02ccb6f3242a1246e7588a69348c",
+      "rows": 148831
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\dropped_signal_ledger.parquet": {
+      "sha256": "c2a19468e4b7d8652966185d7e882e40fdc1f708d0199671c544c9b43023065d",
+      "rows": 72267
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\primary_result.parquet": {
+      "sha256": "70d22e415e7807364c09e25c8f641bbc0952c6c0ee5f8e3ab08e09ca4e47fff3",
+      "rows": 2
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\primary_yearly.parquet": {
+      "sha256": "f8a6eac65641a29ad2c0f2b2b48601661c8dbd76779d6593ee37822eff40336f",
+      "rows": 6
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\primary_concentration.parquet": {
+      "sha256": "a28eeebc66ecd485a5d65a1634faf18fdc65f8e32dbf14b2205c8635198de9fb",
+      "rows": 2
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\primary_top10.parquet": {
+      "sha256": "d934535d456b63a5358ee4accf62185723962354a0a2305c3d94d07da576c488",
+      "rows": 13
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\primary_hold_b_monthly.parquet": {
+      "sha256": "49f4cc1f4e08d2413ac462fb848917648058a4c66e336a4ebdfd3d8ed44cded3",
+      "rows": 6
+    },
+    "out\\k45_gate_direction_r2_9_20261001\\REPORT.md": {
+      "sha256": "3da146b32ff3b0c0f7056b88139b6b3971ed9ca4d945d40232e80a75f96b9b15"
+    }
+  }
+}

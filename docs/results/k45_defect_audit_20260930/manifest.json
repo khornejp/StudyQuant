@@ -1,0 +1,22 @@
+{
+  "experiment": "K45 six-defect adversarial audit",
+  "audit_type": "post_hoc_no_winner_selection",
+  "created_at_utc": "2026-09-30T14:57:57.994980+00:00",
+  "data_cutoff_utc": "2026-06-30T23:59:00+00:00",
+  "input_sha256": {
+    "D:\\StudyQuant\\artifacts\\btcusdt_2020_2026h1.parquet": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "D:\\StudyQuant\\out\\patchtst_k45_causal_admission_ordering_20260930\\causal_candidates.parquet": "589a6412cd589a1be522dd0d59e5fde15edecaefb80299def20a373f6ed2205b",
+    "D:\\StudyQuant\\out\\patchtst_k45_flow_inference_20260930\\flow_candidates.parquet": "d7d9f1e47a8d53e31c5aed84e4664bd157c50de9a0513b210bf99a9a52bc8155",
+    "D:\\StudyQuant\\out\\patchtst_backward_k45_validation_20260929\\ensemble_predictions.parquet": "4a892edec8361c1d44bbfa8851bc473539a1c5e200aea0f0e2cc8f41cdca29d8",
+    "D:\\StudyQuant\\out\\patchtst_post_trigger_markout_20260929\\exploration_origins.parquet": "bb0172e74bee42d7585638b9f81cce3e2aabe2b4ef1e9e4b1591bf9dc90bf78e",
+    "D:\\StudyQuant\\out\\patchtst_excursion_range_20260928\\ensemble_predictions.parquet": "4fa6ab24d4543398d4f595b02765f904f39000a364631c4620edb88d297fa66b",
+    "D:\\StudyQuant\\out\\patchtst_down_breakout_long_confirmation_20260929\\ensemble_predictions.parquet": "d5e81e9d7f58f070c173eed0ab62870566272e8d71e93cece4ac92fea53865c6"
+  },
+  "source_sha256": {
+    "D:\\StudyQuant\\out\\k45_defect_audit_20260930\\run_audit.py": "f9af03660f7987812ed7d26724dbf7102d145382d9b610cd294478d876f33729"
+  },
+  "new_model_fits": 0,
+  "new_orders": 0,
+  "external_data_added": 0,
+  "live_orders": 0
+}

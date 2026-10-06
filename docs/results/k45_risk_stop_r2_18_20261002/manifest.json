@@ -1,0 +1,202 @@
+{
+  "experiment": "R2-18",
+  "created_utc": "2026-10-02T10:16:43.070711+00:00",
+  "started_utc": "2026-10-02T09:56:37.842161+00:00",
+  "elapsed_seconds": 1205.124937,
+  "data_cutoff": "2026-06-30T23:59:00+00:00",
+  "hypothesis_frozen": "최대 240분 보유 + ATR(14, 1h) × 1.5 손절 규칙에서, DEV로만 고른 롱 칸 1개 + 숏 칸 1개의 COMBO_SINGLE이 (a) DEV와 DEV_EX2020 모두 net > 0, (b) DEV 상위 5건 제거 후 net > 0, (c) DEV에서 롱 부분과 숏 부분이 각각 net > 0, (d) DEV 최대 낙폭이 BASE 조합보다 작다.",
+  "oos_result": {
+    "a_dev_and_dev_ex2020_net_positive": true,
+    "b_dev_top5_removed_net_positive": true,
+    "c_dev_long_and_short_net_positive": true,
+    "d_dev_drawdown_less_than_base": false,
+    "pass": false,
+    "hold_b_seen_net_positive": true,
+    "hold_b_seen_net_bps": 559.3811064844739
+  },
+  "cell_count": 48,
+  "base_stop_cell_count": 96,
+  "multiple_testing_cell_count": 48,
+  "workers": 1,
+  "numeric_threads": 4,
+  "model_training": false,
+  "live_orders": 0,
+  "selected_at_utc": "2026-10-02T09:59:36.580968+00:00",
+  "selection_input_segment": "DEV",
+  "selected_cells": {
+    "long": "R-TAIL|q=0.01|method=EXPANDING_OOS|direction=L",
+    "short": "R-F3|tail=10|direction=S"
+  },
+  "selected_cells_sha256": "c603564b2b4f57d958f20b9fd425082a2c1435c01727a6d25e96cf6ae26183d0",
+  "hold_b_metrics_computed_after_selection": true,
+  "pytest_last_line": "8 passed in 8.46s",
+  "inputs": [
+    {
+      "path": "artifacts/btcusdt_2020_2026h1.parquet",
+      "bytes": 182249475,
+      "sha256": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4"
+    },
+    {
+      "path": "artifacts/short_quantile_sweep_20260826/feature_cache/0fc9086b7d4b4c43c8b84f6f/feature_rows.parquet",
+      "bytes": 2259089211,
+      "sha256": "2666ab3aed65a3d2e321c5419e232034bf6c1aca9dbcf507dd2a5da3d01a8700"
+    },
+    {
+      "path": "out/k45_classic_rules_r2_14_20261002/all_cells.parquet",
+      "bytes": 367756,
+      "sha256": "8feb604c4d758ca292878eb3abe40b00ad5b1a04e2c47ad2d0f03667b26c252e"
+    },
+    {
+      "path": "out/k45_mtf_entry_r2_12_20261001/predictions_1h_h60.parquet",
+      "bytes": 4071967,
+      "sha256": "f8e239493e5eb1def1f17b88dbc2b411b6bfccfe3ad80aaebd9f183accff166e"
+    },
+    {
+      "path": "out/k45_mtf_entry_r2_12_20261001/predictions_1h_h120.parquet",
+      "bytes": 4015405,
+      "sha256": "d1a68690ec11cf824cc91e5d71d0484189931e67c133344fe9ba32a6ffc1b145"
+    },
+    {
+      "path": "out/k45_mtf_entry_r2_12_20261001/core_metrics.parquet",
+      "bytes": 88476,
+      "sha256": "80a62fb5f87e35636e11a7c9dd2508518c644da05bf52a0496ab07095c14b74a"
+    },
+    {
+      "path": "out/k45_gate_direction_r2_7_20261001/gate_candidates.parquet",
+      "bytes": 747335,
+      "sha256": "2a272f1f775a782b8f8a899554d89bc1650e8db8b2dab5ab121573e60b36ae46"
+    },
+    {
+      "path": "out/k45_gate_direction_r2_7_20261001/core_metrics.parquet",
+      "bytes": 85689,
+      "sha256": "190593cdbeafd57ccec2fb0f2f8daeb8c4b0dd36544ba23f7a7d9e87cb894f7a"
+    }
+  ],
+  "sources": [
+    {
+      "path": "D:/StudyQuant/out/run_k45_risk_stop_r2_18.py",
+      "bytes": 62418,
+      "sha256": "c736412ee140f0cdcfaf935eadb19d9a282a5eb81d83a0a713d03556c71c056f"
+    },
+    {
+      "path": "tests/test_k45_risk_stop_r2_18.py",
+      "bytes": 4240,
+      "sha256": "2e2f74535669dd2889a114cbed900a7e7411137ce10c0ad7addd31ca8d63d338"
+    },
+    {
+      "path": "D:/StudyQuant/out/run_k45_classic_rules_r2_14.py",
+      "bytes": 65148,
+      "sha256": "39f3ebe3491e477a074c81304aec4deadd291d2b33ac8f75639fe71cd4d62eed"
+    },
+    {
+      "path": "D:/StudyQuant/out/run_k45_mtf_entry_r2_12.py",
+      "bytes": 34516,
+      "sha256": "b0ad23c47d9c8d2dd033421eef8adc741524a7f4f581780c0f5a8cc5895fb711"
+    },
+    {
+      "path": "D:/StudyQuant/out/run_k45_gate_direction_r2_7.py",
+      "bytes": 24296,
+      "sha256": "006131cd58936ecf3f2bc0bb7d115e8b986959f0c238e0ddffa7d75ed25988be"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/reproduction.parquet",
+      "bytes": 6264,
+      "sha256": "aae95f8208648337deda390d319aa3a76b2492fe47633e1561ed70b506aee4a3"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/selected_cells.json",
+      "bytes": 94,
+      "sha256": "c8840bc5fa6bb0b1bdbbf6e5c8020a097868c959f7353c317faadd0e68bf6196"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/cell_metrics.parquet",
+      "bytes": 224729,
+      "sha256": "2e55ad8f6212ce4f80ef62ee8f9032ce9b98a31867a44d7982459991c8aa9773"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/cell_trades.parquet",
+      "bytes": 17813524,
+      "sha256": "56bc644c759867fc795733309855a26a9e160ad6c9247285a1b631e597cc8039"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/combo_metrics.parquet",
+      "bytes": 43589,
+      "sha256": "8f2b8e327bea8c0df76a2e7c8419be08ab4f99eadb780581b7df868ef7f8c876"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/combo_trades.parquet",
+      "bytes": 976779,
+      "sha256": "c11f75b77b50c23c409c7a6212881a6b08ab25d74a673a4dbc975c5b44a5f9cd"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/cost_sensitivity.parquet",
+      "bytes": 54441,
+      "sha256": "b1955351c6f728fa924096c77b7594a36224e0f18d162c95cee3add91ca82701"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/yearly.parquet",
+      "bytes": 27692,
+      "sha256": "117c426c6c6dce8369a7b045db71e99588598a439428a0082c5f8a7b72691eab"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/base_stop_delta.parquet",
+      "bytes": 20153,
+      "sha256": "1cd040c56699709c7c10a24b928781a135a9e23f7c3083fdccb1dfc874f633c2"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/stop_cons_comparison.parquet",
+      "bytes": 19601,
+      "sha256": "2f4a4c2d80f13544580795d837014d709740638655834f0b3fdb6aa3a95a883a"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/stop_multiplier_sensitivity.parquet",
+      "bytes": 25469,
+      "sha256": "de8a3bdbe333587a3ec2c5713575d35d1b2380752184e3cc6f802f8ae9a70cec"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/multiple_testing.parquet",
+      "bytes": 5911,
+      "sha256": "f03bd328e1af4dd8b1fe8179c578e90e530b546740035ef091099a717ec12f2a"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/baselines.parquet",
+      "bytes": 19318,
+      "sha256": "99ba90988b925842ae9815525c94261ecd7f4843cedfa2e6519b5413aee82f15"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/random_repetitions.parquet",
+      "bytes": 3148698,
+      "sha256": "14fbb061baa2ea7818df6aa13075d648b7561636843eae5130b2c4faecec311e"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/buy_hold.parquet",
+      "bytes": 4156,
+      "sha256": "a5623581719acb2dda7d4126a5f0baaf6a2cebb2c8f550347f8d6604c686ac74"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/REPORT.md",
+      "bytes": 500539,
+      "sha256": "1e058b1672b16b2cc1f4172b6706150b7c8efd262b51e5f2b3d28d5358f634b3"
+    },
+    {
+      "path": "out/k45_risk_stop_r2_18_20261002/started_utc.txt",
+      "bytes": 32,
+      "sha256": "a52dd88003eb5389cbef121a79f4d59c31b5e5dd365d605e225e47c406d6a21f"
+    }
+  ],
+  "unavailable_data": [
+    "order_book",
+    "liquidations",
+    "artifacts/btcusdt_2026q3_source (excluded by instruction)"
+  ],
+  "assumptions": {
+    "entry_minute_stop": "STOP excludes it; STOP_CONS assumes adverse touch after fill",
+    "atr": "Wilder ATR(14), last closed 1h bar, fixed at entry",
+    "funding": "R2-14 UTC 00/08/16 prior-minute rate; entry < funding <= exit",
+    "random": "1000 circular schedule shifts; same count/sides/nominal exposure; stop and cap recomputed",
+    "hold_b": "already seen; excluded from hypothesis and selection",
+    "hold_a": "2026 Q3 excluded and unread"
+  }
+}

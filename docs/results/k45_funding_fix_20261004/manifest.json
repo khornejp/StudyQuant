@@ -1,0 +1,1229 @@
+{
+  "experiment": "R2-22",
+  "created_utc": "2026-10-04T05:23:10.872155+00:00",
+  "data_cutoff": "2026-06-30T23:59:00+00:00",
+  "downloads": 0,
+  "live_orders": 0,
+  "hold_a_read": 0,
+  "workers_max": 12,
+  "stage_durations_seconds": {
+    "early_reprice": 5.17298260005191,
+    "r2_14_OPT": 1406.500125,
+    "r2_14_PESS": 1411.481917,
+    "r2_15_audit": 48.808,
+    "r2_15_full": 4456.30127,
+    "r2_15_no_next": 4435.10992,
+    "r2_15_OPT_full": 4455.221061,
+    "r2_15_OPT_no_next": 4387.08586,
+    "r2_17_OPT": 2236.228007,
+    "r2_17_PESS": 2233.431854,
+    "r2_18_OPT": 330.5120926001109,
+    "r2_18_PESS": 330.80567610030994,
+    "r2_19_OPT": 96.14471719972789,
+    "r2_19_PESS": 96.14511199994013,
+    "r2_20_21_verify": 7.909154500346631
+  },
+  "tests": {
+    "test_files": 7,
+    "last_line": "53 passed, 5 warnings in 18.61s",
+    "returncode": 0
+  },
+  "inputs": [
+    {
+      "path": "artifacts\\btcusdt_2020_2026h1.parquet",
+      "sha256": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4"
+    },
+    {
+      "path": "artifacts\\short_quantile_sweep_20260826\\feature_cache\\0fc9086b7d4b4c43c8b84f6f\\feature_rows.parquet",
+      "sha256": "2666ab3aed65a3d2e321c5419e232034bf6c1aca9dbcf507dd2a5da3d01a8700"
+    },
+    {
+      "path": "out\\k45_classic_rules_r2_14_20261002\\manifest.json",
+      "sha256": "528180643a693065e5cce028adc60c69606146bb15cac3f061c50b6855265580"
+    },
+    {
+      "path": "out\\k45_meta_label_r2_15_20261002\\manifest.json",
+      "sha256": "54ead3f890a1a8986eea172a95c10202c1933d19a98f07d4e87489eda6055e48"
+    },
+    {
+      "path": "out\\k45_contrarian_robust_r2_17_20261002\\manifest.json",
+      "sha256": "634dc382c7906bf556ca8cfa10495ac6f2b8682f6d04b4fe209862eddf2b1f66"
+    },
+    {
+      "path": "out\\k45_risk_stop_r2_18_20261002\\manifest.json",
+      "sha256": "2676045b17d7dbccf273f8294b0a11032899f121ad95c06e6beb81bb4697870c"
+    },
+    {
+      "path": "out\\k45_validation_r2_19_20261003\\manifest.json",
+      "sha256": "31ad6163004d3fffe7d84b8c6121c5f65f287ee48b4875960512c787c4977a23"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-01.zip",
+      "sha256": "7f81b2f3694d13779e7e896b69d60cd61e9444d7b9f9e90df761935e1c1b76e2"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-02.zip",
+      "sha256": "6599466d108d120c64a078824326c063ed2d4335b3292e52c5e572f79166533a"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-03.zip",
+      "sha256": "eee845fde6336e29d25889563cba3d2cff2d4d640e51fb1f82ae9b28cedaee77"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-04.zip",
+      "sha256": "d009ce034d08c3dcf3e7f874b0f8b0ec76ba507bc6bb4e007e541df537bafbce"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-05.zip",
+      "sha256": "3f2b56dd6b9a42457009bb367d0adadd3cf7e2216cd325172d0089e3883125a8"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-06.zip",
+      "sha256": "30b3470ff98576578973d75e3c157a5cbf1778b11e4c26b4b4ff70a3cbb348ec"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-07.zip",
+      "sha256": "18dae7b11075fc0fba79ad47df46683415cba5d027caa69c66bc2a5c9d9b459a"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-08.zip",
+      "sha256": "e6f6d1749f674c85d4766e0eb36af6ea40d91a0674234d30df80eb9876b094e3"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-09.zip",
+      "sha256": "7ae9a3b6afb2dc06e46080582908ec8c27063b707a14c7f1e679dc991ff48032"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-10.zip",
+      "sha256": "4c55b191c101f39c7fb193a6529665dd9e83302ca21876521e4c93b3902e9fb1"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-11.zip",
+      "sha256": "676356a2d075caa51b4f8ada026e9430dc320ffd23d2343b13b7aa25324ed6d1"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-12.zip",
+      "sha256": "d7390f90edf54cc4ad9bbe78e2f6b291ae06ad9539f591a2d0fce445873bbd63"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-01.zip",
+      "sha256": "cff916dc4b638ec3de97828e8911cd91cf7d7a3d0836ec0175869c374e66823d"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-02.zip",
+      "sha256": "819a7b107443686adb313fc5fc223302a29f3981e1d1bd9828ad0ade65a8a8af"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-03.zip",
+      "sha256": "2125fd300848938c7b992b8f7b7b5007d5b277a4ff1ebda7da083b40242729da"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-04.zip",
+      "sha256": "9cd888e3b0a1954813d0062c2e60426fdc8e34a7f258f6838371ec67f535b028"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-05.zip",
+      "sha256": "ed934afb9cf84df6ecae742e755147333a84244836a66b51523abc66dd5f63af"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-06.zip",
+      "sha256": "7b8d9bfb8816636b800764dafb2aa2307d19166c695bfa245adbf7d01d61f766"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-07.zip",
+      "sha256": "8ab3df641d3bcf40527491f8e26d046ad2b662d1950ead9555ad32975571b7fe"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-08.zip",
+      "sha256": "7eb681cc45b94176f4b9192a62c3a1925d79031ba001cea2d8dec6ff6e5b9c35"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-09.zip",
+      "sha256": "03f25a7c25eef18d5f5b5b7bb0b664cab7a210b409f37e95a54e141808a0752d"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-10.zip",
+      "sha256": "f25820d6add687addbca3ef43bee58f70853a6da53832a0c1bc22d00dc8ec64a"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-11.zip",
+      "sha256": "e2e6b2d7218607e7e4a38137d50f553c2cfb901275c19edf567024c1cc6de85f"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-12.zip",
+      "sha256": "bf3ce484faf41d7dccfd38c5cc3d8de34d8297df30ab10784e874cc10fd1b310"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-01.zip",
+      "sha256": "22ee19079b620f5c6d820e7d7f8bafa7fde866d89bd664863b8bd527749c12cb"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-02.zip",
+      "sha256": "fa95088258a905c79ab79e8984d2f6f66933ec2e814dbab4ef9da89b01ab484a"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-03.zip",
+      "sha256": "4cf0883bc07f4ed4cdd3b0d8c0d166b4d15d21e666ab752f9f44401af4d6172f"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-04.zip",
+      "sha256": "57e2776cc68b3169fc9f8632dad67278f470cd453407a8ebe6c87963c8a31357"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-05.zip",
+      "sha256": "bced8a5013d09742b96682e6fd01ad4456213515a03d7586ec2b1f2689af5255"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-06.zip",
+      "sha256": "0cd0708f8903829eb46f98cf60f4b2516c986e1ccddf6620a5912b48e16baf93"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-07.zip",
+      "sha256": "29d58cce0cd45f74c6a112039835c6d9ee5a7e60e7c38c2503beb7930453a4fe"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-08.zip",
+      "sha256": "6f4f0c6c84c05694b4b4a5c085776730fd4059723eecd98ee6ffeb3fde4da811"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-09.zip",
+      "sha256": "d62cd4e13009de37add446dc4f63ead4c56dcc4955a1e60f6726bcadc5a68fa9"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-10.zip",
+      "sha256": "ad9efed10d4ca1567b865d7a158790977cec1b925395634217069df6696c8bc9"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-11.zip",
+      "sha256": "8febe5bec1a029e993bbf27490761f8c47c32849bf7dd13441b2b2f6ec1ffb51"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-12.zip",
+      "sha256": "4218c78331bcc4dbeb5768fa112242a880971c1f2cfd1d3f32aaa26ca34069af"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-01.zip",
+      "sha256": "05e3df32f28d0d50f4c5a280adee9368b4a66fc68c6ddca1b3277087ac0d19f5"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-02.zip",
+      "sha256": "5227accd9aaa59f71f5e682abffb58be5f99573ed208ab968b1704c81ac11345"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-03.zip",
+      "sha256": "ab022adff9b853d2f33cf80154e77c770f57c3392f0bbc36564b2e2cdbd0e872"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-04.zip",
+      "sha256": "2931039d26818edc65d4faefba84945fd1ba52989dd58fb127dc3cd7a12c7fbf"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-05.zip",
+      "sha256": "5d026fece46df86293054c8c56c2c8de575d30161b82979b11831831217a246e"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-06.zip",
+      "sha256": "3ffdde6f1dc9c3c065d77ae43f3ba64d19d4cb76512d4bc1d541933d4fb2e6f7"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-07.zip",
+      "sha256": "0304baed9fd407293a8a8040b30a1b68bd344803b630d33530375b421733a930"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-08.zip",
+      "sha256": "516a8f50631c6ede6a9642f6d1590b6a22c33ba09935501d2ace8dc1396501fd"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-09.zip",
+      "sha256": "3fd9df6fd1eef33cf5fe625c27012359bc6d64a68c109305d7b44a0354f533c2"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-10.zip",
+      "sha256": "03105cc140150bffca834bcccbddc6cfee245e079d2df1759653243bd6e92448"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-11.zip",
+      "sha256": "8015d2997f8d5e757ff3707ee87800ca30a74da0129daa747b64117f07bcc186"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-12.zip",
+      "sha256": "8f02fdd2a2da261bbf13ab301c74bdb57fae005f19d5088e9ece5f8824c1a2a7"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-01.zip",
+      "sha256": "3e0d30870672aa8f0f937881056e3cfd55913ae5c780cd50b33f2763aa0ba58e"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-02.zip",
+      "sha256": "daf1e4901e3d6436d82ad60f90d007eb5300be8047cfef121007203a7212cde6"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-03.zip",
+      "sha256": "711dcaf2a341aedfd06447b4117b540f60adb0784c5e64a313c718e4cf092bc3"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-04.zip",
+      "sha256": "6d220b8e2815362a11d294d35dbca28568370d8295351937eceec10f2b359b85"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-05.zip",
+      "sha256": "aef8c5fdce1493fd570b5829a72f2f17c7e459483390f25544d16c2a30be592e"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-06.zip",
+      "sha256": "43fc4473820d1fb4fe340d1b1951a87555f6841aa352e684fa95d6adffce04c6"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-07.zip",
+      "sha256": "acab0593c1452660ce74a6c239fb215c1192b0a9c6e8c1689e6495de40a0174b"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-08.zip",
+      "sha256": "7003d29a43dd5f9357f838da8766834954939e22c1d80af682d9f33984f67b71"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-09.zip",
+      "sha256": "6ef23b02392b481ef9c3855434bf3644289fb6e228b4f7d9a0dfc6d3cdff1116"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-10.zip",
+      "sha256": "26db65ac8020d80ece35df79c254c5f7e24427529bcceeb2972748c4fe2d2707"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-11.zip",
+      "sha256": "e1b19cccfe2cdcba48b022790789b7b01edd86c075f39bc152e44c267d43bd51"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-12.zip",
+      "sha256": "069409f525ebf6370ee1c7defe475167de4b97284c5ac8e68768652968cd3dc9"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-01.zip",
+      "sha256": "df725010d55458866eb5a47e9ee708c6796c9d7e77b14c38342cea11f381815e"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-02.zip",
+      "sha256": "e918b90fb33df3a3317feea13807a892047f1ec86eeac100bdb7b3dd83285d46"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-03.zip",
+      "sha256": "a3b95cfb315641fbfddc61eb32adf2a2588afb7a3973a61f464aca007ad43e3f"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-04.zip",
+      "sha256": "01dbb7bd0135f98bd63bdde6b943cde1accc1770cabf92f68a1ec0653ced3888"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-05.zip",
+      "sha256": "e7355e2775b88009c984db1783bb8ed6b5f24ede2b52bb764151b5722d6a5e42"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-06.zip",
+      "sha256": "a1f4a40953740fa83ee9ad97776ff8325d1958654a67f1325614071a983819d4"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-07.zip",
+      "sha256": "b097dff828f6e43fece23db0d3cb98042a9d7bc19693b8cbfd051d88eb973b7b"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-08.zip",
+      "sha256": "1180129860b6e196e8d70bb9719e81573aa6b4acb423ba5ee7f82f10c836f7ab"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-09.zip",
+      "sha256": "21dc6570fc6bffad0e7b5f9e99211b82ad07c95ab4f18c3a2daa3b95ec98344c"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-10.zip",
+      "sha256": "9ecdedab6344fc4cdb154763266b8e09627a71c3cc5574cf868158b541c259c2"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-11.zip",
+      "sha256": "23735400405627d610123e3a43db3e98ae7addb93459cd670e65a7659a5f081b"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-12.zip",
+      "sha256": "35318b789f020b0e04c9043112480743855554e52e1d188437cbdaa67246d51d"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-01.zip",
+      "sha256": "fcdc796484f395830d418588a34a26baed8849dbef0ff2b56173247e493ff51f"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-02.zip",
+      "sha256": "80df1dd669dc1e3afc360c9da8b9a949a127fce088eedbf5bf708bd37b0a1f58"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-03.zip",
+      "sha256": "5c069d5e9597a44fd0e213395082e59ff223fb99c9eab3a2a5a2a5622ba7867c"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-04.zip",
+      "sha256": "51cdeb4de7d5ef1d4eece80b6115e391bdf7a2d0803bf9ad8371ab23340b22d3"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-05.zip",
+      "sha256": "445b65fd6b17bfcfb5e4d035db29fad34f729fa078f0449024db42621be84e6e"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-06.zip",
+      "sha256": "cff97ce688329592bccbbf5873b5c7021649e093f5f5806e332c5b4fb7fd6a00"
+    }
+  ],
+  "sources": [
+    {
+      "path": "D:\\StudyQuant\\out\\run_k45_funding_fix_r2_22.py",
+      "sha256": "16755e02da3a24446f947263bdddfe8c6045f0b6dc46a7dc95cf06338d00ffd6"
+    },
+    {
+      "path": "D:\\StudyQuant\\out\\k45_funding.py",
+      "sha256": "5742d10c08d513147720a1147d25d925217b079e9dae038f74ad9e5ee83f65a6"
+    },
+    {
+      "path": "out\\run_k45_classic_rules_r2_14.py",
+      "sha256": "0ddf2b26d4abd6bd85bb0ed4479e930815ce9e720b0be4342030c014b273ec78"
+    },
+    {
+      "path": "out\\run_k45_meta_label_r2_15.py",
+      "sha256": "60b7afa11695de0bb9766a24a0fcc504b397b1f092a049a38be80a55b9a81745"
+    },
+    {
+      "path": "out\\run_k45_contrarian_robust_r2_17.py",
+      "sha256": "30bcd62204d5898eb489e4aaa0e0d8c0b64c2c831a606d6434caa07e3461b102"
+    },
+    {
+      "path": "out\\run_k45_risk_stop_r2_18.py",
+      "sha256": "8c9d2c9438630405d51af31312f0cdd611c4fa47768be602240bc11bbf0b0154"
+    },
+    {
+      "path": "out\\run_k45_validation_r2_19.py",
+      "sha256": "e1b2dd07dc5cb19644c983201379f67211aa9107040ba9715fea0b0b45e05374"
+    },
+    {
+      "path": "out\\k45_ledger.py",
+      "sha256": "c7331a4cd523ea61c8836827bd57d2c8d5728e73f3617893ce81e287de398967"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "out\\k45_funding_fix_20261004\\BRIEF.md",
+      "sha256": "0cbe775690c04194d6385681310e8b3a29ab97f3c6ef5a79a9dac4f797e64c18"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\confirmed_boundary.parquet",
+      "sha256": "1e5b1538695743c385eebf3e7b10b97f38d2cd0803b633b2864add84004a5ab6"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\definition_changes.parquet",
+      "sha256": "484cda343279f82d854f6908e5141c2d8d91b3dffd7aa62c5d1074d2f3fe3931"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\experiment_net_changes.parquet",
+      "sha256": "01e9f5a46e70173ceb7c34bd53cdde1f542e6078a5c1b232bbae59eebd5f8039"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\experiment_summary.parquet",
+      "sha256": "9a9c4d337f0badbe4e9a55f1686c236f82725753749f93c1c2c2d0815164867b"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\funding_module_summary.parquet",
+      "sha256": "0292d6c2c9221d4bc3eebb09dc72ee351695ed6cfee475cbda55eac7d4dd5dee"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\hypothesis_verdicts.parquet",
+      "sha256": "e91fffde74718bccc4bc4c674413d549370098777e76c5232132de79cbef4894"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_INCL_funding.parquet",
+      "sha256": "dd3c22cce2d6c04bee3708cfcf04e0053d93b35859a6aefe9bb0606e18475133"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_INCL_summary.parquet",
+      "sha256": "3457c9f6fa3adb30e8cc893c0c1935c0bc7c7b06ee13fc8df7e180a3943da6f2"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_ablation.parquet",
+      "sha256": "060516bcb1c4710446e4ab6caeb7c693d53b3e7bc86359cdf95353f509baa153"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_ablation_summary.parquet",
+      "sha256": "703343c32685e6d420f3a0a251715a5ba7a1ea039bcfeaf0724f632db4893759"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_variant_summary.parquet",
+      "sha256": "d235095e6977c453f0ef7bddceabe2055256bdbe9797401f34fb906b62509697"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\REPORT.md",
+      "sha256": "80162c21d993c667d12ea5e0b0e6a51c79156b08c03c5e83e35b5bef9f5f55e3"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\selection_changes.parquet",
+      "sha256": "e7c2270f006229036b902a9fc4a73e7f2cb78acb78fdbf46aa1cd50cbbeea58f"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\stage_durations.parquet",
+      "sha256": "ed4e2dbf471f99910545f0f3c4c2671bbad4f9692cbce9a138bd66ab2ae3634e"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\test_results.parquet",
+      "sha256": "be44f145fde4430aee2563122dfaf69371d74164cdfc64ed4791f06495dd636d"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\early_reprice\\before_pess_opt.parquet",
+      "sha256": "8c4eb4fc67149d5285e193184c6d394f7c0062b27453b2e91248bba6adc8ee85"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\early_reprice\\cells_OPT.parquet",
+      "sha256": "4c741bf7ece1d894d62b202dd15f808daa4da4d0e31cfead1d5f45e75a97dae7"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\early_reprice\\cells_PESS.parquet",
+      "sha256": "3a945991242887b3da9cd96de316300ec36fe08124d718213d88aa4ebf97c208"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\early_reprice\\run.log",
+      "sha256": "7e331cc4a047438ccbe29485ff58380cac09e8db9c0ada006c6a54dcb4382883"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\early_reprice\\summary_OPT.parquet",
+      "sha256": "a0cf0106a393d43a0e3aa9e37d57a2e67c6cc47bb79362b37a880a3918ebaef0"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\early_reprice\\summary_PESS.parquet",
+      "sha256": "405131ec7b8004b8e007d1d36aebc708fdb01858f2246f27eb4dd7ffee27785a"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_OPT\\all_cells.parquet",
+      "sha256": "8fa37f1cae226ca46504ed4917e5d583b00b6cdb9a2b7df77ab4685657f47b01"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_OPT\\buy_hold.parquet",
+      "sha256": "3b7f9967be607b57153d6c4d6ea20917c1dd072be8d07d07e049de6b237389e5"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_OPT\\cost_sensitivity.parquet",
+      "sha256": "59f3b782c37ef67aae19bb76a940936c0ff9a376a361f570de407277bb08f7d7"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_OPT\\family_representatives.parquet",
+      "sha256": "e3a78f0d38933b3924d2fb86cd66c8995a43f0e7d6d52f5289ef9feee6f63cc6"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_OPT\\multiple_testing.parquet",
+      "sha256": "3be4501f31f5c4c9bed92816910693c4b03f45a3911c7bee81f054f75b8efe2c"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_OPT\\random_baselines.parquet",
+      "sha256": "c80be6d5bb3d6385b5b3c523552f9e667630c13967a8c397a9f3f454a58a04c9"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_OPT\\REPORT.md",
+      "sha256": "942353b8522fd11ff51c2216a548bdb89047eb96d3875e9bf5b5a7aee37e03c6"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_OPT\\run.log",
+      "sha256": "f054e92b8ad21b558bec925e60d67dca71ed8b17dc8c39847c9a8c389582d663"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_OPT\\started_utc.txt",
+      "sha256": "b617c91799f43a8c994876de54bfd265248c1a21005743e640d75e00228bb0b8"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_OPT\\trend_yearly.parquet",
+      "sha256": "ed02f88b38121339fe59d2c8a967615bbe94eb6dd2f3ba0fec947b970e29b66c"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_OPT\\yearly.parquet",
+      "sha256": "76d9b9c684484d0445d01cf065f8b0e53cc027496f3a8933f818b8f68e96ef98"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_PESS\\all_cells.parquet",
+      "sha256": "531f788ceba687e8a2fc1d15e661148b88f36a3414cbcd5c218c6571c433ade3"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_PESS\\buy_hold.parquet",
+      "sha256": "e7efb8a5426986cdf3fd9c4be68432c7f783a36ce66f821a57260030aabd454c"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_PESS\\cost_sensitivity.parquet",
+      "sha256": "20877bbba6adefda4bc201cc9fc18f1c87dc99ae0ca7582cfb0e8191e7ddb7b4"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_PESS\\family_representatives.parquet",
+      "sha256": "a35a6eda8d680e06c29ff98f8286f7945de6692dca663a03efd35517e66992ac"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_PESS\\multiple_testing.parquet",
+      "sha256": "c9d6b6d704089af868aa8375be1d2d0f1c85411c22e95f01e0a3fe0c4adbf9fe"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_PESS\\random_baselines.parquet",
+      "sha256": "e8a326aaef96a6823149defa15363e51ee2991d906af3bc946d0c1b89951eb39"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_PESS\\REPORT.md",
+      "sha256": "ff2c228334ce1bd322060823062aa0bbcdbf465dd6aa6386c2bbdf645c0a1bc4"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_PESS\\run.log",
+      "sha256": "f1fcad2b6f3ae2597904defc5f0a8124b00143044675e82bfd22966c62e1d8ad"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_PESS\\started_utc.txt",
+      "sha256": "9b262f0aef83dbf869469cc49d57b75b06c3a7cdc333be311ee6939427ac8614"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_PESS\\trend_yearly.parquet",
+      "sha256": "79d3c96131f6ecfefe8cea5a2fe34fc087606b8e350f0a96822b182f6080cbf7"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_14_PESS\\yearly.parquet",
+      "sha256": "867b7e8c5408488c13c4f635379681ccc41a91d05f505c15fb12172020e2b8dd"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_audit\\comparison.parquet",
+      "sha256": "d067206f92c5767dc2d83b604c741f8906afd10671fd21d69690e3ad674469b4"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_audit\\run.log",
+      "sha256": "6c19caa404e973691c397c4a505e3eb34066560cef2d7de3dd409db31ab80ff7"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_audit\\summary.parquet",
+      "sha256": "5e26fc53685b4a79bb0455882778d0a99f200ec204a79ae7165e7fe3af13601a"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\all_cells.parquet",
+      "sha256": "ce7879dcf7ea610053813cd0f6676136005217313936c775a5bf4f6c6798da39"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\candidates.parquet",
+      "sha256": "b3e7bf4cd86d2c424196f8f957d714a0bf0402903738e2ef194fe9e20c405734"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\feature_names.json",
+      "sha256": "686947385759b532451b3736b1bcfb2748f321d1cd413caf889c76b43e35c30a"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\monthly_auc.parquet",
+      "sha256": "36637cbb4119f652f1de3a5a26050bdc50dd48107d03c3e2b9f3f9c8f2845144"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\multiple_testing.parquet",
+      "sha256": "5cec4f5e4700008662b3e404daf788d186e1d4d6fd390f90fe3ae6c6232766cc"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\parity.parquet",
+      "sha256": "126035fe2789d0e7c8de61f54b784e6a8bfc3ef03711b9cde7470a345c82e971"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\predictions.parquet",
+      "sha256": "81b9d758bb6ca192f4dce61d152eae002c6d9e6a03d37562c84c62532e243c23"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\quality.parquet",
+      "sha256": "ebfd3ce4ed98677a8c418118d449950b13d26aac5cf09317a8873f53b3c57fd0"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\quality_deciles.parquet",
+      "sha256": "db1884a5bd5d7354782473dae8f1e11a4dc73d44fbe1e3beba59a6b94134e56d"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\random_baselines.parquet",
+      "sha256": "d1033df13856799dcbc1c2f01a28a37e30b40d5df69726ad6b8dabde311a230d"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\REPORT.md",
+      "sha256": "0517719a4f239e0c41cc32e27afea1a30b880a3a02163589492f7020414529b7"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\run.log",
+      "sha256": "dfbeed1d6a00e978425abafef485effe9b2d18878f3e62473571435c5237adfa"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\selected_rules.parquet",
+      "sha256": "843522bca6f384e845cd476fdbc84854aa39a997a66b1c95cdd8aae8cce8033e"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\started_utc.txt",
+      "sha256": "3702ea89a2a9c3ec16cec4e43623ac3548cc380ab8b6e2836422382f069e602e"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\walk_forward_audit.parquet",
+      "sha256": "747a81ac1d86b0ad1607f1d6964be74435593feb4d2564baee0072594c95c7d9"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_full\\yearly.parquet",
+      "sha256": "fd0be5897c6a9ee09821436877ee7abc55e63373f19631a048ade20f154c8b0d"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\all_cells.parquet",
+      "sha256": "020c5e7679bf18bdbfe2a2ddcc5444603804f40fc153fc345bf66e7ad3c665dc"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\candidates.parquet",
+      "sha256": "b3e7bf4cd86d2c424196f8f957d714a0bf0402903738e2ef194fe9e20c405734"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\feature_names.json",
+      "sha256": "5116ffa02ac3a739f10b948d3395720d6a6e5a7aec3cf893c01981883c621555"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\monthly_auc.parquet",
+      "sha256": "5a0a7893caf8419de345808266ca94b42e2f21cf09185afd0c52a4b4d594ac63"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\multiple_testing.parquet",
+      "sha256": "b77994e0acedc56eb22fe0294e8d1cac2e40acb722c31c47ef69b8a8168324b1"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\parity.parquet",
+      "sha256": "126035fe2789d0e7c8de61f54b784e6a8bfc3ef03711b9cde7470a345c82e971"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\predictions.parquet",
+      "sha256": "32c9f90b18a7385b68a558d5c827e0578f305dec98e5c7bdae6ffde16c818dca"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\quality.parquet",
+      "sha256": "eb4f29c2a140817007c4f11501f434180bcf5cf9a63fde0a9ae18d7bfdced470"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\quality_deciles.parquet",
+      "sha256": "d34e3631267f285455a940e375755c6b4ad4337424d6c9bed89d9c8221424a37"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\random_baselines.parquet",
+      "sha256": "94b69ae0e18e2dd4a760f41831fcb158e33068d612e727a7d71dd61929b55cdb"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\REPORT.md",
+      "sha256": "aa9b4d9940548b5b452113680f9f32d9ffd4c856bbbaa55304a1b68d6855dbc1"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\run.log",
+      "sha256": "2bd458e1f6b7c9d90faa597d2556677591a76bad3544cb91ffb8dc0762a6630c"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\selected_rules.parquet",
+      "sha256": "843522bca6f384e845cd476fdbc84854aa39a997a66b1c95cdd8aae8cce8033e"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\started_utc.txt",
+      "sha256": "fa24403252c8c9c3787f6d93e7485affb6231c7a62a07463a2727a25849dc53e"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\walk_forward_audit.parquet",
+      "sha256": "2178111bbb54aa47b2e073874d1a20f33bc53f53ca49700cb9d81b22a8b92dec"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_no_next\\yearly.parquet",
+      "sha256": "cbd14b84296c40a19c4c61349299d6972bf0e57abdadfd98f83e0b4c04bea159"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\all_cells.parquet",
+      "sha256": "029e51f81cde6f269ee7e3f2bacbf82d64f337b2d20255e0063fa6a1b5faf196"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\candidates.parquet",
+      "sha256": "65d65361a90cecb93f0150b5ece29ce7dc3a48b7b5ed660567e75848c14faa5e"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\feature_names.json",
+      "sha256": "686947385759b532451b3736b1bcfb2748f321d1cd413caf889c76b43e35c30a"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\monthly_auc.parquet",
+      "sha256": "4fff792336197c423b68d9506efd9a2e09e28bd47783c7ff55c5490062763a75"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\multiple_testing.parquet",
+      "sha256": "dd70fc0de526f3e09dac1433663a4c144e2488ce097eefd884271b468e6d1501"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\parity.parquet",
+      "sha256": "5af64bc74f0e319b32d3de09d7a1bac708b37b327136d39b9ccafdf8a8c43eab"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\predictions.parquet",
+      "sha256": "beb44ade7fc00534aca30c38daa6858f513b60791b4a58e51871e1a875f399f8"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\quality.parquet",
+      "sha256": "59694c8c83476cd244b2ab7696bae0c4b43029140a39b2b8447a6dc738fbebcb"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\quality_deciles.parquet",
+      "sha256": "c1a1daa9c0aa37cce55bc328e95320a15e676051ee9d96fe954aa9ce2571d07b"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\random_baselines.parquet",
+      "sha256": "2a2ddb7d6907933ece14cbd4ee6a4eac7cf60d41aa0d4ceee2cae4ead73ae5f6"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\REPORT.md",
+      "sha256": "3819084251957d8bbf6fc87e046407bb785ab586048f6dd0c0364a960b1e7f32"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\run.log",
+      "sha256": "6fbd671169fd50e6d819176b52ad04858810e7119cafb3fc4e870fb4f7402368"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\selected_rules.parquet",
+      "sha256": "7146ac102244e34c67061d71a51ef937622ee273cbc25d6acaa75fd4606688bd"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\started_utc.txt",
+      "sha256": "f402d1b70ada3c741087c92087c25dd414db0c199fc59fb977c8f564c977b981"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\walk_forward_audit.parquet",
+      "sha256": "a2adc0caaecb85b0ea6c2fe7e9766d2c3d726ba6e926f874c45b1430e59569b5"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_full\\yearly.parquet",
+      "sha256": "9d7c1893e40ebbcf7ad26fea05539c328c2fabfa55f54132e83c3a20c638b58f"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\all_cells.parquet",
+      "sha256": "5e0b83a0c5694537b839f8688ebc1d3c347154bc13161926e1b5fa2f75cb6d42"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\candidates.parquet",
+      "sha256": "65d65361a90cecb93f0150b5ece29ce7dc3a48b7b5ed660567e75848c14faa5e"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\feature_names.json",
+      "sha256": "5116ffa02ac3a739f10b948d3395720d6a6e5a7aec3cf893c01981883c621555"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\monthly_auc.parquet",
+      "sha256": "d7bc0cf09fa3e055f45800fc7818ac1895f0020343e69d74f9a11ad94f8c705c"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\multiple_testing.parquet",
+      "sha256": "b6ec302fe140d48eed80242ccd1b7109b18b91523ba9aa1b704cc006acbbd72c"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\parity.parquet",
+      "sha256": "5af64bc74f0e319b32d3de09d7a1bac708b37b327136d39b9ccafdf8a8c43eab"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\predictions.parquet",
+      "sha256": "71aa2e50da0a08871b568429d7d43222a2317e99872f1fc9aca0088a23d69efe"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\quality.parquet",
+      "sha256": "53ee3270e46bebb2fdcca5e94a7c9352ceba35d292fb960eb88c776e05021297"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\quality_deciles.parquet",
+      "sha256": "98c421043a586807d1dbb6bca2b16571b3a455eb5e27c6a759d55534da264569"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\random_baselines.parquet",
+      "sha256": "ac51cd35d4fcf91e7290dc9b54332c079f2807e9f8c79abdaf4a8825824c453a"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\REPORT.md",
+      "sha256": "6c9cb3acb22f8aa2d12a4a607cbc16b887b00c7810373b9d447793f151487385"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\run.log",
+      "sha256": "13f0307c975cfc6251f7268ce17d7b59c0f576bd7b8b0722b0d1337782ba54a5"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\selected_rules.parquet",
+      "sha256": "7146ac102244e34c67061d71a51ef937622ee273cbc25d6acaa75fd4606688bd"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\started_utc.txt",
+      "sha256": "296556fb34812b08642eb284a665c3e851eafbf468506bf9927c24db6b2a3bba"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\walk_forward_audit.parquet",
+      "sha256": "ef805a884da350e66f5914c1c6048c28a0bc356bd7486c7f83e36b52a6980292"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_OPT_no_next\\yearly.parquet",
+      "sha256": "7daa9255bcfb78fea52c7b3021e355e4c89e2eb4580bddbf36f872c4b5d2f955"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\all_cells.parquet",
+      "sha256": "3bc03e27071a4f42d70688806bf93b474afe827c88afb656a505c1c11dacda92"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\axis_sharpe_median.parquet",
+      "sha256": "b98fa93944ba12feae133702e756d6e6bba1a44d9f1017f16adf4429b8587cc9"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\buy_hold.parquet",
+      "sha256": "814e7619c1f7b77d6943b75a581e67f10ed4e468c752989b1abc07de310cbe7f"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\concentration.parquet",
+      "sha256": "1ec677e31deb78b86dfd0a00e38625033e4910b5a8c01f194355f36bc7f66341"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\concentration_cells.parquet",
+      "sha256": "69721d310b72fab4e90c8eb1e8ef8e774671c6b05ccd60ad639fb2b9fe0b59a8"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\concentration_top_dates.parquet",
+      "sha256": "76e156d3b88f5c01372733e62e1098b375540011c1645bf4b8309a13597f7e6d"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\REPORT.md",
+      "sha256": "9592a0d5a2374e8d99b82dfcbe00b6b8c1cf197a862aae186a2f6e20dd8ea807"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\reproduction.parquet",
+      "sha256": "73050d631f38f727ccb515fc68264378a29098f3253f8b89a0f137dce49390be"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\rolling_12m.parquet",
+      "sha256": "9309a567be18b13623e00ccffc13682cb0ca6813c65f734eac54308f5dba15eb"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\run.log",
+      "sha256": "ea3d6942c091a5fd23eabd4957d4361811a88e42b6ef9d689f51fbfa538c013a"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\stability_summary.parquet",
+      "sha256": "d8ef082119a411a78ce030f9dbf2d5abc62243d42bcdb0e5d83f1f5e9432873f"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\started_utc.txt",
+      "sha256": "3f8f6eb0ce41cee4708c5c20748c26ea6f510ddee1dceb7a9605b2261a90a188"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_OPT\\yearly.parquet",
+      "sha256": "c8f2d594b4193387cda1ba3e930d81670262be0462e1ec3ffaacb39fe67a98a5"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\all_cells.parquet",
+      "sha256": "662e538c2d508812819d49cd9539eb8b68214c9333b7577277358b17eaec1193"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\axis_sharpe_median.parquet",
+      "sha256": "cadcf8bc30c353120558b12186e2412b5a1159b0e1b0dc6aa26c94059ebca8b3"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\buy_hold.parquet",
+      "sha256": "3928d0d048e0a303aa8c2c1b8fdbc9acc5ac36cf7671145a22ad98e6f806f83f"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\concentration.parquet",
+      "sha256": "45064ee09de6c3070484d22773506f8223f8cff7f95f28c60ac43307e972264f"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\concentration_cells.parquet",
+      "sha256": "519dd42ad8c30abfaae83689177692e1298b5abba73143858169a6a22d5885f2"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\concentration_top_dates.parquet",
+      "sha256": "002bba270d6bcf76a59ee93b07a8faec32070a2319098891611cd8a2106dec07"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\REPORT.md",
+      "sha256": "03818339be22120c2e8bddebc22ae212b0006e9c360e4a5f2fe960adb075f3ec"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\reproduction.parquet",
+      "sha256": "4e8ca49014d984de980c3077ce459c9d70a5b1abedb9393d79cfd342adc2c8ad"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\rolling_12m.parquet",
+      "sha256": "5576531d634d10406ba3d671ccc70e354edd21ea8c3c9b169d34d00dd7f3cbe1"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\run.log",
+      "sha256": "68bcb4ef1fd7fa72675f5f650b6145f673720549071b00b1631af3ac4fb6e87f"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\stability_summary.parquet",
+      "sha256": "12060d236259689e7058214eea54874122474ddef460813eaf0961e42fea6792"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\started_utc.txt",
+      "sha256": "0b78ae7c4b9fcbde831cf088b5406a99ad992e3444fc210c0edbad9e560ad796"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_17_PESS\\yearly.parquet",
+      "sha256": "54cb884ad54ed18ed31d006be269b8fa12331acccf8094304d7f8f34f8586678"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\baselines.parquet",
+      "sha256": "f2dea7f57545d70b433fc13348363a517feb845e3b15c8f9dc70e834d50c6905"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\base_stop_delta.parquet",
+      "sha256": "369622cf497e4574a550df4cf1fb1cdf9901d8d29be8897b85dd68c7f1d64410"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\buy_hold.parquet",
+      "sha256": "0b6e9eb4c21835e333ff4a9f08dd537b9ff715d51e0057581ec9aaf2957f7f1e"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\cell_metrics.parquet",
+      "sha256": "f20cf4bb3adf1d4ecfdff79179370b9599301d437c778c52a43bf6b9ead5aaa4"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\cell_trades.parquet",
+      "sha256": "7b31b1b0107d007a30009092c0f708d63addca4be577cdc84ef576589db86691"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\combo_metrics.parquet",
+      "sha256": "7a14b0f59462806f3bde9fac18fa73148578eac2b184a492fba281cf754f6f37"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\combo_trades.parquet",
+      "sha256": "660813d755f619ee8de973fead68ab285a57b27329168da6e4be02f65e605157"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\cost_sensitivity.parquet",
+      "sha256": "11416ad8e90ab4f80291730646ad607e17aa32b7979be1818b32e34db1502a0d"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\multiple_testing.parquet",
+      "sha256": "2871055f76e06ee21b7cf21440c8a4625b76b4da58bd0499d14ced67a20cded1"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\random_repetitions.parquet",
+      "sha256": "05e4a9afd32a7acc9b098213e985167104520335da1b4ec248e9bd1fbc0f9259"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\REPORT.md",
+      "sha256": "fd2350480998036cf6b540fda0f144ec25da7c7c29deaf9c09fc083d0e8b2f94"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\reproduction.parquet",
+      "sha256": "1c2cd5be13ce0aae098ff292c72ebd8d6b18ec3819d1a11d39ef858d946b53db"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\run.log",
+      "sha256": "789c23536676cf44fa87d280ceb8862e343648294e5108a75bcecce471f34a77"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\selected_cells.json",
+      "sha256": "c8840bc5fa6bb0b1bdbbf6e5c8020a097868c959f7353c317faadd0e68bf6196"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\started_utc.txt",
+      "sha256": "17a3685a5176272e5ae20f7cd1918ef1c365bc8ef750d697f48f2df1aa3fccb6"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\stop_cons_comparison.parquet",
+      "sha256": "73738bd6fa80570013feae12bc50bf5096e14e9d723c391322da838ed59b860f"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\stop_multiplier_sensitivity.parquet",
+      "sha256": "b5d9427d16bfa9ead915d77ec48daa9ef5d5078c04e2cf23934ccd616f455ec9"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_OPT\\yearly.parquet",
+      "sha256": "20c761bf47a53ba3eee4dea62914b524b1245d11c2995a88bf27ffaa4a9f61be"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\baselines.parquet",
+      "sha256": "8b7d6cf371d956a4d7783acb400296a8c4ce4776f4a667bf52417f7fcd6bf7c2"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\base_stop_delta.parquet",
+      "sha256": "b44dd086e0c2dc1c4c1dbe2419aa9abdb463b561a9eeff51f53b3b9c1b43a980"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\buy_hold.parquet",
+      "sha256": "adcbab57519bfb92a32dd044967fbe75e8e63bc0457ba741eeebd5ef8bc51ed5"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\cell_metrics.parquet",
+      "sha256": "2da720c9668078d0357bffea6d78947fbe2ed8942469718e238c4658e40ec2ea"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\cell_trades.parquet",
+      "sha256": "dae11e68628df9e2f656690c7154bcf463ddcc33af95ca18fdf0787a8d80b239"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\combo_metrics.parquet",
+      "sha256": "1a2ce7f9543c968ad28d4260f67ef6cc852b88fe286b8b15fd473c90a2bf6f24"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\combo_trades.parquet",
+      "sha256": "43f45e0db1c44de89dd9a8264d74571279b585d31a2733e5acbdd65c191560bc"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\cost_sensitivity.parquet",
+      "sha256": "9e6e89f2d34af82a3b51a5abf806a387367110e392dcc231c2947dedb1f8fb38"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\multiple_testing.parquet",
+      "sha256": "869c8fc1592c6a621c26b0cb5207f1e2f5c8c172af8b0cde2c656df07948276e"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\random_repetitions.parquet",
+      "sha256": "715b5faaf2e399d3f5c712420a2920d2135dbd1d371ccd1daee2104a8304e154"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\REPORT.md",
+      "sha256": "df55cb689e8134778fcbbcc6a84b28a9e6a64e6cc9e97bde897511ad96a39ab7"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\reproduction.parquet",
+      "sha256": "2cdb0792b3d7cea7febce69c6e5d3d490cb1955431d982925cc6a19076156f3b"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\run.log",
+      "sha256": "0fece6037271ba1ba788518a14d4476d6481a1fa4cca561d1f18b10ba5e164de"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\selected_cells.json",
+      "sha256": "c8840bc5fa6bb0b1bdbbf6e5c8020a097868c959f7353c317faadd0e68bf6196"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\started_utc.txt",
+      "sha256": "62dbbfce63714da8677394ec851c6d279b8557ddaba9f88509217ddc7b6262c7"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\stop_cons_comparison.parquet",
+      "sha256": "a38e0efa3c976e8d5db4b183a00af1ca36f3ecd9d6256043d5e9bee8e84cb9f6"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\stop_multiplier_sensitivity.parquet",
+      "sha256": "6ad6b31546da9b2397182e2c770090c15b97ba22cc7da5aa36d89ab5fb6cddc5"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_18_PESS\\yearly.parquet",
+      "sha256": "92e83e16adb8fd670b4a209aa8862e392e8c035b161614fb0f5f8d8200620f92"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_OPT\\boundary.parquet",
+      "sha256": "88bf2320ee53c2116070b8c80e1256de68fbb49dad088ab286c907f228c2d97c"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_OPT\\concentration.parquet",
+      "sha256": "d1f459e1cf82d934c0231bcd5e54e5399772c779bdb82dedfd341d0dfafd45dd"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_OPT\\e1_definition.md",
+      "sha256": "3a74a48cfb9131f76295bd46049fabb9340b5dab940d4f65abe37e3943613d7d"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_OPT\\funding_audit.parquet",
+      "sha256": "2c3726f3d4deffd9e8a9e34923a3e10fb0fe9aa1a301c03013a16cddcda5f050"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_OPT\\inference.parquet",
+      "sha256": "75d20104f204c21f1b442a28abcb2f56d5aa4ad5290340c3de29aef4fd5220f5"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_OPT\\ls_audit.parquet",
+      "sha256": "1ccaef0037af92c81339a6298f7023f4142eda31b5eea3aa174eabe029b70481"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_OPT\\random_matched.parquet",
+      "sha256": "0f8153ac9bea87bb08ec9319a1bd8420b4931c1ddef2da0a651532ac6651c355"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_OPT\\REPORT.md",
+      "sha256": "33244804eef33097639ca6931d07c639d5c1951828de0cc8e0b230544ad043a5"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_OPT\\reproduction.parquet",
+      "sha256": "ab323b6d9ff8ead393573b5bb5cbd559fb354590fcfee9ecb1970b50182ce3b6"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_OPT\\risk.parquet",
+      "sha256": "7b952df504da89d4fd36f21dbd538917fb86a8670f73fea7bf028a0bc026cb35"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_OPT\\run.log",
+      "sha256": "faa699e722fdbe81a548448b8b592e42a9415bfe93cc3a9b715a219d3a758c61"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_PESS\\boundary.parquet",
+      "sha256": "fc5ac63d588d1feeb279074fa4a912fe6e0f54218ee0956b81dcd58ab55b9c58"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_PESS\\concentration.parquet",
+      "sha256": "1d9c9f9a1a45ca0939f1892f46ae60a30c4a07d24cfba61e32f7cdf2b7329772"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_PESS\\e1_definition.md",
+      "sha256": "3a74a48cfb9131f76295bd46049fabb9340b5dab940d4f65abe37e3943613d7d"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_PESS\\funding_audit.parquet",
+      "sha256": "2c3726f3d4deffd9e8a9e34923a3e10fb0fe9aa1a301c03013a16cddcda5f050"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_PESS\\inference.parquet",
+      "sha256": "bdb410b191db85172b1e0cfaf62e4268549ad6e724cbce091aa2281e57b36878"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_PESS\\ls_audit.parquet",
+      "sha256": "1ccaef0037af92c81339a6298f7023f4142eda31b5eea3aa174eabe029b70481"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_PESS\\random_matched.parquet",
+      "sha256": "9de9f7e6663655395906e2b118d1b5e3ab1d740fc3f50a3dabeff1d9af384c33"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_PESS\\REPORT.md",
+      "sha256": "c4bb7660d55235288a813db230f8fb9522eb1717dff616a150a5e69ce558ed69"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_PESS\\reproduction.parquet",
+      "sha256": "4ee7b64a415cb1251375dc1df309b485e6e00e7c633c5501e37a9bac2daa4da4"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_PESS\\risk.parquet",
+      "sha256": "bd079d870a45f3e66cae1c542e02c546c11e0a1eedf0364b9d1a24f08cb48fdb"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_19_PESS\\run.log",
+      "sha256": "ce0c633957c88e27a07dc55b13c099e818e2175c2814d207c62aa6b34b0c5e3c"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_20_21_verify\\funding_differences.parquet",
+      "sha256": "4973b5afaa2e05a66915f4e28d0068b5635518902db180fe2b7b8bad71c715c1"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_20_21_verify\\funding_paths.parquet",
+      "sha256": "ba0e6a788fedc48e450531908c4b7c4e47c418a6181ed7c04e159f963ea3fca0"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_20_21_verify\\input_sha.parquet",
+      "sha256": "523789b868226665a545f33e39aa9174b9c9fa602448d8579ce89cbde30d5502"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_20_21_verify\\run.log",
+      "sha256": "8fdf7ac9a310e5964d5c5bf5dea2028de8cc2e2c4d03c51d3d5bec7f2491f324"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_audit\\OPT\\labels.parquet",
+      "sha256": "f78c087618b0187b7b3063c149d3699b72aadeeccf27d09a4bc94482b7f61213"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_audit\\OPT\\run.log",
+      "sha256": "615c40b86a22606a66a5048f85c73beda95ff2c29e58efbeff062545de82c89e"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_audit\\OPT\\selected.parquet",
+      "sha256": "7146ac102244e34c67061d71a51ef937622ee273cbc25d6acaa75fd4606688bd"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_audit\\PESS\\labels.parquet",
+      "sha256": "2386cf69cd698c2dbd0717d82755920681f843571a3271eaff7bdd47ee53de6e"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_audit\\PESS\\run.log",
+      "sha256": "28c6b718d458a3a3796285b5178a7c9f94167ea816498522f852355a535bdaf0"
+    },
+    {
+      "path": "out\\k45_funding_fix_20261004\\r2_15_audit\\PESS\\selected.parquet",
+      "sha256": "843522bca6f384e845cd476fdbc84854aa39a997a66b1c95cdd8aae8cce8033e"
+    }
+  ]
+}

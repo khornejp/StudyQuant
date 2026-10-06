@@ -1,0 +1,138 @@
+{
+  "experiment": "R2-17",
+  "created_utc": "2026-10-02T09:30:45.863923+00:00",
+  "data_cutoff": "2026-06-30T23:59:00+00:00",
+  "hypothesis_frozen": "F3의 DEV 양수는 특정 파라미터 한 점이 아니라 넓은 영역에서 나타난다: F3 global_ls_account LS 칸의 70% 이상이 DEV·DEV_EX2020 모두 양수이고, 그 칸들의 HOLD_B 양수 비율이 50% 이상이다.",
+  "oos_result": {
+    "cell_count": 360,
+    "dev_and_dev_ex2020_positive_count": 359,
+    "dev_and_dev_ex2020_positive_ratio": 0.9972222222222222,
+    "qualified_hold_b_positive_count": 334,
+    "qualified_hold_b_positive_ratio": 0.9303621169916435,
+    "threshold_dev_and_dev_ex2020": 0.7,
+    "threshold_hold_b": 0.5,
+    "pass": true
+  },
+  "cell_count": 2682,
+  "metric_row_count": 8046,
+  "workers": 4,
+  "model_training": false,
+  "live_orders": 0,
+  "segments": {
+    "DEV": [
+      "2020-07-01T00:00:00+00:00",
+      "2026-01-01T00:00:00+00:00"
+    ],
+    "DEV_EX2020": [
+      "2021-01-01T00:00:00+00:00",
+      "2026-01-01T00:00:00+00:00"
+    ],
+    "HOLD_B": [
+      "2026-01-01T00:00:00+00:00",
+      "2026-07-01T00:00:00+00:00"
+    ]
+  },
+  "inputs": [
+    {
+      "path": "artifacts/btcusdt_2020_2026h1.parquet",
+      "bytes": 182249475,
+      "sha256": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4"
+    },
+    {
+      "path": "artifacts/short_quantile_sweep_20260826/feature_cache/0fc9086b7d4b4c43c8b84f6f/feature_rows.parquet",
+      "bytes": 2259089211,
+      "sha256": "2666ab3aed65a3d2e321c5419e232034bf6c1aca9dbcf507dd2a5da3d01a8700"
+    },
+    {
+      "path": "out/k45_classic_rules_r2_14_20261002/all_cells.parquet",
+      "bytes": 367756,
+      "sha256": "8feb604c4d758ca292878eb3abe40b00ad5b1a04e2c47ad2d0f03667b26c252e"
+    }
+  ],
+  "sources": [
+    {
+      "path": "D:/StudyQuant/out/run_k45_contrarian_robust_r2_17.py",
+      "bytes": 28911,
+      "sha256": "6a40e25f5b3f67d5dbdf29751f14526b62ec5c8b94a658621f592a0a890ee306"
+    },
+    {
+      "path": "tests/test_k45_contrarian_robust_r2_17.py",
+      "bytes": 2441,
+      "sha256": "468e81fc71728c0021e7a42e487679a3cac85a844b148ec28b73867ccb8c88dc"
+    },
+    {
+      "path": "D:/StudyQuant/out/run_k45_classic_rules_r2_14.py",
+      "bytes": 65148,
+      "sha256": "39f3ebe3491e477a074c81304aec4deadd291d2b33ac8f75639fe71cd4d62eed"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/reproduction.parquet",
+      "bytes": 7504,
+      "sha256": "4089e5cbfafd45b5960f34dc2264648a2f6d2ad0e2ff785ce633ffc7059cd153"
+    },
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/all_cells.parquet",
+      "bytes": 2357193,
+      "sha256": "08fe14fd95377486c5b49d3e845f76071de9ba0fee87e1c60db84181d6251021"
+    },
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/yearly.parquet",
+      "bytes": 291344,
+      "sha256": "967b8b92f19f82e67f906c26a6a3b4b96d7968e428cb2dd57b6a8b44b42f3c80"
+    },
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/stability_summary.parquet",
+      "bytes": 4629,
+      "sha256": "c558bfe2e06bc19827f8fb9be6d92e5a1e4897db943528987ea5531cf1384935"
+    },
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/axis_sharpe_median.parquet",
+      "bytes": 4374,
+      "sha256": "6fa77f6a8028432f33e6948db325c080055df504e7ad0f0e7c8521a06d01581d"
+    },
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/concentration_cells.parquet",
+      "bytes": 4543,
+      "sha256": "7c65f71f1a1654612bd90a77fbb25d574e4ef5675505f2c30a1de088b9396092"
+    },
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/concentration.parquet",
+      "bytes": 10556,
+      "sha256": "6c859433dc4d415de0f0ea3c13692021e2260adbabb95ab75aa89911528fc24f"
+    },
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/concentration_top_dates.parquet",
+      "bytes": 11452,
+      "sha256": "b4a299aba42f330fd4dc5afb20bcc29e89b64db530aa5972b7c49988e6a07048"
+    },
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/rolling_12m.parquet",
+      "bytes": 37422,
+      "sha256": "37f2c71de2ad11e3a755b48c0146426b798172276ef0de390c3ed944ab3ecd58"
+    },
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/buy_hold.parquet",
+      "bytes": 3287,
+      "sha256": "92f75567ad259abdefebbac032062238f4c59c4a98d7616f428e62efc8472a95"
+    },
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/REPORT.md",
+      "bytes": 402590,
+      "sha256": "0ed61892315c8b9c3d869ef0a4246a8c44d4f3cf6f0d63c7b988d897e14647aa"
+    },
+    {
+      "path": "out/k45_contrarian_robust_r2_17_20261002/started_utc.txt",
+      "bytes": 32,
+      "sha256": "f4582026a5e99c132bf1f5599c62932c0c15b0e3a021645cc14fb83b1598f46a"
+    }
+  ],
+  "methods": {
+    "funding": "R2-14 settlement_events: UTC 00/08/16, prior-minute rate",
+    "execution": "R2-14 simulate: next minute open, one position",
+    "pw_ci": "R2-14 circular moving-block bootstrap, 1000",
+    "fixed_ci": "R2-14 circular 20-day block bootstrap, 1000",
+    "random": "R2-14 random_baseline, 1000 circular shifts, same n/sides/durations/exposure"
+  }
+}

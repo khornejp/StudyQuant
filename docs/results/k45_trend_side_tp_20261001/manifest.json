@@ -1,0 +1,52 @@
+{
+ "label": "EXPLORATORY_AFTER_DEV_FAIL",
+ "data_source": "Binance USD-M BTCUSDT futures; frozen local parquet only",
+ "run_utc": "2026-10-01T01:04:21.178918+00:00",
+ "data_cutoff_utc": "2026-06-30T23:59:00Z",
+ "hypothesis": "\uace0\uc815 TP\uac00 30\uc77c \ucd94\uc138 \ubc29\ud5a5 \ub450 \ud314\uc758 \uac70\ub798\ub2f9 net\uc744 \ub192\uc778\ub2e4.",
+ "inputs": {
+  "out\\patchtst_k45_causal_admission_ordering_20260930\\causal_candidates.parquet": "589a6412cd589a1be522dd0d59e5fde15edecaefb80299def20a373f6ed2205b",
+  "artifacts\\btcusdt_2020_2026h1.parquet": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4"
+ },
+ "outputs": {
+  "out\\k45_trend_side_tp_20261001\\grid.parquet": "79696db478b4e33cd204ca2cc84959b4761bc733bcd83d5cdc884c526003c198",
+  "out\\k45_trend_side_tp_20261001\\paired.parquet": "3fea7afc2e8349e5c30e3d1d20c7d81746b06fa70bf953da76ad38c65f2b3f68",
+  "out\\k45_trend_side_tp_20261001\\gates.json": "ccfd2cf7a24bae8a21863c607ce98f3331c1e221eb92534ecad552730ae48b4a",
+  "out\\k45_trend_side_tp_20261001\\REPORT.md": "9f0d92a203314ab9a1e8e8aac418e462151832dece6cf860cfb7e5561615d5f4"
+ },
+ "source": {
+  "D:\\StudyQuant\\out\\run_k45_trend_side_tp.py": "791d79e5b17508fa3b873f70400fcfb66e565baa4bf2ff599a886128a6af25c7",
+  "out/k45_trend_side.py": "0dbfca1ce56f680e649e85e50440efb6d87029d816eb113c7a583fea0fd8fb8f",
+  "out/run_k45_trend_side.py": "db030543cab60e93e659d32692aaa22495941b4b7003f176a1db6fac837a4770"
+ },
+ "segment_results": {
+  "DEV": {
+   "tested_tp_bps": [
+    50.0,
+    100.0,
+    150.0
+   ],
+   "book_results": {
+    "50.0": {
+     "net": -0.8335272510354486,
+     "p": 0.7212139393030349
+    },
+    "100.0": {
+     "net": 0.19857044448930186,
+     "p": 0.45807709614519276
+    },
+    "150.0": {
+     "net": 0.7255919973417979,
+     "p": 0.3513324333783311
+    }
+   }
+  },
+  "HOLD_B": {
+   "tested_tp_bps": [],
+   "gate": null,
+   "book_results": {}
+  }
+ },
+ "new_model_fits": 0,
+ "live_orders": 0
+}

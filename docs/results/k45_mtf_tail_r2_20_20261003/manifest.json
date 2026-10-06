@@ -1,0 +1,150 @@
+{
+  "run_started_utc": "2026-10-03T00:31:42.824232+00:00",
+  "run_finished_utc": "2026-10-03T00:43:41.707564+00:00",
+  "elapsed_seconds": 444.8088370002806,
+  "data_cutoff_utc": "2026-06-30T23:59:00+00:00",
+  "frozen_hypothesis": "1h 모델 점수 상위 꼬리(q <= 2%, 인과 기준)만 거래하면 같은 tf·h·게이트의 R2-12 E0 전체 거래보다 DEV 거래당 net이 높고, DEV net > 0 이다.",
+  "out_of_sample_result": {
+    "eligible_cell_count": 48,
+    "pass_cell_count": 45,
+    "all_cells_pass": false
+  },
+  "hold_b_seen_excluded_from_verdict": true,
+  "local_data_only": true,
+  "downloads": 0,
+  "model_training": 0,
+  "live_orders": 0,
+  "cpu_worker_limit": 4,
+  "cpu_workers_used": 1,
+  "cost_bps_primary": 4.0,
+  "funding_included": true,
+  "single_position": true,
+  "tail_cell_count": 120,
+  "tail_metric_row_count": 240,
+  "threshold_methods": [
+    "EXPANDING_OOS",
+    "ROLLING_180D"
+  ],
+  "tail_modes": [
+    "MAX",
+    "SIDE"
+  ],
+  "quantiles": [
+    0.01,
+    0.02,
+    0.05
+  ],
+  "seed": 20261003,
+  "inputs": {
+    "out/k45_mtf_entry_r2_12_20261001/predictions_1h_h60.parquet": {
+      "sha256": "f8e239493e5eb1def1f17b88dbc2b411b6bfccfe3ad80aaebd9f183accff166e",
+      "mtime_utc": "2026-10-02T01:49:04.135551+00:00"
+    },
+    "out/k45_mtf_entry_r2_12_20261001/predictions_1h_h120.parquet": {
+      "sha256": "d1a68690ec11cf824cc91e5d71d0484189931e67c133344fe9ba32a6ffc1b145",
+      "mtime_utc": "2026-10-02T01:44:15.768832+00:00"
+    },
+    "out/k45_mtf_entry_r2_12_20261001/predictions_1h_h240.parquet": {
+      "sha256": "5ed307815b9d544d4549d5b384c6699211aa795045cb9337fc61da05d069758a",
+      "mtime_utc": "2026-10-02T01:37:37.173884+00:00"
+    },
+    "out/k45_mtf_entry_r2_12_20261001/predictions_4h_h240.parquet": {
+      "sha256": "59581c92e109e7ae3d36471a9d512300b2c55d3912b86d251008792cd02af503",
+      "mtime_utc": "2026-10-02T00:46:47.602615+00:00"
+    },
+    "out/k45_mtf_entry_r2_12_20261001/predictions_4h_h480.parquet": {
+      "sha256": "2ce2673dfbc539c87b06abd1c219b3590686b85892d5eaaade5ae2ecaa6cf8b3",
+      "mtime_utc": "2026-10-02T00:43:30.202413+00:00"
+    },
+    "out/k45_mtf_entry_r2_12_20261001/core_metrics.parquet": {
+      "sha256": "80a62fb5f87e35636e11a7c9dd2508518c644da05bf52a0496ab07095c14b74a",
+      "mtime_utc": "2026-10-02T02:13:10.869708+00:00"
+    },
+    "artifacts/btcusdt_2020_2026h1.parquet": {
+      "sha256": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+      "mtime_utc": "2026-07-31T05:10:34.534496+00:00"
+    },
+    "D:/StudyQuant/out/run_k45_mtf_entry_r2_12.py": {
+      "sha256": "b0ad23c47d9c8d2dd033421eef8adc741524a7f4f581780c0f5a8cc5895fb711",
+      "mtime_utc": "2026-10-02T02:02:40.752480+00:00"
+    },
+    "out/run_patchtst_k45_flow_inference.py": {
+      "sha256": "2b298530680ded1d8503fc73a3c1da4a91ace47714d0c3f1d561f55ad7604fe3",
+      "mtime_utc": "2026-09-30T12:09:34.029302+00:00"
+    },
+    "D:/StudyQuant/out/run_k45_classic_rules_r2_14.py": {
+      "sha256": "39f3ebe3491e477a074c81304aec4deadd291d2b33ac8f75639fe71cd4d62eed",
+      "mtime_utc": "2026-10-02T07:31:35.042715+00:00"
+    },
+    "D:/StudyQuant/out/run_k45_mtf_tail_r2_20.py": {
+      "sha256": "857556a452e9955ba32b71d7b879272d4d1b0827846d6d89dd576f5c19bbe451",
+      "mtime_utc": "2026-10-03T00:35:59.882443+00:00"
+    },
+    "tests/test_k45_mtf_tail_r2_20.py": {
+      "sha256": "707076f023ed70282042310a0f0961d1e9bd5591de71d21bbbd9bb4faa31bafb",
+      "mtime_utc": "2026-10-03T00:28:56.842632+00:00"
+    }
+  },
+  "outputs": {
+    "baseline_repetitions.parquet": {
+      "sha256": "92072a8738976c142f1e7ec547dd4fd06348d8cd1e329e1021972149feb7cb80",
+      "rows": 240000
+    },
+    "baselines.parquet": {
+      "sha256": "88b44e01f303426afb70e993a4417ca97bdf192517763a442a1cb70a1fb24010",
+      "rows": 240
+    },
+    "causal_cutoffs.parquet": {
+      "sha256": "d53a4670ee0af3edc82e85b61266f0d83930e3c1a0553b2e654d2abe72ca0d2a",
+      "rows": 312628
+    },
+    "cost_sensitivity.parquet": {
+      "sha256": "6ffda43ec8fffee9036346cc6d61affe51514f1ee57895d565f3969b64e99dd9",
+      "rows": 960
+    },
+    "dev_daily_returns.parquet": {
+      "sha256": "35e4033e3f8fb53d3d8ab87e44f99dd4d311e2cf54bb3c98862aa19c5ba81f0b",
+      "rows": 1819
+    },
+    "hypothesis_cells.parquet": {
+      "sha256": "9a3d25da21e27d18ebb59b2d5f74e118d90353f969d110d52f54cd9031ad7bc2",
+      "rows": 48
+    },
+    "hypothesis_summary.parquet": {
+      "sha256": "f5df6bb67542aa0ecf7708406bfc3bdf547b0ef2fcd907049d38186cb42778a4",
+      "rows": 1
+    },
+    "multiple_testing.parquet": {
+      "sha256": "6c9345124b760707a10b4796f0e0419b31aace97ac3aa23fbd460a316c389890",
+      "rows": 1
+    },
+    "r2_12_comparison.parquet": {
+      "sha256": "fc89aeeef0123075983e5f070a90ec0c6aa4f52822dee84fb6aa3e408e398465",
+      "rows": 240
+    },
+    "REPORT.md": {
+      "sha256": "50c4fe79c13eb097ec1bd353a50178cbd0fa77c0e89e59f45e33c3c55a6dfb65",
+      "rows": null
+    },
+    "reproduction.parquet": {
+      "sha256": "37100e13e3c1d2ca4fb16816142d14adc700599e522a5c3ceff8f028ab3ca369",
+      "rows": 8
+    },
+    "started_utc.txt": {
+      "sha256": "615425a9eb6ce784750d36af28c91cf3c5d2443e5d29be1f46e81397909f46e4",
+      "rows": null
+    },
+    "tail_metrics.parquet": {
+      "sha256": "d823d67d7970cb44fee15975629c45d7d281e966c9f76ecb8df3f0ca626e356b",
+      "rows": 240
+    },
+    "trades.parquet": {
+      "sha256": "f48465bf34ca82761fb25d5dd93f020906c2bd7f969e8e24dc029f6342438edb",
+      "rows": 43920
+    },
+    "yearly.parquet": {
+      "sha256": "4c4ffceb64e5b48a314fd48a3eddc5e4d4c44638e85729d2572748c22790f627",
+      "rows": 648
+    }
+  }
+}

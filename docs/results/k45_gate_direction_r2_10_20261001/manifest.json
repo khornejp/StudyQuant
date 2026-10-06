@@ -1,0 +1,485 @@
+{
+  "run_started_utc": "2026-10-01T06:26:48.001743+00:00",
+  "run_finished_utc": "2026-10-01T10:19:59.470917+00:00",
+  "runtime_seconds": 13991.469174,
+  "aggregation_runtime_seconds": 182.6386430999264,
+  "data_cutoff_utc": "2026-06-30T23:59:00+00:00",
+  "frozen_hypothesis": "보유 시간에 맞춰 학습한 모델로 단일 포지션 한 방향 규칙을 쓰면 DEV와 HOLD_B net이 모두 0보다 크다",
+  "out_of_sample_result": {
+    "matched_cells": 91,
+    "both_positive_cells": 8,
+    "all_matched_cells_both_positive": false
+  },
+  "segments": {
+    "DEV": "pilot_fold <= 605",
+    "HOLD_B": "pilot_fold >= 606; exploratory"
+  },
+  "catboost_params": {
+    "iterations": 500,
+    "depth": 4,
+    "learning_rate": 0.05,
+    "l2_leaf_reg": 3,
+    "random_seed": 20261001,
+    "thread_count": -1,
+    "verbose": false
+  },
+  "purge_rule": "signal_index + h < stop_start_index",
+  "test_valid_rule": "signal_index + h < test_end_index and signal_index + h < market_rows",
+  "residual_causal_margin": "role/h target rate = DEV score > 0.20; fold k quantile uses pilot_fold < k; min_history=2000",
+  "cost_bps": 4.0,
+  "seed": 20261001,
+  "random_repetitions": 1000,
+  "local_data_only": true,
+  "downloads": 0,
+  "patchtst_fits": 0,
+  "live_orders": 0,
+  "inputs": {
+    "out\\k45_gate_direction_20261001\\dataset.parquet": "b099a66e6dce89c0c707fce3c3b5e1744248112fcbe3fdf942616ef27e8b260c",
+    "out\\k45_gate_direction_20261001\\predictions.parquet": "31b341e49c421aa9e104319505a2ed1cdc426d0f74a702cc91d1c4424a1b6cb8",
+    "artifacts\\btcusdt_2020_2026h1.parquet": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "out\\k45_gate_direction_r2_20261001\\manifest.json": "cba80925cb3e6589362708bf776bdd2f09d7b42b115a87eba7de07d10713e878",
+    "out\\k45_gate_direction_r2_8_20261001\\manifest.json": "fcc835315ab8bb1afcfccc6a12e7c74fa5c63ff1665d1640a007973af96fd6ec",
+    "out\\k45_gate_direction_r2_20261001\\r21_long_h15_predictions.parquet": "a43f8dd1b5c4e7e13cc2a89a89b3ce52b6defde37f4d033d0508d890b7628688",
+    "out\\k45_gate_direction_r2_20261001\\r21_long_h15_selection.parquet": "bf6bf32070542198832560aaa718b8a607a1213882f343df927145609dc6cd79",
+    "out\\k45_gate_direction_r2_20261001\\r21_long_h45_predictions.parquet": "97f70edb51b38330aa9f0c6fc6d9c90158cb161960fd011266ff714bf1eecf2b",
+    "out\\k45_gate_direction_r2_20261001\\r21_long_h45_selection.parquet": "e5bde520ac6f3b8d52000265fb0e3d94af5a862f6d10dd6a74c293548c98c04b",
+    "out\\k45_gate_direction_r2_20261001\\r21_long_h60_predictions.parquet": "c656ad8a7d022f3808c316cc3107586dfa0179017d00d533bfcdd904c3e2116b",
+    "out\\k45_gate_direction_r2_20261001\\r21_long_h60_selection.parquet": "19aa7c1732fe14bc7cbf8323ea6d78bfc5e973ceb5b7ef546a0f2ff43eba2b59",
+    "out\\k45_gate_direction_r2_20261001\\r21_short_h5_predictions.parquet": "a58d5940516c5237cb119a260ade01c0b828e08452ac343b8df4620a998d0d9a",
+    "out\\k45_gate_direction_r2_20261001\\r21_short_h5_selection.parquet": "03d2011efd72fcbdacf1855c852a0ccf742230a3f794bac217f522d4be542826",
+    "out\\k45_gate_direction_r2_20261001\\r21_short_h15_predictions.parquet": "2857c564affba037822fb421855481cdee77fbe0b38df40b7a8ab2e59f5ee800",
+    "out\\k45_gate_direction_r2_20261001\\r21_short_h15_selection.parquet": "aa18b31cd94de45236863feeda648cec4b451f844db8438d39e03f506eab8e95",
+    "out\\k45_gate_direction_r2_20261001\\r21_short_h45_predictions.parquet": "8d6390a18c37722810f1aeae7e1d640ff991e5ffed7c3b1c277a45927c1e6215",
+    "out\\k45_gate_direction_r2_20261001\\r21_short_h45_selection.parquet": "3d60d047010612ef99c242fb078cb23b4b89e4d9b52e697d5e72fc2cf9d037cf",
+    "out\\k45_gate_direction_r2_20261001\\r23_residual_predictions.parquet": "9b7c6dedb9d173773483dff7fce80f3b11794af75006ff88579a30cf880b7425",
+    "out\\k45_gate_direction_r2_20261001\\r23_residual_selection.parquet": "d7c499f99143f985180cc8b6f5777dce8a115ad3d3e5a38ef90ec2a6da45e6e6",
+    "out\\k45_gate_direction_r2_8_20261001\\core_metrics.parquet": "7bf43e88d78a248f2953de715b71f9ab8274a83f12d5da7cdf7af6584319b1e2",
+    "out\\k45_gate_direction_r2_8_20261001\\yearly.parquet": "6f18ebeb47a05f2cc550238b44cce234948f19f393985a9519fc0a871febb968",
+    "out\\k45_gate_direction_r2_8_20261001\\arm_contribution.parquet": "5751c5ba9a54736e40447454bda4afe4c32b94bb9ad74bfd043626bec0c85a11",
+    "out\\k45_gate_direction_r2_8_20261001\\baselines.parquet": "e97013e2becb0c3481bf76a74ed0dc717932d621da957ef5b923f54d61bf84c9",
+    "out\\k45_gate_direction_r2_8_20261001\\dropped_signals.parquet": "6a2a39fbea6365921fcb87aa1d714bfb6b871bfdb04052e6f9f15a6d63da086b",
+    "out\\k45_gate_direction_r2_8_20261001\\funding_summary.parquet": "35b0d7c36e462fc7503f4969f5f2a97ce8863006cba16d4e02bd2bd4d8622f57",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-01.zip": "7f81b2f3694d13779e7e896b69d60cd61e9444d7b9f9e90df761935e1c1b76e2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-02.zip": "6599466d108d120c64a078824326c063ed2d4335b3292e52c5e572f79166533a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-03.zip": "eee845fde6336e29d25889563cba3d2cff2d4d640e51fb1f82ae9b28cedaee77",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-04.zip": "d009ce034d08c3dcf3e7f874b0f8b0ec76ba507bc6bb4e007e541df537bafbce",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-05.zip": "3f2b56dd6b9a42457009bb367d0adadd3cf7e2216cd325172d0089e3883125a8",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-06.zip": "30b3470ff98576578973d75e3c157a5cbf1778b11e4c26b4b4ff70a3cbb348ec",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-07.zip": "18dae7b11075fc0fba79ad47df46683415cba5d027caa69c66bc2a5c9d9b459a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-08.zip": "e6f6d1749f674c85d4766e0eb36af6ea40d91a0674234d30df80eb9876b094e3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-09.zip": "7ae9a3b6afb2dc06e46080582908ec8c27063b707a14c7f1e679dc991ff48032",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-10.zip": "4c55b191c101f39c7fb193a6529665dd9e83302ca21876521e4c93b3902e9fb1",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-11.zip": "676356a2d075caa51b4f8ada026e9430dc320ffd23d2343b13b7aa25324ed6d1",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2020-12.zip": "d7390f90edf54cc4ad9bbe78e2f6b291ae06ad9539f591a2d0fce445873bbd63",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-01.zip": "cff916dc4b638ec3de97828e8911cd91cf7d7a3d0836ec0175869c374e66823d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-02.zip": "819a7b107443686adb313fc5fc223302a29f3981e1d1bd9828ad0ade65a8a8af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-03.zip": "2125fd300848938c7b992b8f7b7b5007d5b277a4ff1ebda7da083b40242729da",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-04.zip": "9cd888e3b0a1954813d0062c2e60426fdc8e34a7f258f6838371ec67f535b028",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-05.zip": "ed934afb9cf84df6ecae742e755147333a84244836a66b51523abc66dd5f63af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-06.zip": "7b8d9bfb8816636b800764dafb2aa2307d19166c695bfa245adbf7d01d61f766",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-07.zip": "8ab3df641d3bcf40527491f8e26d046ad2b662d1950ead9555ad32975571b7fe",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-08.zip": "7eb681cc45b94176f4b9192a62c3a1925d79031ba001cea2d8dec6ff6e5b9c35",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-09.zip": "03f25a7c25eef18d5f5b5b7bb0b664cab7a210b409f37e95a54e141808a0752d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-10.zip": "f25820d6add687addbca3ef43bee58f70853a6da53832a0c1bc22d00dc8ec64a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-11.zip": "e2e6b2d7218607e7e4a38137d50f553c2cfb901275c19edf567024c1cc6de85f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2021-12.zip": "bf3ce484faf41d7dccfd38c5cc3d8de34d8297df30ab10784e874cc10fd1b310",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-01.zip": "22ee19079b620f5c6d820e7d7f8bafa7fde866d89bd664863b8bd527749c12cb",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-02.zip": "fa95088258a905c79ab79e8984d2f6f66933ec2e814dbab4ef9da89b01ab484a",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-03.zip": "4cf0883bc07f4ed4cdd3b0d8c0d166b4d15d21e666ab752f9f44401af4d6172f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-04.zip": "57e2776cc68b3169fc9f8632dad67278f470cd453407a8ebe6c87963c8a31357",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-05.zip": "bced8a5013d09742b96682e6fd01ad4456213515a03d7586ec2b1f2689af5255",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-06.zip": "0cd0708f8903829eb46f98cf60f4b2516c986e1ccddf6620a5912b48e16baf93",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-07.zip": "29d58cce0cd45f74c6a112039835c6d9ee5a7e60e7c38c2503beb7930453a4fe",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-08.zip": "6f4f0c6c84c05694b4b4a5c085776730fd4059723eecd98ee6ffeb3fde4da811",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-09.zip": "d62cd4e13009de37add446dc4f63ead4c56dcc4955a1e60f6726bcadc5a68fa9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-10.zip": "ad9efed10d4ca1567b865d7a158790977cec1b925395634217069df6696c8bc9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-11.zip": "8febe5bec1a029e993bbf27490761f8c47c32849bf7dd13441b2b2f6ec1ffb51",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2022-12.zip": "4218c78331bcc4dbeb5768fa112242a880971c1f2cfd1d3f32aaa26ca34069af",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-01.zip": "05e3df32f28d0d50f4c5a280adee9368b4a66fc68c6ddca1b3277087ac0d19f5",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-02.zip": "5227accd9aaa59f71f5e682abffb58be5f99573ed208ab968b1704c81ac11345",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-03.zip": "ab022adff9b853d2f33cf80154e77c770f57c3392f0bbc36564b2e2cdbd0e872",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-04.zip": "2931039d26818edc65d4faefba84945fd1ba52989dd58fb127dc3cd7a12c7fbf",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-05.zip": "5d026fece46df86293054c8c56c2c8de575d30161b82979b11831831217a246e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-06.zip": "3ffdde6f1dc9c3c065d77ae43f3ba64d19d4cb76512d4bc1d541933d4fb2e6f7",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-07.zip": "0304baed9fd407293a8a8040b30a1b68bd344803b630d33530375b421733a930",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-08.zip": "516a8f50631c6ede6a9642f6d1590b6a22c33ba09935501d2ace8dc1396501fd",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-09.zip": "3fd9df6fd1eef33cf5fe625c27012359bc6d64a68c109305d7b44a0354f533c2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-10.zip": "03105cc140150bffca834bcccbddc6cfee245e079d2df1759653243bd6e92448",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-11.zip": "8015d2997f8d5e757ff3707ee87800ca30a74da0129daa747b64117f07bcc186",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2023-12.zip": "8f02fdd2a2da261bbf13ab301c74bdb57fae005f19d5088e9ece5f8824c1a2a7",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-01.zip": "3e0d30870672aa8f0f937881056e3cfd55913ae5c780cd50b33f2763aa0ba58e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-02.zip": "daf1e4901e3d6436d82ad60f90d007eb5300be8047cfef121007203a7212cde6",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-03.zip": "711dcaf2a341aedfd06447b4117b540f60adb0784c5e64a313c718e4cf092bc3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-04.zip": "6d220b8e2815362a11d294d35dbca28568370d8295351937eceec10f2b359b85",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-05.zip": "aef8c5fdce1493fd570b5829a72f2f17c7e459483390f25544d16c2a30be592e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-06.zip": "43fc4473820d1fb4fe340d1b1951a87555f6841aa352e684fa95d6adffce04c6",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-07.zip": "acab0593c1452660ce74a6c239fb215c1192b0a9c6e8c1689e6495de40a0174b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-08.zip": "7003d29a43dd5f9357f838da8766834954939e22c1d80af682d9f33984f67b71",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-09.zip": "6ef23b02392b481ef9c3855434bf3644289fb6e228b4f7d9a0dfc6d3cdff1116",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-10.zip": "26db65ac8020d80ece35df79c254c5f7e24427529bcceeb2972748c4fe2d2707",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-11.zip": "e1b19cccfe2cdcba48b022790789b7b01edd86c075f39bc152e44c267d43bd51",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2024-12.zip": "069409f525ebf6370ee1c7defe475167de4b97284c5ac8e68768652968cd3dc9",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-01.zip": "df725010d55458866eb5a47e9ee708c6796c9d7e77b14c38342cea11f381815e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-02.zip": "e918b90fb33df3a3317feea13807a892047f1ec86eeac100bdb7b3dd83285d46",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-03.zip": "a3b95cfb315641fbfddc61eb32adf2a2588afb7a3973a61f464aca007ad43e3f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-04.zip": "01dbb7bd0135f98bd63bdde6b943cde1accc1770cabf92f68a1ec0653ced3888",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-05.zip": "e7355e2775b88009c984db1783bb8ed6b5f24ede2b52bb764151b5722d6a5e42",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-06.zip": "a1f4a40953740fa83ee9ad97776ff8325d1958654a67f1325614071a983819d4",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-07.zip": "b097dff828f6e43fece23db0d3cb98042a9d7bc19693b8cbfd051d88eb973b7b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-08.zip": "1180129860b6e196e8d70bb9719e81573aa6b4acb423ba5ee7f82f10c836f7ab",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-09.zip": "21dc6570fc6bffad0e7b5f9e99211b82ad07c95ab4f18c3a2daa3b95ec98344c",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-10.zip": "9ecdedab6344fc4cdb154763266b8e09627a71c3cc5574cf868158b541c259c2",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-11.zip": "23735400405627d610123e3a43db3e98ae7addb93459cd670e65a7659a5f081b",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2025-12.zip": "35318b789f020b0e04c9043112480743855554e52e1d188437cbdaa67246d51d",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-01.zip": "fcdc796484f395830d418588a34a26baed8849dbef0ff2b56173247e493ff51f",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-02.zip": "80df1dd669dc1e3afc360c9da8b9a949a127fce088eedbf5bf708bd37b0a1f58",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-03.zip": "5c069d5e9597a44fd0e213395082e59ff223fb99c9eab3a2a5a2a5622ba7867c",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-04.zip": "51cdeb4de7d5ef1d4eece80b6115e391bdf7a2d0803bf9ad8371ab23340b22d3",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-05.zip": "445b65fd6b17bfcfb5e4d035db29fad34f729fa078f0449024db42621be84e6e",
+    "artifacts\\funding_2020_2026h1\\BTCUSDT-fundingRate-2026-06.zip": "cff97ce688329592bccbbf5873b5c7021649e093f5f5806e332c5b4fb7fd6a00"
+  },
+  "sources": {
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_10.py": "af87695411df1c70d52f8928b1c83eff8fe62f57ee1cb584d44477c7ecde2329",
+    "tests\\test_k45_gate_direction_r2_10.py": "8caac68f63bcbdd799328d03f33fa96e21f6540ae6d24c895d83f0d0ef4a3db0",
+    "D:\\StudyQuant\\out\\k45_gate_direction.py": "69deb6e4d7d87d063a4d9e169fcd47666a96b296b1c9a86b5e1b14256d4a04cd",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2.py": "a9fa8d49d743872b932ded087d8abe5bd01fbf54ff5cd85da72960964b8c5246",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_8.py": "cf7378d9f2c10e4dd62b195c0ba8c3330881f26bd7fecc24097b4643f98ee0a8",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_r2_6.py": "ffaa3d86a38424267a45ea1947bb578680aa0b8a36bacf2f2a4100d61db4659b",
+    "D:\\StudyQuant\\out\\run_k45_gate_direction_walkforward.py": "953286b40afebebb9e81ad70bf61ba8e345af6fd5c0034b2fc6f057b55bfc31e"
+  },
+  "outputs": {
+    "out\\k45_gate_direction_r2_10_20261001\\arm_contribution.parquet": {
+      "sha256": "b26fd1a0c92fd25b47ab7cb65b124399372c14412fa5d423025772ba5337fc28",
+      "rows": 218
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\baselines.parquet": {
+      "sha256": "1f6bab24a98a896c0bc8d689a4511d94f1c6597e0804d23cd007004a15986825",
+      "rows": 218
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\causal_thresholds.parquet": {
+      "sha256": "37ef81d8078c28155666d7e83c8bece9a1c342f47bea4cd2d67234eed5c0ee68",
+      "rows": 3726
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\core_metrics.parquet": {
+      "sha256": "c99ad99f8fe49c5776cb479b4bf5a45d3b7c905fd6ca2e3c98c5d78e2c63df0e",
+      "rows": 218
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\dropped_signal_ledger.parquet": {
+      "sha256": "2c27ebf6b65e171a42d0bd52dd8bebda85c1b9dae52ad4f6ce3e8571d79d2fa3",
+      "rows": 579750
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\dropped_signals.parquet": {
+      "sha256": "788f25901175f135d17ccd682e8968eaabba6a97679f422ff18bedd01ffc4567",
+      "rows": 218
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\funding_summary.parquet": {
+      "sha256": "ea76eb4c687193d40347819741f74adf47fd7fddec4a814231f2db4e020a3a62",
+      "rows": 218
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\grid_summary.parquet": {
+      "sha256": "2fb0137b16ffc144f86844300da48a7b98dd6707db61abb8e60c37fc6288b68d",
+      "rows": 218
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\hold_b_monthly.parquet": {
+      "sha256": "02d788a60232e47560696ff3aa0a0420f661c5eee90f93b49c307d57452d225e",
+      "rows": 546
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\matched_vs_mismatched.parquet": {
+      "sha256": "bcfc3e015bee44ba0986339dcd73b98b332bd23e445208d90bdd4751491c19b2",
+      "rows": 36
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\model_deciles.parquet": {
+      "sha256": "3d2112bc557487d2382061df30bdad6e83a356b90ecb3941c0b07940babab8ef",
+      "rows": 440
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\model_fold_status.parquet": {
+      "sha256": "8ed22ae5cb902f2aad7a21f29e5992357dfc35c4afdc2eed0eca032bcdc915d7",
+      "rows": 13767
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\model_fold_summary.parquet": {
+      "sha256": "109a949f0b546d4ba68902efd2b6932eff21d8dcb251afd7d0f0ed3e4625727c",
+      "rows": 22
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\model_inventory.parquet": {
+      "sha256": "caf102b564cb82b218aa17cfde7f682935b7d094cd568c0cf86bddff3eb2bcf5",
+      "rows": 22
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\model_quality.parquet": {
+      "sha256": "8e3f147091a14e91934f10f5a55c580980263516b8b149f190c2022f353935ef",
+      "rows": 44
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\monthly.parquet": {
+      "sha256": "661c4470a617a80fc833b7327bb229996cebc3c07c2284946913bf88d9802abb",
+      "rows": 6006
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h120_predictions.parquet": {
+      "sha256": "c1ac5253d634da774a926f89ecad796ebc45459e1222246fd76ed29206bfc6fa",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h120_selection.parquet": {
+      "sha256": "de7f9920d43d426498c8f161e66ece1a315099a95de42abf0135b0056367e636",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h15_predictions.parquet": {
+      "sha256": "a43f8dd1b5c4e7e13cc2a89a89b3ce52b6defde37f4d033d0508d890b7628688",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h15_selection.parquet": {
+      "sha256": "bf6bf32070542198832560aaa718b8a607a1213882f343df927145609dc6cd79",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h240_predictions.parquet": {
+      "sha256": "b19313c2ed7891691fc48cc0b62a76cfb7f73d6e4cc034bc20c2825d20808a93",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h240_selection.parquet": {
+      "sha256": "75855963fe8c8ef3f460a582ecffc0c8209de531f03d6e79fe16ec70538d2df8",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h30_predictions.parquet": {
+      "sha256": "3553a01695ad77300b44ef4d4a1e4c060f29a46d4ce000c7341d026bb4779894",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h30_selection.parquet": {
+      "sha256": "5f68fadbc948b72bb944262edcce32aba88ca508e3c4d6ca5bbb82c235806946",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h45_predictions.parquet": {
+      "sha256": "97f70edb51b38330aa9f0c6fc6d9c90158cb161960fd011266ff714bf1eecf2b",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h45_selection.parquet": {
+      "sha256": "e5bde520ac6f3b8d52000265fb0e3d94af5a862f6d10dd6a74c293548c98c04b",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h5_predictions.parquet": {
+      "sha256": "d9bd6757aff6b9813dce0883245dc687c11718d556dcb95ec2cb22164610e41d",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h5_selection.parquet": {
+      "sha256": "49565a4347c59c42964f6e5092bca56291ebc1ccb2d51b1ce36ef7a5f5bbb3fa",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h60_predictions.parquet": {
+      "sha256": "c656ad8a7d022f3808c316cc3107586dfa0179017d00d533bfcdd904c3e2116b",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h60_selection.parquet": {
+      "sha256": "19aa7c1732fe14bc7cbf8323ea6d78bfc5e973ceb5b7ef546a0f2ff43eba2b59",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h90_predictions.parquet": {
+      "sha256": "abc19afb8de88a3360c933249bfc4ec04f76c5eabc72d0997187ab0081dd2757",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_long_h90_selection.parquet": {
+      "sha256": "a1710c163d72a45999942ba891b09dc34c5a638e57c1d7bfc598bda4c71eb4cf",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h120_predictions.parquet": {
+      "sha256": "4bfca70631b8e621dca8a5901a2140cb9ee7a7f4ee2b92550aad4da304438328",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h120_selection.parquet": {
+      "sha256": "0d272aa489ca90c2be6cfee160af86ccf88964fd3597aaa7d89cba0d6842d8e9",
+      "rows": 14019
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h15_predictions.parquet": {
+      "sha256": "2857c564affba037822fb421855481cdee77fbe0b38df40b7a8ab2e59f5ee800",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h15_selection.parquet": {
+      "sha256": "aa18b31cd94de45236863feeda648cec4b451f844db8438d39e03f506eab8e95",
+      "rows": 29589
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h240_predictions.parquet": {
+      "sha256": "9338443136547d52a35beac0276134e8dccb51ca8e94d456abe404dd710562fb",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h240_selection.parquet": {
+      "sha256": "682b15f35841bb81d6c635a8219dcaf08d14f7cd85a383b716fd81addf4cd42a",
+      "rows": 9816
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h30_predictions.parquet": {
+      "sha256": "29ee63eccd01607761180a28a729e5e901d963b0e9cdf5a218059b227b7aed5d",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h30_selection.parquet": {
+      "sha256": "edb0717c3e57a554dc3ca241ea2fe916526d5d675074aabf23bed9adaef19c0c",
+      "rows": 21077
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h45_predictions.parquet": {
+      "sha256": "8d6390a18c37722810f1aeae7e1d640ff991e5ffed7c3b1c277a45927c1e6215",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h45_selection.parquet": {
+      "sha256": "3d60d047010612ef99c242fb078cb23b4b89e4d9b52e697d5e72fc2cf9d037cf",
+      "rows": 19452
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h5_predictions.parquet": {
+      "sha256": "a58d5940516c5237cb119a260ade01c0b828e08452ac343b8df4620a998d0d9a",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h5_selection.parquet": {
+      "sha256": "03d2011efd72fcbdacf1855c852a0ccf742230a3f794bac217f522d4be542826",
+      "rows": 25846
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h60_predictions.parquet": {
+      "sha256": "0539412f4d611877adf368805e5cdbe88adccae95d8c02ac444dc6ba1db5f855",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h60_selection.parquet": {
+      "sha256": "35e19c7b95259d74bc144910ff229e2a192901ac0a9257b9af8cf6c0e0f35b94",
+      "rows": 19445
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h90_predictions.parquet": {
+      "sha256": "3d764e16a194157b6420436efa6d77009dd231c5656152c26fe4be8dbc8b0292",
+      "rows": 27306
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\r21_short_h90_selection.parquet": {
+      "sha256": "b211da0cea2bca8edff9d1f3404e260efd1636c864cf7b794d575df48e4edaef",
+      "rows": 16676
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\random_repetitions.parquet": {
+      "sha256": "18a60172955c10638faf769a58317ca08615c2c28b658f132b5074b5aa491683",
+      "rows": 182000
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\REPORT.md": {
+      "sha256": "fc5e64f73cd64e4e8636285c549e461dd42c78e90f84d37dca1bbd11278d1471"
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h120_predictions.parquet": {
+      "sha256": "9826dd0058a5e5e53877700a94f52a6210213763af61f709d644aa2fd220a167",
+      "rows": 27165
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h120_selection.parquet": {
+      "sha256": "210656f83ec2a79810471dbbbdd0d51ed9c131084ea7f4cbd169bb268bce59ee",
+      "rows": 10505
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h15_predictions.parquet": {
+      "sha256": "81ef1813fb35b7c956ed757673714c7b3cf665688261df340af97a1cd978eb52",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h15_selection.parquet": {
+      "sha256": "e6fcd54333e04031e1a2ac87d30078e2c222dbcf9aa98af342b5474a8206f262",
+      "rows": 11504
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h240_predictions.parquet": {
+      "sha256": "d95b808846a2005ba8ead3ebc889c2f6293a609b37745e88a23318264e2351aa",
+      "rows": 26304
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h240_selection.parquet": {
+      "sha256": "f3866577f3045a3f427decbc356915b806b772638f91fdfbf8880fce41819518",
+      "rows": 10041
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h45_predictions.parquet": {
+      "sha256": "9b7c6dedb9d173773483dff7fce80f3b11794af75006ff88579a30cf880b7425",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h45_selection.parquet": {
+      "sha256": "d7c499f99143f985180cc8b6f5777dce8a115ad3d3e5a38ef90ec2a6da45e6e6",
+      "rows": 11438
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h5_predictions.parquet": {
+      "sha256": "feb5b377fd77f0c93a0393f94cf9e339d11b25a009a557050ab59bb7856cd4f2",
+      "rows": 27502
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h5_selection.parquet": {
+      "sha256": "9bfc98e850acb0093d2b6dfd0c1625643a9093fe8a11d0b367401f714498db81",
+      "rows": 9365
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h60_predictions.parquet": {
+      "sha256": "76df30009009494952ecc8ffc7c843da1808a0f390ff113e0fc0d92b55a389c3",
+      "rows": 27440
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\residual_h60_selection.parquet": {
+      "sha256": "67b50ae1dbc21c6fdbfde683bd70ef26dffae4c5839915a6a25e6282f7c15346",
+      "rows": 10641
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\run.log": {
+      "sha256": "f1883334f54416ca2580bdcc40364e83b939614eb48bc8870a22737a9b76e1f6"
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\short120_restart.err": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\short120_restart.out": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\short60_restart.err": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\short60_restart.out": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\started_utc.txt": {
+      "sha256": "43c71375ccc3578ff0f0f1701883221e08f857fc2d083d95480de268764b419a"
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_r21_long_h120.parquet": {
+      "sha256": "8d495214c97af6bfdcff25d8373d7adbe876771842e7e9a8cd9d6861ca482a30",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_r21_long_h240.parquet": {
+      "sha256": "df259981859f16eaeee27a1492eed40342eaac7558153f77e7dc6fffeccdadeb",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_r21_long_h30.parquet": {
+      "sha256": "889da2f2d970ef29427a8a2832450c7bd3e9bf911b49316e2e71eb23f15ccd9e",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_r21_long_h5.parquet": {
+      "sha256": "90e7dc046dff5ef2497b509c6abe3d120b3f7e07b8bdfecda8abfde3ccce4e01",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_r21_long_h90.parquet": {
+      "sha256": "207e3cbaf21250d3ac9e34b1d76b9093e21463378a83f6c1f6516808e4a472f5",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_r21_short_h120.parquet": {
+      "sha256": "64f90d0cb9224645117fe0c0a4828fdb1ae95dc52eb1a415e51bd5cf75256dd9",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_r21_short_h240.parquet": {
+      "sha256": "a04998c50dac14611be063e07d0f0fee8468680251dddc4fbc2d15baf8fc1dcf",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_r21_short_h30.parquet": {
+      "sha256": "c18200aca9d4e284f24f6877f9f5ac9ce88af9a19893da86358e75bc1efd59f2",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_r21_short_h60.parquet": {
+      "sha256": "0bd22eddd22554382064616bff25d06430a65c7df3626ebd200289b21b6c3243",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_r21_short_h90.parquet": {
+      "sha256": "7c0e3f4dab53b65f98c18268d9e7080a3452c16def46306ea9c6ae89782544ee",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_residual_h120.parquet": {
+      "sha256": "43e9c5f0196756dd0eee450271033c94663be218eed43af2a00c9feb7e864b0f",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_residual_h15.parquet": {
+      "sha256": "9bc7195dedc2c2bf24e9e85d2c83cca45b39d4a29e428af1d1998975987ebd4c",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_residual_h240.parquet": {
+      "sha256": "6fc5ab2a19d5dcea94b54985bf708e724b3905bdbe86dd0aa4d7d1771d523fe8",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_residual_h5.parquet": {
+      "sha256": "d0dc95677e6085560bd039af1d48c91429dcc41e5e017684d38b050c80200b25",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\status_residual_h60.parquet": {
+      "sha256": "7d8d46528cf8f671cd72a11c75ab8fd2efd82bc46999858ac4efff932f42b20d",
+      "rows": 621
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\trades.parquet": {
+      "sha256": "4482aa7f61fd166786700e55f63ccbcca2031cd7fc6cb14dab7e504e98844e7a",
+      "rows": 504231
+    },
+    "out\\k45_gate_direction_r2_10_20261001\\yearly.parquet": {
+      "sha256": "39a4324957eaeeb9f05f907e27f83b0b33f39d7bec736fbaa6bb2000f19313d1",
+      "rows": 654
+    }
+  }
+}

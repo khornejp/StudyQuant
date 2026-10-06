@@ -1,0 +1,188 @@
+{
+  "source": "out/run_k45_hold_a_interpret_r2_33.py",
+  "timestamp_utc": "2026-10-05T16:17:54.183460+00:00",
+  "data_cutoff": {
+    "DEV_COMMON": "2025-12-31T23:59:59Z",
+    "HOLD_B": "2026-06-30T23:59:59Z",
+    "HOLD_A": "2026-09-30T23:59:59Z"
+  },
+  "frozen_hypothesis": "DRAFT v3; evaluated without FROZEN by user decision",
+  "hold_a_usage": "post_hoc_description_and_system_nonselection_only; no tuning, candidate selection, or OOS claim",
+  "boundary": "PESS",
+  "round_trip_cost_bps": 4.0,
+  "sources": {
+    "out/k45_hold_a_exclude_bookticker_r2_32_20261005/REPORT.md": "a30b13e3a6ee7be797fd2ab9094211ba095e055eddabd8f6867d179460defa3f",
+    "out/k45_hold_a_exclude_bookticker_r2_32_20261005/hold_a/REPORT.md": "986fd5416b3e10c205f01e59d31da153340d49721d63aea07070a638647f9e78",
+    "out/k45_hold_a_exclude_bookticker_r2_32_20261005/hold_a/metrics.parquet": "e99e505719ad8cee0fb0e54e8318e7f5a18512c408ce8cef6daec4a2790556cd",
+    "out/k45_hold_a_exclude_bookticker_r2_32_20261005/hold_a/trades.parquet": "76bd59d0463ed9994f65556d2dfbee8f404d595dd444d77a73636654d2d2f267",
+    "out/k45_hold_a_exclude_bookticker_r2_32_20261005/hold_a/daily_pnl.parquet": "8999a329fc62924f11fd41228dee72fd65da2fa3b2aa65e826f6b8c303811a27",
+    "out/k45_hold_a_exclude_bookticker_r2_32_20261005/historical_metrics.parquet": "010330401111c7d63286861c5bcf2f117406f7f0c300b999c2c7a8e393adf67d",
+    "out/k45_hold_a_exclude_bookticker_r2_32_20261005/fold_comparison.parquet": "0601a4abdfee9ba1849f3879ef359ced8b18026689ce57d1a5aabe07e23bd15b",
+    "out/k45_candidate_compare_r2_23_20261004/metrics.parquet": "62d24eac7581768adddd920a92f2fadf46daf01c89f5448cb5d39c4df2eb3242",
+    "out/k45_candidate_compare_r2_23_20261004/trades.parquet": "06be82c8fffe9d934ba6a8d1c28127ef71aaa6d3a2cb6f2b8396c9eab65c91c7",
+    "out/k45_candidate_compare_r2_23_20261004/daily_pnl.parquet": "2207497b0156f6ddfc4cf79bd72aa67e42e0f3222af82fdd486e6dbe55e7bbd2",
+    "out/k45_single_book_combo_r2_24_20261004/combo_metrics.parquet": "5605fe55ebff322afe49b7cc3842a9d411522dfae941b8484d85b00f5b45f0c5",
+    "out/k45_single_book_combo_r2_24_20261004/accepted_trades.parquet": "74b50eaca156fb12a79cb30a68a23ddc77108bf659b0265c4e055e3238b0f333",
+    "out/k45_single_book_combo_r2_24_20261004/daily_pnl.parquet": "0195a33459b751183619580a7b474e22bd3c9fdf4082315265b2cd8178553193",
+    "out/k45_combo_robust_r2_25_20261004/hypothesis.parquet": "eaa5560de0a3d458368776a4eed0a21ed84e9aa68738a822cae70136c7523ab3",
+    "docs/hold_a/2026-10-05_hold_a_freeze.md": "d2da417175487241e3b2607e1ce953a9e5ff799728f0d40edc3bc3cf24e2f2f3"
+  },
+  "outputs": {
+    "attribution_parity.csv": {
+      "sha256": "4cec4a507ddd8616bd0ba3a071c5b5de735e7c7c6d7653e7a5da71d615f76037",
+      "bytes": 538
+    },
+    "attribution_parity.parquet": {
+      "sha256": "cad0db47024ed296f09a331152fee0d9f9feaa1347b23aa137e1cc76411150f2",
+      "bytes": 2500
+    },
+    "beta_hac.csv": {
+      "sha256": "fdc6a483fce70a2a7ca8605692a24208f85ef84227bfd9d5acfd04357039342d",
+      "bytes": 3034
+    },
+    "beta_hac.parquet": {
+      "sha256": "06571967feb3c4117efde73530c07c564da311130a780b4ad76420591240dac3",
+      "bytes": 9290
+    },
+    "c1_components.csv": {
+      "sha256": "1649a81f4f7efb790df763353e20a77ee2bbeaebe5588fec25f043acc2ccf156",
+      "bytes": 471
+    },
+    "c1_components.parquet": {
+      "sha256": "5e507d69f5faa62cc0bed5f4a3af30678fde3f9e8f8e7cc6116e319922e9d21f",
+      "bytes": 3677
+    },
+    "c4_unusual.csv": {
+      "sha256": "8a7705ac58010ecd6adb43e5e01be9227d251284adf1b631a63e44bdd5cfa64f",
+      "bytes": 397
+    },
+    "c4_unusual.parquet": {
+      "sha256": "662a64fdbeebb0e46d7c5aebc1706af00051bd6994ccc8594a9652db222e6830",
+      "bytes": 5186
+    },
+    "claims_1_6.csv": {
+      "sha256": "d3bf6c33a8a8ddf8de95f007968ffd51cafaa485513c64e37ad37caf86d5961f",
+      "bytes": 2355
+    },
+    "concentration_92d.parquet": {
+      "sha256": "026cdcf3bcb91aa34f8917509f17470c656f5e291cf2b8317106f4ffa9d7a7d4",
+      "bytes": 143925
+    },
+    "concentration_summary.csv": {
+      "sha256": "95820016fc591679ede88e60f0a89c2be26f4fec19fc423beaca96ceea6164b5",
+      "bytes": 1029
+    },
+    "concentration_summary.parquet": {
+      "sha256": "e778a5c324cfc9611a6d1af35d13a3781cc2fcc1d40d1ff4e4b2386b2d18b699",
+      "bytes": 8745
+    },
+    "direction_exposure.csv": {
+      "sha256": "f860b3ea9779d348d944ca5cc0206b7d93ce97953f2487417b0f7f8906011af9",
+      "bytes": 2211
+    },
+    "direction_exposure.parquet": {
+      "sha256": "4d64fff62ab90ac749604d39d87cd041105517d942ab1807889af46e1afc87b2",
+      "bytes": 6790
+    },
+    "e1_dev_regime.csv": {
+      "sha256": "27872515daacb014d858e2c23e6435a9855888856c5f22415e5c7488cb6589c6",
+      "bytes": 585
+    },
+    "e1_dev_regime.parquet": {
+      "sha256": "fc410f4fa6621413f528db25ac328ae4f6b6b68ec9026fa6b763eab4f24a7507",
+      "bytes": 3791
+    },
+    "f3_halfyear.csv": {
+      "sha256": "b396d3cde1c726d4ba484ed8b23cb3a0ec87d010ce267ea5b0477b13a7670473",
+      "bytes": 523
+    },
+    "f3_halfyear.parquet": {
+      "sha256": "f8c5710714cef9a69064b9a0112a39e9b4cf80581799174156fa90b8b0a108f8",
+      "bytes": 3168
+    },
+    "f3_rolling_6m.parquet": {
+      "sha256": "67fcfd0e72665d409d9880e78a14396de44a1c6b83895bcee6ff8cd31de58ff4",
+      "bytes": 27663
+    },
+    "f3_trend.csv": {
+      "sha256": "9791e87125cced6b18f9196dc9e6b9bc24a1e1238212ee72fac7470a04738436",
+      "bytes": 195
+    },
+    "f3_trend.parquet": {
+      "sha256": "2b0de48a0591b05a85f864c6708afcfec65c5da6256dcf72101aa7bb6f3d6104",
+      "bytes": 4478
+    },
+    "f3_yearly.csv": {
+      "sha256": "0d3353322679e95a221d7df856a306522e0de0861ae423202312b0c6fc1a0672",
+      "bytes": 275
+    },
+    "f3_yearly.parquet": {
+      "sha256": "a5ed43bdb44430f285c5d16ef4173eb2d20776842c6fa70aac980aeb4017dc68",
+      "bytes": 3015
+    },
+    "freeze_execution_record_proposal.md": {
+      "sha256": "1fb318ec13830bb34080176c0ef0fbd6bfadceec18fe3ba5228ca1e74ffd5d73",
+      "bytes": 849
+    },
+    "hold_a_regime_days.csv": {
+      "sha256": "a4467a1e2f8e91908b687eb024a224103b1a959ada8822dd7851bc25beae7fed",
+      "bytes": 410
+    },
+    "hold_a_regime_days.parquet": {
+      "sha256": "a3cd6c622d93f8aa22de270913ab4cbd01a91534e576e14b59fd6e54ea355e70",
+      "bytes": 4282
+    },
+    "hold_a_side_by_side_corrected.csv": {
+      "sha256": "e5e351c2086d9d3f62b1b64ea5affe9c6a633ae60c665b43b3de845b4e87fe44",
+      "bytes": 6919
+    },
+    "hold_a_side_by_side_corrected.md": {
+      "sha256": "31e518e3a8c05555b653eb7c4e5e15b0cb02adb7946fa0f2b3b37b532bc46c17",
+      "bytes": 5231
+    },
+    "hold_a_side_by_side_corrected.parquet": {
+      "sha256": "c2b49a73f394553365c72b002f7a7e7d4c51859ae863cd854ca398aaa18cff77",
+      "bytes": 11971
+    },
+    "regime_summary.csv": {
+      "sha256": "2384407d73f59955e1ffdc1cfa1d9114fa4d01deba581416129601cec7c4d183",
+      "bytes": 380
+    },
+    "regime_summary.parquet": {
+      "sha256": "ed7cf3f368f3f08173203b7c2444386e15eeb15265ee766e3893802aa5cf7465",
+      "bytes": 6454
+    },
+    "REPORT.md": {
+      "sha256": "463fb29424cecc8a1166d8c7eb48176b3024e57209e99759289fef76b2714997",
+      "bytes": 16451
+    },
+    "rolling_92d.parquet": {
+      "sha256": "62c1d16f2d27ca681025758f479f32023729507b37495f6e29fcf818c0e9a12a",
+      "bytes": 168346
+    },
+    "system_options.csv": {
+      "sha256": "b253e2e94c11f59f372b63f8af558d984511c7621578ff385d131d2ad02136c5",
+      "bytes": 625
+    },
+    "system_options.parquet": {
+      "sha256": "bffc39917f3dc06c9eee8db14a7d440e29fc9cb2634071f69f10fd4eeb3be97d",
+      "bytes": 7865
+    },
+    "window_summary.csv": {
+      "sha256": "54cdc54f897a49a6af362a34da8b12dc3351a255bbb713e6fcbc35dc4c995aa5",
+      "bytes": 1257
+    },
+    "window_summary.parquet": {
+      "sha256": "767d80bdd435bc0f9aac6344b77b6d2cb14d6d6f9a77ca2c33e221da94d3f963",
+      "bytes": 9540
+    }
+  },
+  "downloads": 0,
+  "live_orders": 0,
+  "cpu_workers_max": 8,
+  "tests": {
+    "target": "32 passed in 5.71s",
+    "full": "1133 passed, 35 subtests passed, 20 warnings in 728.07s",
+    "basetemp": ".pytest_tmp_r2_33"
+  }
+}

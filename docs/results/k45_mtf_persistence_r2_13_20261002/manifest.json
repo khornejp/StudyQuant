@@ -1,0 +1,220 @@
+{
+  "run_started_utc": "2026-10-02T15:27:32.881287+00:00",
+  "run_finished_utc": "2026-10-02T17:06:48.550623+00:00",
+  "data_cutoff_utc": "2026-06-30T23:59:00+00:00",
+  "frozen_hypothesis": "1h/4h에서 예측 포착 수익이 큰 쪽만 거래하면 방향만으로 고른 R_DIR보다 SINGLE net이 높고, 같은 진입·청산의 항상 롱을 DEV와 HOLD_B 모두에서 이긴다.",
+  "out_of_sample_result": {
+    "matched_parameter_cells": 60,
+    "dev_and_hold_b_supporting_cells": 9,
+    "hypothesis_supported_by_any_cell": true
+  },
+  "local_data_only": true,
+  "downloads": 0,
+  "patchtst_refits": 0,
+  "live_orders": 0,
+  "cost_bps": 4.0,
+  "funding_included": true,
+  "hold_b_exploratory": true,
+  "seed": 20261001,
+  "model_params": {
+    "iterations": 500,
+    "depth": 4,
+    "learning_rate": 0.05,
+    "l2_leaf_reg": 3,
+    "random_seed": 20261001,
+    "thread_count": 6,
+    "verbose": false,
+    "allow_writing_files": false
+  },
+  "single_position_first": true,
+  "ci_reps": 999,
+  "random_baseline_reps": 1000,
+  "inputs": {
+    "artifacts\\btcusdt_2020_2026h1.parquet": {
+      "sha256": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+      "mtime_utc": "2026-07-31T05:10:34.534496+00:00"
+    },
+    "tests\\test_k45_mtf_persistence_r2_13.py": {
+      "sha256": "af333d80bfe00cb1f4470c8a95a26253a79dc4945bdefed6bf60920c3ccc7490",
+      "mtime_utc": "2026-10-02T15:21:47.743266+00:00"
+    },
+    "D:\\StudyQuant\\out\\run_k45_mtf_persistence_r2_13.py": {
+      "sha256": "f4542fc9178580646081b1f778db4b72af71adaa896c4c06566f3c5d28e046ac",
+      "mtime_utc": "2026-10-02T15:27:58.368960+00:00"
+    },
+    "out\\k45_mtf_entry_r2_12_20261001\\manifest.json": {
+      "sha256": "647ce6066b60c9ffe3bed017c5e325e328763575237cfc0918561ecf46827e90",
+      "mtime_utc": "2026-10-02T02:13:13.439737+00:00"
+    },
+    "out\\k45_gate_direction_r2_9b_20261002\\manifest.json": {
+      "sha256": "5f84849eaed317874aad8c07b269ca0ef3a8b5c7d018c26c994ab292c3ffd95d",
+      "mtime_utc": "2026-10-02T15:13:40.770476+00:00"
+    },
+    "out\\k45_mtf_entry_r2_12_20261001\\dataset_1h.parquet": {
+      "sha256": "e48d08961da5a27510d2dedf5bbd985e257797acfcaefee8c35dc255defaa13f",
+      "mtime_utc": "2026-10-02T00:12:21.268969+00:00"
+    },
+    "out\\k45_mtf_entry_r2_12_20261001\\dataset_4h.parquet": {
+      "sha256": "bea533c0ca52b80ff71651630ea1c3ea4097898bf3ca5f919fbc1b290d9a86b9",
+      "mtime_utc": "2026-10-02T00:12:23.324244+00:00"
+    },
+    "out\\k45_mtf_entry_r2_12_20261001\\predictions_1h_h60.parquet": {
+      "sha256": "f8e239493e5eb1def1f17b88dbc2b411b6bfccfe3ad80aaebd9f183accff166e",
+      "mtime_utc": "2026-10-02T01:49:04.135551+00:00"
+    },
+    "out\\k45_mtf_entry_r2_12_20261001\\predictions_1h_h120.parquet": {
+      "sha256": "d1a68690ec11cf824cc91e5d71d0484189931e67c133344fe9ba32a6ffc1b145",
+      "mtime_utc": "2026-10-02T01:44:15.768832+00:00"
+    },
+    "out\\k45_mtf_entry_r2_12_20261001\\predictions_1h_h240.parquet": {
+      "sha256": "5ed307815b9d544d4549d5b384c6699211aa795045cb9337fc61da05d069758a",
+      "mtime_utc": "2026-10-02T01:37:37.173884+00:00"
+    },
+    "out\\k45_mtf_entry_r2_12_20261001\\predictions_4h_h240.parquet": {
+      "sha256": "59581c92e109e7ae3d36471a9d512300b2c55d3912b86d251008792cd02af503",
+      "mtime_utc": "2026-10-02T00:46:47.602615+00:00"
+    },
+    "out\\k45_mtf_entry_r2_12_20261001\\predictions_4h_h480.parquet": {
+      "sha256": "2ce2673dfbc539c87b06abd1c219b3590686b85892d5eaaade5ae2ecaa6cf8b3",
+      "mtime_utc": "2026-10-02T00:43:30.202413+00:00"
+    }
+  },
+  "outputs": {
+    "out\\k45_mtf_persistence_r2_13_20261002\\baseline_repetitions.parquet": {
+      "sha256": "7743afe98c267e0e92ecf21d8bdecc8c9136304a464aaadec8623fcb72be03c5",
+      "rows": 1120000
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\baselines.parquet": {
+      "sha256": "a0684dd5191816ca2a8b01fa03b9c6876e36b52652d1f4ff500edee5d38ed73e",
+      "rows": 668
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\comparisons_r2_12.parquet": {
+      "sha256": "0b101a2cd4627ee437ad6435041ac0cbc853f8549e5a64f9d0cdee9d53ee7c18",
+      "rows": 20
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\grid_metrics.parquet": {
+      "sha256": "157131d535ecfae3177666733d30304b391f655cc61255bdb54d5e023ac5b5a4",
+      "rows": 668
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\label_distribution.parquet": {
+      "sha256": "b1b5f47f9d31df43bd6fae677a42a6c8cb3aa9525ef21dbbbe91f0aa09a45708",
+      "rows": 16
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\labels_1h.parquet": {
+      "sha256": "8d4b2f1466146d0f66e55a556c2ec1308644244099c74da5d6ed761a41a2cbfc",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\labels_4h.parquet": {
+      "sha256": "f269792a152d7ebca4f48f25f3a9206bf9180c90080d2535fc880604a9fdb1af",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\monthly.parquet": {
+      "sha256": "2c3134e25f1631d7918ef3bf1a2f5cbcc1a2e0778e440b5f260eba983a5be169",
+      "rows": 15805
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\prediction_deciles.parquet": {
+      "sha256": "d0de54e2d137c69a7ddf76f6d80c5f8817fbdec3f3e61b97b3a23e5ddd56eb5a",
+      "rows": 320
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\prediction_quality.parquet": {
+      "sha256": "eeb0be14eecc74904e2d74f4d971216320b381cf333ec3051d5f4c95c0e14226",
+      "rows": 32
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\predictions.parquet": {
+      "sha256": "1eaf444221cdd5c0986fb627bb93b19cc0585ef80734696a902869792417da4e",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\predictions_1h_k1_long.parquet": {
+      "sha256": "16ad781eb7ff9c64545f4dd75d4daddede533fb4c80eabc4a9c90d04e10de56e",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\predictions_1h_k1_short.parquet": {
+      "sha256": "5ccea677b6458ee28d0efe0e5f9f6943c7c72719323840460323f9484391986c",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\predictions_1h_k2_long.parquet": {
+      "sha256": "9c2669efdf5d95f939cfe91ef4bfaaa21e0fbd5416315be038f1aa0792bf8a0d",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\predictions_1h_k2_short.parquet": {
+      "sha256": "adad80675f80e3ff1090dbc2b6f0b9002a05ddfc7b733673910755438e874857",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\predictions_4h_k1_long.parquet": {
+      "sha256": "272269b388f72df2ac37065a70aaa5fcb347904bf0cce5ec6b473bec7d7d8125",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\predictions_4h_k1_short.parquet": {
+      "sha256": "7139b43c8c91427096b0f4e0df02a12f1154ff3b66fd4b19539bf767c4601a22",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\predictions_4h_k2_long.parquet": {
+      "sha256": "5ffb9d6d3d1e087ffef2df2015ab6fe8747af75d87a13f60debe0b5de9a08e12",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\predictions_4h_k2_short.parquet": {
+      "sha256": "53bfcbbbb1c650992751aa8358dfd56aab38706a0ec2794fbf15c05cd1392f2e",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\queue.log": {
+      "sha256": "18751d2b6179ffaa3c345bba268583672bb46db412ffba7203e470e81c00bb88",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\queue.ps1": {
+      "sha256": "fb453b9736c9df93e1dd91c6bd475513f17264624deb527b553bdeee3c53bf02",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\REPORT.md": {
+      "sha256": "16fe6cb475aba9f5c269ac4ae4768e5d191a3671a0a6ca8e1a65d2c0d997af56",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\run.log": {
+      "sha256": "8660cd631ea411c9de2853dce9494fe37ae950414dcd2c84477aba8ce88ac497",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\selection_1h_k1_long.parquet": {
+      "sha256": "05c4a09403f428b83c76f44bfaef00031b6e2258cc35b0f9420feab638483021",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\selection_1h_k1_short.parquet": {
+      "sha256": "96e9f47cf9dd5c6815daf4b7d8966ebae8159aa419e0e4282e8307fe79b70cc6",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\selection_1h_k2_long.parquet": {
+      "sha256": "213f35233b3c1c9230f2a3be6218deb4959c69ebefffad39dea607f7fbe3f138",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\selection_1h_k2_short.parquet": {
+      "sha256": "c5fc6ad7ad0b068651e131110004e7d5320be4fe90d6a1d1319c4a1efcc72cc4",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\selection_4h_k1_long.parquet": {
+      "sha256": "5c450b20eb944bcb87dec750a54cc0d84326be16f428cc5c05b7157c5f11953c",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\selection_4h_k1_short.parquet": {
+      "sha256": "1c0500d1567849390b7d13b36f193a1167d51c38215d0075a390310ae98d4053",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\selection_4h_k2_long.parquet": {
+      "sha256": "1ed54845b8de317cd4cb90e7bea96442f766bfddf7ad06612ca7bc076d79362d",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\selection_4h_k2_short.parquet": {
+      "sha256": "ee56e32dd7745c860512bbf6d19d953d4f02ddb50576470fbd6dd78fc1e7d5b0",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\started_utc.txt": {
+      "sha256": "ee8fd77ec6a55b3b704924d792b518b4d3565a24da90c3c5d15de29aed639ef0",
+      "rows": null
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\trades.parquet": {
+      "sha256": "d09bfecb30833aa33a0c85bfd8c975f1813aa09e3a725eed1df1d605382d5ea5",
+      "rows": 666864
+    },
+    "out\\k45_mtf_persistence_r2_13_20261002\\yearly.parquet": {
+      "sha256": "c20594eee72335e76ed15f2be38bc09e821aa7a6044e289d2e28d88114299341",
+      "rows": 1747
+    }
+  }
+}
