@@ -110,3 +110,21 @@ def test_r2_37_c1_v5_exact_and_q3_restart(tmp_path) -> None:
     pd.testing.assert_frame_equal(replayed[columns].reset_index(drop=True),
                                   expected[columns].reset_index(drop=True),
                                   check_exact=True, check_dtype=False)
+
+
+def test_replay_before_comparison_book_t0_does_not_crash(tmp_path) -> None:
+    # Live: C1_5m's own T0 is later than the global start; replays in between saw no trades.
+    import pandas as pd
+    from btcusdt_quant.paper.config import PaperConfig
+    from btcusdt_quant.paper.engine import PaperEngine
+    from btcusdt_quant.paper.store import PaperStore
+
+    market = pd.read_parquet("artifacts/hold_a_2026q3/market_2026q3.parquet").iloc[:6 * 1440]
+    config = PaperConfig(sqlite_path=str(tmp_path / "live.sqlite"), books=("C1", "C1_5m"),
+                         start_time="2026-07-03T00:00:00Z",
+                         book_start_times={"C1_5m": "2026-07-05T23:00:00Z"},
+                         comparison_books=("C1_5m",))
+    with PaperStore(config.sqlite_path) as store:
+        engine = PaperEngine(store, config)
+        engine.process_replay_minutes(market)
+        engine.replay_books(config.start_time, "2026-07-05T00:00:00Z", publish_open_positions=True)

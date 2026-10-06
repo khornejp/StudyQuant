@@ -168,6 +168,10 @@ class PaperEngine:
         def window(frame: pd.DataFrame, candidate: str,
                    book_start: pd.Timestamp = start) -> pd.DataFrame:
             result = frame.loc[(frame.exit_time > book_start) & (frame.entry_time < end)].copy()
+            if result.empty:  # e.g. a book before its own T0: untyped empty columns break the math below
+                result["_active"] = pd.Series(dtype=bool)
+                result["exit_reason"] = pd.Series(dtype=object)
+                return result.reset_index(drop=True)
             natural_end = result.entry_time + pd.to_timedelta(rules.SPECS[candidate].max_hold,
                                                                unit="h")
             result["_active"] = result.exit_time.eq(data_end) & natural_end.gt(data_end)
