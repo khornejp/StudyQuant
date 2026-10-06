@@ -29,6 +29,13 @@ def main() -> None:
     if args.sqlite_path or args.data_root:
         config = replace(config, sqlite_path=args.sqlite_path or config.sqlite_path,
                          data_root=args.data_root or config.data_root)
+    # One collector per DB: a second instance (e.g. scheduler + manual start) exits instead of double-writing.
+    import msvcrt
+    lock = open(Path(config.sqlite_path).with_suffix(".run.lock"), "a+")
+    try:
+        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        sys.exit(f"paper_run already running for {config.sqlite_path}")
     with PaperStore(config.sqlite_path) as store:
         collector = Collector(PaperEngine(store, config), f"{config.data_root}/raw")
         notifier = TelegramNotifier(store.path, config)
