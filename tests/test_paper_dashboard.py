@@ -380,3 +380,25 @@ def test_conditions_two_year_cached_response_under_one_second(tmp_path) -> None:
     assert elapsed < 1.0
     assert len(payload["legs"]) == 2
     assert all(len(leg["rows"]) == 17_520 for leg in payload["legs"])
+
+
+def test_public_dashboard_never_shows_secret_fragments(tmp_path, monkeypatch) -> None:
+    # The dashboard is shared publicly through a tunnel; even masked key/token fragments must not appear.
+    from btcusdt_quant.paper.dashboard import server as dashboard_server
+
+    monkeypatch.setattr(dashboard_server, "credential_status",
+                        lambda: {"loaded": True, "api_key": "abcd...wxyz", "api_secret": "efgh...stuv"})
+    monkeypatch.setattr(dashboard_server, "telegram_status",
+                        lambda: {"configured": True, "token": "8974...HQac",
+                                 "label": "텔레그램: 설정됨 (8974...HQac)"})
+    path = tmp_path / "live.sqlite"
+    with PaperStore(path):
+        pass
+    server, thread, base = _serve(path, tmp_path, books=("C1",))
+    try:
+        bodies = [urllib.request.urlopen(base + route).read().decode("utf-8")
+                  for route in ("/api/health", "/api/status")]
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+    for body in bodies:
+        assert "wxyz" not in body and "stuv" not in body and "HQac" not in body

@@ -26,16 +26,26 @@ STATIC = Path(__file__).with_name("index.html")
 VENDOR = Path(__file__).with_name("vendor")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TF_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
-DEFAULT_BOOKS = ("C1", "C1_5m", "F3", "E1", "C4")
-BOOK_LABELS = {"C1_5m": "C1 역추세5분 (비교)"}
+DEFAULT_BOOKS = ("C1", "C1_5m", "C1_T1", "F3", "E1", "C4")
+BOOK_LABELS = {"C1_5m": "C1 역추세5분 (비교)",
+               "C1_T1": "C1 T+1분 진입 (비교)"}
 MAX_CANDLES = 2_000
 CONDITION_BOOKS = {
     "F3": (rules.F3,), "E1": (rules.E1,),
-    "C1": (rules.F3, rules.E1), "C1_5m": (rules.F3_5M, rules.E1),
+    "C1": (rules.F3, rules.E1), "C1_T1": (rules.F3, rules.E1),
+    "C1_5m": (rules.F3_5M, rules.E1),
     "C4": (rules.F3_W30, rules.E1),
 }
 CONDITION_NAMES = {rules.F3: "F3 역추세", rules.F3_W30: "F3-w30 역추세",
                    rules.F3_5M: "F3 역추세 5분 판단", rules.E1: "E1 거래량 돌파"}
+
+
+def _public_status() -> tuple[dict[str, object], dict[str, object]]:
+    """Dashboard is shared publicly via a tunnel: expose only whether secrets are set."""
+    credentials, telegram = credential_status(), telegram_status()
+    return ({"loaded": credentials["loaded"]},
+            {"configured": telegram["configured"],
+             "label": "텔레그램: 설정됨" if telegram["configured"] else "텔레그램: 미설정"})
 
 
 def _records(frame: pd.DataFrame) -> list[dict[str, object]]:
@@ -821,7 +831,7 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                             "latency": status["latency"], "ws_closed_events": status["ws_closed_events"],
                             "notifications": status["notifications"], "book_ticker": status["book_ticker"],
                             "disk_free_ratio": status["disk_free_ratio"], "disk_warning": status["disk_warning"],
-                            "credentials": credential_status(), "telegram": status["telegram"]}); return True
+                            "credentials": _public_status()[0], "telegram": status["telegram"]}); return True
             return False
 
         def _reference(self) -> list[dict[str, object]]:
@@ -899,7 +909,7 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                     "reconcile": {"result": "일치" if revision_count == 0 else "불일치",
                                   "revision_count": revision_count},
                     "disk_free_ratio": usage.free / usage.total, "disk_warning": usage.free / usage.total < .10,
-                    "telegram": telegram_status()}
+                    "telegram": _public_status()[1]}
 
     return Handler
 
