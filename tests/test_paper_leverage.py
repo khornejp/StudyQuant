@@ -111,3 +111,16 @@ def test_engine_restart_rebuilds_same_leverage_state_and_base_ledger(tmp_path,
         pd.testing.assert_frame_equal(first_trades, store.frame("leverage_trades").drop(columns="id"),
                                       check_exact=True)
     pd.testing.assert_frame_equal(first_base, second_base, check_exact=True)
+
+
+def test_simulate_book_with_no_trades_returns_initial_state() -> None:
+    # Live books start empty; the first cycles after T0 must not crash.
+    import pandas as pd
+    from btcusdt_quant.paper import leverage
+
+    start = pd.Timestamp("2026-10-06T03:00:00Z")
+    minutes = pd.DataFrame({"open_time": [start], "high": [1.0], "low": [1.0], "close": [1.0]})
+    empty = pd.DataFrame(columns=["entry_time", "exit_time", "side", "entry_price", "exit_price"])
+    funding = pd.DataFrame(columns=["time", "rate"])
+    result = leverage.simulate_book(empty, minutes, funding, "C1", start, start + pd.Timedelta(minutes=1))
+    assert result is not None

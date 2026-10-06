@@ -63,7 +63,7 @@ def main() -> None:
                     last_day = current_day
                 except Exception as error:
                     notifier.enqueue(
-                        f"alert:engine:{pd.Timestamp.now(tz='UTC').floor('min').isoformat()}",
+                        f"alert:engine:{type(error).__name__}:{pd.Timestamp.now(tz='UTC').floor('h').isoformat()}",
                         "alert", {"kind": "엔진 오류", "detail": type(error).__name__})
                     logging.exception("paper cycle failed: %s", type(error).__name__)
                 completed += 1

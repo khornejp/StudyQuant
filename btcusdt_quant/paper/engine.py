@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import json
 from pathlib import Path
 from typing import Mapping
@@ -223,12 +225,16 @@ class PaperEngine:
                 output.append(book.reprice(raw, funding, boundary, self.config.cost_bps).assign(
                     book=name, boundary=boundary))
             if name in leverage_books:
-                leverage_results.append(leverage.simulate_book(
-                    raw, market, funding, name, book_start, end,
-                    leverage=self.config.leverage, budget_usd=self.config.budget_usd,
-                    maintenance_margin_rate=self.config.maintenance_margin_rate,
-                    liquidation_fee_rate=self.config.liquidation_fee_rate,
-                    cost_bps=self.config.cost_bps))
+                # The x3 overlay is reference only; its failure must not block the 1x books.
+                try:
+                    leverage_results.append(leverage.simulate_book(
+                        raw, market, funding, name, book_start, end,
+                        leverage=self.config.leverage, budget_usd=self.config.budget_usd,
+                        maintenance_margin_rate=self.config.maintenance_margin_rate,
+                        liquidation_fee_rate=self.config.liquidation_fee_rate,
+                        cost_bps=self.config.cost_bps))
+                except Exception:
+                    logging.getLogger(__name__).exception("x3 overlay failed for %s", name)
         ledger = pd.concat(output, ignore_index=True)
         published = ledger.loc[~ledger["_active"].fillna(False)].copy() if publish_open_positions else ledger
         closes = market.set_index("open_time").close

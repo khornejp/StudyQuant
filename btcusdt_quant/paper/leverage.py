@@ -70,6 +70,7 @@ def simulate_book(accepted: pd.DataFrame, minutes: pd.DataFrame, funding: pd.Dat
     max_drawdown = 0.0
     max_drawdown_pct = 0.0
     peak_equity = balance
+    liquidation_time: pd.Timestamp | None = None  # also needed when there are no trades yet
 
     source = accepted.copy().sort_values("entry_time", kind="stable").reset_index(drop=True)
     for row in source.to_dict("records"):
@@ -94,7 +95,7 @@ def simulate_book(accepted: pd.DataFrame, minutes: pd.DataFrame, funding: pd.Dat
                                         maintenance_margin_rate, cashflows.get(entry, 0.0))
         worst_pnl = -entry_fee
         liquidated = False
-        liquidation_time: pd.Timestamp | None = None
+        liquidation_time = None
         current_liq = initial_liq
         left = int(market_times.searchsorted(entry.value, side="left"))
         right = int(market_times.searchsorted(scheduled_exit.value, side="left"))
