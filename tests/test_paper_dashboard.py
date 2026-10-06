@@ -14,7 +14,9 @@ import pytest
 
 from btcusdt_quant.paper import rules
 from btcusdt_quant.paper.dashboard import make_server
-from btcusdt_quant.paper.dashboard.server import _condition_inputs, _connect_ro
+from btcusdt_quant.paper.dashboard.server import (
+    _condition_inputs, _condition_value, _connect_ro, _display_condition_details,
+)
 from btcusdt_quant.paper.store import PaperStore
 
 
@@ -170,9 +172,49 @@ def test_v2_api_schemas_and_candles_match_pandas_resample(tmp_path, monkeypatch)
     assert conditions["tf"] == "5m" and len(conditions["legs"]) == 2
     assert conditions["summary"]["estimate_label"] == "현재까지 데이터 기준"
     assert {leg["kind"] for leg in conditions["legs"]} == {"contrarian", "breakout"}
+    assert all({"long_account_pct", "upper_pct", "lower_pct", "distance_to_short",
+                "distance_to_long"} <= set(leg) for leg in conditions["legs"])
     assert [(row["kind"], row["price"]) for row in markers["rows"]] == [
         ("entry", 101.5), ("exit", 109.5)]
     assert all(row["trade_id"] == 1 and row["net_bps"] == -14 for row in markers["rows"])
+
+
+def test_condition_ratio_percent_and_both_distances() -> None:
+    row = pd.Series({
+        "decision_time": pd.Timestamp("2026-10-06T01:00:00Z"),
+        "global_ls_account": 1.06, "lower_threshold": 0.984, "upper_threshold": 1.83,
+        "volume_zscore": np.nan, "prior_high_20": np.nan, "prior_low_20": np.nan,
+        "close": 100.0, "volume": 10.0, "required_volume": np.nan, "side": 0,
+    })
+    value = _condition_value(row)
+    assert value is not None
+    assert value["long_account_pct"] == pytest.approx(1.06 / 2.06 * 100)
+    assert value["upper_pct"] == pytest.approx(1.83 / 2.83 * 100)
+    assert value["lower_pct"] == pytest.approx(.984 / 1.984 * 100)
+    assert value["distance_to_short"] == pytest.approx({
+        "ratio": 1.83 - 1.06,
+        "pct_points": 1.83 / 2.83 * 100 - 1.06 / 2.06 * 100,
+    })
+    assert value["distance_to_long"] == pytest.approx({
+        "ratio": 1.06 - .984,
+        "pct_points": 1.06 / 2.06 * 100 - .984 / 1.984 * 100,
+    })
+
+
+def test_breakout_required_volume_hits_z3_and_prior_low_is_shifted() -> None:
+    frame = pd.DataFrame({
+        "volume": np.linspace(10.0, 31.0, 22),
+        "low": np.array([100, 98, 99, 97, 96, 95, 94, 93, 92, 91, 90,
+                         89, 88, 87, 86, 85, 84, 83, 82, 81, 80, 79], dtype=float),
+    })
+    actual = _display_condition_details(frame, rules.E1)
+    required = actual.required_volume.iloc[19]
+    window = np.r_[frame.volume.iloc[:19].to_numpy(), required]
+    zscore = (required - window.mean()) / window.std(ddof=0)
+    assert zscore == pytest.approx(3.0, abs=1e-9)
+    expected_low = frame.low.rolling(20).min().shift()
+    pd.testing.assert_series_equal(actual.prior_low_20, expected_low,
+                                   check_names=False)
 
 
 def test_vendor_is_local_html_has_no_external_scripts_and_bind_is_loopback(tmp_path) -> None:
@@ -192,6 +234,8 @@ def test_vendor_is_local_html_has_no_external_scripts_and_bind_is_loopback(tmp_p
     assert "T0 이후 거래가 표시됩니다" in html
     assert 'id="conditionPanes"' in html and 'id="conditionSummary"' in html
     assert "지난 정시 실제 사용" in html and "다음 정시 예상" in html
+    assert "직전 20봉 저가 (참고·숏 신호 없음)" in html
+    assert "롱 계정 비율 %" in html and "필요 거래량 BTC" in html
     with pytest.raises(ValueError, match="127.0.0.1"):
         make_server(path, tmp_path, host="0.0.0.0", port=0)
 
@@ -225,6 +269,8 @@ def test_replay_database_supplies_chart_and_ledger_data() -> None:
     assert {"decision_time", "global_ls_account", "lower_threshold", "upper_threshold",
             "volume_zscore", "prior_high_20", "close", "side", "condition_met",
             "direction", "signal_status", "signal_reason"} <= set(c1["legs"][0]["rows"][0])
+    assert {"long_account_pct", "upper_pct", "lower_pct", "distance_to_short",
+            "distance_to_long"} <= set(c1["summary"]["legs"][0]["last_decision"])
     actual = {leg["candidate"]: [(row["decision_time"], row["side"])
                                   for row in leg["rows"] if row["condition_met"]]
               for leg in c1["legs"] + c4["legs"]}

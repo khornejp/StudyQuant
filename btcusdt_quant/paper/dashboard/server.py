@@ -156,26 +156,100 @@ def _padded_to_hour(minutes: pd.DataFrame) -> pd.DataFrame | None:
     return pd.concat([minutes, padding], ignore_index=True)
 
 
-def _condition_value(row: pd.Series | None) -> dict[str, object] | None:
+def _required_volume_for_zscore(prior_mean: object, prior_sse: object, *,
+                                prior_count: int = 19, target: float = 3.0) -> object:
+    """Volume boundary where z equals target after adding the current observation."""
+    denominator = prior_count * (prior_count - target ** 2)
+    if denominator <= 0:
+        raise ValueError("target z must be below sqrt(prior_count)")
+    return prior_mean + np.sqrt((prior_count + 1) * target ** 2 * prior_sse / denominator)
+
+
+def _display_condition_details(frame: pd.DataFrame, candidate: str) -> pd.DataFrame:
+    """Add dashboard-only values without changing frozen rule decisions."""
+    if candidate != rules.E1:
+        return frame
+    frame = frame.copy()
+    frame["prior_low_20"] = np.nan
+    frame["required_volume"] = np.nan
+    if frame.empty:
+        return frame
+    prior = frame.volume.shift().rolling(19)
+    prior_sum = prior.sum()
+    prior_mean = prior_sum / 19
+    prior_sse = (frame.volume.pow(2).shift().rolling(19).sum()
+                 - prior_sum.pow(2) / 19).clip(lower=0)
+    frame["required_volume"] = _required_volume_for_zscore(prior_mean, prior_sse)
+    frame["prior_low_20"] = frame.low.rolling(20).min().shift()
+    return frame
+
+
+def _row_value(row: object, name: str) -> object:
+    if isinstance(row, pd.Series):
+        return row.get(name)
+    if isinstance(row, Mapping):
+        return row.get(name)
+    return getattr(row, name, None)
+
+
+def _optional_float(row: object, name: str) -> float | None:
+    value = _row_value(row, name)
+    return None if value is None or pd.isna(value) else float(value)
+
+
+def _ratio_pct(value: float) -> float:
+    return value / (1 + value) * 100
+
+
+def _condition_value(row: object | None, *, include_distances: bool = True) -> dict[str, object] | None:
     if row is None:
         return None
     fields = ("global_ls_account", "lower_threshold", "upper_threshold", "volume_zscore",
-              "prior_high_20", "close", "side")
-    return {"decision_time": _iso(row.decision_time),
-            **{name: (None if pd.isna(row[name]) else int(row[name]) if name == "side"
-                      else float(row[name])) for name in fields}}
+              "prior_high_20", "prior_low_20", "close", "volume", "required_volume")
+    result: dict[str, object] = {
+        "decision_time": _iso(pd.Timestamp(_row_value(row, "decision_time"))),
+        **{name: _optional_float(row, name) for name in fields},
+        "side": int(_row_value(row, "side")),
+    }
+    result["current_volume"] = result.pop("volume")
+    ratio = result["global_ls_account"]
+    lower = result["lower_threshold"]
+    upper = result["upper_threshold"]
+    if ratio is None or lower is None or upper is None:
+        result.update(long_account_pct=None, upper_pct=None, lower_pct=None)
+        if include_distances:
+            result.update(distance_to_short=None, distance_to_long=None)
+    else:
+        ratio, lower, upper = float(ratio), float(lower), float(upper)
+        long_pct, lower_pct, upper_pct = map(_ratio_pct, (ratio, lower, upper))
+        result.update(long_account_pct=long_pct, upper_pct=upper_pct, lower_pct=lower_pct)
+        if include_distances:
+            result.update(
+                distance_to_short={"ratio": max(0.0, upper - ratio),
+                                   "pct_points": max(0.0, upper_pct - long_pct)},
+                distance_to_long={"ratio": max(0.0, ratio - lower),
+                                  "pct_points": max(0.0, long_pct - lower_pct)},
+            )
+    close, high = result["close"], result["prior_high_20"]
+    result["price_distance_pct"] = (
+        None if close is None or high is None or not float(close)
+        else max(0.0, (float(high) / float(close) - 1) * 100))
+    return result
 
 
 def _condition_text(candidate: str, value: dict[str, object] | None) -> str:
     if value is None:
         return "계산 가능한 완성 봉이 없습니다."
     if candidate == rules.E1:
-        zscore, close, high = value["volume_zscore"], value["close"], value["prior_high_20"]
-        if zscore is None or high is None:
+        zscore, high = value["volume_zscore"], value["prior_high_20"]
+        required, current = value["required_volume"], value["current_volume"]
+        if zscore is None or high is None or required is None:
             return "돌파: 20봉 준비 중 → 대기"
-        met = float(zscore) > 3 and float(close) > float(high)
-        return (f"돌파: z {zscore:.2f} / 기준 3.0, 종가 {close:,.1f} / "
-                f"직전 20봉 고가 {high:,.1f} → {'롱 조건 충족' if met else '대기'}")
+        met = int(value["side"]) > 0
+        return (f"돌파: 거래량 필요 {required:,.1f} BTC / 현재 {current:,.1f} BTC, "
+                f"직전 20봉 고가 {high:,.1f} 위 마감 필요 "
+                f"(현재가 대비 +{value['price_distance_pct']:.2f}%) → "
+                f"{'롱 조건 충족' if met else '대기'}")
     ratio, upper, lower = (value[name] for name in
                            ("global_ls_account", "upper_threshold", "lower_threshold"))
     if ratio is None or upper is None or lower is None:
@@ -185,9 +259,15 @@ def _condition_text(candidate: str, value: dict[str, object] | None) -> str:
     elif float(ratio) <= float(lower):
         state = "롱 조건 충족"
     else:
-        state = f"대기 (숏까지 +{float(upper) - float(ratio):.2f})"
-    return (f"역추세: 롱숏비율 {ratio:.2f} / 숏 기준 {upper:.2f} 이상 / "
-            f"롱 기준 {lower:.2f} 이하 → {state}")
+        state = "대기"
+    short = value["distance_to_short"]
+    long = value["distance_to_long"]
+    return (f"역추세: 롱 계정 비율 {value['long_account_pct']:.1f}% "
+            f"(롱숏비율 {ratio:.2f}) / 숏 기준 {value['upper_pct']:.1f}% "
+            f"(롱숏비율 {upper:.2f}) 이상 / 롱 기준 {value['lower_pct']:.1f}% "
+            f"(롱숏비율 {lower:.2f}) 이하 / 남은 거리 "
+            f"숏 {short['ratio']:.2f}·{short['pct_points']:.1f}%p, "
+            f"롱 {long['ratio']:.2f}·{long['pct_points']:.1f}%p → {state}")
 
 
 class _ConditionCache:
@@ -206,7 +286,8 @@ class _ConditionCache:
             if self.key == key and self.value is not None:
                 return self.value
             market, features, display_start, source = _condition_inputs(connection)
-            details = {candidate: rules.condition_details(market, features, candidate)
+            details = {candidate: _display_condition_details(
+                           rules.condition_details(market, features, candidate), candidate)
                        for candidate in rules.SPECS}
             if not pd.isna(display_start):
                 details = {candidate: frame.loc[frame.bar_start.ge(display_start)].reset_index(drop=True)
@@ -214,8 +295,8 @@ class _ConditionCache:
             padded = _padded_to_hour(market)
             estimates = {}
             for candidate in rules.SPECS:
-                estimate = None if padded is None else rules.condition_details(
-                    padded, features, candidate)
+                estimate = None if padded is None else _display_condition_details(
+                    rules.condition_details(padded, features, candidate), candidate)
                 row = None if estimate is None or estimate.empty else estimate.iloc[-1]
                 if row is not None and not details[candidate].empty and (
                         row.decision_time <= details[candidate].decision_time.iloc[-1]):
@@ -273,15 +354,21 @@ def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
                 else:
                     signal_status = "dropped"
                     signal_reason = rejected.get((execution_ns, candidate), "holding")
+            ratio = None if pd.isna(row.global_ls_account) else float(row.global_ls_account)
+            lower = None if pd.isna(row.lower_threshold) else float(row.lower_threshold)
+            upper = None if pd.isna(row.upper_threshold) else float(row.upper_threshold)
+            display = ({
+                "prior_low_20": None if pd.isna(row.prior_low_20) else float(row.prior_low_20),
+                "current_volume": float(row.volume),
+                "required_volume": None if pd.isna(row.required_volume) else float(row.required_volume),
+            } if candidate == rules.E1 else {})
             rows.append({
                 "time": int(row.decision_time.timestamp()),
                 "decision_time": _iso(row.decision_time),
-                "global_ls_account": None if pd.isna(row.global_ls_account) else float(row.global_ls_account),
-                "lower_threshold": None if pd.isna(row.lower_threshold) else float(row.lower_threshold),
-                "upper_threshold": None if pd.isna(row.upper_threshold) else float(row.upper_threshold),
+                "global_ls_account": ratio, "lower_threshold": lower, "upper_threshold": upper,
                 "volume_zscore": None if pd.isna(row.volume_zscore) else float(row.volume_zscore),
                 "prior_high_20": None if pd.isna(row.prior_high_20) else float(row.prior_high_20),
-                "close": float(row.close), "side": int(row.side),
+                "close": float(row.close), "side": int(row.side), **display,
                 "condition_met": bool(row.side), "direction": (
                     "long" if row.side > 0 else "short" if row.side < 0 else None),
                 "signal_status": signal_status, "signal_reason": signal_reason,
@@ -289,11 +376,15 @@ def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
         last = _condition_value(None if frame.empty else frame.iloc[-1])
         estimate = _condition_value(cached["estimates"][candidate])
         current = estimate or last
+        readable_fields = ("long_account_pct", "upper_pct", "lower_pct",
+                           "distance_to_short", "distance_to_long")
         legs.append({"candidate": candidate, "name": CONDITION_NAMES[candidate],
                      "kind": "breakout" if candidate == rules.E1 else "contrarian",
                      "decision_cadence_minutes": 5 if candidate == rules.F3_5M else 60,
                      "max_hold_hours": rules.SPECS[candidate].max_hold,
                      "last_decision": last, "next_estimate": estimate,
+                     **{name: None if current is None else current[name]
+                        for name in readable_fields},
                      "current_text": _condition_text(candidate, current), "rows": rows})
     now = pd.Timestamp.now(tz="UTC")
     cadence = 5 if rules.F3_5M in CONDITION_BOOKS[book] else 60
