@@ -234,7 +234,7 @@ def test_vendor_is_local_html_has_no_external_scripts_and_bind_is_loopback(tmp_p
     assert "T0 이후 거래가 표시됩니다" in html
     assert 'id="conditionPanes"' in html and 'id="conditionSummary"' in html
     assert "지난 정시 실제 사용" in html and "다음 정시 예상" in html
-    assert "직전 20봉 저가 (참고·숏 신호 없음)" in html
+    assert "직전 20봉 저가(참고)" in html
     assert "롱 계정 비율 %" in html and "필요 거래량 BTC" in html
     with pytest.raises(ValueError, match="127.0.0.1"):
         make_server(path, tmp_path, host="0.0.0.0", port=0)
