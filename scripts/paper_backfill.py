@@ -40,6 +40,9 @@ def main() -> None:
                     "global_ls_account": float(row.global_ls_account), "long_account": None,
                     "short_account": None, "source": "archive",
                     "received_at": row.open_time.isoformat()}, connection)
+        # REST LS ratio resumes right after the archive window (first REST end label = args.end).
+        store.set_meta("last_ls_timestamp",
+                       (pd.Timestamp(args.end) - pd.Timedelta(milliseconds=1)).isoformat())
         for row in funding.itertuples(index=False):
             engine.store_funding(row.funding_time, row.funding_rate, source="archive")
         rest_rows = 0

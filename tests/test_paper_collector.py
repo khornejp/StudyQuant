@@ -49,6 +49,32 @@ def test_collector_recorded_responses_and_gap(tmp_path) -> None:
     assert list((tmp_path / "raw").glob("*.jsonl.gz"))
 
 
+def test_ls_ratio_pages_from_cursor_after_long_outage(tmp_path) -> None:
+    # The real endpoint returns the latest rows when endTime is missing; a 3-day outage must still fill.
+    start = pd.Timestamp("2026-10-01T00:00:00Z")
+    now = start + pd.Timedelta(days=3)
+    every = [int((start + pd.Timedelta(minutes=5 * i)).timestamp() * 1000) for i in range(864)]
+    calls = []
+
+    class Client:
+        def get(self, path, parameters):
+            if path == "/futures/data/globalLongShortAccountRatio":
+                calls.append(parameters)
+                assert "endTime" in parameters
+                rows = [t for t in every if parameters["startTime"] <= t <= parameters["endTime"]]
+                return [{"timestamp": t, "longShortRatio": "1.1", "longAccount": ".52",
+                         "shortAccount": ".48"} for t in rows[:parameters["limit"]]]
+            return []
+
+    with PaperStore(tmp_path / "live.sqlite") as store:
+        store.set_meta("last_ls_timestamp", (start - pd.Timedelta(minutes=5)).isoformat())
+        Collector(PaperEngine(store), tmp_path / "raw", Client()).collect_once(now)
+        stored = pd.to_datetime(store.frame("ls_ratio").timestamp, utc=True)
+        assert len(stored) == 864 and stored.min() == start
+        assert len(calls) == 2
+        assert store.get_meta("last_ls_timestamp") == pd.to_datetime(every[-1], unit="ms", utc=True).isoformat()
+
+
 def test_funding_normalization_rejects_bad_time(tmp_path) -> None:
     with PaperStore(tmp_path / "live.sqlite") as store:
         engine = PaperEngine(store)

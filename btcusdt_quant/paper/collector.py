@@ -194,9 +194,22 @@ class Collector:
                     "source": "rest", "received_at": received.isoformat()})
                 premium_count += 1
 
-        ls = self.client.get("/futures/data/globalLongShortAccountRatio", {
-            "symbol": "BTCUSDT", "period": "5m", "startTime": _utc_ms(start), "limit": 500})
+        # Without endTime the endpoint returns the latest 500 rows, so page from our own cursor.
+        cursor = self.engine.store.get_meta("last_ls_timestamp")
+        ls_start = (pd.Timestamp(cursor) + pd.Timedelta(milliseconds=1)) if cursor else start
+        ls = []
+        while ls_start < received:
+            ls_end = min(ls_start + pd.Timedelta(minutes=5 * 500), received)
+            page = self.client.get("/futures/data/globalLongShortAccountRatio", {
+                "symbol": "BTCUSDT", "period": "5m", "startTime": _utc_ms(ls_start),
+                "endTime": _utc_ms(ls_end), "limit": 500})
+            ls.extend(page)
+            ls_start = ls_end + pd.Timedelta(milliseconds=1)
         self._audit("globalLongShortAccountRatio", ls, received)
+        if ls:
+            last_ls = max(int(row["timestamp"]) for row in ls)
+            self.engine.store.set_meta(
+                "last_ls_timestamp", pd.to_datetime(last_ls, unit="ms", utc=True).isoformat())
         for row in ls:
             # REST is end/availability labelled. Keeping it unshifted makes strict-prior causal.
             stamp = pd.to_datetime(int(row["timestamp"]), unit="ms", utc=True)
