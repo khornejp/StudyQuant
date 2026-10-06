@@ -86,19 +86,30 @@ def _strict_prior_feature(bars: pd.DataFrame, features: pd.DataFrame,
     return source.iloc[indices][column].reset_index(drop=True)
 
 
-def signals(minutes: pd.DataFrame, features: pd.DataFrame, candidate: str, *,
-            legacy_create_time_available: bool = False
-            ) -> pd.DataFrame:
-    """Return every frozen decision, including repeated signals while holding."""
+def condition_details(minutes: pd.DataFrame, features: pd.DataFrame, candidate: str, *,
+                      legacy_create_time_available: bool = False) -> pd.DataFrame:
+    """Return frozen decisions and the exact indicator values which produced them."""
     if candidate not in SPECS:
         raise ValueError(f"unknown candidate: {candidate}")
-    bars = aggregate_hourly(minutes)
+    bars = (aggregate_hourly(minutes) if not minutes.empty else
+            pd.DataFrame(columns=["bar_start", "decision_time", "open", "high", "low",
+                                  "close", "volume"]))
     side = np.zeros(len(bars), np.int8)
+    bars["global_ls_account"] = np.nan
+    bars["lower_threshold"] = np.nan
+    bars["upper_threshold"] = np.nan
+    bars["volume_zscore"] = np.nan
+    bars["prior_high_20"] = np.nan
+    if bars.empty:
+        bars["side"] = pd.Series(dtype=np.int8)
+        return bars
     if candidate == E1:
         mean = bars.volume.rolling(20).mean()
         zscore = (bars.volume - mean) / bars.volume.rolling(20).std(ddof=0)
         prior_high = bars.high.rolling(20).max().shift()
         side[(zscore > 3).to_numpy() & bars.close.gt(prior_high).fillna(False).to_numpy()] = 1
+        bars["volume_zscore"] = zscore
+        bars["prior_high_20"] = prior_high
     else:
         spec = SPECS[candidate]
         source = _strict_prior_feature(
@@ -108,10 +119,22 @@ def signals(minutes: pd.DataFrame, features: pd.DataFrame, candidate: str, *,
         upper = rolling.quantile(spec.upper_quantile)
         side[source.ge(upper).fillna(False).to_numpy()] = -1
         side[source.le(lower).fillna(False).to_numpy()] = 1
-    result = bars[["bar_start", "decision_time", "open", "high", "low", "close",
-                   "volume"]].copy()
-    result["side"] = side
-    return result
+        bars["global_ls_account"] = source
+        bars["lower_threshold"] = lower
+        bars["upper_threshold"] = upper
+    bars["side"] = side
+    return bars
+
+
+def signals(minutes: pd.DataFrame, features: pd.DataFrame, candidate: str, *,
+            legacy_create_time_available: bool = False
+            ) -> pd.DataFrame:
+    """Return every frozen decision, including repeated signals while holding."""
+    details = condition_details(
+        minutes, features, candidate,
+        legacy_create_time_available=legacy_create_time_available)
+    return details[["bar_start", "decision_time", "open", "high", "low", "close",
+                    "volume", "side"]].copy()
 
 
 def _raw_trade(side: int, entry_time: pd.Timestamp, exit_time: pd.Timestamp,
@@ -164,4 +187,4 @@ def make_trades(minutes: pd.DataFrame, features: pd.DataFrame, candidate: str,
 
 
 __all__ = ["E1", "F3", "F3_W30", "RULE_INPUT_COLUMNS", "RuleSpec", "SPECS", "aggregate_hourly",
-           "make_trades", "signals"]
+           "condition_details", "make_trades", "signals"]

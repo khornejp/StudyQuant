@@ -5,8 +5,10 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import shutil
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +18,7 @@ import numpy as np
 import pandas as pd
 from plotly.offline import get_plotlyjs
 
+from .. import rules
 from ..config import credential_status, telegram_status
 
 STATIC = Path(__file__).with_name("index.html")
@@ -24,6 +27,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 TF_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 DEFAULT_BOOKS = ("C1", "F3", "E1", "C4")
 MAX_CANDLES = 2_000
+CONDITION_BOOKS = {
+    "F3": (rules.F3,), "E1": (rules.E1,),
+    "C1": (rules.F3, rules.E1), "C4": (rules.F3_W30, rules.E1),
+}
+CONDITION_NAMES = {rules.F3: "F3 역추세", rules.F3_W30: "F3-w30 역추세",
+                   rules.E1: "E1 거래량 돌파"}
 
 
 def _records(frame: pd.DataFrame) -> list[dict[str, object]]:
@@ -69,6 +78,232 @@ def _utc(value: str | None) -> pd.Timestamp | None:
 
 def _iso(value: pd.Timestamp) -> str:
     return value.isoformat()
+
+
+def _q3_replay_inputs(connection: sqlite3.Connection, first: pd.Timestamp,
+                      last: pd.Timestamp) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+    """Recover the exact external warm-up used to build the checked-in Q3 replay DB."""
+    count = int(connection.execute("SELECT COUNT(*) FROM klines_1m").fetchone()[0])
+    if count != 132_480 or first != pd.Timestamp("2026-07-01T00:00:00Z") or (
+            last != pd.Timestamp("2026-09-30T23:59:00Z")):
+        return None
+    history_path = REPO_ROOT / "artifacts/btcusdt_2020_2026h1.parquet"
+    old_features = (REPO_ROOT / "artifacts/short_quantile_sweep_20260826/feature_cache/"
+                    "0fc9086b7d4b4c43c8b84f6f/feature_rows.parquet")
+    q3_features = REPO_ROOT / "artifacts/hold_a_2026q3/features_2026q3.parquet"
+    if not all(path.exists() for path in (history_path, old_features, q3_features)):
+        return None
+    market_start = first - pd.Timedelta(hours=20)
+    market = pd.read_parquet(history_path, columns=["open_time", "open", "high", "low",
+                                                           "close", "volume"],
+                             filters=[("open_time", ">=", market_start),
+                                      ("open_time", "<", first)])
+    feature_start = first - pd.Timedelta(hours=2_161)
+    columns = ["open_time", "global_ls_account"]
+    features = pd.concat([
+        pd.read_parquet(old_features, columns=columns,
+                        filters=[("open_time", ">=", feature_start),
+                                 ("open_time", "<", first)]),
+        pd.read_parquet(q3_features, columns=columns,
+                        filters=[("open_time", ">=", first),
+                                 ("open_time", "<=", last)]),
+    ], ignore_index=True)
+    return market, features
+
+
+def _condition_inputs(connection: sqlite3.Connection) -> tuple[pd.DataFrame, pd.DataFrame,
+                                                                  pd.Timestamp, str]:
+    market = pd.read_sql_query(
+        "SELECT open_time,open,high,low,close,volume FROM klines_1m "
+        "WHERE closed=1 ORDER BY open_time", connection)
+    if market.empty:
+        return market, pd.DataFrame(columns=["open_time", "global_ls_account"]), pd.NaT, "sqlite"
+    market["open_time"] = pd.to_datetime(market.open_time, utc=True)
+    first, last = market.open_time.iloc[0], market.open_time.iloc[-1]
+    features = pd.read_sql_query(
+        "SELECT timestamp AS open_time,global_ls_account,source FROM ls_ratio ORDER BY timestamp",
+        connection) if _has_table(connection, "ls_ratio") else pd.DataFrame()
+    source = "sqlite:klines_1m+ls_ratio"
+    if features.empty:
+        replay = _q3_replay_inputs(connection, first, last)
+        if replay is not None:
+            warmup, features = replay
+            warmup["open_time"] = pd.to_datetime(warmup.open_time, utc=True)
+            market = pd.concat([warmup, market], ignore_index=True).sort_values(
+                "open_time", kind="stable").reset_index(drop=True)
+            source = "sqlite:klines_1m+frozen Q3 replay artifacts"
+        else:
+            features = pd.DataFrame(columns=["open_time", "global_ls_account"])
+    features["open_time"] = pd.to_datetime(features.open_time, utc=True)
+    return market, features, first, source
+
+
+def _padded_to_hour(minutes: pd.DataFrame) -> pd.DataFrame | None:
+    """Hold price and add zero volume to show a clearly-labelled nowcast."""
+    if minutes.empty:
+        return None
+    last = minutes.open_time.iloc[-1]
+    end = last.floor("h") + pd.Timedelta(minutes=59)
+    if last >= end:
+        return None
+    missing = pd.date_range(last + pd.Timedelta(minutes=1), end, freq="min", tz="UTC")
+    price = float(minutes.close.iloc[-1])
+    padding = pd.DataFrame({"open_time": missing, "open": price, "high": price,
+                            "low": price, "close": price, "volume": 0.0})
+    return pd.concat([minutes, padding], ignore_index=True)
+
+
+def _condition_value(row: pd.Series | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    fields = ("global_ls_account", "lower_threshold", "upper_threshold", "volume_zscore",
+              "prior_high_20", "close", "side")
+    return {"decision_time": _iso(row.decision_time),
+            **{name: (None if pd.isna(row[name]) else int(row[name]) if name == "side"
+                      else float(row[name])) for name in fields}}
+
+
+def _condition_text(candidate: str, value: dict[str, object] | None) -> str:
+    if value is None:
+        return "계산 가능한 완성 봉이 없습니다."
+    if candidate == rules.E1:
+        zscore, close, high = value["volume_zscore"], value["close"], value["prior_high_20"]
+        if zscore is None or high is None:
+            return "돌파: 20봉 준비 중 → 대기"
+        met = float(zscore) > 3 and float(close) > float(high)
+        return (f"돌파: z {zscore:.2f} / 기준 3.0, 종가 {close:,.1f} / "
+                f"직전 20봉 고가 {high:,.1f} → {'롱 조건 충족' if met else '대기'}")
+    ratio, upper, lower = (value[name] for name in
+                           ("global_ls_account", "upper_threshold", "lower_threshold"))
+    if ratio is None or upper is None or lower is None:
+        return "역추세: 기준선 준비 중 → 대기"
+    if float(ratio) >= float(upper):
+        state = "숏 조건 충족"
+    elif float(ratio) <= float(lower):
+        state = "롱 조건 충족"
+    else:
+        state = f"대기 (숏까지 +{float(upper) - float(ratio):.2f})"
+    return (f"역추세: 롱숏비율 {ratio:.2f} / 숏 기준 {upper:.2f} 이상 / "
+            f"롱 기준 {lower:.2f} 이하 → {state}")
+
+
+class _ConditionCache:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.key: tuple[object, ...] | None = None
+        self.value: dict[str, object] | None = None
+
+    def get(self, connection: sqlite3.Connection) -> dict[str, object]:
+        latest = connection.execute("SELECT MAX(open_time),COUNT(*) FROM klines_1m").fetchone()
+        feature_latest = connection.execute("SELECT MAX(timestamp),COUNT(*) FROM ls_ratio").fetchone()
+        key = (latest[0], latest[1], feature_latest[0], feature_latest[1])
+        if self.key == key and self.value is not None:
+            return self.value
+        with self.lock:
+            if self.key == key and self.value is not None:
+                return self.value
+            market, features, display_start, source = _condition_inputs(connection)
+            details = {candidate: rules.condition_details(market, features, candidate)
+                       for candidate in rules.SPECS}
+            if not pd.isna(display_start):
+                details = {candidate: frame.loc[frame.bar_start.ge(display_start)].reset_index(drop=True)
+                           for candidate, frame in details.items()}
+            padded = _padded_to_hour(market)
+            estimates = {}
+            for candidate in rules.SPECS:
+                estimate = None if padded is None else rules.condition_details(
+                    padded, features, candidate)
+                row = None if estimate is None or estimate.empty else estimate.iloc[-1]
+                if row is not None and not details[candidate].empty and (
+                        row.decision_time <= details[candidate].decision_time.iloc[-1]):
+                    row = None
+                estimates[candidate] = row
+            cutoff = None if market.empty else market.open_time.iloc[-1] + pd.Timedelta(minutes=1)
+            self.key, self.value = key, {"details": details, "estimates": estimates,
+                                         "market": market, "data_cutoff": cutoff,
+                                         "source": source}
+            return self.value
+
+
+def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
+                        book: str, tf: str) -> dict[str, object]:
+    if book not in CONDITION_BOOKS:
+        raise ValueError(f"book must be one of {','.join(CONDITION_BOOKS)}")
+    if tf not in TF_SECONDS:
+        raise ValueError("tf must be one of 1m,5m,15m,1h,4h,1d")
+    cached = cache.get(connection)
+    market = cached["market"]
+    market_times = market.open_time.array.asi8 if not market.empty else np.array([], dtype=np.int64)
+    trades = _frame(connection, "trades", "book=? AND boundary='PESS'", (book,))
+    accepted: set[tuple[int, str | None]] = set()
+    if not trades.empty:
+        accepted = {(pd.Timestamp(row.entry_time).value,
+                     None if pd.isna(row.candidate) else str(row.candidate))
+                    for row in trades.itertuples(index=False)}
+    dropped = _frame(connection, "signals", "book=?", (book,))
+    rejected: dict[tuple[int, str], str] = {}
+    if not dropped.empty:
+        rejected = {(pd.Timestamp(row.entry_time).value, str(row.candidate)): str(row.reason)
+                    for row in dropped.itertuples(index=False)}
+    position = _frame(connection, "positions", "book=?", (book,))
+    holding = not position.empty
+    legs = []
+    for candidate in CONDITION_BOOKS[book]:
+        frame = cached["details"][candidate]
+        rows = []
+        for row in frame.itertuples(index=False):
+            execution_ns = None
+            if len(market_times):
+                location = int(np.searchsorted(market_times, row.decision_time.value, side="left"))
+                if location < len(market_times):
+                    execution_ns = int(market_times[location])
+            signal_status = signal_reason = None
+            if int(row.side):
+                if execution_ns is not None and ((execution_ns, candidate) in accepted or
+                                                 (execution_ns, None) in accepted):
+                    signal_status = "filled"
+                else:
+                    signal_status = "dropped"
+                    signal_reason = rejected.get((execution_ns, candidate), "holding")
+            rows.append({
+                "time": int(row.decision_time.timestamp()),
+                "decision_time": _iso(row.decision_time),
+                "global_ls_account": None if pd.isna(row.global_ls_account) else float(row.global_ls_account),
+                "lower_threshold": None if pd.isna(row.lower_threshold) else float(row.lower_threshold),
+                "upper_threshold": None if pd.isna(row.upper_threshold) else float(row.upper_threshold),
+                "volume_zscore": None if pd.isna(row.volume_zscore) else float(row.volume_zscore),
+                "prior_high_20": None if pd.isna(row.prior_high_20) else float(row.prior_high_20),
+                "close": float(row.close), "side": int(row.side),
+                "condition_met": bool(row.side), "direction": (
+                    "long" if row.side > 0 else "short" if row.side < 0 else None),
+                "signal_status": signal_status, "signal_reason": signal_reason,
+            })
+        last = _condition_value(None if frame.empty else frame.iloc[-1])
+        estimate = _condition_value(cached["estimates"][candidate])
+        current = estimate or last
+        legs.append({"candidate": candidate, "name": CONDITION_NAMES[candidate],
+                     "kind": "breakout" if candidate == rules.E1 else "contrarian",
+                     "max_hold_hours": rules.SPECS[candidate].max_hold,
+                     "last_decision": last, "next_estimate": estimate,
+                     "current_text": _condition_text(candidate, current), "rows": rows})
+    now = pd.Timestamp.now(tz="UTC")
+    next_decision = now.floor("h") + pd.Timedelta(hours=1)
+    remaining = max(0, math.ceil((next_decision - now) / pd.Timedelta(minutes=1)))
+    return {"schema_version": 3, "book": book, "tf": tf,
+            "source": cached["source"],
+            "generated_at": _iso(now),
+            "data_cutoff": None if cached["data_cutoff"] is None else _iso(cached["data_cutoff"]),
+            "summary": {"holding": holding,
+                        "holding_text": "보유 중, 신호 무시" if holding else "미보유",
+                        "next_decision_time": _iso(next_decision),
+                        "next_decision_kst": next_decision.tz_convert("Asia/Seoul").isoformat(),
+                        "minutes_remaining": remaining,
+                        "estimate_label": "현재까지 데이터 기준",
+                        "legs": [{key: leg[key] for key in
+                                  ("candidate", "name", "kind", "max_hold_hours",
+                                   "last_decision", "next_estimate", "current_text")}
+                                 for leg in legs]},
+            "legs": legs}
 
 
 def _candle_rows(connection: sqlite3.Connection, tf: str, start: str | None,
@@ -265,6 +500,9 @@ class DashboardServer(ThreadingHTTPServer):
 def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
              start_time: str | None = None) -> type[BaseHTTPRequestHandler]:
     configured_books = books or DEFAULT_BOOKS
+    condition_cache = _ConditionCache()
+    with _connect_ro(store_path) as connection:
+        condition_cache.get(connection)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: object) -> None:
@@ -345,6 +583,10 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                 self._json(_performance(connection, query.get("book", [configured_books[0]])[0], start_time=start_time)); return True
             if path == "/api/status":
                 self._json(self._status(connection)); return True
+            if path == "/api/conditions":
+                book = query.get("book", [configured_books[0]])[0]
+                tf = query.get("tf", ["1h"])[0]
+                self._json(_conditions_payload(connection, condition_cache, book, tf)); return True
             return False
 
         def _v1(self, connection: sqlite3.Connection, path: str,

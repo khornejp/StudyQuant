@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import threading
 import urllib.request
 from pathlib import Path
@@ -11,7 +12,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from btcusdt_quant.paper import rules
 from btcusdt_quant.paper.dashboard import make_server
+from btcusdt_quant.paper.dashboard.server import _condition_inputs, _connect_ro
 from btcusdt_quant.paper.store import PaperStore
 
 
@@ -117,6 +120,7 @@ def test_v2_api_schemas_and_candles_match_pandas_resample(tmp_path, monkeypatch)
         positions = _get(base, "/api/positions")
         performance = _get(base, "/api/performance?book=C1")
         status = _get(base, "/api/status")
+        conditions = _get(base, "/api/conditions?book=C1&tf=5m")
     finally:
         server.shutdown(); server.server_close(); thread.join()
     expected = (source.set_index("open_time").resample("5min")
@@ -132,6 +136,10 @@ def test_v2_api_schemas_and_candles_match_pandas_resample(tmp_path, monkeypatch)
     assert positions == {"schema_version": 2, "rows": []}
     assert performance["schema_version"] == 2 and performance["book"] == "C1"
     assert status["schema_version"] == 2 and status["mode"] == "paper"
+    assert conditions["schema_version"] == 3 and conditions["book"] == "C1"
+    assert conditions["tf"] == "5m" and len(conditions["legs"]) == 2
+    assert conditions["summary"]["estimate_label"] == "현재까지 데이터 기준"
+    assert {leg["kind"] for leg in conditions["legs"]} == {"contrarian", "breakout"}
     assert [(row["kind"], row["price"]) for row in markers["rows"]] == [
         ("entry", 101.5), ("exit", 109.5)]
     assert all(row["trade_id"] == 1 and row["net_bps"] == -14 for row in markers["rows"])
@@ -152,6 +160,8 @@ def test_vendor_is_local_html_has_no_external_scripts_and_bind_is_loopback(tmp_p
     assert 'src="/vendor/lightweight-charts.standalone.production.js"' in html
     assert not re.search(r'<script[^>]+src=["\']https?://', html, re.I)
     assert "T0 이후 거래가 표시됩니다" in html
+    assert 'id="conditionPanes"' in html and 'id="conditionSummary"' in html
+    assert "지난 정시 실제 사용" in html and "다음 정시 예상" in html
     with pytest.raises(ValueError, match="127.0.0.1"):
         make_server(path, tmp_path, host="0.0.0.0", port=0)
 
@@ -166,12 +176,37 @@ def test_replay_database_supplies_chart_and_ledger_data() -> None:
         trades = _get(base, "/api/trades?book=H1")
         markers = _get(base, "/api/markers?book=H1")
         status = _get(base, "/api/status")
+        started = time.perf_counter()
+        c1 = _get(base, "/api/conditions?book=C1&tf=1h")
+        c1_seconds = time.perf_counter() - started
+        started = time.perf_counter()
+        c4 = _get(base, "/api/conditions?book=C4&tf=1h")
+        c4_seconds = time.perf_counter() - started
     finally:
         server.shutdown(); server.server_close(); thread.join()
     assert candles["rows"] and len(candles["rows"]) <= 2_000
     pessimistic = [row for row in trades["rows"] if row["boundary"] == "PESS"]
     assert trades["rows"] and len(markers["rows"]) == 2 * len(pessimistic)
     assert status["market"]["latest_price"] == candles["latest_price"]
+    assert max(c1_seconds, c4_seconds) < 1.0
+    assert {"generated_at", "data_cutoff", "source", "summary", "legs"} <= set(c1)
+    assert {"holding", "holding_text", "next_decision_time", "next_decision_kst",
+            "minutes_remaining", "estimate_label", "legs"} <= set(c1["summary"])
+    assert {"decision_time", "global_ls_account", "lower_threshold", "upper_threshold",
+            "volume_zscore", "prior_high_20", "close", "side", "condition_met",
+            "direction", "signal_status", "signal_reason"} <= set(c1["legs"][0]["rows"][0])
+    actual = {leg["candidate"]: [(row["decision_time"], row["side"])
+                                  for row in leg["rows"] if row["condition_met"]]
+              for leg in c1["legs"] + c4["legs"]}
+    with _connect_ro(replay) as connection:
+        market, features, display_start, source = _condition_inputs(connection)
+    assert source.endswith("frozen Q3 replay artifacts")
+    for candidate in (rules.F3, rules.F3_W30, rules.E1):
+        expected = rules.signals(market, features, candidate)
+        expected = expected.loc[expected.bar_start.ge(display_start) & expected.side.ne(0)]
+        assert actual[candidate] == [
+            (row.decision_time.isoformat(), int(row.side))
+            for row in expected.itertuples(index=False)]
 
 
 def test_buy_hold_benchmark_starts_at_t0() -> None:
@@ -234,3 +269,38 @@ def test_forming_bar_is_display_only_and_merged_into_last_bucket(tmp_path) -> No
     assert len(five["rows"]) == 1 and five["rows"][0]["high"] == 15.0 and five["rows"][0]["volume"] == 5.0
     assert status["market"]["latest_price"] == 14.0
     assert closed_rows == 3
+
+
+def test_conditions_two_year_cached_response_under_one_second(tmp_path) -> None:
+    path = tmp_path / "two_year.sqlite"
+    with PaperStore(path) as store:
+        connection = store.connection
+        connection.execute("BEGIN")
+        connection.execute("""
+            WITH RECURSIVE n(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i<1051199)
+            INSERT INTO klines_1m
+            SELECT strftime('%Y-%m-%dT%H:%M:%S+00:00',1704067200+i*60,'unixepoch'),
+                   10000+(i%1000),10001+(i%1000),9999+(i%1000),10000.5+(i%1000),
+                   10+(i%60),0,0,0,0,'test',
+                   strftime('%Y-%m-%dT%H:%M:%S+00:00',1704067200+i*60,'unixepoch'),1
+            FROM n
+        """)
+        connection.execute("""
+            WITH RECURSIVE n(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i<210239)
+            INSERT INTO ls_ratio
+            SELECT strftime('%Y-%m-%dT%H:%M:%S+00:00',1704067200+i*300,'unixepoch'),
+                   1.0+(i%200)/100.0,NULL,NULL,'archive',
+                   strftime('%Y-%m-%dT%H:%M:%S+00:00',1704067200+i*300,'unixepoch')
+            FROM n
+        """)
+        connection.commit()
+    server, thread, base = _serve(path, tmp_path, books=("C1",))
+    try:
+        started = time.perf_counter()
+        payload = _get(base, "/api/conditions?book=C1&tf=1h")
+        elapsed = time.perf_counter() - started
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+    assert elapsed < 1.0
+    assert len(payload["legs"]) == 2
+    assert all(len(leg["rows"]) == 17_520 for leg in payload["legs"])
