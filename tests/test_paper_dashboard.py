@@ -151,7 +151,7 @@ def test_vendor_is_local_html_has_no_external_scripts_and_bind_is_loopback(tmp_p
     assert b"TradingView Lightweight Charts" in vendor[:200]
     assert 'src="/vendor/lightweight-charts.standalone.production.js"' in html
     assert not re.search(r'<script[^>]+src=["\']https?://', html, re.I)
-    assert "T0(2026-10-07 09:00 KST) 이후 거래가 표시됩니다" in html
+    assert "T0 이후 거래가 표시됩니다" in html
     with pytest.raises(ValueError, match="127.0.0.1"):
         make_server(path, tmp_path, host="0.0.0.0", port=0)
 
