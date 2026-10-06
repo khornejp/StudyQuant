@@ -19,8 +19,11 @@ from .store import PaperStore, utc_text
 BOOKS = {"H1": (rules.F3,), "H2": (rules.E1,),
          "H3": (rules.F3, rules.E1), "H5": (rules.F3_W30, rules.E1),
          "F3": (rules.F3,), "E1": (rules.E1,),
-         "C1": (rules.F3, rules.E1), "C1_5m": (rules.F3_5M, rules.E1),
+         "C1": (rules.F3, rules.E1), "C1_T1": (rules.F3, rules.E1),
+         "C1_5m": (rules.F3_5M, rules.E1),
          "C4": (rules.F3_W30, rules.E1)}
+
+EXECUTION_DELAYS = {"C1_T1": 1}
 
 
 def _kline_row(row: Mapping[str, object], received_at: object, source: str) -> dict[str, object]:
@@ -165,15 +168,17 @@ class PaperEngine:
         end_price = float(market.loc[market.open_time.lt(end), "close"].iloc[-1])
         data_end = market.open_time.iloc[-1] + pd.Timedelta(minutes=1)
 
-        def window(frame: pd.DataFrame, candidate: str,
+        def window(frame: pd.DataFrame, candidate: str | None,
                    book_start: pd.Timestamp = start) -> pd.DataFrame:
             result = frame.loc[(frame.exit_time > book_start) & (frame.entry_time < end)].copy()
             if result.empty:  # e.g. a book before its own T0: untyped empty columns break the math below
                 result["_active"] = pd.Series(dtype=bool)
                 result["exit_reason"] = pd.Series(dtype=object)
                 return result.reset_index(drop=True)
-            natural_end = result.entry_time + pd.to_timedelta(rules.SPECS[candidate].max_hold,
-                                                               unit="h")
+            hold_hours = (result.candidate.map(
+                {name: spec.max_hold for name, spec in rules.SPECS.items()})
+                if candidate is None else rules.SPECS[candidate].max_hold)
+            natural_end = result.entry_time + pd.to_timedelta(hold_hours, unit="h")
             result["_active"] = result.exit_time.eq(data_end) & natural_end.gt(data_end)
             forced = result.exit_time > end
             result.loc[forced, "exit_time"] = end
@@ -194,7 +199,14 @@ class PaperEngine:
             book_start = pd.Timestamp(self.config.book_start_times.get(name, start))
             if book_start.tzinfo is None:
                 raise ValueError("book start must be timezone-aware")
-            if book_start != start:
+            execution_delay = EXECUTION_DELAYS.get(name, 0)
+            if execution_delay:
+                raw = window(rules.make_first_trades(
+                    market, features, candidates, decision_start=book_start,
+                    execution_delay_minutes=execution_delay,
+                    cost_bps=self.config.cost_bps), None, book_start)
+                dropped = pd.DataFrame()
+            elif book_start != start:
                 local_generated = {candidate: rules.make_trades(
                     market, features, candidate, decision_start=book_start)
                     for candidate in candidates}
@@ -202,18 +214,19 @@ class PaperEngine:
                              for candidate, frame in local_generated.items()}
             else:
                 book_base = base
-            if len(candidates) == 1:
-                raw = book_base[candidates[0]].copy()
-                raw["candidate"] = None if name in {"H1", "H2"} else candidates[0]
-            else:
-                source = pd.concat([book_base[candidate].assign(candidate=candidate)
-                                    for candidate in candidates], ignore_index=True)
-                raw, dropped = book.first_book(source, list(candidates))
-                for row in dropped.itertuples(index=False):
-                    self.store.insert("signals", {"decision_time": utc_text(row.entry_time),
-                        "entry_time": utc_text(row.entry_time), "book": name,
-                        "candidate": row.candidate, "side": int(row.side), "accepted": 0,
-                        "reason": row.reason})
+            if not execution_delay:
+                if len(candidates) == 1:
+                    raw = book_base[candidates[0]].copy()
+                    raw["candidate"] = None if name in {"H1", "H2"} else candidates[0]
+                else:
+                    source = pd.concat([book_base[candidate].assign(candidate=candidate)
+                                        for candidate in candidates], ignore_index=True)
+                    raw, dropped = book.first_book(source, list(candidates))
+                    for row in dropped.itertuples(index=False):
+                        self.store.insert("signals", {"decision_time": utc_text(row.entry_time),
+                            "entry_time": utc_text(row.entry_time), "book": name,
+                            "candidate": row.candidate, "side": int(row.side), "accepted": 0,
+                            "reason": row.reason})
             if publish_open_positions and len(raw) and bool(raw.iloc[-1].get("_active", False)):
                 current = raw.iloc[-1]
                 current_candidate = current.candidate or candidates[0]
@@ -226,7 +239,9 @@ class PaperEngine:
                     "unrealized_bps": float(current.side * np.log(end_price / current.entry_price) * 1e4),
                     "updated_at": utc_text(end)})
             for boundary in ("PESS", "OPT"):
-                output.append(book.reprice(raw, funding, boundary, self.config.cost_bps).assign(
+                output.append(book.reprice(
+                    raw, funding, boundary, self.config.cost_bps,
+                    cost_first=name == "C1_T1").assign(
                     book=name, boundary=boundary))
             if name in leverage_books:
                 # The x3 overlay is reference only; its failure must not block the 1x books.
@@ -308,4 +323,4 @@ class PaperEngine:
         return ledger
 
 
-__all__ = ["BOOKS", "PaperEngine"]
+__all__ = ["BOOKS", "EXECUTION_DELAYS", "PaperEngine"]

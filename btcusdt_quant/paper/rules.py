@@ -249,6 +249,70 @@ def make_trades(minutes: pd.DataFrame, features: pd.DataFrame, candidate: str,
     return pd.DataFrame(rows, columns=TRADE_COLUMNS)
 
 
+def make_first_trades(minutes: pd.DataFrame, features: pd.DataFrame,
+                      candidates: tuple[str, ...], *,
+                      decision_start: object | None = None,
+                      execution_delay_minutes: int = 0,
+                      cost_bps: float = 4.0) -> pd.DataFrame:
+    """Run a priority FIRST book directly from decisions, including held-signal drops."""
+    decision_frames = [signals(minutes, features, candidate) for candidate in candidates]
+    decisions = decision_frames[0][["decision_time"]].copy()
+    for candidate, frame in zip(candidates, decision_frames):
+        if not frame.decision_time.equals(decisions.decision_time):
+            raise ValueError("FIRST candidates must share decision times")
+        decisions[candidate] = frame.side.to_numpy(np.int8)
+    if decision_start is not None:
+        decisions = decisions.loc[decisions.decision_time.ge(pd.Timestamp(decision_start))]
+
+    source = minutes.copy()
+    source["open_time"] = pd.to_datetime(source.open_time, utc=True)
+    source = source.sort_values("open_time", kind="stable").reset_index(drop=True)
+    times = source.open_time.array.asi8
+    opens = source.open.to_numpy(float)
+    data_end = source.open_time.iloc[-1] + pd.Timedelta(minutes=1)
+    delay = pd.Timedelta(minutes=execution_delay_minutes)
+    active: str | None = None
+    side = 0
+    entry_time: pd.Timestamp | None = None
+    entry_price = np.nan
+    expiry: pd.Timestamp | None = None
+    rows: list[dict[str, object]] = []
+
+    def close(time: pd.Timestamp, price: float) -> None:
+        nonlocal active, side, entry_time, entry_price, expiry
+        rows.append({**_raw_trade(side, entry_time, time, entry_price, price, cost_bps),
+                     "candidate": active})
+        active, side, entry_time, expiry = None, 0, None, None
+        entry_price = np.nan
+
+    for values in decisions.itertuples(index=False, name=None):
+        decision_time, *side_values = values
+        current = dict(zip(candidates, side_values))
+        execution_target = pd.Timestamp(decision_time) + delay
+        if execution_target >= data_end:
+            break
+        location = int(np.searchsorted(times, execution_target.value, side="left"))
+        if location >= len(source):
+            continue
+        execution_time = source.open_time.iloc[location]
+        execution_price = float(opens[location])
+        if active is not None and expiry is not None and expiry <= execution_time:
+            expiry_location = int(np.searchsorted(times, expiry.value, side="left"))
+            close(source.open_time.iloc[expiry_location], float(opens[expiry_location]))
+        if active is not None and int(current[active]) == -side:
+            close(execution_time, execution_price)
+        if active is None:
+            chosen = next((candidate for candidate in candidates
+                           if int(current[candidate]) != 0), None)
+            if chosen is not None:
+                active, side = chosen, int(current[chosen])
+                entry_time, entry_price = execution_time, execution_price
+                expiry = execution_time + pd.Timedelta(hours=SPECS[chosen].max_hold)
+    if active is not None:
+        close(data_end, float(source.close.iloc[-1]))
+    return pd.DataFrame(rows, columns=[*TRADE_COLUMNS, "candidate"])
+
+
 def _make_time_trades(decisions: pd.DataFrame, source: pd.DataFrame, spec: RuleSpec,
                       cost_bps: float, close_at_end: bool) -> pd.DataFrame:
     """Absolute-time hold used by R2-37 V5; held signals remain ignored."""
@@ -296,4 +360,4 @@ def _make_time_trades(decisions: pd.DataFrame, source: pd.DataFrame, spec: RuleS
 
 
 __all__ = ["E1", "F3", "F3_5M", "F3_W30", "RULE_INPUT_COLUMNS", "RuleSpec", "SPECS", "aggregate_hourly",
-           "condition_details", "make_trades", "signals"]
+           "condition_details", "make_first_trades", "make_trades", "signals"]

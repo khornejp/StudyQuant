@@ -81,7 +81,7 @@ def _funding_arrays(funding: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
 
 def reprice(trades: pd.DataFrame, funding: pd.DataFrame, boundary: str,
-            cost_bps: float = 4.0) -> pd.DataFrame:
+            cost_bps: float = 4.0, *, cost_first: bool = False) -> pd.DataFrame:
     """Apply exact research funding boundary and round-trip cost rules."""
     if boundary not in BOUNDARIES:
         raise ValueError(f"unknown boundary: {boundary}")
@@ -115,7 +115,8 @@ def reprice(trades: pd.DataFrame, funding: pd.DataFrame, boundary: str,
     out["funding_bps"] = internal + edge_cashflow
     out["funding_event_count"] = count
     out["cost_bps"] = float(cost_bps)
-    out["net_bps"] = out.gross_bps + out.funding_bps - cost_bps
+    out["net_bps"] = (out.gross_bps - cost_bps + out.funding_bps if cost_first else
+                      out.gross_bps + out.funding_bps - cost_bps)
     out["hold_minutes"] = (out.exit_time - out.entry_time) / pd.Timedelta(minutes=1)
     return out
 

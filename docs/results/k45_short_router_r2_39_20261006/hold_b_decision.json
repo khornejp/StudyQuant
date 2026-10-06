@@ -1,0 +1,43 @@
+{
+  "decision": "ROUTER_DEV_FAIL",
+  "winner": null,
+  "decided_at_utc": "2026-10-06T04:36:35.380353+00:00",
+  "hold_b_opened": false,
+  "hold_b_result": null,
+  "hold_a_used_for_selection": false,
+  "model_rows": [
+    {
+      "model": "ridge",
+      "trade_n": 850,
+      "net_bps": 9259.426263080533,
+      "absolute_pw_low": -2.2778298176419014,
+      "paired_net_bps": -7831.477422631384,
+      "paired_pw_low": -14.325257479336088,
+      "paired_dsr_m2": 0.0270765741448207,
+      "paired_dsr_m5050": 0.0038055481246880717,
+      "hac_alpha": 8.528209937374843,
+      "hac_alpha_low": -1.9392939951145642,
+      "top2_removed": 7108.820790690785,
+      "net_8bps": 5859.426263080532,
+      "random_percentile": 0.0,
+      "dev_pass": false
+    },
+    {
+      "model": "small_boosting",
+      "trade_n": 656,
+      "net_bps": 10257.033618139225,
+      "absolute_pw_low": -0.6159304418997831,
+      "paired_net_bps": -6833.870067572692,
+      "paired_pw_low": -14.65793187984156,
+      "paired_dsr_m2": 0.05640046674348518,
+      "paired_dsr_m5050": 0.010033939773875735,
+      "hac_alpha": 8.816383436673283,
+      "hac_alpha_low": -0.7916321370315131,
+      "top2_removed": 8056.859788734917,
+      "net_8bps": 7633.033618139225,
+      "random_percentile": 0.0,
+      "dev_pass": false
+    }
+  ],
+  "final_decision": "ROUTER_DEV_FAIL"
+}
