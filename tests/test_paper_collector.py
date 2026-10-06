@@ -158,3 +158,27 @@ def test_ls_rest_end_label_is_strictly_prior_and_book_is_not_rule_input() -> Non
         "global_ls_account": [1.0, 999.0], "source": ["rest", "rest"]})
     assert rules._strict_prior_feature(bars, features, "global_ls_account").tolist() == [1.0]
     assert "book_ticker_1m" not in rules.RULE_INPUT_COLUMNS
+
+
+def test_premium_uses_own_cursor_when_websocket_advanced_klines(tmp_path) -> None:
+    # Live bug: the WebSocket moved the kline cursor to the open minute, so premium was never stored.
+    start = pd.Timestamp("2026-10-06T04:53:00Z")
+    now = start + pd.Timedelta(minutes=10, seconds=5)
+    requested = {}
+
+    class Client:
+        def get(self, path, parameters):
+            if path == "/fapi/v1/premiumIndexKlines":
+                requested["startTime"] = parameters["startTime"]
+                return [[int((start + pd.Timedelta(minutes=i)).timestamp() * 1000), "0", "0", "0", "0.0001"]
+                        for i in range(1, 11)]
+            return []
+
+    with PaperStore(tmp_path / "live.sqlite") as store:
+        store.set_meta("last_processed_minute", (now.floor("min") - pd.Timedelta(minutes=1)).isoformat())
+        store.set_meta("last_premium_minute", start.isoformat())
+        Collector(PaperEngine(store), tmp_path / "raw", Client()).collect_once(now)
+        stored = store.frame("premium_1m")
+        assert requested["startTime"] == int((start + pd.Timedelta(minutes=1)).timestamp() * 1000)
+        assert len(stored) == 9  # the 05:03 bar is still open at 05:03:05
+        assert store.get_meta("last_premium_minute") == (start + pd.Timedelta(minutes=9)).isoformat()

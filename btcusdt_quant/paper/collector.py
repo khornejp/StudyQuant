@@ -193,8 +193,14 @@ class Collector:
         inserted = sum(self.engine.process_closed_minute(
             row, received_at=received, source="rest") for row in closed)
 
+        # Premium keeps its own cursor: the kline cursor is advanced by the WebSocket first,
+        # so starting from it would only ever ask for the still-open minute.
+        premium_cursor = self.engine.store.get_meta("last_premium_minute")
+        premium_start = ((pd.Timestamp(premium_cursor) + pd.Timedelta(minutes=1)) if premium_cursor
+                         else start)
         premium = self.client.get("/fapi/v1/premiumIndexKlines", {
-            "symbol": "BTCUSDT", "interval": "1m", "startTime": _utc_ms(start), "limit": 1_000})
+            "symbol": "BTCUSDT", "interval": "1m", "startTime": _utc_ms(premium_start),
+            "limit": 1_000})
         self._audit("premiumIndexKlines", premium, received)
         premium_count = 0
         for row in premium:
@@ -203,6 +209,7 @@ class Collector:
                 self.engine.store.upsert("premium_1m", {
                     "open_time": stamp.isoformat(), "premium_index": float(row[4]),
                     "source": "rest", "received_at": received.isoformat()})
+                self.engine.store.set_meta("last_premium_minute", stamp.isoformat())
                 premium_count += 1
 
         # Without endTime the endpoint returns the latest 500 rows, so page from our own cursor.
