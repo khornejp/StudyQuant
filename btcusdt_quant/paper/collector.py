@@ -41,6 +41,17 @@ def parse_kline(row: list[object]) -> dict[str, object]:
             "taker_buy_quote_volume": float(row[10]), "closed": True}
 
 
+def parse_ws_forming(payload: Mapping[str, object]) -> dict[str, object] | None:
+    """In-progress bar for display only; never stored as a kline or used by signals."""
+    kline = payload.get("k", payload.get("data", {}).get("k", {}))
+    if not isinstance(kline, Mapping) or bool(kline.get("x")) or "t" not in kline:
+        return None
+    return {"open_time": pd.to_datetime(int(kline["t"]), unit="ms", utc=True).isoformat(),
+            "open": float(kline["o"]), "high": float(kline["h"]), "low": float(kline["l"]),
+            "close": float(kline["c"]), "volume": float(kline["v"]),
+            "updated_at": pd.Timestamp.now(tz="UTC").isoformat()}
+
+
 def parse_ws_kline(message: str | Mapping[str, object]) -> dict[str, object] | None:
     payload = json.loads(message) if isinstance(message, str) else message
     kline = payload.get("k", payload.get("data", {}).get("k", {}))
@@ -293,8 +304,14 @@ class Collector:
                     self._remember_socket(socket)
                     retries = 0
                     connected = time.monotonic()
+                    forming_written = 0.0
                     while not self._stop.is_set() and time.monotonic() - connected < 23 * 3600 + 50 * 60:
-                        row = parse_ws_kline(socket.recv())
+                        payload = json.loads(socket.recv())
+                        forming = parse_ws_forming(payload)
+                        if forming is not None and time.monotonic() - forming_written >= 1.0:
+                            store.set_meta("forming_kline", json.dumps(forming))
+                            forming_written = time.monotonic()
+                        row = parse_ws_kline(payload)
                         if row is not None and engine.process_closed_minute(
                                 row, received_at=datetime.now(timezone.utc), source="ws"):
                             store.set_meta("ws_closed_events", int(store.get_meta("ws_closed_events") or 0) + 1)

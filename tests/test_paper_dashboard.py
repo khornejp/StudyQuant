@@ -206,3 +206,31 @@ def test_default_candle_window_works_for_every_timeframe(tmp_path, tf) -> None:
     finally:
         server.shutdown(); server.server_close(); thread.join()
     assert "error" not in candles and candles["rows"]
+
+
+def test_forming_bar_is_display_only_and_merged_into_last_bucket(tmp_path) -> None:
+    import json as _json
+
+    path = tmp_path / "live.sqlite"
+    start = pd.Timestamp("2026-07-01T00:00:00Z")
+    with PaperStore(path) as store:
+        for i in range(3):
+            stamp = (start + pd.Timedelta(minutes=i)).isoformat()
+            store.upsert("klines_1m", {"open_time": stamp, "open": 10.0, "high": 11.0, "low": 9.0,
+                                       "close": 10.0, "volume": 1.0, "source": "test",
+                                       "received_at": stamp, "closed": 1})
+        store.set_meta("forming_kline", _json.dumps({
+            "open_time": (start + pd.Timedelta(minutes=3)).isoformat(), "open": 10.0, "high": 15.0,
+            "low": 10.0, "close": 14.0, "volume": 2.0, "updated_at": "2026-07-01T00:03:30+00:00"}))
+        closed_rows = len(store.frame("klines_1m"))
+    server, thread, base = _serve(path, tmp_path, books=("C1",))
+    try:
+        one = _get(base, "/api/candles?tf=1m")
+        five = _get(base, "/api/candles?tf=5m")
+        status = _get(base, "/api/status")
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+    assert len(one["rows"]) == 4 and one["rows"][-1]["forming"] and one["rows"][-1]["close"] == 14.0
+    assert len(five["rows"]) == 1 and five["rows"][0]["high"] == 15.0 and five["rows"][0]["volume"] == 5.0
+    assert status["market"]["latest_price"] == 14.0
+    assert closed_rows == 3

@@ -149,6 +149,33 @@ def _trade_markers(trades: pd.DataFrame) -> list[dict[str, object]]:
     return rows
 
 
+def _with_forming(connection: sqlite3.Connection, tf: str, rows: list[dict[str, object]],
+                  latest: dict[str, object]) -> tuple[list[dict[str, object]], dict[str, object]]:
+    """Append the live in-progress 1m bar (display only) to the last timeframe bucket."""
+    raw = _meta(connection, "forming_kline")
+    if not raw:
+        return rows, latest
+    forming = json.loads(raw)
+    stamp = _utc(forming["open_time"])
+    last_closed = _utc(latest.get("latest_time")) if latest.get("latest_time") else None
+    if stamp is None or (last_closed is not None and stamp <= last_closed):
+        return rows, latest
+    seconds = TF_SECONDS[tf]
+    epoch = int(stamp.timestamp()) // seconds * seconds
+    rows = [dict(row) for row in rows]
+    if rows and int(rows[-1]["time"]) == epoch:
+        bar = rows[-1]
+        bar.update(high=max(float(bar["high"]), forming["high"]), low=min(float(bar["low"]), forming["low"]),
+                   close=forming["close"], volume=float(bar["volume"]) + forming["volume"])
+    elif not rows or int(rows[-1]["time"]) < epoch:
+        rows.append({"time": epoch, "time_utc": _iso(pd.Timestamp(epoch, unit="s", tz="UTC")),
+                     "open": forming["open"], "high": forming["high"], "low": forming["low"],
+                     "close": forming["close"], "volume": forming["volume"]})
+    rows[-1]["forming"] = True
+    return rows, {**latest, "latest_price": forming["close"], "latest_time": forming["updated_at"],
+                  "forming": True}
+
+
 def _drawdown(values: pd.Series) -> pd.Series:
     return values.cummax().clip(lower=0) - values
 
@@ -289,6 +316,8 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                 tf = query.get("tf", ["1h"])[0]
                 rows, latest = _candle_rows(connection, tf, query.get("from", [None])[0],
                                             query.get("to", [None])[0])
+                if not query.get("to"):
+                    rows, latest = _with_forming(connection, tf, rows, latest)
                 self._json({"schema_version": 2, "tf": tf, "max_rows": MAX_CANDLES,
                             "rows": rows, **latest}); return True
             if path == "/api/markers":
@@ -415,6 +444,7 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
             usage = shutil.disk_usage(data_root if data_root.exists() else data_root.parent)
             market_rows, latest = _candle_rows(connection, "1m",
                                                 _iso((last_stamp or now) - pd.Timedelta(hours=24)), None)
+            market_rows, latest = _with_forming(connection, "1m", market_rows, latest)
             change = None if not market_rows else (float(latest["latest_price"]) / float(market_rows[0]["open"]) - 1) * 100
             return {"schema_version": 2, "mode": "paper", "symbol": "BTCUSDT", "contract": "무기한",
                     "market": {**latest, "change_24h_pct": change},
