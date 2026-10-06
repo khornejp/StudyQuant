@@ -19,6 +19,10 @@ class PaperConfig:
     primary_book: str = "C1"
     start_time: str = "2026-10-01T00:00:00Z"
     cost_bps: float = 4.0
+    leverage: float = 3.0
+    budget_usd: float = 100.0
+    maintenance_margin_rate: float = 0.004
+    liquidation_fee_rate: float = 0.0
     sqlite_path: str = "artifacts/live/live.sqlite"
     data_root: str = "artifacts/live"
     dashboard_host: str = "127.0.0.1"
@@ -48,6 +52,10 @@ class PaperConfig:
             raise ValueError("dashboard_host must be 127.0.0.1")
         if self.cost_bps != 4.0:
             raise ValueError("frozen round-trip cost is 4 bps")
+        if self.leverage != 3.0 or self.budget_usd != 100.0:
+            raise ValueError("frozen leverage book is 3x with $100 budget")
+        if self.maintenance_margin_rate != .004 or self.liquidation_fee_rate != 0.0:
+            raise ValueError("frozen liquidation settings changed")
         if self.telegram_retry_base_seconds <= 0 or self.telegram_retry_max_seconds <= 0:
             raise ValueError("telegram retry seconds must be positive")
         if not 0 < self.alert_disk_free_ratio < 1:

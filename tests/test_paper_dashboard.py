@@ -89,6 +89,36 @@ def test_books_listed_before_t0(tmp_path) -> None:
     assert all(row["status"].startswith("T0 대기") and row["trades"] == 0 for row in rows)
 
 
+def test_leverage_book_dashboard_payload(tmp_path) -> None:
+    path = tmp_path / "live.sqlite"
+    stamp = "2026-10-06T03:00:00+00:00"
+    with PaperStore(path) as store:
+        store.set_meta("last_processed_minute", stamp)
+        store.upsert("leverage_state", {"book": "C1_x3", "source_book": "C1",
+            "status": "RUNNING", "balance_usd": 112.0, "cumulative_pnl_usd": 12.0,
+            "cumulative_return_pct": 12.0, "max_drawdown_usd": 5.0,
+            "max_drawdown_pct": 4.5, "liquidated_at": None, "updated_at": stamp})
+        store.upsert("leverage_positions", {"book": "C1_x3", "source_book": "C1",
+            "side": 1, "candidate": "F3", "entry_time": stamp, "entry_price": 100.0,
+            "mark_price": 105.0, "notional_usd": 336.0, "margin_usd": 112.0,
+            "liquidation_price": 67.1, "liquidation_distance_pct": 36.1,
+            "unrealized_pnl_usd": 16.7, "balance_usd": 112.0, "updated_at": stamp})
+        store.upsert("leverage_daily", {"book": "C1_x3", "date": "2026-10-06",
+            "balance_usd": 112.0, "day_pnl_usd": 12.0, "max_drawdown_usd": 5.0,
+            "max_drawdown_pct": 4.5})
+    server, thread, base = _serve(path, tmp_path, books=("C1",), start_time=stamp)
+    try:
+        books = _get(base, "/api/books")["rows"]
+        performance = _get(base, "/api/performance?book=C1_x3")
+        positions = _get(base, "/api/positions?book=C1_x3")["rows"]
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+    leveraged = next(row for row in books if row["book"] == "C1_x3")
+    assert leveraged["display_book"] == "C1 ×3" and leveraged["balance_usd"] == 112.0
+    assert performance["summary"]["leverage"] and performance["summary"]["status"] == "RUNNING"
+    assert positions[0]["liquidation_price"] == 67.1
+
+
 def test_v2_api_schemas_and_candles_match_pandas_resample(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     path = tmp_path / "live.sqlite"

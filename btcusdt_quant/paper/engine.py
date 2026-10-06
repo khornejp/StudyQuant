@@ -9,7 +9,7 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
-from . import book, rules
+from . import book, leverage, rules
 from .broker import PaperBroker
 from .config import PaperConfig
 from .store import PaperStore, utc_text
@@ -176,6 +176,7 @@ class PaperEngine:
         base = {candidate: window(frame, candidate) for candidate, frame in generated.items()}
         output: list[pd.DataFrame] = []
         open_rows: list[dict[str, object]] = []
+        leverage_results: list[leverage.LeverageResult] = []
         for name in self.config.books:
             candidates = BOOKS[name]
             if len(candidates) == 1:
@@ -204,6 +205,12 @@ class PaperEngine:
             for boundary in ("PESS", "OPT"):
                 output.append(book.reprice(raw, funding, boundary, self.config.cost_bps).assign(
                     book=name, boundary=boundary))
+            leverage_results.append(leverage.simulate_book(
+                raw, market, funding, name, start, end,
+                leverage=self.config.leverage, budget_usd=self.config.budget_usd,
+                maintenance_margin_rate=self.config.maintenance_margin_rate,
+                liquidation_fee_rate=self.config.liquidation_fee_rate,
+                cost_bps=self.config.cost_bps))
         ledger = pd.concat(output, ignore_index=True)
         published = ledger.loc[~ledger["_active"].fillna(False)].copy() if publish_open_positions else ledger
         closes = market.set_index("open_time").close
@@ -220,6 +227,11 @@ class PaperEngine:
             connection.execute("DELETE FROM trades")
             connection.execute("DELETE FROM daily_pnl")
             connection.execute("DELETE FROM positions")
+            connection.execute("DELETE FROM leverage_state")
+            connection.execute("DELETE FROM leverage_positions")
+            connection.execute("DELETE FROM leverage_trades")
+            connection.execute("DELETE FROM leverage_daily")
+            connection.execute("DELETE FROM leverage_skips")
             for position in open_rows:
                 self.store.upsert("positions", position, connection)
             for row in published.itertuples(index=False):
@@ -234,6 +246,32 @@ class PaperEngine:
                      getattr(row, "exit_reason", "MAX_HOLD_OR_REVERSE")))
             for row in daily.itertuples(index=False):
                 self.store.upsert("daily_pnl", row._asdict(), connection)
+            for result in leverage_results:
+                state = dict(result.state)
+                state["liquidated_at"] = (None if state["liquidated_at"] is None else
+                                           utc_text(state["liquidated_at"]))
+                state["updated_at"] = utc_text(state["updated_at"])
+                self.store.upsert("leverage_state", state, connection)
+                if result.position is not None:
+                    position = dict(result.position)
+                    for column in ("entry_time", "updated_at"):
+                        position[column] = utc_text(position[column])
+                    if pd.isna(position.get("candidate")):
+                        position["candidate"] = None
+                    self.store.upsert("leverage_positions", position, connection)
+                for row in result.trades.to_dict("records"):
+                    for column in ("entry_time", "exit_time"):
+                        row[column] = utc_text(row[column])
+                    if pd.isna(row.get("candidate")):
+                        row["candidate"] = None
+                    self.store.insert("leverage_trades", row, connection)
+                for row in result.daily.to_dict("records"):
+                    self.store.upsert("leverage_daily", row, connection)
+                for row in result.skips.to_dict("records"):
+                    row["entry_time"] = utc_text(row["entry_time"])
+                    if pd.isna(row.get("candidate")):
+                        row["candidate"] = None
+                    self.store.insert("leverage_skips", row, connection)
             connection.execute(
                 "INSERT INTO meta(key,value) VALUES('last_replay',?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

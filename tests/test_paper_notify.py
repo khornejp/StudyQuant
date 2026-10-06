@@ -98,3 +98,31 @@ def test_rest_catchup_lag_is_not_alerted_but_stalled_stream_is(tmp_path) -> None
         keys = store.frame("notifications").event_key.tolist()
     assert not [key for key in keys if key.startswith("alert:lag:")]
     assert len([key for key in keys if key.startswith("alert:ws_down:")]) == 1
+
+
+def test_leverage_entry_distance_warning_once_and_liquidation_alert(tmp_path) -> None:
+    path = tmp_path / "live.sqlite"
+    entry = "2026-10-06T03:00:00+00:00"
+    with PaperStore(path) as store:
+        store.upsert("leverage_positions", {"book": "C1_x3", "source_book": "C1",
+            "side": 1, "candidate": "F3", "entry_time": entry, "entry_price": 100.0,
+            "mark_price": 70.0, "notional_usd": 300.0, "margin_usd": 100.0,
+            "liquidation_price": 67.0, "liquidation_distance_pct": 4.285,
+            "unrealized_pnl_usd": -90.0, "balance_usd": 100.0, "updated_at": entry})
+        store.insert("leverage_trades", {"book": "F3_x3", "source_book": "F3",
+            "candidate": "F3", "entry_time": entry, "exit_time": entry, "side": -1,
+            "entry_price": 100.0, "exit_price": 132.9, "notional_usd": 300.0,
+            "margin_usd": 100.0, "initial_liquidation_price": 132.9,
+            "liquidation_price": 132.9, "max_adverse_pnl_usd": -100.0,
+            "liquidated": 1, "gross_pnl_usd": -99.94, "cost_usd": .06,
+            "funding_usd": 0.0, "pnl_usd": -100.0, "balance_before_usd": 100.0,
+            "balance_after_usd": 0.0, "hold_minutes": 0.0, "exit_reason": "LIQUIDATED"})
+    notifier = TelegramNotifier(path, env_path=_secrets(tmp_path))
+    # Ongoing positions are still checked after their entry cycle.
+    assert notifier.publish_store_events(since=entry) == 1
+    assert notifier.publish_store_events() == 2
+    assert notifier.publish_store_events() == 0
+    with PaperStore(path) as store:
+        rows = store.frame("notifications")
+    assert rows.event_type.value_counts().to_dict() == {
+        "entry": 1, "distance_warning": 1, "liquidation": 1}

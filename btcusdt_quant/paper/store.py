@@ -61,6 +61,43 @@ CREATE TABLE IF NOT EXISTS daily_pnl (
     gross_bps REAL NOT NULL, cost_bps REAL NOT NULL, funding_bps REAL NOT NULL,
     net_bps REAL NOT NULL, PRIMARY KEY(book, boundary, date)
 );
+CREATE TABLE IF NOT EXISTS leverage_state (
+    book TEXT PRIMARY KEY, source_book TEXT NOT NULL, status TEXT NOT NULL,
+    balance_usd REAL NOT NULL, cumulative_pnl_usd REAL NOT NULL,
+    cumulative_return_pct REAL NOT NULL, max_drawdown_usd REAL NOT NULL,
+    max_drawdown_pct REAL NOT NULL, liquidated_at TEXT, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS leverage_positions (
+    book TEXT PRIMARY KEY, source_book TEXT NOT NULL, side INTEGER NOT NULL,
+    candidate TEXT, entry_time TEXT NOT NULL, entry_price REAL NOT NULL,
+    mark_price REAL NOT NULL,
+    notional_usd REAL NOT NULL, margin_usd REAL NOT NULL,
+    liquidation_price REAL NOT NULL, liquidation_distance_pct REAL NOT NULL,
+    unrealized_pnl_usd REAL NOT NULL, balance_usd REAL NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS leverage_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, book TEXT NOT NULL,
+    source_book TEXT NOT NULL, candidate TEXT, entry_time TEXT NOT NULL,
+    exit_time TEXT NOT NULL, side INTEGER NOT NULL, entry_price REAL NOT NULL,
+    exit_price REAL NOT NULL, notional_usd REAL NOT NULL, margin_usd REAL NOT NULL,
+    initial_liquidation_price REAL NOT NULL, liquidation_price REAL NOT NULL,
+    max_adverse_pnl_usd REAL NOT NULL, liquidated INTEGER NOT NULL,
+    gross_pnl_usd REAL NOT NULL, cost_usd REAL NOT NULL, funding_usd REAL NOT NULL,
+    pnl_usd REAL NOT NULL, balance_before_usd REAL NOT NULL,
+    balance_after_usd REAL NOT NULL, hold_minutes REAL NOT NULL,
+    exit_reason TEXT NOT NULL, UNIQUE(book, entry_time)
+);
+CREATE TABLE IF NOT EXISTS leverage_daily (
+    book TEXT NOT NULL, date TEXT NOT NULL, balance_usd REAL NOT NULL,
+    day_pnl_usd REAL NOT NULL, max_drawdown_usd REAL NOT NULL,
+    max_drawdown_pct REAL NOT NULL, PRIMARY KEY(book, date)
+);
+CREATE TABLE IF NOT EXISTS leverage_skips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, book TEXT NOT NULL,
+    source_book TEXT NOT NULL, entry_time TEXT NOT NULL, candidate TEXT,
+    reason TEXT NOT NULL, UNIQUE(book, entry_time)
+);
 CREATE TABLE IF NOT EXISTS collector_health (
     minute TEXT NOT NULL, source TEXT NOT NULL, lag_ms REAL,
     gaps INTEGER NOT NULL DEFAULT 0, retries INTEGER NOT NULL DEFAULT 0,
@@ -84,6 +121,8 @@ CREATE TABLE IF NOT EXISTS revisions (
 );
 CREATE INDEX IF NOT EXISTS idx_signals_book_time ON signals(book, decision_time);
 CREATE INDEX IF NOT EXISTS idx_trades_book_time ON trades(book, entry_time);
+CREATE INDEX IF NOT EXISTS idx_leverage_trades_book_time
+    ON leverage_trades(book, entry_time);
 CREATE INDEX IF NOT EXISTS idx_notifications_delivery
     ON notifications(status, next_attempt_at, id);
 """
@@ -159,7 +198,8 @@ class PaperStore:
     def upsert(self, table: str, row: Mapping[str, object],
                connection: sqlite3.Connection | None = None) -> None:
         if table not in {"klines_1m", "premium_1m", "ls_ratio", "funding",
-                         "positions", "daily_pnl", "collector_health", "book_ticker_1m"}:
+                         "positions", "daily_pnl", "collector_health", "book_ticker_1m",
+                         "leverage_state", "leverage_positions", "leverage_daily"}:
             raise ValueError(f"upsert table not allowed: {table}")
         values = dict(row)
         columns = list(values)
@@ -172,7 +212,8 @@ class PaperStore:
 
     def insert(self, table: str, row: Mapping[str, object],
                connection: sqlite3.Connection | None = None) -> int:
-        if table not in {"signals", "trades", "revisions"}:
+        if table not in {"signals", "trades", "revisions", "leverage_trades",
+                         "leverage_skips"}:
             raise ValueError(f"insert table not allowed: {table}")
         values = dict(row)
         columns = list(values)
@@ -188,7 +229,8 @@ class PaperStore:
     def frame(self, table: str, where: str = "", parameters: Iterable[object] = ()) -> pd.DataFrame:
         allowed = set(DATASET_TABLE.values()) | {
             "signals", "positions", "trades", "daily_pnl", "collector_health", "revisions",
-            "notifications", "meta"}
+            "notifications", "meta", "leverage_state", "leverage_positions",
+            "leverage_trades", "leverage_daily", "leverage_skips"}
         if table not in allowed:
             raise ValueError(f"read table not allowed: {table}")
         suffix = f" WHERE {where}" if where else ""

@@ -127,3 +127,19 @@ Live orders, C3 model legs (deferred; see `docs/paper_system/deferred_model_stra
 - Subscribe WS `btcusdt@bookTicker` (public). Aggregate per UTC minute with exactly the `out/build_spread_features.py` definitions (reuse `reduce_chunk` logic): `spread_bps_mean`, `spread_bps_max`, `spread_bps_std`, `top_imbalance_mean`, `quote_update_count`, `spread_valid`; minute keyed by exchange transaction time.
 - Store in SQLite table `book_ticker_1m` and daily parquet `artifacts/live/daily/book_ticker_1m/`. No raw tick storage by default (config switch, off).
 - Not used by any strategy, signal, or dashboard decision. Shown only in the health tab (row count, gaps, last update). A stream failure must never stop klines collection or books.
+
+## 14. Isolated 3x reference books (added 2026-10-06)
+
+- Each configured 1x book has a separate `<book>_x3` simulation with a $100 initial budget,
+  3x isolated leverage, 0.4% maintenance margin, and PESS funding only.
+- The overlay consumes the accepted 1x trades; it never creates a signal or changes the 1x
+  `positions`, `trades`, `daily_pnl`, parity result, or promotion decision.
+- Every entry uses the full current balance as margin and three times that amount as notional.
+  Normal exits use the 1x timestamp and price. Round-trip fees are 4 bps of notional.
+- Each held minute checks the adverse extreme (long low, short high). Equality with maintenance
+  margin liquidates. The liquidation minute uses the theoretical threshold price and writes the
+  entire margin off; later accepted trades are recorded as skipped.
+- Leverage state, open position, trades, daily balances, and skips live in separate
+  `leverage_*` SQLite tables and are replaced atomically with the base replay publication.
+- These books are risk/reference displays only. The frozen 1x books remain the sole promotion
+  evidence.

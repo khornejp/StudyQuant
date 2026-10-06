@@ -227,6 +227,9 @@ class _ConditionCache:
 
 def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
                         book: str, tf: str) -> dict[str, object]:
+    requested_book = book
+    if book.endswith("_x3"):
+        book = book[:-3]
     if book not in CONDITION_BOOKS:
         raise ValueError(f"book must be one of {','.join(CONDITION_BOOKS)}")
     if tf not in TF_SECONDS:
@@ -245,7 +248,8 @@ def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
     if not dropped.empty:
         rejected = {(pd.Timestamp(row.entry_time).value, str(row.candidate)): str(row.reason)
                     for row in dropped.itertuples(index=False)}
-    position = _frame(connection, "positions", "book=?", (book,))
+    position_table = "leverage_positions" if requested_book.endswith("_x3") else "positions"
+    position = _frame(connection, position_table, "book=?", (requested_book,))
     holding = not position.empty
     legs = []
     for candidate in CONDITION_BOOKS[book]:
@@ -289,7 +293,7 @@ def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
     now = pd.Timestamp.now(tz="UTC")
     next_decision = now.floor("h") + pd.Timedelta(hours=1)
     remaining = max(0, math.ceil((next_decision - now) / pd.Timedelta(minutes=1)))
-    return {"schema_version": 3, "book": book, "tf": tf,
+    return {"schema_version": 3, "book": requested_book, "tf": tf,
             "source": cached["source"],
             "generated_at": _iso(now),
             "data_cutoff": None if cached["data_cutoff"] is None else _iso(cached["data_cutoff"]),
@@ -373,14 +377,19 @@ def _trade_markers(trades: pd.DataFrame) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for trade in trades.sort_values("entry_time").to_dict("records"):
         side = int(trade["side"])
+        net_bps, pnl_usd = trade.get("net_bps"), trade.get("pnl_usd")
         common = {"trade_id": int(trade["id"]), "side": side,
                   "side_label": "롱" if side > 0 else "숏"}
         rows.append({**common, "kind": "entry", "time": int(_utc(trade["entry_time"]).timestamp()),
                      "time_utc": trade["entry_time"], "price": float(trade["entry_price"]),
-                     "net_bps": float(trade["net_bps"]), "exit_reason": trade["exit_reason"]})
+                     "net_bps": None if net_bps is None else float(net_bps),
+                     "pnl_usd": None if pnl_usd is None else float(pnl_usd),
+                     "exit_reason": trade["exit_reason"]})
         rows.append({**common, "kind": "exit", "time": int(_utc(trade["exit_time"]).timestamp()),
                      "time_utc": trade["exit_time"], "price": float(trade["exit_price"]),
-                     "net_bps": float(trade["net_bps"]), "exit_reason": trade["exit_reason"]})
+                     "net_bps": None if net_bps is None else float(net_bps),
+                     "pnl_usd": None if pnl_usd is None else float(pnl_usd),
+                     "exit_reason": trade["exit_reason"]})
     return rows
 
 
@@ -418,6 +427,26 @@ def _drawdown(values: pd.Series) -> pd.Series:
 def _performance(connection: sqlite3.Connection, book: str,
                  daily_prices: list[dict[str, object]] | None = None,
                  start_time: str | None = None) -> dict[str, object]:
+    if book.endswith("_x3"):
+        daily = _frame(connection, "leverage_daily", "book=?", (book,))
+        trades = _frame(connection, "leverage_trades", "book=?", (book,))
+        state = _frame(connection, "leverage_state", "book=?", (book,))
+        row = {} if state.empty else _records(state)[0]
+        summary = {"book": book, "leverage": True, "trade_count": len(trades),
+                   "win_rate": None if trades.empty else float((trades.pnl_usd > 0).mean()),
+                   "balance_usd": row.get("balance_usd", 100.0),
+                   "cumulative_pnl_usd": row.get("cumulative_pnl_usd", 0.0),
+                   "cumulative_return_pct": row.get("cumulative_return_pct", 0.0),
+                   "max_drawdown_usd": row.get("max_drawdown_usd", 0.0),
+                   "max_drawdown_pct": row.get("max_drawdown_pct", 0.0),
+                   "status": row.get("status", "RUNNING")}
+        series = [] if daily.empty else [{"name": "X3", "date": daily.date.tolist(),
+            "cumulative_pnl_usd": (daily.balance_usd - 100.0).tolist(),
+            "drawdown_usd": daily.max_drawdown_usd.tolist()}]
+        monthly = [] if daily.empty else _records(
+            daily.assign(month=daily.date.str[:7]).groupby("month", as_index=False).day_pnl_usd.sum())
+        return {"schema_version": 2, "book": book, "summary": summary,
+                "series": series, "monthly": monthly}
     daily = _frame(connection, "daily_pnl", "book=?", (book,))
     trades = _frame(connection, "trades", "book=?", (book,))
     series: list[dict[str, object]] = []
@@ -487,9 +516,47 @@ def _book_rows(connection: sqlite3.Connection, book_names: tuple[str, ...],
                      "net_pess_bps": net.get("PESS", 0.0), "net_opt_bps": net.get("OPT", 0.0),
                      "win_rate": None if pess.empty else float((pess.net_bps > 0).mean()),
                      "max_drawdown_bps": 0.0 if cumulative.empty else float(_drawdown(cumulative).max()),
+                     "nonleveraged_balance_usd": 100.0 * math.exp(net.get("PESS", 0.0) / 10_000),
+                     "nonleveraged_pnl_usd": 100.0 * math.expm1(net.get("PESS", 0.0) / 10_000),
                      "next_funding": next_funding,
                      "status": "running" if started else f"T0 대기 ({start_time})"})
+    states = _frame(connection, "leverage_state")
+    leverage_positions = _frame(connection, "leverage_positions")
+    leverage_trades = _frame(connection, "leverage_trades")
+    if states.empty:
+        return rows
+    for source_name in book_names:
+        name = f"{source_name}_x3"
+        state = states.loc[states.book.eq(name)] if not states.empty else states
+        position = (leverage_positions.loc[leverage_positions.book.eq(name)]
+                    if not leverage_positions.empty else leverage_positions)
+        trade_part = (leverage_trades.loc[leverage_trades.book.eq(name)]
+                      if not leverage_trades.empty else leverage_trades)
+        value = {} if state.empty else _records(state)[0]
+        rows.append({"book": name, "display_book": f"{source_name} ×3",
+                     "position": None if position.empty else _records(position)[0],
+                     "trades": len(trade_part),
+                     "win_rate": None if trade_part.empty else float((trade_part.pnl_usd > 0).mean()),
+                     "balance_usd": value.get("balance_usd", 100.0),
+                     "cumulative_pnl_usd": value.get("cumulative_pnl_usd", 0.0),
+                     "cumulative_return_pct": value.get("cumulative_return_pct", 0.0),
+                     "max_drawdown_usd": value.get("max_drawdown_usd", 0.0),
+                     "max_drawdown_pct": value.get("max_drawdown_pct", 0.0),
+                     "status": (value.get("status", "RUNNING") if started else
+                                f"T0 대기 ({start_time})")})
     return rows
+
+
+def _all_positions(connection: sqlite3.Connection) -> pd.DataFrame:
+    frames = [_frame(connection, name) for name in ("positions", "leverage_positions")]
+    return pd.concat([frame for frame in frames if not frame.empty], ignore_index=True, sort=False) if any(
+        not frame.empty for frame in frames) else pd.DataFrame()
+
+
+def _all_trades(connection: sqlite3.Connection) -> pd.DataFrame:
+    frames = [_frame(connection, name) for name in ("trades", "leverage_trades")]
+    return pd.concat([frame for frame in frames if not frame.empty], ignore_index=True, sort=False) if any(
+        not frame.empty for frame in frames) else pd.DataFrame()
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -560,11 +627,12 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                             "rows": rows, **latest}); return True
             if path == "/api/markers":
                 book = query.get("book", [configured_books[0]])[0]
+                table = "leverage_trades" if book.endswith("_x3") else "trades"
                 self._json({"schema_version": 2, "book": book,
-                            "rows": _trade_markers(_frame(connection, "trades", "book=?", (book,)))})
+                            "rows": _trade_markers(_frame(connection, table, "book=?", (book,)))})
                 return True
             if path in {"/api/positions", "/api/positions.csv"}:
-                frame = _frame(connection, "positions")
+                frame = _all_positions(connection)
                 if query.get("book") and not frame.empty: frame = frame.loc[frame.book.eq(query["book"][0])]
                 self._csv(frame) if path.endswith(".csv") else self._json({"schema_version": 2, "rows": _records(frame)})
                 return True
@@ -575,7 +643,16 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                 if query.get("book"): clauses.append("book=?"); parameters.append(query["book"][0])
                 if query.get("from"): clauses.append(f"{time_column}>=?"); parameters.append(_iso(_utc(query["from"][0])))
                 if query.get("to"): clauses.append(f"{time_column}<?"); parameters.append(_iso(_utc(query["to"][0])))
-                frame = _frame(connection, table, " AND ".join(clauses), tuple(parameters))
+                if table == "trades":
+                    frame = _all_trades(connection)
+                    if query.get("book") and not frame.empty:
+                        frame = frame.loc[frame.book.eq(query["book"][0])]
+                    if query.get("from") and not frame.empty:
+                        frame = frame.loc[pd.to_datetime(frame[time_column], utc=True) >= _utc(query["from"][0])]
+                    if query.get("to") and not frame.empty:
+                        frame = frame.loc[pd.to_datetime(frame[time_column], utc=True) < _utc(query["to"][0])]
+                else:
+                    frame = _frame(connection, table, " AND ".join(clauses), tuple(parameters))
                 if not frame.empty: frame = frame.sort_values(time_column, ascending=False, kind="stable")
                 self._csv(frame) if path.endswith(".csv") else self._json({"schema_version": 1, "rows": _records(frame)})
                 return True

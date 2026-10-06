@@ -27,14 +27,37 @@ def format_message(event_type: str, event: Mapping[str, object]) -> str:
     """Format terse Korean messages; every bps value has one decimal place."""
     if event_type == "entry":
         side = "롱" if int(event["side"]) > 0 else "숏"
+        if "notional_usd" in event:
+            return (f"진입 | {event['book']} {side} | {float(event['price']):,.1f} | "
+                    f"명목 ${float(event['notional_usd']):,.2f} / "
+                    f"증거금 ${float(event['margin_usd']):,.2f} | "
+                    f"청산가 {float(event['liquidation_price']):,.1f} | "
+                    f"잔고 ${float(event['balance_usd']):,.2f}")
         return (f"진입 | {event['book']} {side} | {float(event['price']):,.1f} | "
                 f"신호 {event['candidate']} | 예정 {event['exit_time']}")
     if event_type == "exit":
+        if "pnl_usd" in event:
+            return (f"청산 | {event['book']} | {float(event['price']):,.1f} | "
+                    f"{event['reason']} | 손익 ${float(event['pnl_usd']):+,.2f} | "
+                    f"명목 ${float(event['notional_usd']):,.2f} / "
+                    f"증거금 ${float(event['margin_usd']):,.2f} | "
+                    f"청산가 {float(event['liquidation_price']):,.1f} | "
+                    f"잔고 ${float(event['balance_usd']):,.2f}")
         return (f"청산 | {event['book']} | {float(event['price']):,.1f} | "
                 f"보유 {int(float(event['hold_minutes']))}분 | {event['reason']} | "
                 f"총 {_bps(event['gross_bps'])} / 비용 {_bps(event['cost_bps'])} / "
                 f"펀딩 {_bps(event['funding_bps'])} / 순 {_bps(event['net_bps'])} | "
                 f"누적 {_bps(event['cumulative_net_bps'])}")
+    if event_type == "liquidation":
+        return (f"강제청산 | {event['book']} | {float(event['price']):,.1f} | "
+                f"명목 ${float(event['notional_usd']):,.2f} / "
+                f"증거금 ${float(event['margin_usd']):,.2f} | "
+                f"청산가 {float(event['liquidation_price']):,.1f} | "
+                f"손익 ${float(event['pnl_usd']):+,.2f} | 잔고 $0.00")
+    if event_type == "distance_warning":
+        return (f"청산 경고 | {event['book']} | 거리 {float(event['distance_pct']):.2f}% | "
+                f"현재 {float(event['price']):,.1f} / 청산가 "
+                f"{float(event['liquidation_price']):,.1f}")
     if event_type == "dropped_signal":
         side = "롱" if int(event["side"]) > 0 else "숏"
         return (f"버린 신호 | {event['book']} {side} | {event['candidate']} | "
@@ -71,6 +94,8 @@ class TelegramNotifier:
         setting = {
             "entry": self.config.telegram_entry,
             "exit": self.config.telegram_exit,
+            "liquidation": self.config.telegram_exit,
+            "distance_warning": self.config.telegram_alert,
             "dropped_signal": self.config.telegram_dropped_signal,
             "daily_summary": self.config.telegram_daily_summary,
             "alert": self.config.telegram_alert,
@@ -164,13 +189,20 @@ class TelegramNotifier:
             positions = store.frame("positions")
             trades = store.frame("trades", "boundary='PESS'").sort_values("exit_time")
             dropped = store.frame("signals", "accepted=0")
+            leverage_positions = store.frame("leverage_positions")
+            leverage_trades = store.frame("leverage_trades").sort_values("exit_time")
         if not trades.empty:
             trades["cumulative_net_bps"] = trades.groupby("book").net_bps.cumsum()
+        warning_positions = leverage_positions.copy()
         if since is not None:
             cutoff = pd.Timestamp(since)
             positions = positions.loc[pd.to_datetime(positions.entry_time, utc=True).gt(cutoff)]
             trades = trades.loc[pd.to_datetime(trades.exit_time, utc=True).gt(cutoff)]
             dropped = dropped.loc[pd.to_datetime(dropped.entry_time, utc=True).gt(cutoff)]
+            leverage_positions = leverage_positions.loc[
+                pd.to_datetime(leverage_positions.entry_time, utc=True).gt(cutoff)]
+            leverage_trades = leverage_trades.loc[
+                pd.to_datetime(leverage_trades.exit_time, utc=True).gt(cutoff)]
         for row in positions.itertuples(index=False):
             queued += self.enqueue(f"entry:{row.book}:{row.entry_time}", "entry", {
                 "book": row.book, "side": row.side, "price": row.entry_price,
@@ -181,6 +213,26 @@ class TelegramNotifier:
                 "reason": row.exit_reason, "gross_bps": row.gross_bps,
                 "cost_bps": row.cost_bps, "funding_bps": row.funding_bps,
                 "net_bps": row.net_bps, "cumulative_net_bps": row.cumulative_net_bps})
+        for row in leverage_positions.itertuples(index=False):
+            event = {"book": row.book, "side": row.side, "price": row.entry_price,
+                     "notional_usd": row.notional_usd, "margin_usd": row.margin_usd,
+                     "liquidation_price": row.liquidation_price,
+                     "balance_usd": row.balance_usd}
+            queued += self.enqueue(f"entry:{row.book}:{row.entry_time}", "entry", event)
+        for row in warning_positions.itertuples(index=False):
+            if float(row.liquidation_distance_pct) < 5.0:
+                queued += self.enqueue(f"distance:{row.book}:{row.entry_time}",
+                    "distance_warning", {"book": row.book,
+                    "distance_pct": row.liquidation_distance_pct, "price": row.mark_price,
+                    "liquidation_price": row.liquidation_price})
+        for row in leverage_trades.itertuples(index=False):
+            event = {"book": row.book, "price": row.exit_price,
+                     "reason": row.exit_reason, "pnl_usd": row.pnl_usd,
+                     "notional_usd": row.notional_usd, "margin_usd": row.margin_usd,
+                     "liquidation_price": row.liquidation_price,
+                     "balance_usd": row.balance_after_usd}
+            event_type = "liquidation" if int(row.liquidated) else "exit"
+            queued += self.enqueue(f"exit:{row.book}:{row.entry_time}", event_type, event)
         for row in dropped.itertuples(index=False):
             queued += self.enqueue(
                 f"drop:{row.book}:{row.candidate}:{row.decision_time}", "dropped_signal",
