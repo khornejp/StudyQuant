@@ -188,3 +188,21 @@ def test_buy_hold_benchmark_starts_at_t0() -> None:
     after = _performance(connection, "C1", prices, "2026-10-07T00:00:00Z")["summary"]
     assert before["buy_hold_bps"] is None and before["vs_buy_hold_bps"] is None
     assert round(after["buy_hold_bps"], 6) == round(float(np.log(121 / 110) * 10_000), 6)
+
+
+@pytest.mark.parametrize("tf", ["1m", "5m", "15m", "1h", "4h", "1d"])
+def test_default_candle_window_works_for_every_timeframe(tmp_path, tf) -> None:
+    # The page requests candles without from/to; "1m"/"5m" must not be read as pandas month offsets.
+    path = tmp_path / "live.sqlite"
+    with PaperStore(path) as store:
+        for i in range(30):
+            stamp = (pd.Timestamp("2026-07-01T00:00:00Z") + pd.Timedelta(minutes=i)).isoformat()
+            store.upsert("klines_1m", {"open_time": stamp, "open": 1.0, "high": 1.0, "low": 1.0,
+                                       "close": 1.0, "volume": 1.0, "source": "test",
+                                       "received_at": stamp, "closed": 1})
+    server, thread, base = _serve(path, tmp_path, books=("C1",))
+    try:
+        candles = _get(base, f"/api/candles?tf={tf}")
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+    assert "error" not in candles and candles["rows"]

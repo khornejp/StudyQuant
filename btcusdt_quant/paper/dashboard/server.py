@@ -86,7 +86,7 @@ def _candle_rows(connection: sqlite3.Connection, tf: str, start: str | None,
     end_stamp = _utc(end) or (last_time + pd.Timedelta(minutes=1))
     start_stamp = _utc(start)
     if start_stamp is None:
-        start_stamp = last_time.floor(tf) - pd.Timedelta(seconds=seconds * (MAX_CANDLES - 1))
+        start_stamp = last_time.floor(pd.Timedelta(seconds=seconds)) - pd.Timedelta(seconds=seconds * (MAX_CANDLES - 1))
     if end_stamp <= start_stamp:
         raise ValueError("to must be later than from")
     start_epoch = int(start_stamp.timestamp()) // seconds * seconds
