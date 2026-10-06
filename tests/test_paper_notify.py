@@ -82,3 +82,19 @@ def test_missing_keys_disable_only_notifications_and_status_is_masked(tmp_path) 
     status = telegram_status(_secrets(tmp_path))
     assert status["configured"] and status["token"] == "toke...5678"
     assert "token-abcdefgh-12345678" not in str(status)
+
+
+def test_rest_catchup_lag_is_not_alerted_but_stalled_stream_is(tmp_path) -> None:
+    path = tmp_path / "live.sqlite"
+    now = pd.Timestamp.now(tz="UTC").floor("min")
+    with PaperStore(path) as store:
+        for minute, source, lag in [(now - pd.Timedelta(minutes=10), "ws", 200.0),
+                                    (now - pd.Timedelta(minutes=9), "rest", 61_000.0)]:
+            store.upsert("collector_health", {"minute": minute.isoformat(), "source": source,
+                                              "lag_ms": lag, "gaps": 0, "retries": 0, "status": "OK"})
+    notifier = TelegramNotifier(path, env_path=_secrets(tmp_path))
+    notifier.publish_health_alerts(tmp_path, since=now - pd.Timedelta(minutes=2))
+    with PaperStore(path) as store:
+        keys = store.frame("notifications").event_key.tolist()
+    assert not [key for key in keys if key.startswith("alert:lag:")]
+    assert len([key for key in keys if key.startswith("alert:ws_down:")]) == 1

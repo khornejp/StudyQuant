@@ -214,6 +214,7 @@ class TelegramNotifier:
             health = store.frame("collector_health",
                                  "source IN ('ws','rest','ws_kline_error','ws_book_error')")
             revisions = store.frame("revisions")
+        ws_minutes = pd.to_datetime(health.loc[health.source.eq("ws"), "minute"], utc=True)
         if since is not None:
             health = health.loc[pd.to_datetime(health.minute, utc=True).gt(pd.Timestamp(since))]
         for row in health.tail(200).itertuples(index=False):
@@ -223,9 +224,15 @@ class TelegramNotifier:
             if int(row.gaps) >= self.config.alert_gap_minutes:
                 queued += self.enqueue(f"alert:gap:{row.source}:{row.minute}", "alert",
                                        {"kind": "수집 갭", "detail": f"{row.gaps}분"})
-            if row.lag_ms is not None and float(row.lag_ms) / 1000 >= self.config.alert_collector_lag_seconds:
+            # REST rows are catch-up fills after a restart; their "lag" is just the outage length.
+            if (row.source == "ws" and row.lag_ms is not None
+                    and float(row.lag_ms) / 1000 >= self.config.alert_collector_lag_seconds):
                 queued += self.enqueue(f"alert:lag:{row.source}:{row.minute}", "alert",
                                        {"kind": "수집 지연", "detail": f"{float(row.lag_ms)/1000:.1f}초"})
+        now = pd.Timestamp.now(tz="UTC")
+        if len(ws_minutes) and now - ws_minutes.max() > pd.Timedelta(minutes=3):
+            queued += self.enqueue(f"alert:ws_down:{now.floor('h').isoformat()}", "alert",
+                                   {"kind": "실시간 스트림 끊김", "detail": f"마지막 수신 {ws_minutes.max():%H:%M} UTC, REST 대체 중"})
         if len(revisions):
             queued += self.enqueue(f"alert:reconcile:{len(revisions)}", "alert",
                                    {"kind": "대조 불일치", "detail": f"{len(revisions)}건"})
