@@ -17,7 +17,8 @@ from .store import PaperStore, utc_text
 BOOKS = {"H1": (rules.F3,), "H2": (rules.E1,),
          "H3": (rules.F3, rules.E1), "H5": (rules.F3_W30, rules.E1),
          "F3": (rules.F3,), "E1": (rules.E1,),
-         "C1": (rules.F3, rules.E1), "C4": (rules.F3_W30, rules.E1)}
+         "C1": (rules.F3, rules.E1), "C1_5m": (rules.F3_5M, rules.E1),
+         "C4": (rules.F3_W30, rules.E1)}
 
 
 def _kline_row(row: Mapping[str, object], received_at: object, source: str) -> dict[str, object]:
@@ -155,13 +156,16 @@ class PaperEngine:
         funding = funding.drop_duplicates("time", keep="last").reset_index(drop=True)
         funding.attrs["_time_ns"] = funding.time.array.asi8
         funding.attrs["_rates"] = funding.rate.to_numpy(float)
+        candidates_used = tuple(dict.fromkeys(
+            candidate for name in self.config.books for candidate in BOOKS[name]))
         generated = {candidate: rules.make_trades(market, features, candidate)
-                     for candidate in (rules.F3, rules.E1, rules.F3_W30)}
+                     for candidate in candidates_used}
         end_price = float(market.loc[market.open_time.lt(end), "close"].iloc[-1])
         data_end = market.open_time.iloc[-1] + pd.Timedelta(minutes=1)
 
-        def window(frame: pd.DataFrame, candidate: str) -> pd.DataFrame:
-            result = frame.loc[(frame.exit_time > start) & (frame.entry_time < end)].copy()
+        def window(frame: pd.DataFrame, candidate: str,
+                   book_start: pd.Timestamp = start) -> pd.DataFrame:
+            result = frame.loc[(frame.exit_time > book_start) & (frame.entry_time < end)].copy()
             natural_end = result.entry_time + pd.to_timedelta(rules.SPECS[candidate].max_hold,
                                                                unit="h")
             result["_active"] = result.exit_time.eq(data_end) & natural_end.gt(data_end)
@@ -177,13 +181,26 @@ class PaperEngine:
         output: list[pd.DataFrame] = []
         open_rows: list[dict[str, object]] = []
         leverage_results: list[leverage.LeverageResult] = []
+        leverage_books = (self.config.books if self.config.leverage_books is None else
+                          self.config.leverage_books)
         for name in self.config.books:
             candidates = BOOKS[name]
+            book_start = pd.Timestamp(self.config.book_start_times.get(name, start))
+            if book_start.tzinfo is None:
+                raise ValueError("book start must be timezone-aware")
+            if book_start != start:
+                local_generated = {candidate: rules.make_trades(
+                    market, features, candidate, decision_start=book_start)
+                    for candidate in candidates}
+                book_base = {candidate: window(frame, candidate, book_start)
+                             for candidate, frame in local_generated.items()}
+            else:
+                book_base = base
             if len(candidates) == 1:
-                raw = base[candidates[0]].copy()
+                raw = book_base[candidates[0]].copy()
                 raw["candidate"] = None if name in {"H1", "H2"} else candidates[0]
             else:
-                source = pd.concat([base[candidate].assign(candidate=candidate)
+                source = pd.concat([book_base[candidate].assign(candidate=candidate)
                                     for candidate in candidates], ignore_index=True)
                 raw, dropped = book.first_book(source, list(candidates))
                 for row in dropped.itertuples(index=False):
@@ -205,19 +222,21 @@ class PaperEngine:
             for boundary in ("PESS", "OPT"):
                 output.append(book.reprice(raw, funding, boundary, self.config.cost_bps).assign(
                     book=name, boundary=boundary))
-            leverage_results.append(leverage.simulate_book(
-                raw, market, funding, name, start, end,
-                leverage=self.config.leverage, budget_usd=self.config.budget_usd,
-                maintenance_margin_rate=self.config.maintenance_margin_rate,
-                liquidation_fee_rate=self.config.liquidation_fee_rate,
-                cost_bps=self.config.cost_bps))
+            if name in leverage_books:
+                leverage_results.append(leverage.simulate_book(
+                    raw, market, funding, name, book_start, end,
+                    leverage=self.config.leverage, budget_usd=self.config.budget_usd,
+                    maintenance_margin_rate=self.config.maintenance_margin_rate,
+                    liquidation_fee_rate=self.config.liquidation_fee_rate,
+                    cost_bps=self.config.cost_bps))
         ledger = pd.concat(output, ignore_index=True)
         published = ledger.loc[~ledger["_active"].fillna(False)].copy() if publish_open_positions else ledger
         closes = market.set_index("open_time").close
         daily_parts = []
         for (name, boundary), trades in published.groupby(["book", "boundary"]):
             minute = book.minute_components(trades, closes, funding, boundary, self.config.cost_bps)
-            minute = minute.loc[(minute.index >= start) & (minute.index < end)]
+            book_start = pd.Timestamp(self.config.book_start_times.get(name, start))
+            minute = minute.loc[(minute.index >= book_start) & (minute.index < end)]
             daily = minute.groupby(minute.index.strftime("%Y-%m-%d")).sum().reset_index(
                 names="date")
             daily.insert(0, "boundary", boundary); daily.insert(0, "book", name)

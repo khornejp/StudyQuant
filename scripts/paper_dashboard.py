@@ -25,7 +25,9 @@ def main() -> None:
                          dashboard_port=args.port or config.dashboard_port)
     server = make_server(config.sqlite_path, config.data_root,
                          config.dashboard_host, config.dashboard_port,
-                         books=config.books, start_time=config.start_time)
+                         books=config.books, start_time=config.start_time,
+                         book_start_times=config.book_start_times,
+                         leverage_books=config.leverage_books)
     print(f"http://{config.dashboard_host}:{config.dashboard_port}", flush=True)
     server.serve_forever()
 

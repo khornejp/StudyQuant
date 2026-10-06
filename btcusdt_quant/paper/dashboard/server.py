@@ -12,6 +12,7 @@ import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Mapping
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
@@ -25,14 +26,16 @@ STATIC = Path(__file__).with_name("index.html")
 VENDOR = Path(__file__).with_name("vendor")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TF_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
-DEFAULT_BOOKS = ("C1", "F3", "E1", "C4")
+DEFAULT_BOOKS = ("C1", "C1_5m", "F3", "E1", "C4")
+BOOK_LABELS = {"C1_5m": "C1 역추세5분 (비교)"}
 MAX_CANDLES = 2_000
 CONDITION_BOOKS = {
     "F3": (rules.F3,), "E1": (rules.E1,),
-    "C1": (rules.F3, rules.E1), "C4": (rules.F3_W30, rules.E1),
+    "C1": (rules.F3, rules.E1), "C1_5m": (rules.F3_5M, rules.E1),
+    "C4": (rules.F3_W30, rules.E1),
 }
 CONDITION_NAMES = {rules.F3: "F3 역추세", rules.F3_W30: "F3-w30 역추세",
-                   rules.E1: "E1 거래량 돌파"}
+                   rules.F3_5M: "F3 역추세 5분 판단", rules.E1: "E1 거래량 돌파"}
 
 
 def _records(frame: pd.DataFrame) -> list[dict[str, object]]:
@@ -226,7 +229,8 @@ class _ConditionCache:
 
 
 def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
-                        book: str, tf: str) -> dict[str, object]:
+                        book: str, tf: str,
+                        start_time: str | None = None) -> dict[str, object]:
     requested_book = book
     if book.endswith("_x3"):
         book = book[:-3]
@@ -287,13 +291,16 @@ def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
         current = estimate or last
         legs.append({"candidate": candidate, "name": CONDITION_NAMES[candidate],
                      "kind": "breakout" if candidate == rules.E1 else "contrarian",
+                     "decision_cadence_minutes": 5 if candidate == rules.F3_5M else 60,
                      "max_hold_hours": rules.SPECS[candidate].max_hold,
                      "last_decision": last, "next_estimate": estimate,
                      "current_text": _condition_text(candidate, current), "rows": rows})
     now = pd.Timestamp.now(tz="UTC")
-    next_decision = now.floor("h") + pd.Timedelta(hours=1)
+    cadence = 5 if rules.F3_5M in CONDITION_BOOKS[book] else 60
+    next_decision = now.floor(f"{cadence}min") + pd.Timedelta(minutes=cadence)
     remaining = max(0, math.ceil((next_decision - now) / pd.Timedelta(minutes=1)))
     return {"schema_version": 3, "book": requested_book, "tf": tf,
+            "start_time": start_time,
             "source": cached["source"],
             "generated_at": _iso(now),
             "data_cutoff": None if cached["data_cutoff"] is None else _iso(cached["data_cutoff"]),
@@ -305,6 +312,7 @@ def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
                         "estimate_label": "현재까지 데이터 기준",
                         "legs": [{key: leg[key] for key in
                                   ("candidate", "name", "kind", "max_hold_hours",
+                                   "decision_cadence_minutes",
                                    "last_decision", "next_estimate", "current_text")}
                                  for leg in legs]},
             "legs": legs}
@@ -492,15 +500,19 @@ def _performance(connection: sqlite3.Connection, book: str,
 
 
 def _book_rows(connection: sqlite3.Connection, book_names: tuple[str, ...],
-               start_time: str | None) -> list[dict[str, object]]:
+               start_time: str | None,
+               book_start_times: Mapping[str, str] | None = None,
+               leverage_book_names: tuple[str, ...] | None = None) -> list[dict[str, object]]:
     positions, trades, daily = (_frame(connection, name) for name in ("positions", "trades", "daily_pnl"))
     last = _meta(connection, "last_processed_minute")
     names = list(dict.fromkeys((*book_names, *sorted(set(trades.get("book", ())) |
                                                    set(positions.get("book", ()))))))
-    started = start_time is None or (last is not None and _utc(last) >= _utc(start_time))
+    starts = book_start_times or {}
     next_funding = _iso(_utc(last).floor("8h") + pd.Timedelta(hours=8)) if last else None
     rows = []
     for name in names:
+        book_start = starts.get(name, start_time)
+        started = book_start is None or (last is not None and _utc(last) >= _utc(book_start))
         trade_part = trades.loc[trades.book.eq(name)] if not trades.empty else trades
         position = positions.loc[positions.book.eq(name)] if not positions.empty else positions
         daily_part = daily.loc[daily.book.eq(name)] if not daily.empty else daily
@@ -510,7 +522,9 @@ def _book_rows(connection: sqlite3.Connection, book_names: tuple[str, ...],
             not trade_part.empty and "boundary" in trade_part) else trade_part
         cumulative = daily_part.loc[daily_part.boundary.eq("PESS"), "net_bps"].cumsum(
             ) if not daily_part.empty else pd.Series(dtype=float)
-        rows.append({"book": name, "position": None if position.empty else _records(position)[0],
+        rows.append({"book": name, "display_book": BOOK_LABELS.get(name, name),
+                     "start_time": book_start,
+                     "position": None if position.empty else _records(position)[0],
                      "trades": int(len(pess)),
                      "net_bps": float(daily_part.net_bps.sum()) if not daily_part.empty else 0.0,
                      "net_pess_bps": net.get("PESS", 0.0), "net_opt_bps": net.get("OPT", 0.0),
@@ -519,13 +533,15 @@ def _book_rows(connection: sqlite3.Connection, book_names: tuple[str, ...],
                      "nonleveraged_balance_usd": 100.0 * math.exp(net.get("PESS", 0.0) / 10_000),
                      "nonleveraged_pnl_usd": 100.0 * math.expm1(net.get("PESS", 0.0) / 10_000),
                      "next_funding": next_funding,
-                     "status": "running" if started else f"T0 대기 ({start_time})"})
+                     "status": "running" if started else f"T0 대기 ({book_start})"})
     states = _frame(connection, "leverage_state")
     leverage_positions = _frame(connection, "leverage_positions")
     leverage_trades = _frame(connection, "leverage_trades")
     if states.empty:
         return rows
-    for source_name in book_names:
+    for source_name in leverage_book_names or book_names:
+        book_start = starts.get(source_name, start_time)
+        started = book_start is None or (last is not None and _utc(last) >= _utc(book_start))
         name = f"{source_name}_x3"
         state = states.loc[states.book.eq(name)] if not states.empty else states
         position = (leverage_positions.loc[leverage_positions.book.eq(name)]
@@ -542,8 +558,9 @@ def _book_rows(connection: sqlite3.Connection, book_names: tuple[str, ...],
                      "cumulative_return_pct": value.get("cumulative_return_pct", 0.0),
                      "max_drawdown_usd": value.get("max_drawdown_usd", 0.0),
                      "max_drawdown_pct": value.get("max_drawdown_pct", 0.0),
+                     "start_time": book_start,
                      "status": (value.get("status", "RUNNING") if started else
-                                f"T0 대기 ({start_time})")})
+                                f"T0 대기 ({book_start})")})
     return rows
 
 
@@ -565,8 +582,16 @@ class DashboardServer(ThreadingHTTPServer):
 
 
 def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
-             start_time: str | None = None) -> type[BaseHTTPRequestHandler]:
+             start_time: str | None = None,
+             book_start_times: Mapping[str, str] | None = None,
+             leverage_books: tuple[str, ...] | None = None) -> type[BaseHTTPRequestHandler]:
     configured_books = books or DEFAULT_BOOKS
+    configured_starts = dict(book_start_times or {})
+    configured_leverage = configured_books if leverage_books is None else leverage_books
+
+    def book_start(book: str) -> str | None:
+        source = book[:-3] if book.endswith("_x3") else book
+        return configured_starts.get(source, start_time)
     condition_cache = _ConditionCache()
     with _connect_ro(store_path) as connection:
         condition_cache.get(connection)
@@ -657,13 +682,15 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                 self._csv(frame) if path.endswith(".csv") else self._json({"schema_version": 1, "rows": _records(frame)})
                 return True
             if path == "/api/performance":
-                self._json(_performance(connection, query.get("book", [configured_books[0]])[0], start_time=start_time)); return True
+                book = query.get("book", [configured_books[0]])[0]
+                self._json(_performance(connection, book, start_time=book_start(book))); return True
             if path == "/api/status":
                 self._json(self._status(connection)); return True
             if path == "/api/conditions":
                 book = query.get("book", [configured_books[0]])[0]
                 tf = query.get("tf", ["1h"])[0]
-                self._json(_conditions_payload(connection, condition_cache, book, tf)); return True
+                self._json(_conditions_payload(connection, condition_cache, book, tf,
+                                                book_start(book))); return True
             return False
 
         def _v1(self, connection: sqlite3.Connection, path: str,
@@ -675,12 +702,14 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                             "position_count": len(positions), "trade_count": len(trades),
                             "signal_count": len(signals), "daily_count": len(daily)}); return True
             if path == "/api/books":
-                self._json({"schema_version": 1, "rows": _book_rows(connection, configured_books, start_time)}); return True
+                self._json({"schema_version": 1, "rows": _book_rows(
+                    connection, configured_books, start_time, configured_starts,
+                    configured_leverage)}); return True
             if path == "/api/chart":
                 rows = []
                 daily_prices, _ = _candle_rows(connection, "1d", None, None)
                 for book in configured_books:
-                    for item in _performance(connection, book, daily_prices, start_time)["series"]:
+                    for item in _performance(connection, book, daily_prices, book_start(book))["series"]:
                         rows.append({"book": book if item["name"] != "BUY_HOLD" else "BUY_HOLD",
                                      "boundary": item["name"], **{key: item[key] for key in
                                      ("date", "cumulative_net_bps", "drawdown_bps")}, "monthly": {}})
@@ -786,13 +815,16 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
 
 def make_server(store_path: str | Path, data_root: str | Path,
                 host: str = "127.0.0.1", port: int = 8765, books: tuple[str, ...] = (),
-                start_time: str | None = None) -> DashboardServer:
+                start_time: str | None = None,
+                book_start_times: Mapping[str, str] | None = None,
+                leverage_books: tuple[str, ...] | None = None) -> DashboardServer:
     if host != "127.0.0.1":
         raise ValueError("dashboard must bind 127.0.0.1")
     path = Path(store_path)
     if not path.exists():
         raise FileNotFoundError(path)
-    server = DashboardServer((host, port), _handler(path, Path(data_root), tuple(books), start_time))
+    server = DashboardServer((host, port), _handler(
+        path, Path(data_root), tuple(books), start_time, book_start_times, leverage_books))
     server.store_path, server.data_root = path, Path(data_root)
     return server
 

@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import os
 import tomllib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from btcusdt_quant.secrets import mask_secret
@@ -16,6 +17,9 @@ class PaperConfig:
     mode: str = "paper"
     symbol: str = "BTCUSDT"
     books: tuple[str, ...] = ("C1", "F3", "E1", "C4")
+    book_start_times: dict[str, str] = field(default_factory=dict)
+    comparison_books: tuple[str, ...] = ()
+    leverage_books: tuple[str, ...] | None = None
     primary_book: str = "C1"
     start_time: str = "2026-10-01T00:00:00Z"
     cost_bps: float = 4.0
@@ -48,6 +52,16 @@ class PaperConfig:
             raise ValueError("v1 supports BTCUSDT only")
         if self.primary_book not in self.books:
             raise ValueError("primary_book must be enabled")
+        if set(self.book_start_times) - set(self.books):
+            raise ValueError("book_start_times keys must be enabled books")
+        if set(self.comparison_books) - set(self.books) or self.primary_book in self.comparison_books:
+            raise ValueError("comparison_books must be enabled non-primary books")
+        if self.leverage_books is not None and set(self.leverage_books) - set(self.books):
+            raise ValueError("leverage_books must be enabled books")
+        for value in (self.start_time, *self.book_start_times.values()):
+            stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                raise ValueError("book start times must be timezone-aware")
         if self.dashboard_host != "127.0.0.1":
             raise ValueError("dashboard_host must be 127.0.0.1")
         if self.cost_bps != 4.0:
@@ -72,6 +86,9 @@ def load_config(path: str | Path = "config/paper.toml") -> PaperConfig:
     values = payload.get("paper", payload)
     if "books" in values:
         values["books"] = tuple(values["books"])
+    for name in ("comparison_books", "leverage_books"):
+        if name in values:
+            values[name] = tuple(values[name])
     config = PaperConfig(**values)
     if config.mode == "live":
         raise RuntimeError("live mode is disabled: LiveBroker is not implemented")

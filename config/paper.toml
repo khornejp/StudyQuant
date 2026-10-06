@@ -1,7 +1,10 @@
 [paper]
 mode = "paper"
 symbol = "BTCUSDT"
-books = ["C1", "F3", "E1", "C4"]
+books = ["C1", "C1_5m", "F3", "E1", "C4"]
+book_start_times = { C1_5m = "2026-10-06T04:00:00Z" }
+comparison_books = ["C1_5m"]  # 관찰 전용; 전환 판정 제외
+leverage_books = ["C1", "F3", "E1", "C4"]
 primary_book = "C1"
 start_time = "2026-10-06T03:00:00Z"  # T0, docs/paper_system/promotion_criteria.md
 cost_bps = 4.0
