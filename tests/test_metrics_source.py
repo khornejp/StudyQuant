@@ -20,14 +20,31 @@ def _row(at: datetime, scale: float) -> metrics.MetricsRow:
     )
 
 
-def test_metrics_alignment_uses_create_time_as_the_first_visible_minute() -> None:
+def test_metrics_alignment_default_uses_strict_prior_period_end() -> None:
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    row = _row(base, 1.0)
+    boundary = base + timedelta(minutes=5)
+    minutes = [boundary, boundary + timedelta(minutes=1)]
+
+    raw = metrics.align_metrics_to_minutes([row], minutes)
+    derived = metrics.metrics_features_to_minutes([row], minutes)
+
+    assert boundary not in raw
+    assert boundary not in derived
+    assert raw[boundary + timedelta(minutes=1)]["sum_open_interest"] == 101.0
+    assert derived[boundary + timedelta(minutes=1)]["global_ls_account"] == 9.0
+
+
+def test_metrics_alignment_legacy_option_restores_immediate_create_time() -> None:
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     at_t = base + timedelta(minutes=5)
     rows = [_row(base, 1.0), _row(at_t, 2.0)]
     minutes = [base + timedelta(minutes=offset) for offset in range(10)]
 
-    raw = metrics.align_metrics_to_minutes(rows, minutes)
-    derived = metrics.metrics_features_to_minutes(rows, minutes)
+    raw = metrics.align_metrics_to_minutes(
+        rows, minutes, legacy_create_time_available=True)
+    derived = metrics.metrics_features_to_minutes(
+        rows, minutes, legacy_create_time_available=True)
 
     # The new row is not visible one minute before its create_time, is visible
     # at create_time, and remains the active value for the next four minutes.
@@ -65,7 +82,8 @@ def test_new_metrics_features_are_causal_and_forward_fill_from_their_tick() -> N
     changed_features = metrics.compute_metrics_features(future_changed)
     assert changed_features[at_t] == row
     minutes = [at_t - timedelta(minutes=1), at_t, at_t + timedelta(minutes=4)]
-    aligned = metrics.metrics_features_to_minutes(rows, minutes)
+    aligned = metrics.metrics_features_to_minutes(
+        rows, minutes, legacy_create_time_available=True)
     assert aligned[at_t - timedelta(minutes=1)] != row
     assert aligned[at_t] == row
     assert aligned[at_t + timedelta(minutes=4)] == row
@@ -95,6 +113,7 @@ def test_missing_field_clears_feature_and_staleness_cap_ends_forward_fill() -> N
     derived = metrics.metrics_features_to_minutes(
         [complete, missing_taker],
         [base + timedelta(minutes=4), base + timedelta(minutes=5), base + timedelta(minutes=46)],
+        legacy_create_time_available=True,
     )
     assert "taker_ls_ratio" in derived[base + timedelta(minutes=4)]
     assert "taker_ls_ratio" not in derived[base + timedelta(minutes=5)]
@@ -145,5 +164,6 @@ def test_taker_splice_uses_prior_five_klines_and_marks_its_provenance() -> None:
     assert rows[0].values["sum_taker_long_short_vol_ratio"] == 1.5
     assert rows[1] == preserved
     assert reconstructed == {at}
-    minute = metrics.metrics_features_to_minutes(rows, [at], reconstructed)[at]
+    minute = metrics.metrics_features_to_minutes(
+        rows, [at], reconstructed, legacy_create_time_available=True)[at]
     assert minute[metrics.TAKER_PROVENANCE_KEY] == metrics.TAKER_RECONSTRUCTED_PROVENANCE

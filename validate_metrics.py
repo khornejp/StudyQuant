@@ -73,7 +73,8 @@ def main() -> int:
     print("\n=== 5m -> 1m as-of alignment (first ~15 minutes) ===")
     t0 = rows[0].create_time.replace(second=0, microsecond=0)
     minutes = [t0 + timedelta(minutes=i) for i in range(15)]
-    aligned = ms.align_metrics_to_minutes(rows, minutes)
+    aligned = ms.align_metrics_to_minutes(
+        rows, minutes, legacy_create_time_available=True)
     for m in minutes:
         oi = aligned.get(m, {}).get("sum_open_interest", "<none>")
         print(f"    {m.strftime('%Y-%m-%d %H:%M')}  OI={oi}")

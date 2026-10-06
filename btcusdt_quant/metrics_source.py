@@ -12,8 +12,8 @@ from klines:
 These are 5-minute observations (BTCUSDT metrics exist from ~2020-09). This
 module downloads the daily CSV zips, de-duplicates rows sharing a create_time,
 and forward-fills the 5-minute series onto the 1-minute feature clock WITHOUT
-look-ahead: every 1m bar sees only the last metrics observation at or before
-its own open_time.
+look-ahead.  Archive ``create_time`` is the interval start, so its value is
+available five minutes later and only to later decisions.
 
 IMPORTANT (train/live parity): this module only builds the TRAINING-side
 metrics from the historical archive. To deploy models that use these features
@@ -175,13 +175,14 @@ def dedup_metrics_rows(rows: Iterable[MetricsRow]) -> list[MetricsRow]:
 def align_metrics_to_minutes(
     rows: Sequence[MetricsRow],
     minute_times: Sequence[datetime],
+    *,
+    legacy_create_time_available: bool = False,
 ) -> dict[datetime, dict[str, float]]:
     """Forward-fill metrics onto a 1-minute clock without look-ahead.
 
     For each minute t in ``minute_times`` (assumed UTC, ascending), assign the
-    most recent metrics observation whose create_time <= t. Minutes before the
-    first observation get no entry (caller decides the fallback). This is a
-    causal as-of join: a bar never sees a metrics value stamped after it.
+    most recent observation available strictly before t.  The explicit legacy
+    option restores the old create_time <= t behavior for frozen research.
     """
     aligned: dict[datetime, dict[str, float]] = {}
     if not rows:
@@ -192,7 +193,10 @@ def align_metrics_to_minutes(
     current: dict[str, float] = {}
     observed_at: dict[str, datetime] = {}
     for minute in minute_times:
-        while idx < n and ordered[idx].create_time <= minute:
+        # F3 is strict-prior: archive create_time is usable only when create_time + 5m < T.
+        while idx < n and ((ordered[idx].create_time <= minute)
+                           if legacy_create_time_available else
+                           (ordered[idx].create_time + timedelta(minutes=5) < minute)):
             row = ordered[idx]
             # A field omitted by a newer archive row is explicitly absent: do
             # not keep serving an earlier value as though it was observed.
@@ -204,8 +208,8 @@ def align_metrics_to_minutes(
                     current.pop(name, None)
                     observed_at.pop(name, None)
             idx += 1
-            visible = {
-                name: value for name, value in current.items()
+        visible = {
+            name: value for name, value in current.items()
             if name == TAKER_PROVENANCE_KEY or minute - observed_at[name] <= METRICS_STALENESS_CAP
         }
         if visible:
@@ -530,12 +534,14 @@ def metrics_features_to_minutes(
     rows: Sequence[MetricsRow],
     minute_times: Sequence[datetime],
     reconstructed_taker_times: set[datetime] | None = None,
+    *,
+    legacy_create_time_available: bool = False,
 ) -> dict[datetime, dict[str, float]]:
     """Compute 5m features then forward-fill onto the 1m clock, causally.
 
     Convenience wrapper: compute_metrics_features on the 5m grid, then as-of
-    join onto minute_times (each minute sees the last 5m feature vector at or
-    before it). Minutes before the first metric observation get no entry.
+    join onto minute_times.  Corrected mode uses create_time + 5m < minute;
+    the explicit legacy option restores create_time <= minute.
     """
     feat_5m = compute_metrics_features(rows)
     if not feat_5m:
@@ -548,7 +554,9 @@ def metrics_features_to_minutes(
     observed_at: dict[str, datetime] = {}
     reconstructed_taker_times = reconstructed_taker_times or set()
     for minute in minute_times:
-        while idx < n and grid_times[idx] <= minute:
+        while idx < n and ((grid_times[idx] <= minute)
+                           if legacy_create_time_available else
+                           (grid_times[idx] + timedelta(minutes=5) < minute)):
             row = feat_5m[grid_times[idx]]
             for name in METRICS_FEATURE_NAMES:
                 value = row.get(name, float("nan"))

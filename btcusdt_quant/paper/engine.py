@@ -1,0 +1,244 @@
+"""Transactional closed-minute engine and deterministic history replay."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Mapping
+
+import numpy as np
+import pandas as pd
+
+from . import book, rules
+from .broker import PaperBroker
+from .config import PaperConfig
+from .store import PaperStore, utc_text
+
+BOOKS = {"H1": (rules.F3,), "H2": (rules.E1,),
+         "H3": (rules.F3, rules.E1), "H5": (rules.F3_W30, rules.E1),
+         "F3": (rules.F3,), "E1": (rules.E1,),
+         "C1": (rules.F3, rules.E1), "C4": (rules.F3_W30, rules.E1)}
+
+
+def _kline_row(row: Mapping[str, object], received_at: object, source: str) -> dict[str, object]:
+    if not bool(row.get("closed", True)):
+        raise ValueError("in-progress kline is display-only")
+    return {"open_time": utc_text(row["open_time"]),
+            **{name: float(row[name]) for name in ("open", "high", "low", "close", "volume")},
+            "quote_volume": float(row.get("quote_volume", 0.0)),
+            "number_of_trades": int(row.get("number_of_trades", 0)),
+            "taker_buy_base_volume": float(row.get("taker_buy_base_volume", row["volume"])),
+            "taker_buy_quote_volume": float(row.get("taker_buy_quote_volume", 0.0)),
+            "source": source, "received_at": utc_text(received_at), "closed": 1}
+
+
+class PaperEngine:
+    """Persist each closed minute and replay frozen books from persisted history."""
+
+    def __init__(self, store: PaperStore, config: PaperConfig | None = None):
+        self.store = store
+        self.config = config or PaperConfig()
+        if self.config.mode != "paper":
+            raise RuntimeError("live mode is disabled")
+        self.broker = PaperBroker()
+        self.store.set_meta("config_hash", self.config.hash)
+
+    def process_closed_minute(self, row: Mapping[str, object], *,
+                              received_at: object | None = None,
+                              source: str = "archive") -> bool:
+        """Commit raw bar, gap health and resume cursor as one transaction."""
+        received = pd.Timestamp(received_at or row["open_time"])
+        values = _kline_row(row, received, source)
+        stamp = pd.Timestamp(values["open_time"])
+        exists = self.store.connection.execute(
+            "SELECT 1 FROM klines_1m WHERE open_time=?", (stamp.isoformat(),)).fetchone()
+        if exists is not None:
+            return False
+        last_text = self.store.get_meta("last_processed_minute")
+        is_forward = last_text is None or stamp > pd.Timestamp(last_text)
+        gap = 0 if not is_forward or last_text is None else max(0, int(
+            (stamp - pd.Timestamp(last_text)) / pd.Timedelta(minutes=1)) - 1)
+        lag_ms = max(0.0, (received - (stamp + pd.Timedelta(minutes=1))).total_seconds() * 1000)
+        with self.store.transaction() as connection:
+            self.store.upsert("klines_1m", values, connection)
+            self.store.upsert("collector_health", {
+                "minute": stamp.isoformat(), "source": source, "lag_ms": lag_ms,
+                "gaps": gap, "retries": 0,
+                "status": "BACKFILL" if not is_forward else "GAP" if gap else "OK"}, connection)
+            if is_forward:
+                connection.execute(
+                    "INSERT INTO meta(key,value) VALUES('last_processed_minute',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (stamp.isoformat(),))
+        return True
+
+    def process_replay_minutes(self, frame: pd.DataFrame, *, source: str = "archive",
+                               checkpoint_rows: int = 1_000) -> int:
+        """Advance the simulated clock one minute at a time with batched durable checkpoints."""
+        if checkpoint_rows < 1:
+            raise ValueError("checkpoint_rows must be positive")
+        inserted = 0
+        records = frame.to_dict("records")
+        for offset in range(0, len(records), checkpoint_rows):
+            last_text = self.store.get_meta("last_processed_minute")
+            last = pd.Timestamp(last_text) if last_text else None
+            with self.store.transaction() as connection:
+                for row in records[offset:offset + checkpoint_rows]:
+                    received = pd.Timestamp(row["open_time"]) + pd.Timedelta(minutes=1)
+                    values = _kline_row({**row, "closed": True}, received, source)
+                    stamp = pd.Timestamp(values["open_time"])
+                    if last is not None and stamp <= last:
+                        continue
+                    gap = 0 if last is None else max(0, int(
+                        (stamp - last) / pd.Timedelta(minutes=1)) - 1)
+                    self.store.upsert("klines_1m", values, connection)
+                    self.store.upsert("collector_health", {
+                        "minute": stamp.isoformat(), "source": source, "lag_ms": 0.0,
+                        "gaps": gap, "retries": 0, "status": "GAP" if gap else "OK"}, connection)
+                    last = stamp
+                    inserted += 1
+                if last is not None:
+                    connection.execute(
+                        "INSERT INTO meta(key,value) VALUES('last_processed_minute',?) "
+                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (last.isoformat(),))
+        return inserted
+
+    def store_ls_ratio(self, timestamp: object, value: float, *, source: str = "archive",
+                       received_at: object | None = None) -> None:
+        stamp = pd.Timestamp(timestamp)
+        self.store.upsert("ls_ratio", {"timestamp": utc_text(stamp),
+                          "global_ls_account": float(value), "long_account": None,
+                          "short_account": None, "source": source,
+                          "received_at": utc_text(received_at or stamp)})
+
+    def store_funding(self, time: object, rate: float, *, raw_calc_time: object | None = None,
+                      source: str = "archive", received_at: object | None = None) -> None:
+        raw = pd.Timestamp(raw_calc_time or time)
+        interval = pd.Timedelta(hours=8).value
+        scheduled_ns = ((raw.value + interval // 2) // interval) * interval
+        if abs(raw.value - scheduled_ns) > pd.Timedelta(seconds=60).value:
+            raise ValueError("funding timestamp exceeds 60s tolerance")
+        stamp = pd.Timestamp(scheduled_ns, tz="UTC")
+        self.store.upsert("funding", {"time": utc_text(stamp), "rate": float(rate),
+                          "raw_calc_time": utc_text(raw), "source": source,
+                          "received_at": utc_text(received_at or raw)})
+
+    def replay_books(self, start: object, end: object,
+                     features: pd.DataFrame | None = None,
+                     history: pd.DataFrame | None = None,
+                     funding_history: pd.DataFrame | None = None,
+                     publish_open_positions: bool = False) -> pd.DataFrame:
+        """Recompute frozen books from stored bars, then atomically publish ledger."""
+        start, end = pd.Timestamp(start), pd.Timestamp(end)
+        if start.tzinfo is None or end.tzinfo is None:
+            raise ValueError("replay bounds must be timezone-aware")
+        market = self.store.frame("klines_1m")
+        market["open_time"] = pd.to_datetime(market.open_time, utc=True)
+        if history is not None:
+            warmup = history.copy()
+            warmup["open_time"] = pd.to_datetime(warmup.open_time, utc=True)
+            market = pd.concat([warmup, market], ignore_index=True, sort=False)
+        market = market.sort_values("open_time", kind="stable").reset_index(drop=True)
+        market = market.drop_duplicates("open_time", keep="last").reset_index(drop=True)
+        if features is None:
+            features = self.store.frame("ls_ratio").rename(columns={"timestamp": "open_time"})
+        feature_columns = ["open_time", "global_ls_account"] + (
+            ["source"] if "source" in features else [])
+        features = features[feature_columns].copy()
+        features["open_time"] = pd.to_datetime(features.open_time, utc=True)
+        funding = self.store.frame("funding")[["time", "rate"]]
+        funding["time"] = pd.to_datetime(funding.time, utc=True, format="mixed")
+        if funding_history is not None:
+            prior = funding_history[["time", "rate"]].copy()
+            prior["time"] = pd.to_datetime(prior.time, utc=True)
+            funding = pd.concat([prior, funding], ignore_index=True)
+        funding = funding.sort_values("time", kind="stable").reset_index(drop=True)
+        funding = funding.drop_duplicates("time", keep="last").reset_index(drop=True)
+        funding.attrs["_time_ns"] = funding.time.array.asi8
+        funding.attrs["_rates"] = funding.rate.to_numpy(float)
+        generated = {candidate: rules.make_trades(market, features, candidate)
+                     for candidate in (rules.F3, rules.E1, rules.F3_W30)}
+        end_price = float(market.loc[market.open_time.lt(end), "close"].iloc[-1])
+        data_end = market.open_time.iloc[-1] + pd.Timedelta(minutes=1)
+
+        def window(frame: pd.DataFrame, candidate: str) -> pd.DataFrame:
+            result = frame.loc[(frame.exit_time > start) & (frame.entry_time < end)].copy()
+            natural_end = result.entry_time + pd.to_timedelta(rules.SPECS[candidate].max_hold,
+                                                               unit="h")
+            result["_active"] = result.exit_time.eq(data_end) & natural_end.gt(data_end)
+            forced = result.exit_time > end
+            result.loc[forced, "exit_time"] = end
+            result.loc[forced, "exit_price"] = end_price
+            result.loc[forced, "gross_bps"] = (result.loc[forced, "side"] * np.log(
+                result.loc[forced, "exit_price"] / result.loc[forced, "entry_price"]) * 1e4)
+            result["exit_reason"] = np.where(forced, "REPLAY_END", "MAX_HOLD_OR_REVERSE")
+            return result.reset_index(drop=True)
+
+        base = {candidate: window(frame, candidate) for candidate, frame in generated.items()}
+        output: list[pd.DataFrame] = []
+        open_rows: list[dict[str, object]] = []
+        for name in self.config.books:
+            candidates = BOOKS[name]
+            if len(candidates) == 1:
+                raw = base[candidates[0]].copy()
+                raw["candidate"] = None if name in {"H1", "H2"} else candidates[0]
+            else:
+                source = pd.concat([base[candidate].assign(candidate=candidate)
+                                    for candidate in candidates], ignore_index=True)
+                raw, dropped = book.first_book(source, list(candidates))
+                for row in dropped.itertuples(index=False):
+                    self.store.insert("signals", {"decision_time": utc_text(row.entry_time),
+                        "entry_time": utc_text(row.entry_time), "book": name,
+                        "candidate": row.candidate, "side": int(row.side), "accepted": 0,
+                        "reason": row.reason})
+            if publish_open_positions and len(raw) and bool(raw.iloc[-1].get("_active", False)):
+                current = raw.iloc[-1]
+                current_candidate = current.candidate or candidates[0]
+                elapsed = int((end - current.entry_time) / pd.Timedelta(minutes=1))
+                maximum = rules.SPECS[current_candidate].max_hold * 60
+                open_rows.append({"book": name, "side": int(current.side),
+                    "candidate": current_candidate, "entry_time": utc_text(current.entry_time),
+                    "entry_price": float(current.entry_price), "exit_time": utc_text(current.exit_time),
+                    "remaining_minutes": max(0, maximum - elapsed),
+                    "unrealized_bps": float(current.side * np.log(end_price / current.entry_price) * 1e4),
+                    "updated_at": utc_text(end)})
+            for boundary in ("PESS", "OPT"):
+                output.append(book.reprice(raw, funding, boundary, self.config.cost_bps).assign(
+                    book=name, boundary=boundary))
+        ledger = pd.concat(output, ignore_index=True)
+        published = ledger.loc[~ledger["_active"].fillna(False)].copy() if publish_open_positions else ledger
+        closes = market.set_index("open_time").close
+        daily_parts = []
+        for (name, boundary), trades in published.groupby(["book", "boundary"]):
+            minute = book.minute_components(trades, closes, funding, boundary, self.config.cost_bps)
+            minute = minute.loc[(minute.index >= start) & (minute.index < end)]
+            daily = minute.groupby(minute.index.strftime("%Y-%m-%d")).sum().reset_index(
+                names="date")
+            daily.insert(0, "boundary", boundary); daily.insert(0, "book", name)
+            daily_parts.append(daily)
+        daily = pd.concat(daily_parts, ignore_index=True) if daily_parts else pd.DataFrame()
+        with self.store.transaction() as connection:
+            connection.execute("DELETE FROM trades")
+            connection.execute("DELETE FROM daily_pnl")
+            connection.execute("DELETE FROM positions")
+            for position in open_rows:
+                self.store.upsert("positions", position, connection)
+            for row in published.itertuples(index=False):
+                connection.execute(
+                    "INSERT INTO trades(book,boundary,candidate,entry_time,exit_time,side,"
+                    "entry_price,exit_price,gross_bps,cost_bps,funding_bps,net_bps,hold_minutes,"
+                    "exit_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (row.book, row.boundary, row.candidate, utc_text(row.entry_time),
+                     utc_text(row.exit_time), int(row.side), float(row.entry_price),
+                     float(row.exit_price), float(row.gross_bps), float(row.cost_bps),
+                     float(row.funding_bps), float(row.net_bps), float(row.hold_minutes),
+                     getattr(row, "exit_reason", "MAX_HOLD_OR_REVERSE")))
+            for row in daily.itertuples(index=False):
+                self.store.upsert("daily_pnl", row._asdict(), connection)
+            connection.execute(
+                "INSERT INTO meta(key,value) VALUES('last_replay',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (json.dumps({"start": start.isoformat(), "end": end.isoformat()}),))
+        return ledger
+
+
+__all__ = ["BOOKS", "PaperEngine"]

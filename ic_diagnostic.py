@@ -268,7 +268,8 @@ def main() -> int:
         print(f"Loading metrics from {args.metrics_dir} ...")
         metrics_rows = metrics_source.load_metrics_dir(Path(args.metrics_dir))
         minute_times = [c.open_time for c in candles]
-        metrics_by_minute = metrics_source.metrics_features_to_minutes(metrics_rows, minute_times)
+        metrics_by_minute = metrics_source.metrics_features_to_minutes(
+            metrics_rows, minute_times, legacy_create_time_available=True)
         external_sources = {t: {"metrics": feats} for t, feats in metrics_by_minute.items()}
         print(f"  {len(metrics_rows):,} metrics rows -> {len(metrics_by_minute):,} aligned minutes")
 

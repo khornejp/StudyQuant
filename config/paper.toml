@@ -1,0 +1,30 @@
+[paper]
+mode = "paper"
+symbol = "BTCUSDT"
+books = ["C1", "F3", "E1", "C4"]
+primary_book = "C1"
+start_time = "2026-10-07T00:00:00Z"  # T0, docs/paper_system/promotion_criteria.md
+cost_bps = 4.0
+sqlite_path = "artifacts/live/live.sqlite"
+data_root = "artifacts/live"
+dashboard_host = "127.0.0.1"
+dashboard_port = 8765
+
+# Telegram (.env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+telegram_entry = true
+telegram_exit = true
+telegram_dropped_signal = false
+telegram_daily_summary = true
+telegram_alert = true
+telegram_retry_base_seconds = 5.0
+telegram_retry_max_seconds = 300.0
+
+# Health alert thresholds
+alert_collector_lag_seconds = 10.0
+alert_gap_minutes = 1
+alert_disk_free_ratio = 0.10
+
+# Public WebSocket recording only; never a strategy input.
+book_ticker_enabled = true
+book_ticker_raw_ticks = false
+websocket_reconnect_max_seconds = 60.0

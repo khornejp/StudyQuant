@@ -1138,7 +1138,9 @@ def merge_metrics_external_sources(
     metrics_rows = metrics_source.load_metrics_dir(metrics_dir)
     metrics_rows, reconstructed_taker_times = metrics_source.splice_taker_ratio_from_klines(metrics_rows, candles)
     minute_times = [c.open_time for c in candles]
-    metrics_by_minute = metrics_source.metrics_features_to_minutes(metrics_rows, minute_times, reconstructed_taker_times)
+    metrics_by_minute = metrics_source.metrics_features_to_minutes(
+        metrics_rows, minute_times, reconstructed_taker_times,
+        legacy_create_time_available=True)
     print(f"Loaded metrics: {len(metrics_rows)} rows -> {len(metrics_by_minute)} aligned minutes")
     if not metrics_by_minute:
         print(f"WARNING: no metrics rows aligned to the candle window from {metrics_dir}; F16 features will be 0.", file=sys.stderr)
@@ -2967,7 +2969,9 @@ def main(argv: list[str] | None = None) -> int:
                 metrics_rows = metrics_source.load_metrics_dir(Path(args.metrics_dir))
                 metrics_rows, reconstructed_taker_times = metrics_source.splice_taker_ratio_from_klines(metrics_rows, candles)
                 minute_times = [c.open_time for c in candles]
-                metrics_by_minute = metrics_source.metrics_features_to_minutes(metrics_rows, minute_times, reconstructed_taker_times)
+                metrics_by_minute = metrics_source.metrics_features_to_minutes(
+                    metrics_rows, minute_times, reconstructed_taker_times,
+                    legacy_create_time_available=True)
                 external_sources = {t: {"metrics": feats} for t, feats in metrics_by_minute.items()}
                 print(f"[MH]   metrics: {len(metrics_rows):,} rows aligned")
 
