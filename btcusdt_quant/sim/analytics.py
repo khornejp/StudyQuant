@@ -91,6 +91,30 @@ def hac_mean_ci(x, lag: int = 7) -> dict:
     return {"mean": mean, "lower": mean - 1.96 * se, "upper": mean + 1.96 * se, "reason": "ok"}
 
 
+def hac_alpha(y, x, lag: int = 7) -> dict:
+    """Intercept of OLS y = alpha + beta x with a Newey-West (Bartlett, `lag`) 95% CI (plan 3 C19)."""
+    y, x = np.asarray(y, float), np.asarray(x, float)
+    ok = np.isfinite(y) & np.isfinite(x)
+    y, x = y[ok], x[ok]
+    nan = {"alpha": math.nan, "lower": math.nan, "upper": math.nan, "beta": math.nan}
+    if len(y) < 3:
+        return {**nan, "reason": "too_short"}
+    if x.std() == 0:
+        return {**nan, "reason": "x_constant"}
+    X = np.column_stack([np.ones(len(y)), x])
+    beta = np.linalg.lstsq(X, y, rcond=None)[0]
+    u = X * (y - X @ beta)[:, None]
+    s = u.T @ u
+    for k in range(1, min(lag, len(y) - 1) + 1):
+        g = u[k:].T @ u[:-k]
+        s += (1 - k / (lag + 1)) * (g + g.T)
+    inv = np.linalg.inv(X.T @ X)
+    se = math.sqrt(max((inv @ s @ inv)[0, 0], 0.0))
+    alpha = float(beta[0])
+    return {"alpha": alpha, "lower": alpha - 1.96 * se, "upper": alpha + 1.96 * se, "beta": float(beta[1]), "se": se,
+            "reason": "ok" if se > 0 else "zero_variance"}
+
+
 def deflated_sharpe(x, trial_sharpes, n_trials: int) -> dict:
     x = _clean(x)
     if len(x) < 30:
