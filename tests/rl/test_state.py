@@ -43,7 +43,7 @@ def ctx():
     return synthetic_ctx()
 
 
-@pytest.fixture(scope="module", params=["S1", "S3"])
+@pytest.fixture(scope="module", params=["S1", "S3", "S4"])
 def store(request, ctx):
     return state.build_state_store(ctx, START, END, request.param)
 
@@ -93,6 +93,8 @@ def test_hourly_signal_not_visible_before_bar_close():
 
 
 def test_store_signal_channels_match_tables(ctx, store):
+    if store.variant == "S4":
+        pytest.skip("S4 has no technique channels")
     times = pd.DatetimeIndex(store.times, tz="UTC")
     for spec_id in ("K01", "K16", "K11_1h"):
         table, _ = build_variant(ctx, spec_id, gated=False, style="NATIVE")
@@ -152,6 +154,8 @@ def test_missing_prediction_days_masked_not_filled(ctx):
 
 
 def test_signal_ids_exclude_composites_grid_oco(store):
+    if store.variant == "S4":
+        pytest.skip("S4 has no technique channels")
     core = [k for k, v in CATALOG.items() if v.simulator == "core"]
     assert set(state.SIGNAL_IDS) | set(state.OCO_IDS) == set(core) - {"B1", "B2", "B3"}
     assert not set(state.SIGNAL_IDS) & set(state.OCO_IDS)
@@ -171,6 +175,45 @@ def test_oco_ids_are_the_oco_entry_tables(ctx):
         assert (spec_id in state.OCO_IDS) == (table.entry == "oco").any(), spec_id
 
 
+S4_INDICATORS = ("ret1", "ret4", "ret16", "rv20", "close_ema9", "ema9_ema21", "boll_z", "rsi14", "atr14", "adx14",
+                 "range_pos20", "volume_z", "taker_imb4", "upper_wick", "lower_wick")
+
+
+@pytest.fixture(scope="module")
+def s4(ctx):
+    return state.build_state_store(ctx, START, END, "S4")
+
+
+def test_s4_has_no_technique_channels(s4):
+    assert not [n for n in s4.feature_names if n[:1] == "K" and n[1:3].isdigit()]
+
+
+def test_s4_channels_present(s4, ctx):
+    s1 = state.build_state_store(ctx, START, START + pd.Timedelta(days=1), "S1")
+    kept = [n for n in s1.feature_names if not (n[:1] == "K" and n[1:3].isdigit())]
+    assert set(kept) <= set(s4.feature_names)
+    for w in state.S4_WINDOWS:
+        for ind in S4_INDICATORS:
+            assert f"{w}_{ind}" in s4.feature_names and f"{w}_{ind}__nan" in s4.feature_names
+            if w != "1d":       # 12 synthetic days: too few daily bars for the 20-bar windows
+                assert np.isfinite(s4.static[-96:, s4.feature_names.index(f"{w}_{ind}")]).all(), (w, ind)
+    for name in ("vwap_dev", "ls_pct30d", "d_ls_1h", "d_ls_4h", "d_ls_1d", "premium_z30d", "funding_z30d"):
+        assert name in s4.feature_names
+        assert np.isfinite(s4.static[-96:, s4.feature_names.index(name)]).any(), name
+
+
+def test_s4_daily_uses_last_closed_day(s4, ctx):
+    d = ctx.bars(1440)
+    times = pd.DatetimeIndex(s4.times, tz="UTC")
+    k = np.searchsorted(d.decision_time.to_numpy(), times.to_numpy(), side="right") - 1    # last day closed <= T
+    c, o, h, l = (d[x].to_numpy(float) for x in ("close", "open", "high", "low"))
+    np.testing.assert_allclose(s4.static[:, s4.feature_names.index("1d_ret1")], np.log(c[k] / c[k - 1]), rtol=1e-6)
+    np.testing.assert_allclose(s4.static[:, s4.feature_names.index("1d_upper_wick")],
+                               (h[k] - np.maximum(o[k], c[k])) / (h[k] - l[k]), rtol=1e-5, atol=1e-7)
+    at_midnight = (times.hour == 0) & (times.minute == 0)
+    assert at_midnight.sum() == 4 and (d.decision_time.iloc[k[at_midnight]].to_numpy() == times[at_midnight].to_numpy()).all()
+
+
 @pytest.mark.slow
 def test_real_missing_days_masked():
     ctx = Context.load(end=pd.Timestamp("2026-01-01", tz="UTC"), start=pd.Timestamp("2025-12-01", tz="UTC"))
@@ -188,7 +231,7 @@ def test_real_missing_days_masked():
 def test_real_prefix_invariance():
     ctx = Context.load(end=pd.Timestamp("2023-03-01", tz="UTC"), start=pd.Timestamp("2022-10-01", tz="UTC"))
     start = pd.Timestamp("2023-02-20", tz="UTC")
-    for variant in ("S1", "S3"):
+    for variant in ("S1", "S3", "S4"):
         full = state.build_state_store(ctx, start, ctx.end, variant)
         for t in (pd.Timestamp("2023-02-24 10:45", tz="UTC"), pd.Timestamp("2023-02-27 16:00", tz="UTC")):
             cut = state.build_state_store(ctx.truncate(t), start, t + pd.Timedelta(minutes=15), variant)

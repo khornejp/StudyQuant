@@ -8,7 +8,7 @@ from btcusdt_quant.sim.rolling import WINDOWS  # noqa: E402
 
 p = argparse.ArgumentParser()
 p.add_argument("--window", required=True)
-p.add_argument("--variant", required=True)
+p.add_argument("--variant", required=True, choices=("S1", "S3", "S4"))
 p.add_argument("--encoder", default="conv")
 p.add_argument("--lr", type=float, default=3e-4)
 p.add_argument("--seed", type=int, default=0)

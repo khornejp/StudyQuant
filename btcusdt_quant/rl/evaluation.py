@@ -15,7 +15,7 @@ from .vec_env import SIDES, STEP_MIN, STEP_NS, EnvConfig, VecTradingEnv, replay
 STEP = pd.Timedelta(minutes=STEP_MIN)
 VS = ("C1_X", "baseline2", "supervised")       # criterion 2: comparators 1, 2, 3
 DSR_MIN, SEEDS_MIN, N_SEEDS = 0.95, 4, 5
-N_TRIALS = {"frozen": 5285, "net": 5293}       # 5277 prior trials + 8 candidate policies; the net-reward variant adds 8 more
+N_TRIALS = {"frozen": 5285, "net": 5297}       # 5277 prior + 8 frozen (R2-48) + 12 net-reward (R2-51: S1, S3, S4 x 4 hparams)
 
 
 @lru_cache(maxsize=1)

@@ -156,9 +156,9 @@ def test_pass_report_dsr_audit_and_n_trials_guard():
 def test_n_trials_guard_per_experiment():
     zero, seeds, comps, null, sharpes = flat_inputs()
     nt = pd.DataFrame(columns=TRADE_COLUMNS)
-    assert E.N_TRIALS == {"frozen": 5285, "net": 5293}
-    with pytest.raises(ValueError, match="n_trials 5285 != 5293"):
+    assert E.N_TRIALS == {"frozen": 5285, "net": 5297}
+    with pytest.raises(ValueError, match="n_trials 5285 != 5297"):
         E.pass_report(zero, seeds, comps, null, 5285, sharpes, rl_trades=nt, experiment="net")
-    with pytest.raises(ValueError, match="n_trials 5293 != 5285"):
-        E.pass_report(zero, seeds, comps, null, 5293, sharpes, rl_trades=nt, experiment="frozen")
-    assert E.pass_report(zero, seeds, comps, null, 5293, sharpes, rl_trades=nt, experiment="net")["n_trials"] == 5293
+    with pytest.raises(ValueError, match="n_trials 5297 != 5285"):
+        E.pass_report(zero, seeds, comps, null, 5297, sharpes, rl_trades=nt, experiment="frozen")
+    assert E.pass_report(zero, seeds, comps, null, 5297, sharpes, rl_trades=nt, experiment="net")["n_trials"] == 5297

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import numpy as np, pandas as pd
 from numpy.lib.stride_tricks import sliding_window_view
-from ..sim import data, provenance, regime, store as feature_store
+from ..sim import data, indicators, provenance, regime, store as feature_store
 from ..sim.rolling import TRAIN_START
 from ..sim.strategies import CATALOG, Context, build_variant
 
@@ -24,6 +24,9 @@ SETTLEMENT_MIN = 480                          # BTCUSDT funding every 8 h at 00/
 _UNSCALED_SUFFIX = ("_side", "_never_seen", "_proposal_active", "__nan", "_sin", "_cos")
 _UNMASKED = ("_age", "min_to_settlement")     # continuous but never NaN
 CACHE_ROOT = data.ROOT / "artifacts/rl_state"
+S4_WINDOWS = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+# ponytail: 30-day windows are row counts (5 m metrics, 1 m premium, 8 h funding), exact only without data gaps
+DAY30 = {"metrics": 30 * 288, "premium": 30 * 1440, "funding": 30 * 3}
 
 
 @dataclass(frozen=True)
@@ -83,8 +86,24 @@ def oco_channels(table: pd.DataFrame, times: pd.DatetimeIndex, close: np.ndarray
     return live.astype(float), upper, lower
 
 
+def s4_indicators(b: pd.DataFrame) -> pd.DataFrame:
+    """Frozen S4 per-window list (r2_51 freeze, addendum 2026-10-08) on complete bars; row i reads bars <= i only."""
+    c, o, h, l, v = b.close, b.open, b.high, b.low, b.volume
+    r = np.log(c / c.shift())
+    e9, e21 = indicators.ema(c, 9), indicators.ema(c, 21)
+    bb = indicators.bollinger(c, 20, 1.0)                    # upper - middle = std20
+    hi, lo, rng = h.rolling(20).max(), l.rolling(20).min(), h - l
+    return pd.DataFrame({
+        "ret1": r, "ret4": np.log(c / c.shift(4)), "ret16": np.log(c / c.shift(16)), "rv20": r.rolling(20).std(ddof=0),
+        "close_ema9": c / e9 - 1, "ema9_ema21": e9 / e21 - 1, "boll_z": (c - bb.middle) / (bb.upper - bb.middle),
+        "rsi14": indicators.rsi(c, 14), "atr14": indicators.atr(b, 14) / c, "adx14": indicators.adx(b, 14),
+        "range_pos20": (c - lo) / (hi - lo), "volume_z": indicators.zscore_past(v, 20, 20),
+        "taker_imb4": (b.taker_buy / v - 0.5).rolling(4).mean(),
+        "upper_wick": (h - np.maximum(o, c)) / rng, "lower_wick": (np.minimum(o, c) - l) / rng})
+
+
 def build_state_store(ctx: Context, start: pd.Timestamp, end: pd.Timestamp, variant: str) -> StateStore:
-    if variant not in ("S1", "S3"):
+    if variant not in ("S1", "S3", "S4"):
         raise ValueError(f"bad state variant {variant}")
     times = pd.date_range(start, end, freq="15min", inclusive="left")
     bars = ctx.bars(15).set_index("decision_time")
@@ -105,13 +124,13 @@ def build_state_store(ctx: Context, start: pd.Timestamp, end: pd.Timestamp, vari
     missing = ~(np.isfinite(m) & np.isfinite(lv))
     cols.update(M=m, L=lv, missing=missing.astype(float))
 
-    for spec_id in SIGNAL_IDS:
+    for spec_id in SIGNAL_IDS if variant != "S4" else ():
         table, _ = build_variant(ctx, spec_id, gated=False, style="NATIVE")
         channels = side_channels(table, times, CATALOG[spec_id].cadence_min == 5)
         for name, values in zip(("event_side", "last_side", "age", "never_seen"), channels):
             cols[f"{spec_id}_{name}"] = values
     close = c.to_numpy(float)[at]
-    for spec_id in OCO_IDS:
+    for spec_id in OCO_IDS if variant != "S4" else ():
         table, _ = build_variant(ctx, spec_id, gated=False, style="NATIVE")
         for name, values in zip(("proposal_active", "upper_bps", "lower_bps"), oco_channels(table, times, close)):
             cols[f"{spec_id}_{name}"] = values
@@ -164,6 +183,28 @@ def build_state_store(ctx: Context, start: pd.Timestamp, end: pd.Timestamp, vari
             mean7 = np.where(hi_i > lo_i, (total[hi_i] - total[lo_i]) / np.maximum(hi_i - lo_i, 1), np.nan)
             cols["s3_funding_trend"] = (rate - mean7) * 1e4
             cols["s3_oi_trend_24h"] = np.log(oi / metric("oi", times - pd.Timedelta(hours=24)))
+
+    if variant == "S4":
+        now = times.as_unit("ns").asi8
+        for w, minutes in S4_WINDOWS.items():
+            b = ctx.bars(minutes)
+            k = np.searchsorted(_ns(b.decision_time), now, side="right") - 1     # last bar closed at or before T
+            with np.errstate(invalid="ignore", divide="ignore"):
+                frame = s4_indicators(b)
+            cols.update({f"{w}_{name}": _pick(x, k, np.nan) for name, x in frame.items()})
+        b = ctx.bars(15)
+        k = np.searchsorted(_ns(b.decision_time), now, side="right") - 1
+        with np.errstate(invalid="ignore", divide="ignore"):
+            cols["vwap_dev"] = _pick(b.close / indicators.vwap_utc(b) - 1, k, np.nan)
+            pct = ctx.metrics.global_ls.rolling(DAY30["metrics"], min_periods=DAY30["metrics"] // 4).rank(pct=True)
+            cols["ls_pct30d"] = data.asof(metric_time, pct.to_numpy(float), times.as_unit("ns"), METRIC_TTL)
+            for lag in ("4h", "1d"):
+                cols[f"d_ls_{lag}"] = np.log(ls / metric("global_ls", times - pd.Timedelta(lag)))
+            z = indicators.zscore_past(ctx.premium.premium.astype(float), DAY30["premium"], DAY30["premium"] // 4)
+            cols["premium_z30d"] = data.asof(pd.DatetimeIndex(ctx.premium.available_time).as_unit("ns"), z.to_numpy(float),
+                                             times.as_unit("ns") + pd.Timedelta(1, "ns"), pd.Timedelta(minutes=15))
+            z = indicators.zscore_past(pd.Series(f_rate), DAY30["funding"], DAY30["funding"] // 4)
+            cols["funding_z30d"] = data.asof(pd.DatetimeIndex(f_time, tz="UTC"), z.to_numpy(float), times.as_unit("ns"), None)
 
     for name in list(cols):
         cols[name] = np.where(np.isfinite(cols[name]), cols[name], np.nan)
