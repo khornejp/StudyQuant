@@ -18,6 +18,8 @@ class SimConfig:
     stop_slippage_bps: float = 0.0
     include_funding: bool = True
     close_at_end: bool = False      # research runs: book any open position at the last close (exit fee charged)
+    market_slippage_bps: float = 0.0    # adverse on every market fill: buys at o*(1+s/1e4), sells at o*(1-s/1e4)
+    action_mode: bool = False       # rows are target positions (R2-48 C1): only decision_time and side are read
 
 @dataclass
 class SimResult:
@@ -54,10 +56,28 @@ class _Position:
     def avg(self) -> float:
         return self.units / sum(l.units / l.price for l in self.legs)   # quantity-weighted (R2-46)
 
+def action_rows(signals: pd.DataFrame, config: SimConfig) -> pd.DataFrame:
+    """C1 targets as signal rows: same side holds, flat closes, opposite closes and re-enters at the same fill minute.
+    One unit, market fills, no stops or max hold; funding per settlement minute on the size held (C3, PESS)."""
+    if (config.reentry != "stop_and_reverse" or config.exit_style != "NATIVE" or config.close_at_end
+            or config.funding_boundary != "PESS"):
+        raise ValueError("bad config")
+    if signals.decision_time.duplicated().any():
+        raise ValueError("action mode: one row per decision_time")
+    return signals.assign(entry="market", max_hold_min=0, stop_bps=np.nan, take_bps=np.nan, allow_entry=True,
+                          component=0, exit_long=signals.side != 1, exit_short=signals.side != -1)
+
+def slip(price: float, direction: int, bps: float) -> float:
+    """Market fill price for a buy (direction +1) or a sell (-1): always adverse."""
+    return price * (1 + direction * bps / 1e4)
+
 def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp,
              config: SimConfig) -> SimResult:
     if config.reentry not in ("strict", "stop_and_reverse") or config.exit_style not in ("NATIVE", "DETEXIT"):
         raise ValueError("bad config")
+    if config.action_mode:
+        signals = action_rows(signals, config)
+    s_bps = config.market_slippage_bps
     t_index = pd.DatetimeIndex(minutes.open_time)
     o, h, l, c = (minutes[k].to_numpy(float) for k in ("open", "high", "low", "close"))
     by_exec = {}
@@ -131,7 +151,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
             touches(i, o[i])
         # 2) max hold
         if pos is not None and pos.max_hold_end is not None and now >= pos.max_hold_end:
-            book_exit(i, 1.0, o[i], "max_hold")
+            book_exit(i, 1.0, slip(o[i], -pos.side, s_bps), "max_hold")
         # 3) decisions executing this minute
         rows = by_exec.get(now, [])
         exited_now = False
@@ -141,19 +161,19 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
                 reverse = row.side == -pos.side
                 flag = (row.exit_long and pos.side == 1) or (row.exit_short and pos.side == -1)
                 if reverse or flag:
-                    book_exit(i, 1.0, o[i], "reverse" if reverse else "flag")
+                    book_exit(i, 1.0, slip(o[i], -pos.side, s_bps), "reverse" if reverse else "flag")
                     exited_now = True
         for row in rows:          # entries in row order = priority
             if pos is not None and row.component == pos.component and pos.pending_add:
                 pos.pending_add = False
                 if row.side == pos.side and not pos.took and row.allow_entry:
-                    open_leg(i, pos.side, .5, o[i], pd.Timestamp(row.decision_time), row)
+                    open_leg(i, pos.side, .5, slip(o[i], pos.side, s_bps), pd.Timestamp(row.decision_time), row)
                     legs_before = o[i]
                     continue
             blocked = pos is not None or (config.reentry == "strict" and (held_at_open or exited_now))
             if not blocked and row.allow_entry and row.side != 0 and row.entry == "market":
-                open_leg(i, int(row.side), .5 if config.exit_style == "DETEXIT" else 1.0, o[i],
-                         pd.Timestamp(row.decision_time), row)
+                open_leg(i, int(row.side), .5 if config.exit_style == "DETEXIT" else 1.0,
+                         slip(o[i], int(row.side), s_bps), pd.Timestamp(row.decision_time), row)
                 legs_before = o[i]
             elif not blocked and row.allow_entry and row.entry == "oco":
                 pending_oco.append((row, now + pd.Timedelta(minutes=int(row.expiry_min))))
@@ -183,8 +203,15 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
 
 
 def finish(trades: list[dict], pnl: np.ndarray, t_index: pd.DatetimeIndex, close: np.ndarray, config: SimConfig,
-           open_legs: list[tuple], start: pd.Timestamp, end: pd.Timestamp) -> SimResult:
-    """Shared by both simulators: optional data-end close, then funding booked at each settlement minute."""
+           open_legs: list[tuple], start: pd.Timestamp, end: pd.Timestamp, funding_booked: bool = False) -> SimResult:
+    """Shared by both simulators: optional data-end close, then funding booked at each settlement minute.
+    funding_booked: pnl already holds funding (core action mode books it per minute); only trade rows are filled."""
+    def book(events, units):
+        for when, value in events:
+            k = t_index.searchsorted(when)
+            if not funding_booked and k < len(t_index) and t_index[k] == when:
+                pnl[k] += value * units
+
     if config.close_at_end and open_legs and len(t_index):
         last = len(t_index) - 1
         for decision, entry_time, side, units, price, position_id in open_legs:
@@ -201,10 +228,11 @@ def finish(trades: list[dict], pnl: np.ndarray, t_index: pd.DatetimeIndex, close
             events = costs.funding_events(trade["side"], trade["entry_time"], trade["exit_time"], config.funding_boundary)
             trade["funding_bps"] = sum(v for _, v in events) * trade["units"]
             trade["net_bps"] = trade["gross_bps"] - trade["fee_bps"] + trade["funding_bps"]
-            for when, value in events:
-                k = t_index.searchsorted(when)
-                if k < len(t_index) and t_index[k] == when:
-                    pnl[k] += value * trade["units"]
+            book(events, trade["units"])
+        if config.action_mode and len(t_index):      # C3: a still-open position pays settlements up to the data end
+            for _, entry_time, side, units, _, _ in open_legs:
+                book(costs.funding_events(side, entry_time, t_index[-1] + pd.Timedelta(1, "ns"),
+                                          config.funding_boundary), units)
     series = pd.Series(pnl, index=t_index)
     inside = (series.index >= start) & (series.index < end)
     frame = pd.DataFrame(trades, columns=TRADE_COLUMNS)

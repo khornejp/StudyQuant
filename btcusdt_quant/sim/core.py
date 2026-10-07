@@ -4,7 +4,7 @@ import math
 import numba
 import numpy as np, pandas as pd
 from . import costs
-from .reference import TRADE_COLUMNS, SimConfig, SimResult, finish
+from .reference import TRADE_COLUMNS, SimConfig, SimResult, action_rows, finish
 
 REASONS = ("stop", "breakeven", "take", "max_hold", "reverse", "flag")
 MAX_LEGS = 8
@@ -15,6 +15,11 @@ NLEG, NTRADE, OPEN, SIDE, TOOK, PENDING_ADD, MAX_HOLD_END, COMPONENT, POS_ID, PO
 MAX_OCO = 16
 # float state slots
 STOP, TAKE, STOP_BPS, TAKE_BPS = range(4)
+# advance_minute state (R2-48 action kernel): one unit held at `side`, entered at minute `entry_i`
+STATE_INT = ("side", "entry_i")
+STATE_FLOAT = ("entry_price", "exit_price")          # exit_price = this minute's exit fill, if any
+A_SIDE, A_ENTRY_I = range(len(STATE_INT))
+A_ENTRY, A_EXIT = range(len(STATE_FLOAT))
 
 
 @numba.njit(cache=True)
@@ -31,6 +36,78 @@ def _avg(ist, leg_units, leg_price):
     for k in range(ist[NLEG]):
         value += leg_units[k] / leg_price[k]
     return _units(ist, leg_units) / value       # quantity-weighted (R2-46)
+
+
+@numba.njit(cache=True)
+def _slip(price, direction, bps):
+    return price * (1 + direction * bps / 1e4)          # same as reference.slip: buys +1, sells -1, always adverse
+
+
+@numba.njit(cache=True)
+def advance_minute(i, state_int, state_float, o, h, l, c, fund_ns, fund_rate, t_ns, target_side, fee_per_side,
+                   slip_bps):
+    """One minute of an action-driven unit position (C1-C3); returns the minute's net bps. A target that differs
+    from the held side fills at o[i] with market slippage: close (fee), then open the target (fee), marked to c[i].
+    Funding at a settlement minute: a position held through it always pays; one closed or opened at it only if
+    the cashflow is negative (PESS, as costs.funding_events). h and l are unused (no stops in action mode)."""
+    side = state_int[A_SIDE]
+    rate = 0.0
+    k = np.searchsorted(fund_ns, t_ns[i])
+    if k < len(fund_ns) and fund_ns[k] == t_ns[i]:
+        rate = fund_rate[k]
+    pnl = 0.0
+    if side != 0 and i > 0:
+        pnl += side * math.log(o[i] / c[i - 1]) * 1e4                     # overnight gap mark
+    if target_side == side:
+        if side != 0:
+            pnl += side * math.log(c[i] / o[i]) * 1e4 - side * rate * 1e4
+        return pnl
+    if side != 0:
+        price = _slip(o[i], -side, slip_bps)
+        state_float[A_EXIT] = price
+        pnl += -fee_per_side + side * math.log(price / o[i]) * 1e4 + min(0.0, -side * rate * 1e4)
+    if target_side != 0:
+        price = _slip(o[i], target_side, slip_bps)
+        state_float[A_ENTRY] = price; state_int[A_ENTRY_I] = i
+        pnl += -fee_per_side + target_side * math.log(c[i] / price) * 1e4 + min(0.0, -target_side * rate * 1e4)
+    state_int[A_SIDE] = target_side
+    return pnl
+
+
+@numba.njit(cache=True)
+def _action_loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, fund_ns, fund_rate, fee_per_side, slip_bps):
+    """Targets per execution minute through advance_minute; trade rows and end state shaped like _loop's."""
+    n = len(o)
+    pnl = np.zeros(n)
+    cap = len(d_side) + 1
+    out_int = np.zeros((cap, 6), np.int64)
+    out_float = np.zeros((cap, 5))
+    ist = np.zeros(10, np.int64)
+    si = np.zeros(len(STATE_INT), np.int64); sf = np.zeros(len(STATE_FLOAT))
+    dec = 0
+    for i in range(n):
+        side = si[A_SIDE]; entry_i = si[A_ENTRY_I]; entry = sf[A_ENTRY]
+        target = d_side[exec_start[i]] if exec_end[i] > exec_start[i] else side
+        pnl[i] = advance_minute(i, si, sf, o, h, l, c, fund_ns, fund_rate, t_ns, target, fee_per_side, slip_bps)
+        if target == side:
+            continue
+        if side != 0:
+            k = ist[NTRADE]
+            out_int[k, 0] = dec; out_int[k, 1] = entry_i; out_int[k, 2] = i
+            out_int[k, 3] = side; out_int[k, 4] = 4 if target == -side else 5      # reverse / flag
+            out_int[k, 5] = ist[POS_ID]
+            out_float[k, 0] = 1.0; out_float[k, 1] = entry; out_float[k, 2] = sf[A_EXIT]
+            out_float[k, 3] = side * math.log(sf[A_EXIT] / entry) * 1e4
+            out_float[k, 4] = fee_per_side * 2
+            ist[NTRADE] = k + 1
+        if target != 0:
+            ist[POS_COUNT] += 1; ist[POS_ID] = ist[POS_COUNT]
+            dec = exec_start[i]
+    held = 1 if si[A_SIDE] != 0 else 0
+    ist[OPEN] = held; ist[SIDE] = si[A_SIDE]; ist[MAX_HOLD_END] = NO_END; ist[NLEG] = held
+    m = ist[NTRADE]
+    return pnl, out_int[:m], out_float[:m], ist, np.full(held, 1.0), np.full(held, sf[A_ENTRY]), \
+        np.full(held, si[A_ENTRY_I]), np.full(held, dec)
 
 
 @numba.njit(cache=True)
@@ -141,7 +218,7 @@ def _touches(i, o_i, h, l, o, c, pnl, ist, fst, leg_units, leg_price, leg_tidx, 
 @numba.njit(cache=True)
 def _loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lower, d_expiry, d_max_hold,
           d_stop_bps, d_take_bps, d_component, d_exit_long, d_exit_short, d_allow, strict, detexit, fee_per_side,
-          stop_slip):
+          stop_slip, mslip):
     n = len(o)
     pnl = np.zeros(n)
     cap = 4 * len(d_side) + 8
@@ -163,7 +240,7 @@ def _loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lowe
                      fee_per_side, stop_slip)
         # 2) max hold
         if ist[OPEN] == 1 and t_ns[i] >= ist[MAX_HOLD_END]:
-            _book_exit(i, 1.0, o[i], 3, o, c, pnl, ist,
+            _book_exit(i, 1.0, _slip(o[i], -ist[SIDE], mslip), 3, o, c, pnl, ist,
                        leg_units, leg_price, leg_tidx, leg_dec, out_int, out_float, fee_per_side)
         # 3) decisions executing this minute: exits for every row, then entries in row (priority) order
         exited_now = False
@@ -174,21 +251,21 @@ def _loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lowe
                 reverse = d_side[j] == -pside
                 flag = (d_exit_long[j] and pside == 1) or (d_exit_short[j] and pside == -1)
                 if reverse or flag:
-                    _book_exit(i, 1.0, o[i], 4 if reverse else 5, o, c, pnl, ist,
+                    _book_exit(i, 1.0, _slip(o[i], -pside, mslip), 4 if reverse else 5, o, c, pnl, ist,
                                leg_units, leg_price, leg_tidx, leg_dec, out_int, out_float, fee_per_side)
                     exited_now = True
         for j in range(exec_start[i], exec_end[i]):
             if ist[OPEN] == 1 and d_component[j] == ist[COMPONENT] and ist[PENDING_ADD] == 1:
                 ist[PENDING_ADD] = 0
                 if d_side[j] == ist[SIDE] and ist[TOOK] == 0 and d_allow[j]:
-                    _open_leg(i, ist[SIDE], .5, o[i], j, t_ns, c, pnl, ist, fst, leg_units, leg_price, leg_tidx,
-                              leg_dec, d_max_hold, d_stop_bps, d_take_bps, d_component, detexit, fee_per_side)
+                    _open_leg(i, ist[SIDE], .5, _slip(o[i], ist[SIDE], mslip), j, t_ns, c, pnl, ist, fst, leg_units,
+                              leg_price, leg_tidx, leg_dec, d_max_hold, d_stop_bps, d_take_bps, d_component, detexit, fee_per_side)
                     fill_price = o[i]
                     continue
             blocked = ist[OPEN] == 1 or (strict == 1 and (held_at_open or exited_now))
             if not blocked and d_allow[j] and d_side[j] != 0 and not d_oco[j]:
-                _open_leg(i, d_side[j], first_units, o[i], j, t_ns, c, pnl, ist, fst, leg_units, leg_price,
-                          leg_tidx, leg_dec, d_max_hold, d_stop_bps, d_take_bps, d_component, detexit, fee_per_side)
+                _open_leg(i, d_side[j], first_units, _slip(o[i], d_side[j], mslip), j, t_ns, c, pnl, ist, fst,
+                          leg_units, leg_price, leg_tidx, leg_dec, d_max_hold, d_stop_bps, d_take_bps, d_component, detexit, fee_per_side)
                 fill_price = o[i]
             elif not blocked and d_allow[j] and d_oco[j]:
                 if n_oco >= MAX_OCO:
@@ -257,15 +334,23 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
         exec_start[minute[first]] = rows[first]
         exec_end[minute[last]] = rows[last] + 1
     o, h, l, c = (minutes[k].to_numpy(np.float64) for k in ("open", "high", "low", "close"))
-    pnl, out_int, out_float, ist, leg_units, leg_price, leg_tidx, leg_dec = _loop(
-        t_ns, o, h, l, c, exec_start, exec_end, signals.side.to_numpy(np.int64), (signals.entry == "oco").to_numpy(),
-        signals.upper.to_numpy(np.float64), signals.lower.to_numpy(np.float64),
-        signals.expiry_min.to_numpy(np.int64), signals.max_hold_min.to_numpy(np.int64),
-        signals.stop_bps.to_numpy(np.float64), signals.take_bps.to_numpy(np.float64),
-        (signals.component if "component" in signals else pd.Series(0, index=signals.index)).to_numpy(np.int64),
-        signals.exit_long.to_numpy(bool), signals.exit_short.to_numpy(bool), signals.allow_entry.to_numpy(bool),
-        int(config.reentry == "strict"), int(config.exit_style == "DETEXIT"),
-        float(config.fee_per_side), float(config.stop_slippage_bps))
+    if config.action_mode:
+        side = action_rows(signals, config).side.to_numpy(np.int64)
+        fund = costs._settlement_arrays() if config.include_funding else (np.zeros(0, np.int64), np.zeros(0))
+        loop = _action_loop(t_ns, o, h, l, c, exec_start, exec_end, side, fund[0], fund[1],
+                            float(config.fee_per_side), float(config.market_slippage_bps))
+    else:
+        loop = _loop(
+            t_ns, o, h, l, c, exec_start, exec_end, signals.side.to_numpy(np.int64),
+            (signals.entry == "oco").to_numpy(),
+            signals.upper.to_numpy(np.float64), signals.lower.to_numpy(np.float64),
+            signals.expiry_min.to_numpy(np.int64), signals.max_hold_min.to_numpy(np.int64),
+            signals.stop_bps.to_numpy(np.float64), signals.take_bps.to_numpy(np.float64),
+            (signals.component if "component" in signals else pd.Series(0, index=signals.index)).to_numpy(np.int64),
+            signals.exit_long.to_numpy(bool), signals.exit_short.to_numpy(bool), signals.allow_entry.to_numpy(bool),
+            int(config.reentry == "strict"), int(config.exit_style == "DETEXIT"),
+            float(config.fee_per_side), float(config.stop_slippage_bps), float(config.market_slippage_bps))
+    pnl, out_int, out_float, ist, leg_units, leg_price, leg_tidx, leg_dec = loop
 
     reason_names = REASONS
     trades = [{"decision_time": decisions[j], "entry_time": t_index[entry_i], "exit_time": t_index[exit_i],
@@ -276,7 +361,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
               in zip(out_int.tolist(), out_float.tolist())]
     open_legs = ([(decisions[int(leg_dec[q])], t_index[int(leg_tidx[q])], int(ist[SIDE]), float(leg_units[q]),
                    float(leg_price[q]), int(ist[POS_ID])) for q in range(len(leg_units))] if ist[OPEN] == 1 else [])
-    result = finish(trades, pnl, t_index, c, config, open_legs, start, end)
+    result = finish(trades, pnl, t_index, c, config, open_legs, start, end, funding_booked=config.action_mode)
     if result.open_position is not None:
         result.open_position.update(component=int(ist[COMPONENT]), max_hold_end=(
             None if ist[MAX_HOLD_END] == NO_END else pd.Timestamp(int(ist[MAX_HOLD_END]), tz="UTC")))
