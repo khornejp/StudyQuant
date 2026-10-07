@@ -38,6 +38,30 @@ def load_regime(predictions: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def rank_against(reference: pd.DataFrame, rows: pd.DataFrame, days: int = 30, minimum_days: int = 7) -> pd.DataFrame:
+    """M/L for off-grid rows: each value's rank among the strictly earlier 15-minute reference predictions of the
+    last `days` (the research distribution), needing `minimum_days` x 96 of them."""
+    ref_t = pd.DatetimeIndex(reference.timestamp).as_unit("ns").asi8
+    times = pd.DatetimeIndex(rows.timestamp).as_unit("ns").asi8
+    lo = np.searchsorted(ref_t, times - pd.Timedelta(days=days).value, side="left")
+    hi = np.searchsorted(ref_t, times, side="left")
+    out = rows.copy()
+    ranks = {}
+    for target in M_TARGETS + L_TARGETS:
+        ref_v = reference[f"prediction_{target}"].to_numpy(float)
+        values = rows[f"prediction_{target}"].to_numpy(float)
+        rank = np.full(len(rows), np.nan)
+        for k, (a, b, v) in enumerate(zip(lo, hi, values)):
+            window = ref_v[a:b]
+            window = window[np.isfinite(window)]
+            if len(window) >= minimum_days * 96 and np.isfinite(v):
+                rank[k] = np.count_nonzero(window <= v) / len(window)
+        ranks[target] = rank
+    out["M"] = pd.DataFrame({t: ranks[t] for t in M_TARGETS}).mean(axis=1, skipna=False).to_numpy()
+    out["L"] = pd.DataFrame({t: ranks[t] for t in L_TARGETS}).mean(axis=1, skipna=False).to_numpy()
+    return out
+
+
 def _asof(frame: pd.DataFrame, decisions: pd.DatetimeIndex, column: str, max_age: pd.Timedelta | None) -> np.ndarray:
     times = pd.DatetimeIndex(frame.timestamp).as_unit("ns").asi8
     d = pd.DatetimeIndex(decisions).as_unit("ns").asi8

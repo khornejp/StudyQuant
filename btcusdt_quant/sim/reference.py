@@ -6,7 +6,7 @@ import numpy as np, pandas as pd
 from . import costs, orders
 
 TRADE_COLUMNS = ["decision_time", "entry_time", "exit_time", "side", "units", "entry_price", "exit_price",
-                 "exit_reason", "gross_bps", "fee_bps", "funding_bps", "net_bps"]
+                 "exit_reason", "gross_bps", "fee_bps", "funding_bps", "net_bps", "position_id"]
 
 @dataclass(frozen=True)
 class SimConfig:
@@ -17,6 +17,7 @@ class SimConfig:
     funding_boundary: str = "PESS"
     stop_slippage_bps: float = 0.0
     include_funding: bool = True
+    close_at_end: bool = False      # research runs: book any open position at the last close (exit fee charged)
 
 @dataclass
 class SimResult:
@@ -43,6 +44,7 @@ class _Position:
     take_bps: float = math.nan
     pending_add: bool = False
     component: int = 0
+    position_id: int = 0
 
     @property
     def units(self) -> float:
@@ -64,37 +66,37 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
     pnl = np.zeros(len(minutes))
     trades: list[dict] = []
     pos: _Position | None = None
-    pending_oco = None   # (row, expiry_time)
+    pending_oco: list = []      # [(row, expiry_time)] in placement order; the first to fill cancels the rest
+    positions_opened = 0
 
-    def book_exit(i: int, units: float, price: float, reason: str) -> None:
+    def book_exit(i: int, fraction: float, price: float, reason: str) -> None:
+        """Close `fraction` of every leg (R2-46 _close_lots: pro rata, so the remaining average is unchanged)."""
         nonlocal pos
-        remaining = units
-        while remaining > 1e-12 and pos.legs:
-            leg = pos.legs[0]; take_units = min(leg.units, remaining)
+        for leg in pos.legs:
+            take_units = leg.units * fraction
             gross = pos.side * math.log(price / leg.price) * 1e4 * take_units
             fee = costs.fee_bps(take_units, config.fee_per_side) * 2
-            fund = (costs.funding_bps(pos.side, leg.time, t_index[i], config.funding_boundary) * take_units
-                    if config.include_funding else 0.0)
             trades.append({"decision_time": leg.decision, "entry_time": leg.time, "exit_time": t_index[i],
                            "side": pos.side, "units": take_units, "entry_price": leg.price, "exit_price": price,
-                           "exit_reason": reason, "gross_bps": gross, "fee_bps": fee, "funding_bps": fund,
-                           "net_bps": gross - fee + fund})
-            pnl[i] += -costs.fee_bps(take_units, config.fee_per_side) + fund
+                           "exit_reason": reason, "gross_bps": gross, "fee_bps": fee, "funding_bps": 0.0,
+                           "net_bps": gross - fee, "position_id": pos.position_id})
+            pnl[i] += -costs.fee_bps(take_units, config.fee_per_side)
             base = c[i] if leg.time == t_index[i] else o[i]      # a leg opened this minute is already marked to close
             pnl[i] += pos.side * math.log(price / base) * 1e4 * take_units
-            leg.units -= take_units; remaining -= take_units
-            if leg.units <= 1e-12:
-                pos.legs.pop(0)
+            leg.units -= take_units
+        pos.legs = [leg for leg in pos.legs if leg.units > 1e-12]
         if not pos.legs:
             pos = None
 
     def open_leg(i: int, side: int, units: float, price: float, decision: pd.Timestamp, row) -> None:
-        nonlocal pos
+        nonlocal pos, positions_opened
         if pos is None:
             hold = int(row.max_hold_min)
+            positions_opened += 1
             pos = _Position(side=side, max_hold_end=t_index[i] + pd.Timedelta(minutes=hold) if hold > 0 else None,
                             stop_bps=float(row.stop_bps), take_bps=float(row.take_bps),
-                            pending_add=config.exit_style == "DETEXIT", component=int(row.component))
+                            pending_add=config.exit_style == "DETEXIT", component=int(row.component),
+                            position_id=positions_opened)
         pos.legs.append(_Leg(units, price, t_index[i], decision))
         pnl[i] += -costs.fee_bps(units, config.fee_per_side)
         pnl[i] += side * math.log(c[i] / price) * 1e4 * units          # entry-minute mark to close
@@ -112,12 +114,13 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
         kind, price = hit
         if kind == "stop":
             price *= (1 - pos.side * config.stop_slippage_bps / 1e4)
-            book_exit(i, pos.units, price, "breakeven" if pos.took else "stop")
+            book_exit(i, 1.0, price, "breakeven" if pos.took else "stop")
             return
-        book_exit(i, pos.units / 2, price, "take")
-        pos.took = True; pos.stop = pos.avg; pos.take = math.nan
+        average = pos.avg                                   # breakeven = the pre-take average (R2-46)
+        book_exit(i, 0.5, price, "take")
+        pos.took = True; pos.stop = average; pos.take = math.nan
         if (pos.side == 1 and l[i] <= pos.stop) or (pos.side == -1 and h[i] >= pos.stop):
-            book_exit(i, pos.units, pos.stop, "breakeven")
+            book_exit(i, 1.0, pos.stop, "breakeven")
 
     for i, now in enumerate(t_index):
         held_at_open = pos is not None
@@ -128,7 +131,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
             touches(i, o[i])
         # 2) max hold
         if pos is not None and pos.max_hold_end is not None and now >= pos.max_hold_end:
-            book_exit(i, pos.units, o[i], "max_hold")
+            book_exit(i, 1.0, o[i], "max_hold")
         # 3) decisions executing this minute
         rows = by_exec.get(now, [])
         exited_now = False
@@ -138,7 +141,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
                 reverse = row.side == -pos.side
                 flag = (row.exit_long and pos.side == 1) or (row.exit_short and pos.side == -1)
                 if reverse or flag:
-                    book_exit(i, pos.units, o[i], "reverse" if reverse else "flag")
+                    book_exit(i, 1.0, o[i], "reverse" if reverse else "flag")
                     exited_now = True
         for row in rows:          # entries in row order = priority
             if pos is not None and row.component == pos.component and pos.pending_add:
@@ -153,20 +156,19 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
                          pd.Timestamp(row.decision_time), row)
                 legs_before = o[i]
             elif not blocked and row.allow_entry and row.entry == "oco":
-                pending_oco = (row, now + pd.Timedelta(minutes=int(row.expiry_min)))
-        # 4) pending OCO
-        if pos is None and pending_oco is not None:
-            row, expiry = pending_oco
-            if now >= expiry:
-                pending_oco = None
-            else:
+                pending_oco.append((row, now + pd.Timedelta(minutes=int(row.expiry_min))))
+        # 4) pending OCO orders: expire, then the oldest that fills opens the position and cancels the others
+        pending_oco = [(row, expiry) for row, expiry in pending_oco if now < expiry]
+        if pos is None:
+            for row, expiry in pending_oco:
                 hit = orders.fill_oco(float(row.upper), float(row.lower), o[i], h[i], l[i])
                 if hit is not None:
                     side, price = hit
                     open_leg(i, side, .5 if config.exit_style == "DETEXIT" else 1.0, price,
                              pd.Timestamp(row.decision_time), row)
-                    pending_oco = None
+                    pending_oco = []
                     legs_before = price
+                    break
         # 4b) a fill this minute: its own bar can already touch the new levels (checked from the fill price)
         if legs_before is not None and pos is not None and not math.isnan(pos.stop):
             touches(i, legs_before)
@@ -175,7 +177,43 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
             for leg in pos.legs:
                 if leg.time < now:
                     pnl[i] += pos.side * math.log(c[i] / o[i]) * 1e4 * leg.units
+    open_legs = [] if pos is None else [(leg.decision, leg.time, pos.side, leg.units, leg.price, pos.position_id)
+                                         for leg in pos.legs]
+    return finish(trades, pnl, t_index, c, config, open_legs, start, end)
+
+
+def finish(trades: list[dict], pnl: np.ndarray, t_index: pd.DatetimeIndex, close: np.ndarray, config: SimConfig,
+           open_legs: list[tuple], start: pd.Timestamp, end: pd.Timestamp) -> SimResult:
+    """Shared by both simulators: optional data-end close, then funding booked at each settlement minute."""
+    if config.close_at_end and open_legs and len(t_index):
+        last = len(t_index) - 1
+        for decision, entry_time, side, units, price, position_id in open_legs:
+            gross = side * math.log(close[last] / price) * 1e4 * units
+            fee = costs.fee_bps(units, config.fee_per_side) * 2
+            trades.append({"decision_time": decision, "entry_time": entry_time, "exit_time": t_index[last],
+                           "side": side, "units": units, "entry_price": price, "exit_price": float(close[last]),
+                           "exit_reason": "data_end", "gross_bps": gross, "fee_bps": fee, "funding_bps": 0.0,
+                           "net_bps": gross - fee, "position_id": position_id})
+            pnl[last] += -costs.fee_bps(units, config.fee_per_side)    # price already marked to the last close
+        open_legs = []
+    if config.include_funding:
+        for trade in trades:
+            events = costs.funding_events(trade["side"], trade["entry_time"], trade["exit_time"], config.funding_boundary)
+            trade["funding_bps"] = sum(v for _, v in events) * trade["units"]
+            trade["net_bps"] = trade["gross_bps"] - trade["fee_bps"] + trade["funding_bps"]
+            for when, value in events:
+                k = t_index.searchsorted(when)
+                if k < len(t_index) and t_index[k] == when:
+                    pnl[k] += value * trade["units"]
     series = pd.Series(pnl, index=t_index)
     inside = (series.index >= start) & (series.index < end)
-    trade_frame = pd.DataFrame(trades, columns=TRADE_COLUMNS)
-    return SimResult(trades=trade_frame, minute_pnl=series.loc[inside])
+    frame = pd.DataFrame(trades, columns=TRADE_COLUMNS)
+    held = None
+    if open_legs:
+        units = sum(x[3] for x in open_legs)
+        held = {"side": open_legs[0][2], "units": units, "avg_price": units / sum(x[3] / x[4] for x in open_legs),
+                "entry_time": open_legs[0][1], "decision_time": open_legs[0][0], "position_id": open_legs[0][5],
+                "legs": [{"decision_time": decision, "entry_time": entry_time, "side": side, "units": units,
+                          "entry_price": price, "position_id": position_id}
+                         for decision, entry_time, side, units, price, position_id in open_legs]}
+    return SimResult(trades=frame, minute_pnl=series.loc[inside], open_position=held)

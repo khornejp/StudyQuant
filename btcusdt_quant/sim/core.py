@@ -4,14 +4,15 @@ import math
 import numba
 import numpy as np, pandas as pd
 from . import costs
-from .reference import TRADE_COLUMNS, SimConfig, SimResult
+from .reference import TRADE_COLUMNS, SimConfig, SimResult, finish
 
 REASONS = ("stop", "breakeven", "take", "max_hold", "reverse", "flag")
 MAX_LEGS = 8
 MINUTE_NS = 60_000_000_000
 NO_END = np.iinfo(np.int64).max
 # int state slots
-NLEG, NTRADE, OPEN, SIDE, TOOK, PENDING_ADD, MAX_HOLD_END, COMPONENT = range(8)
+NLEG, NTRADE, OPEN, SIDE, TOOK, PENDING_ADD, MAX_HOLD_END, COMPONENT, POS_ID, POS_COUNT = range(10)
+MAX_OCO = 16
 # float state slots
 STOP, TAKE, STOP_BPS, TAKE_BPS = range(4)
 
@@ -55,32 +56,34 @@ def _fill_limit(side, level, o, h, l):
 
 
 @numba.njit(cache=True)
-def _book_exit(i, units, price, reason, o, c, pnl, ist, leg_units, leg_price, leg_tidx, leg_dec,
+def _book_exit(i, fraction, price, reason, o, c, pnl, ist, leg_units, leg_price, leg_tidx, leg_dec,
                out_int, out_float, fee_per_side):
+    """Close `fraction` of every leg (pro rata, R2-46 _close_lots); the remaining average is unchanged."""
     side = ist[SIDE]
-    remaining = units
-    while remaining > 1e-12 and ist[NLEG] > 0:
-        take_units = min(leg_units[0], remaining)
-        gross = side * math.log(price / leg_price[0]) * 1e4 * take_units
+    for q in range(ist[NLEG]):
+        take_units = leg_units[q] * fraction
+        gross = side * math.log(price / leg_price[q]) * 1e4 * take_units
         fee = (fee_per_side * take_units) * 2
         k = ist[NTRADE]
         if k >= out_int.shape[0]:
             raise ValueError("trade buffer overflow")
-        out_int[k, 0] = leg_dec[0]; out_int[k, 1] = leg_tidx[0]; out_int[k, 2] = i
-        out_int[k, 3] = side; out_int[k, 4] = reason
-        out_float[k, 0] = take_units; out_float[k, 1] = leg_price[0]; out_float[k, 2] = price
+        out_int[k, 0] = leg_dec[q]; out_int[k, 1] = leg_tidx[q]; out_int[k, 2] = i
+        out_int[k, 3] = side; out_int[k, 4] = reason; out_int[k, 5] = ist[POS_ID]
+        out_float[k, 0] = take_units; out_float[k, 1] = leg_price[q]; out_float[k, 2] = price
         out_float[k, 3] = gross; out_float[k, 4] = fee
         ist[NTRADE] = k + 1
-        pnl[i] += -(fee_per_side * take_units) + 0.0
-        base = c[i] if leg_tidx[0] == i else o[i]      # a leg opened this minute is already marked to close
+        pnl[i] += -(fee_per_side * take_units)
+        base = c[i] if leg_tidx[q] == i else o[i]      # a leg opened this minute is already marked to close
         pnl[i] += side * math.log(price / base) * 1e4 * take_units
-        leg_units[0] -= take_units; remaining -= take_units
-        if leg_units[0] <= 1e-12:
-            for q in range(1, ist[NLEG]):
-                leg_units[q - 1] = leg_units[q]; leg_price[q - 1] = leg_price[q]
-                leg_tidx[q - 1] = leg_tidx[q]; leg_dec[q - 1] = leg_dec[q]
-            ist[NLEG] -= 1
-    if ist[NLEG] == 0:
+        leg_units[q] -= take_units
+    n = 0
+    for q in range(ist[NLEG]):
+        if leg_units[q] > 1e-12:
+            leg_units[n] = leg_units[q]; leg_price[n] = leg_price[q]
+            leg_tidx[n] = leg_tidx[q]; leg_dec[n] = leg_dec[q]
+            n += 1
+    ist[NLEG] = n
+    if n == 0:
         ist[OPEN] = 0
 
 
@@ -89,6 +92,7 @@ def _open_leg(i, side, units, price, j, t_ns, c, pnl, ist, fst, leg_units, leg_p
               max_hold_min, stop_bps, take_bps, component, detexit, fee_per_side):
     if ist[OPEN] == 0:
         ist[OPEN] = 1; ist[SIDE] = side; ist[TOOK] = 0
+        ist[POS_COUNT] += 1; ist[POS_ID] = ist[POS_COUNT]
         ist[MAX_HOLD_END] = t_ns[i] + max_hold_min[j] * MINUTE_NS if max_hold_min[j] > 0 else NO_END
         ist[PENDING_ADD] = detexit
         ist[COMPONENT] = component[j]
@@ -119,17 +123,18 @@ def _touches(i, o_i, h, l, o, c, pnl, ist, fst, leg_units, leg_price, leg_tidx, 
     price = _fill_stop(-side, fst[STOP], o_i, h[i], l[i])
     if not math.isnan(price):
         price *= (1 - side * stop_slip / 1e4)
-        _book_exit(i, _units(ist, leg_units), price, 1 if ist[TOOK] == 1 else 0, o, c, pnl, ist,
+        _book_exit(i, 1.0, price, 1 if ist[TOOK] == 1 else 0, o, c, pnl, ist,
                    leg_units, leg_price, leg_tidx, leg_dec, out_int, out_float, fee_per_side)
         return
     price = _fill_limit(-side, take, o_i, h[i], l[i])
     if math.isnan(price):
         return
-    _book_exit(i, _units(ist, leg_units) / 2, price, 2, o, c, pnl, ist,
+    average = _avg(ist, leg_units, leg_price)            # breakeven = the pre-take average (R2-46)
+    _book_exit(i, 0.5, price, 2, o, c, pnl, ist,
                leg_units, leg_price, leg_tidx, leg_dec, out_int, out_float, fee_per_side)
-    ist[TOOK] = 1; fst[STOP] = _avg(ist, leg_units, leg_price); fst[TAKE] = math.nan
+    ist[TOOK] = 1; fst[STOP] = average; fst[TAKE] = math.nan
     if (side == 1 and l[i] <= fst[STOP]) or (side == -1 and h[i] >= fst[STOP]):
-        _book_exit(i, _units(ist, leg_units), fst[STOP], 1, o, c, pnl, ist,
+        _book_exit(i, 1.0, fst[STOP], 1, o, c, pnl, ist,
                    leg_units, leg_price, leg_tidx, leg_dec, out_int, out_float, fee_per_side)
 
 
@@ -140,13 +145,13 @@ def _loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lowe
     n = len(o)
     pnl = np.zeros(n)
     cap = 4 * len(d_side) + 8
-    out_int = np.zeros((cap, 5), np.int64)
+    out_int = np.zeros((cap, 6), np.int64)
     out_float = np.zeros((cap, 5))
-    ist = np.zeros(8, np.int64)
+    ist = np.zeros(10, np.int64)
     fst = np.full(4, math.nan)
     leg_units = np.zeros(MAX_LEGS); leg_price = np.zeros(MAX_LEGS)
     leg_tidx = np.zeros(MAX_LEGS, np.int64); leg_dec = np.zeros(MAX_LEGS, np.int64)
-    oco_pending = False; oco_row = -1; oco_expiry = 0
+    oco_rows = np.zeros(MAX_OCO, np.int64); oco_exp = np.zeros(MAX_OCO, np.int64); n_oco = 0
     first_units = 0.5 if detexit == 1 else 1.0
     for i in range(n):
         held_at_open = ist[OPEN] == 1
@@ -158,7 +163,7 @@ def _loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lowe
                      fee_per_side, stop_slip)
         # 2) max hold
         if ist[OPEN] == 1 and t_ns[i] >= ist[MAX_HOLD_END]:
-            _book_exit(i, _units(ist, leg_units), o[i], 3, o, c, pnl, ist,
+            _book_exit(i, 1.0, o[i], 3, o, c, pnl, ist,
                        leg_units, leg_price, leg_tidx, leg_dec, out_int, out_float, fee_per_side)
         # 3) decisions executing this minute: exits for every row, then entries in row (priority) order
         exited_now = False
@@ -169,7 +174,7 @@ def _loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lowe
                 reverse = d_side[j] == -pside
                 flag = (d_exit_long[j] and pside == 1) or (d_exit_short[j] and pside == -1)
                 if reverse or flag:
-                    _book_exit(i, _units(ist, leg_units), o[i], 4 if reverse else 5, o, c, pnl, ist,
+                    _book_exit(i, 1.0, o[i], 4 if reverse else 5, o, c, pnl, ist,
                                leg_units, leg_price, leg_tidx, leg_dec, out_int, out_float, fee_per_side)
                     exited_now = True
         for j in range(exec_start[i], exec_end[i]):
@@ -186,12 +191,18 @@ def _loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lowe
                           leg_tidx, leg_dec, d_max_hold, d_stop_bps, d_take_bps, d_component, detexit, fee_per_side)
                 fill_price = o[i]
             elif not blocked and d_allow[j] and d_oco[j]:
-                oco_pending = True; oco_row = j; oco_expiry = t_ns[i] + d_expiry[j] * MINUTE_NS
-        # 4) pending OCO
-        if ist[OPEN] == 0 and oco_pending:
-            if t_ns[i] >= oco_expiry:
-                oco_pending = False
-            else:
+                if n_oco >= MAX_OCO:
+                    raise ValueError("too many pending OCO orders")
+                oco_rows[n_oco] = j; oco_exp[n_oco] = t_ns[i] + d_expiry[j] * MINUTE_NS; n_oco += 1
+        # 4) pending OCO orders: expire, then the oldest that fills opens the position and cancels the others
+        kept = 0
+        for q in range(n_oco):
+            if t_ns[i] < oco_exp[q]:
+                oco_rows[kept] = oco_rows[q]; oco_exp[kept] = oco_exp[q]; kept += 1
+        n_oco = kept
+        if ist[OPEN] == 0:
+            for q in range(n_oco):
+                oco_row = oco_rows[q]
                 up = _fill_stop(1, d_upper[oco_row], o[i], h[i], l[i])
                 down = _fill_stop(-1, d_lower[oco_row], o[i], h[i], l[i])
                 side = 0; price = math.nan
@@ -207,8 +218,9 @@ def _loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lowe
                 if side != 0:
                     _open_leg(i, side, first_units, price, oco_row, t_ns, c, pnl, ist, fst, leg_units, leg_price,
                               leg_tidx, leg_dec, d_max_hold, d_stop_bps, d_take_bps, d_component, detexit, fee_per_side)
-                    oco_pending = False
+                    n_oco = 0
                     fill_price = price
+                    break
         # 4b) a fill this minute: its own bar can already touch the new levels (checked from the fill price)
         if not math.isnan(fill_price) and ist[OPEN] == 1 and not math.isnan(fst[STOP]):
             _touches(i, fill_price, h, l, o, c, pnl, ist, fst, leg_units, leg_price, leg_tidx, leg_dec, out_int,
@@ -254,29 +266,18 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
         signals.exit_long.to_numpy(bool), signals.exit_short.to_numpy(bool), signals.allow_entry.to_numpy(bool),
         int(config.reentry == "strict"), int(config.exit_style == "DETEXIT"),
         float(config.fee_per_side), float(config.stop_slippage_bps))
-    if not len(out_int):
-        trades = pd.DataFrame([], columns=TRADE_COLUMNS)
-    else:
-        j, entry_i, exit_i, side, reason = out_int.T
-        units, entry_price, exit_price, gross, fee = out_float.T
-        entry_time, exit_time = t_index[entry_i], t_index[exit_i]
-        fund = np.zeros(len(units))
-        if config.include_funding:
-            for k in range(len(units)):
-                fund[k] = costs.funding_bps(int(side[k]), entry_time[k], exit_time[k], config.funding_boundary) * units[k]
-            np.add.at(pnl, exit_i, fund)
-        trades = pd.DataFrame({
-            "decision_time": decisions[j], "entry_time": entry_time, "exit_time": exit_time, "side": side,
-            "units": units, "entry_price": entry_price, "exit_price": exit_price,
-            "exit_reason": np.array(REASONS, dtype=object)[reason], "gross_bps": gross, "fee_bps": fee,
-            "funding_bps": fund, "net_bps": gross - fee + fund})
-    series = pd.Series(pnl, index=t_index)
-    inside = (series.index >= start) & (series.index < end)
-    open_position = None
-    if ist[OPEN] == 1:
-        units = float(leg_units.sum())
-        open_position = {"side": int(ist[SIDE]), "units": units, "avg_price": units / float((leg_units / leg_price).sum()),
-                         "entry_time": t_index[int(leg_tidx[0])], "decision_time": decisions[int(leg_dec[0])],
-                         "component": int(ist[COMPONENT]),
-                         "max_hold_end": None if ist[MAX_HOLD_END] == NO_END else pd.Timestamp(int(ist[MAX_HOLD_END]), tz="UTC")}
-    return SimResult(trades=trades, minute_pnl=series.loc[inside], open_position=open_position)
+
+    reason_names = REASONS
+    trades = [{"decision_time": decisions[j], "entry_time": t_index[entry_i], "exit_time": t_index[exit_i],
+               "side": side, "units": units, "entry_price": entry_price, "exit_price": exit_price,
+               "exit_reason": reason_names[reason], "gross_bps": gross, "fee_bps": fee, "funding_bps": 0.0,
+               "net_bps": gross - fee, "position_id": position_id}
+              for (j, entry_i, exit_i, side, reason, position_id), (units, entry_price, exit_price, gross, fee)
+              in zip(out_int.tolist(), out_float.tolist())]
+    open_legs = ([(decisions[int(leg_dec[q])], t_index[int(leg_tidx[q])], int(ist[SIDE]), float(leg_units[q]),
+                   float(leg_price[q]), int(ist[POS_ID])) for q in range(len(leg_units))] if ist[OPEN] == 1 else [])
+    result = finish(trades, pnl, t_index, c, config, open_legs, start, end)
+    if result.open_position is not None:
+        result.open_position.update(component=int(ist[COMPONENT]), max_hold_end=(
+            None if ist[MAX_HOLD_END] == NO_END else pd.Timestamp(int(ist[MAX_HOLD_END]), tz="UTC")))
+    return result

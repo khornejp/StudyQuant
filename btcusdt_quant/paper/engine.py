@@ -19,11 +19,17 @@ from .store import PaperStore, utc_text
 BOOKS = {"H1": (rules.F3,), "H2": (rules.E1,),
          "H3": (rules.F3, rules.E1), "H5": (rules.F3_W30, rules.E1),
          "F3": (rules.F3,), "E1": (rules.E1,),
-         "C1": (rules.F3, rules.E1), "C1_T1": (rules.F3, rules.E1),
+         "C1": (rules.F3, rules.E1),
+         "C1_FLIP": (rules.F3_FLIP, rules.E1),
+         "C1_SL200": (rules.F3, rules.E1),
+         "C1_T1": (rules.F3, rules.E1),
          "C1_5m": (rules.F3_5M, rules.E1),
          "C4": (rules.F3_W30, rules.E1)}
 
-EXECUTION_DELAYS = {"C1_T1": 1}
+EXECUTION_DELAYS = {"C1_FLIP": 0, "C1_SL200": 0, "C1_T1": 1}
+# out/k45_rl_r2_48_20261007/fixed_stop_freeze.json: K01 S200 test
+# 2023-09..2025-12 +10,714 vs +11,555 bps; max drawdown 1,910 vs 2,987.
+FIXED_STOP_BPS = {"C1_SL200": 200.0}
 
 
 def _kline_row(row: Mapping[str, object], received_at: object, source: str) -> dict[str, object]:
@@ -185,7 +191,11 @@ class PaperEngine:
             result.loc[forced, "exit_price"] = end_price
             result.loc[forced, "gross_bps"] = (result.loc[forced, "side"] * np.log(
                 result.loc[forced, "exit_price"] / result.loc[forced, "entry_price"]) * 1e4)
-            result["exit_reason"] = np.where(forced, "REPLAY_END", "MAX_HOLD_OR_REVERSE")
+            if "exit_reason" not in result:
+                result["exit_reason"] = "MAX_HOLD_OR_REVERSE"
+            else:
+                result["exit_reason"] = result.exit_reason.fillna("MAX_HOLD_OR_REVERSE")
+            result.loc[forced, "exit_reason"] = "REPLAY_END"
             return result.reset_index(drop=True)
 
         base = {candidate: window(frame, candidate) for candidate, frame in generated.items()}
@@ -202,10 +212,12 @@ class PaperEngine:
                 continue
             candidates = BOOKS[name]
             execution_delay = EXECUTION_DELAYS.get(name, 0)
-            if execution_delay:
+            fixed_stop_bps = FIXED_STOP_BPS.get(name)
+            if execution_delay or fixed_stop_bps is not None:
                 raw = window(rules.make_first_trades(
                     market, features, candidates, decision_start=book_start,
                     execution_delay_minutes=execution_delay,
+                    fixed_stop_bps=fixed_stop_bps,
                     cost_bps=self.config.cost_bps), None, book_start)
                 dropped = pd.DataFrame()
             elif book_start != start:
@@ -216,7 +228,7 @@ class PaperEngine:
                              for candidate, frame in local_generated.items()}
             else:
                 book_base = base
-            if not execution_delay:
+            if not execution_delay and fixed_stop_bps is None:
                 if len(candidates) == 1:
                     raw = book_base[candidates[0]].copy()
                     raw["candidate"] = None if name in {"H1", "H2"} else candidates[0]
@@ -256,7 +268,8 @@ class PaperEngine:
                         cost_bps=self.config.cost_bps))
                 except Exception:
                     logging.getLogger(__name__).exception("x3 overlay failed for %s", name)
-        ledger = pd.concat(output, ignore_index=True)
+        ledger = (pd.concat(output, ignore_index=True) if output else
+                  pd.DataFrame(columns=["book", "boundary", "_active"]))
         published = ledger.loc[~ledger["_active"].fillna(False)].copy() if publish_open_positions else ledger
         closes = market.set_index("open_time").close
         daily_parts = []
@@ -327,4 +340,4 @@ class PaperEngine:
         return ledger
 
 
-__all__ = ["BOOKS", "EXECUTION_DELAYS", "PaperEngine"]
+__all__ = ["BOOKS", "EXECUTION_DELAYS", "FIXED_STOP_BPS", "PaperEngine"]

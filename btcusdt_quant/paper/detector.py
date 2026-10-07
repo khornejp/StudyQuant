@@ -20,6 +20,8 @@ LABEL_LAG = pd.Timedelta(hours=25)       # fit_fold needs >= 1 labelled predicti
 ARCHIVE_END = pd.Timestamp("2026-07-01", tz="UTC")
 PREDICT_DAYS = 20                        # > 14-day 1 h lookback
 TABLE = "detector_predictions"
+MINUTE_TABLE = "detector_predictions_1m"
+FRESH_HEADS = ("30m", "1h", "4h")      # refreshed every minute (detector_refresh_check: better); 12h/24h held from 15 m
 
 
 @lru_cache(maxsize=1)
@@ -154,7 +156,7 @@ def _complete(minutes: pd.DataFrame, frequency: str) -> pd.DataFrame:
     return minutes.loc[minutes.open_time < end].reset_index(drop=True)
 
 
-def recent_data(connection, now: pd.Timestamp):
+def recent_data(connection, now: pd.Timestamp, every_minute: bool = False):
     """Feature-only inputs over the last PREDICT_DAYS of collector data; each resolution keeps its complete bars,
     so an origin sees exactly the bars the research dataset would give it."""
     from types import SimpleNamespace
@@ -167,26 +169,27 @@ def recent_data(connection, now: pd.Timestamp):
     funding = funding.sort_values("publish_time").reset_index(drop=True)
     bars = [r.aggregate(_complete(market, f), f) for f in ("1min", "5min", "1h")]
     arrays = r.attach_exogenous(bars, metrics, premium, funding)
-    origins = pd.DatetimeIndex(r.aggregate(_complete(market, "15min"), "15min").decision_time)
+    origins = pd.DatetimeIndex((bars[0] if every_minute else r.aggregate(_complete(market, "15min"), "15min")).decision_time)
     return SimpleNamespace(bars=bars, arrays=arrays, origins=origins)
 
 
 def ensure_table(connection) -> None:
     """Predictions are immutable: one row per origin; available_at = commit time (live) or write time (backfill)."""
     columns = ", ".join(f"prediction_{t} REAL" for t in target_names())
-    connection.execute(f"CREATE TABLE IF NOT EXISTS {TABLE} (timestamp TEXT PRIMARY KEY, retrain_time TEXT, "
-                       f"{columns}, created_at TEXT)")
-    have = {row[1] for row in connection.execute(f"PRAGMA table_info({TABLE})")}
-    for name in ("available_at", "model_id", "source"):
-        if name not in have:
-            connection.execute(f"ALTER TABLE {TABLE} ADD COLUMN {name} TEXT")
+    for table in (TABLE, MINUTE_TABLE):
+        connection.execute(f"CREATE TABLE IF NOT EXISTS {table} (timestamp TEXT PRIMARY KEY, retrain_time TEXT, "
+                           f"{columns}, created_at TEXT)")
+        have = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+        for name in ("available_at", "model_id", "source"):
+            if name not in have:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} TEXT")
     # rows written before these columns existed were the 2026-07-01.. backfill
     connection.execute(f"UPDATE {TABLE} SET available_at=created_at, model_id=retrain_time, source='backfill' "
                        "WHERE available_at IS NULL")
 
 
 def write_predictions(connection, origins: pd.DatetimeIndex, retrain: pd.Timestamp, values: np.ndarray,
-                      source: str = "live") -> int:
+                      source: str = "live", table: str = TABLE) -> int:
     """INSERT OR IGNORE: a later model never overwrites an origin's prediction."""
     ensure_table(connection)
     names = [f"prediction_{t}" for t in target_names()]
@@ -195,14 +198,22 @@ def write_predictions(connection, origins: pd.DatetimeIndex, retrain: pd.Timesta
     rows = [(o.isoformat(), retrain.isoformat(), *map(float, v), now, now, f"w730_raw_{retrain:%Y%m%d}", source)
             for o, v in zip(origins, values)]
     before = connection.total_changes
-    connection.executemany(f"INSERT OR IGNORE INTO {TABLE} ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
+    connection.executemany(f"INSERT OR IGNORE INTO {table} ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
                            rows)
     return connection.total_changes - before
 
 
-def read_predictions(connection) -> pd.DataFrame:
+def mix_minute(values: np.ndarray, held: np.ndarray) -> np.ndarray:
+    """Fresh values for FRESH_HEADS, the held 15-minute values for the longer heads."""
+    out = held.copy()
+    fresh = [j for j, name in enumerate(target_names()) if name.split("_", 1)[1] in FRESH_HEADS]
+    out[:, fresh] = values[:, fresh]
+    return out
+
+
+def read_predictions(connection, table: str = TABLE) -> pd.DataFrame:
     ensure_table(connection)
-    frame = pd.read_sql_query(f"SELECT * FROM {TABLE} ORDER BY timestamp", connection)
+    frame = pd.read_sql_query(f"SELECT * FROM {table} ORDER BY timestamp", connection)
     for c in ("timestamp", "retrain_time", "available_at"):
         frame[c] = pd.to_datetime(frame[c], utc=True, format="mixed")
     return frame.drop(columns="created_at")

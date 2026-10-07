@@ -27,17 +27,27 @@ STATIC = Path(__file__).with_name("index.html")
 VENDOR = Path(__file__).with_name("vendor")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TF_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
-DEFAULT_BOOKS = ("C1", "C1_5m", "C1_T1", "F3", "E1", "C4")
-BOOK_LABELS = {"C1_5m": "C1 역추세5분 (비교)",
+DEFAULT_BOOKS = ("C1", "C1_FLIP", "C1_SL200", "C1_5m", "C1_T1", "F3", "E1", "C4")
+BOOK_LABELS = {"C1_FLIP": "C1 추세(F3 뒤집기) (비교)",
+               "C1_SL200": "C1 손절 -200bps (비교)",
+               "K03_TRAIL": "K03 추적 손절(비교)",
+               "K03_S150": "K03 고정 손절 -150(비교)",
+               "B2_BE": "B2 본전 이동(비교)",
+               "B2_S150": "B2 고정 손절 -150(비교)",
+               "C1_5m": "C1 역추세5분 (비교)",
                "C1_T1": "C1 T+1분 진입 (비교)"}
 MAX_CANDLES = 2_000
 CONDITION_BOOKS = {
     "F3": (rules.F3,), "E1": (rules.E1,),
-    "C1": (rules.F3, rules.E1), "C1_T1": (rules.F3, rules.E1),
+    "C1": (rules.F3, rules.E1),
+    "C1_FLIP": (rules.F3_FLIP, rules.E1),
+    "C1_SL200": (rules.F3, rules.E1),
+    "C1_T1": (rules.F3, rules.E1),
     "C1_5m": (rules.F3_5M, rules.E1),
     "C4": (rules.F3_W30, rules.E1),
 }
-CONDITION_NAMES = {rules.F3: "F3 역추세", rules.F3_W30: "F3-w30 역추세",
+CONDITION_NAMES = {rules.F3: "F3 역추세", rules.F3_FLIP: "F3 추세(뒤집기)",
+                   rules.F3_W30: "F3-w30 역추세",
                    rules.F3_5M: "F3 역추세 5분 판단", rules.E1: "E1 거래량 돌파"}
 
 
@@ -263,22 +273,25 @@ def _condition_text(candidate: str, value: dict[str, object] | None) -> str:
                 f"{'롱 조건 충족' if met else '대기'}")
     ratio, upper, lower = (value[name] for name in
                            ("global_ls_account", "upper_threshold", "lower_threshold"))
+    flipped = candidate == rules.F3_FLIP
+    label = "추세" if flipped else "역추세"
     if ratio is None or upper is None or lower is None:
-        return "역추세: 기준선 준비 중 → 대기"
+        return f"{label}: 기준선 준비 중 → 대기"
     if float(ratio) >= float(upper):
-        state = "숏 조건 충족"
+        state = "롱 조건 충족" if flipped else "숏 조건 충족"
     elif float(ratio) <= float(lower):
-        state = "롱 조건 충족"
+        state = "숏 조건 충족" if flipped else "롱 조건 충족"
     else:
         state = "대기"
-    short = value["distance_to_short"]
-    long = value["distance_to_long"]
-    return (f"역추세: 롱 계정 비율 {value['long_account_pct']:.1f}% "
-            f"(롱숏비율 {ratio:.2f}) / 숏 기준 {value['upper_pct']:.1f}% "
-            f"(롱숏비율 {upper:.2f}) 이상 / 롱 기준 {value['lower_pct']:.1f}% "
+    upper_side, lower_side = (("롱", "숏") if flipped else ("숏", "롱"))
+    upper_distance = value["distance_to_short"]
+    lower_distance = value["distance_to_long"]
+    return (f"{label}: 롱 계정 비율 {value['long_account_pct']:.1f}% "
+            f"(롱숏비율 {ratio:.2f}) / {upper_side} 기준 {value['upper_pct']:.1f}% "
+            f"(롱숏비율 {upper:.2f}) 이상 / {lower_side} 기준 {value['lower_pct']:.1f}% "
             f"(롱숏비율 {lower:.2f}) 이하 / 남은 거리 "
-            f"숏 {short['ratio']:.2f}·{short['pct_points']:.1f}%p, "
-            f"롱 {long['ratio']:.2f}·{long['pct_points']:.1f}%p → {state}")
+            f"{upper_side} {upper_distance['ratio']:.2f}·{upper_distance['pct_points']:.1f}%p, "
+            f"{lower_side} {lower_distance['ratio']:.2f}·{lower_distance['pct_points']:.1f}%p → {state}")
 
 
 class _ConditionCache:
@@ -379,34 +392,68 @@ def _catalog_conditions(connection: sqlite3.Connection, book: str, tf: str,
     except Exception:
         signals = pd.DataFrame()
     trades = _frame(connection, "trades", "book=? AND boundary='PESS'", (book,))
-    filled = set(pd.to_datetime(trades.entry_time, utc=True)) if not trades.empty else set()
-    for row in _frame(connection, "positions", "book=?", (book,)).itertuples(index=False):
-        filled.add(pd.Timestamp(row.entry_time))
+    legacy_fills = set(pd.to_datetime(trades.entry_time, utc=True)) if not trades.empty else set()
+    positions = _frame(connection, "positions", "book=?", (book,))
+    for row in positions.itertuples(index=False):
+        legacy_fills.add(pd.Timestamp(row.entry_time))
+    linked = _frame(connection, "catalog_fills", "book=?", (book,))
+    fill_of = {}
+    if not linked.empty:
+        linked["signal_time"] = pd.to_datetime(linked.signal_time, utc=True)
+        linked["fill_time"] = pd.to_datetime(linked.fill_time, utc=True)
+        linked = linked.sort_values(["signal_time", "fill_time"], kind="stable")
+        fill_of = {pd.Timestamp(row.signal_time): row for row in linked.drop_duplicates("signal_time").itertuples()}
     gated = catalog.BOOKS[book][1]
+    has_decisions = _has_table(connection, "catalog_decisions")
     try:
         decided = _frame(connection, "catalog_decisions", "book=?", (book,))
     except Exception:
         decided = pd.DataFrame()
     decision_of = ({pd.Timestamp(r["signal_time"]): r for r in _records(decided)} if not decided.empty else {})
+    processed = _utc(_meta(connection, "last_processed_minute"))
     rows, model_rows = [], []
     for row in _records(signals.sort_values("decision_time")) if not signals.empty else []:
         decision = pd.Timestamp(row["decision_time"])
         side = int(row["side"] or 0)
+        entry = row.get("entry")
+        opening = bool(side) or entry in ("oco", "grid")
+        event = decision_of.get(decision)
+        effective = decision
+        if event is not None and event.get("status") == "decided" and event.get("decision_time"):
+            effective = pd.Timestamp(event["decision_time"])
+        fill = fill_of.get(decision)
         status = reason = None
-        if side or row.get("entry") in ("oco", "grid"):
-            status = "filled" if decision + pd.Timedelta(minutes=1) in filled else ("dropped" if side else None)
-            reason = None if status != "dropped" else ("holding" if row["allow_entry"] else "gate")
+        if opening:
+            if fill is not None or effective + pd.Timedelta(minutes=1) in legacy_fills:
+                status = "filled"
+            elif catalog.needs_model(book) and has_decisions and event is None:
+                status = "pending"
+            elif event is not None and event.get("status") != "decided":
+                status, reason = "dropped", str(event.get("status") or "prediction")
+            elif not row["allow_entry"]:
+                status, reason = "dropped", "gate"
+            else:
+                expiry = int(row.get("expiry_min") or 0) if entry in ("oco", "grid") else 0
+                deadline = effective + pd.Timedelta(minutes=1 + expiry)
+                status = "dropped" if processed is not None and processed >= deadline else "pending"
+                reason = "holding" if status == "dropped" else None
         indicators = json.loads(row.get("indicators") or "{}")
         primary = next(iter(indicators), None)
         value = ((None if row.get("M") is None else row["M"] * 100) if gated else
                  indicators.get(primary) if primary is not None else row.get("close"))
-        event = decision_of.get(decision)
+        value = None if value is None or pd.isna(value) else float(value)
         text = _catalog_row_text(row)
         if catalog.needs_model(book) and (side or row.get("entry") in ("oco", "grid")):
             text += " · " + _decision_text(event)
+        fill_side = None if fill is None else int(fill.side)
+        shown_side = fill_side if fill_side is not None else side
+        fill_time = None if fill is None else _iso(pd.Timestamp(fill.fill_time))
+        close = row.get("close")
         rows.append({"time": int(decision.timestamp()), "decision_time": _iso(decision), "side": side,
-                     "value": value, "close": row.get("close"), "condition_met": bool(side),
-                     "direction": "long" if side > 0 else "short" if side < 0 else None,
+                     "fill_side": fill_side, "fill_time": fill_time, "value": value,
+                     "close": None if close is None or pd.isna(close) else float(close),
+                     "condition_met": opening,
+                     "direction": "long" if shown_side > 0 else "short" if shown_side < 0 else None,
                      "signal_status": status, "signal_reason": reason, "text": text})
         model = json.loads(row.get("model") or "null")
         if model is not None:
@@ -416,7 +463,7 @@ def _catalog_conditions(connection: sqlite3.Connection, book: str, tf: str,
     last = rows[-1] if rows else None
     primary_key = (next(iter(json.loads(signals.indicators.iloc[-1] or "{}")), None)
                    if not signals.empty and "indicators" in signals else None)
-    holding = not _frame(connection, "positions", "book=?", (book,)).empty
+    holding = not positions.empty
     cadence = spec.cadence_min or 60
     now = pd.Timestamp.now(tz="UTC")
     next_decision = now.floor(f"{cadence}min") + pd.Timedelta(minutes=cadence)
@@ -435,8 +482,10 @@ def _catalog_conditions(connection: sqlite3.Connection, book: str, tf: str,
                      **{k: None for k in ("long_account_pct", "upper_pct", "lower_pct", "distance_to_short",
                                           "distance_to_long")}}
         legs.append(model_leg)
+    cutoff = processed + pd.Timedelta(minutes=1) if processed is not None else None
     return {"schema_version": 3, "book": book, "tf": tf, "start_time": start_time, "source": "paper_catalog",
-            "generated_at": _iso(now), "data_cutoff": None if last is None else last["decision_time"],
+            "generated_at": _iso(now), "data_cutoff": (_iso(cutoff) if cutoff is not None else
+                                                          None if last is None else last["decision_time"]),
             "summary": {"holding": holding, "holding_text": "보유 중, 신호 무시" if holding else "미보유",
                         "next_decision_time": _iso(next_decision),
                         "next_decision_kst": next_decision.tz_convert("Asia/Seoul").isoformat(),
@@ -557,7 +606,8 @@ def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
         readable_fields = ("long_account_pct", "upper_pct", "lower_pct",
                            "distance_to_short", "distance_to_long")
         legs.append({"candidate": candidate, "name": CONDITION_NAMES[candidate],
-                     "kind": "breakout" if candidate == rules.E1 else "contrarian",
+                     "kind": ("breakout" if candidate == rules.E1 else
+                              "trend" if candidate == rules.F3_FLIP else "contrarian"),
                      "decision_cadence_minutes": 5 if candidate == rules.F3_5M else 60,
                      "max_hold_hours": rules.SPECS[candidate].max_hold,
                      "last_decision": last, "next_estimate": estimate,
@@ -767,7 +817,8 @@ def _performance(connection: sqlite3.Connection, book: str,
     summary: dict[str, object] = {"book": book, "trade_count": 0, "win_rate": None,
                                   "net_pess_bps": 0.0, "net_opt_bps": 0.0,
                                   "max_drawdown_bps": 0.0, "buy_hold_bps": None,
-                                  "vs_buy_hold_bps": None}
+                                  "vs_buy_hold_bps": None,
+                                  "unrealized_bps": _open_unrealized_bps(connection, book)}
     if not trades.empty:
         pess = trades.loc[trades.boundary.eq("PESS")] if "boundary" in trades else trades
         summary["trade_count"] = int(len(pess))
@@ -807,8 +858,7 @@ def _performance(connection: sqlite3.Connection, book: str,
                        "cumulative_net_bps": buy_hold.tolist(),
                        "drawdown_bps": _drawdown(buy_hold).tolist()})
         # The open position's mark-to-market belongs in the comparison; closed trades alone hide it.
-        unrealized = _open_unrealized_bps(connection, book)
-        summary["unrealized_bps"] = unrealized
+        unrealized = float(summary["unrealized_bps"])
         summary["buy_hold_bps"] = float(buy_hold.iloc[-1])
         summary["vs_buy_hold_bps"] = float(summary["net_pess_bps"]) + unrealized - float(buy_hold.iloc[-1])
     return {"schema_version": 2, "book": book, "summary": summary,
@@ -836,14 +886,14 @@ def _book_rows(connection: sqlite3.Connection, book_names: tuple[str, ...],
                for boundary, part in daily_part.groupby("boundary")} if not daily_part.empty else {}
         pess = trade_part.loc[trade_part.boundary.eq("PESS")] if (
             not trade_part.empty and "boundary" in trade_part) else trade_part
-        cumulative = daily_part.loc[daily_part.boundary.eq("PESS"), "net_bps"].cumsum(
+        cumulative = daily_part.loc[daily_part.boundary.eq("PESS")].sort_values("date").net_bps.cumsum(
             ) if not daily_part.empty else pd.Series(dtype=float)
         rows.append({"book": name, "display_book": BOOK_LABELS.get(name) or (
                          catalog.label(name) if name in catalog.BOOKS else name),
                      "start_time": book_start,
                      "position": None if position.empty else _records(position)[0],
                      "trades": int(len(pess)),
-                     "net_bps": float(daily_part.net_bps.sum()) if not daily_part.empty else 0.0,
+                     "net_bps": net.get("PESS", 0.0),
                      "net_pess_bps": net.get("PESS", 0.0), "net_opt_bps": net.get("OPT", 0.0),
                      "win_rate": None if pess.empty else float((pess.net_bps > 0).mean()),
                      "max_drawdown_bps": 0.0 if cumulative.empty else float(_drawdown(cumulative).max()),

@@ -46,7 +46,8 @@ def test_detexit_half_take_then_breakeven():
              {"decision_time": T0 + pd.Timedelta(minutes=30), "side": 1, "stop_bps": 300, "take_bps": 500}])
     r = run(s, m, exit_style="DETEXIT")
     reasons = r.trades.sort_values("exit_time").exit_reason.tolist()
-    assert reasons == ["take", "breakeven"] and np.isclose(r.trades.units.sum(), 1.0)
+    assert reasons == ["take", "take", "breakeven", "breakeven"] and np.isclose(r.trades.units.sum(), 1.0)
+    assert np.allclose(r.trades.units, .25)                                   # each leg closes pro rata
 
 def test_missing_gate_blocks_entry_not_exit():
     m = flat_minutes()

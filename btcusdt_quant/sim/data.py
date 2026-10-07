@@ -20,8 +20,19 @@ def validate_minutes(frame: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("high below open/close/low")
     return frame
 
-def load_minutes(path: Path = MARKET_PATH) -> pd.DataFrame:
-    frame = pd.read_parquet(path, columns=MINUTE_COLUMNS)
+def _file_day(path: Path) -> pd.Timestamp:
+    """Archive files end with -YYYY-MM-DD.zip."""
+    return pd.Timestamp(Path(path).stem[-10:], tz="UTC")
+
+
+def archive_files(root: Path, end: pd.Timestamp | None = None) -> list[Path]:
+    files = sorted(Path(root).glob("*.zip"))
+    return files if end is None else [f for f in files if _file_day(f) < end]
+
+
+def load_minutes(path: Path = MARKET_PATH, end: pd.Timestamp | None = None) -> pd.DataFrame:
+    filters = None if end is None else [("open_time", "<", pd.Timestamp(end).to_pydatetime())]
+    frame = pd.read_parquet(path, columns=MINUTE_COLUMNS, filters=filters)
     frame["open_time"] = pd.to_datetime(frame.open_time, utc=True).astype("datetime64[ns, UTC]")
     return validate_minutes(frame.sort_values("open_time").reset_index(drop=True))
 
@@ -32,8 +43,8 @@ def _csv(path: Path, **kwargs) -> pd.DataFrame:
             raise ValueError(f"expected one csv in {path}")
         return pd.read_csv(archive.open(names[0]), **kwargs)
 
-def load_metrics(root: Path = METRICS_DIR) -> pd.DataFrame:
-    frames = [_csv(p) for p in sorted(Path(root).glob("*.zip"))]
+def load_metrics(root: Path = METRICS_DIR, end: pd.Timestamp | None = None) -> pd.DataFrame:
+    frames = [_csv(p) for p in archive_files(root, end)]
     raw = pd.concat(frames, ignore_index=True)
     create = pd.to_datetime(raw.create_time, utc=True).astype("datetime64[ns, UTC]")
     result = pd.DataFrame({
@@ -45,11 +56,11 @@ def load_metrics(root: Path = METRICS_DIR) -> pd.DataFrame:
         "taker_lsr": pd.to_numeric(raw.sum_taker_long_short_vol_ratio, errors="coerce")})
     return result.drop_duplicates("available_time", keep="last").sort_values("available_time").reset_index(drop=True)
 
-def load_premium(root: Path = PREMIUM_DIR) -> pd.DataFrame:
+def load_premium(root: Path = PREMIUM_DIR, end: pd.Timestamp | None = None) -> pd.DataFrame:
     columns = ["open_time", "open", "high", "low", "close", "volume", "close_time",
                "quote_volume", "count", "taker_buy_volume", "taker_buy_quote_volume", "ignore"]
     frames = []
-    for path in sorted(Path(root).glob("*.zip")):
+    for path in archive_files(root, end):
         raw = _csv(path, header=None)
         if str(raw.iloc[0, 0]).lower() == "open_time":
             raw = raw.iloc[1:]
@@ -70,13 +81,29 @@ def validate_predictions(frame: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("duplicate prediction timestamp")
     return frame
 
-def load_predictions(root: Path = PREDICTIONS_DIR) -> pd.DataFrame:
-    paths = sorted(Path(root).glob("*/fold_*_predictions.parquet"))
+SEGMENT_STARTS = {"DEV_FRONT": "2022-03-01", "DEV_BACK": "2024-01-01", "HOLD_B": "2026-01-01"}
+
+
+def load_predictions(root: Path = PREDICTIONS_DIR, end: pd.Timestamp | None = None) -> pd.DataFrame:
+    segments = [s for s, start in SEGMENT_STARTS.items() if end is None or pd.Timestamp(start, tz="UTC") < end]
+    paths = sorted(p for s in segments for p in (Path(root) / s).glob("fold_*_predictions.parquet"))
     columns = ["timestamp", "retrain_time", "segment"] + [f"prediction_{t}" for t in TARGETS]
     frame = pd.concat([pd.read_parquet(p, columns=columns) for p in paths], ignore_index=True)
     for c in ("timestamp", "retrain_time"):
         frame[c] = pd.to_datetime(frame[c], utc=True)
+    if end is not None:
+        frame = frame.loc[frame.timestamp < end]
     return validate_predictions(frame.sort_values("timestamp").reset_index(drop=True))
+
+
+def prediction_coverage(frame: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> dict:
+    """Expected 15-minute origins in [start, end) vs present; missing days listed (fail-closed callers check it)."""
+    expected = pd.date_range(start, end, freq="15min", tz="UTC", inclusive="left")
+    present = pd.DatetimeIndex(frame.timestamp)
+    missing = expected.difference(present)
+    return {"expected": int(len(expected)), "present": int(expected.isin(present).sum()),
+            "missing": int(len(missing)), "missing_days": sorted({str(t.date()) for t in missing}),
+            "retrain_after_timestamp": int((frame.retrain_time > frame.timestamp).sum())}
 
 def asof(values_time: pd.DatetimeIndex, values: np.ndarray, decisions: pd.DatetimeIndex,
          ttl: pd.Timedelta | None) -> np.ndarray:

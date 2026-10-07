@@ -1,4 +1,5 @@
 import math
+from dataclasses import replace
 import numpy as np, pandas as pd, pytest
 from btcusdt_quant.sim.reference import SimConfig
 from btcusdt_quant.sim.strategies import grid
@@ -42,6 +43,14 @@ def test_grid_stop_closes_all():
 def test_grid_window_end_closes_at_open():
     t = run(ctx_for(path((20, 99.0)))).trades
     assert t.exit_reason.tolist() == ["max_hold"] and t.exit_time.iloc[0] == T0 + pd.Timedelta(minutes=16 + 240)
+
+
+def test_grid_open_position_keeps_all_lots_and_reports_net_side():
+    ctx = ctx_for(path())
+    ctx.minutes.loc[20, ["high", "low"]] = [102.5, 97.5]
+    ctx = replace(ctx, minutes=ctx.minutes.iloc[:21].copy(), end=T0 + pd.Timedelta(minutes=21))
+    held = grid.simulate_grid(ctx, T0, ctx.end, gated=False, config=CFG).open_position
+    assert held is not None and len(held["legs"]) == 4 and held["side"] == 0
 
 
 @pytest.mark.parametrize("seed", range(5))

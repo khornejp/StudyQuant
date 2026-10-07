@@ -16,4 +16,4 @@ testpaths = ["tests"]
 # rather than silently run indefinitely.
 faulthandler_timeout = 120
 faulthandler_exit_on_timeout = true
-markers = ["slow: long real-data checks (tests/sim C1_X parity)"]
+markers = ["slow: long real-data checks; run with -m slow -o faulthandler_timeout=1200"]

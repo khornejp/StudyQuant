@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 F3 = "F3|1h|10/24|signal|LS"
+F3_FLIP = "F3|1h|10/24|signal|LS|flip"
 F3_5M = "F3|5m|10/24|signal|LS"
 F3_W30 = "F3_global_ls_account|1h|w30|q20|h12|LS"
 E1 = "E1|1h|3|signal|L"
@@ -39,6 +40,9 @@ class RuleSpec:
 
 SPECS = {
     F3: RuleSpec(F3, 2_160, 720, .10, .90, 24),
+    # Research K01 flipped F3: -15,528 bps (2022-03..2025-12) vs +21,391
+    # contrarian; live comparison only.
+    F3_FLIP: RuleSpec(F3_FLIP, 2_160, 720, .10, .90, 24),
     F3_5M: RuleSpec(F3_5M, 2_160, 720, .10, .90, 24),
     F3_W30: RuleSpec(F3_W30, 720, 720, .20, .80, 12),
     E1: RuleSpec(E1, None, None, None, None, 20, True),
@@ -177,6 +181,8 @@ def condition_details(minutes: pd.DataFrame, features: pd.DataFrame, candidate: 
         upper = rolling.quantile(spec.upper_quantile)
         side[source.ge(upper).fillna(False).to_numpy()] = -1
         side[source.le(lower).fillna(False).to_numpy()] = 1
+        if candidate == F3_FLIP:
+            side *= -1
         bars["global_ls_account"] = source
         bars["lower_threshold"] = lower
         bars["upper_threshold"] = upper
@@ -253,6 +259,7 @@ def make_first_trades(minutes: pd.DataFrame, features: pd.DataFrame,
                       candidates: tuple[str, ...], *,
                       decision_start: object | None = None,
                       execution_delay_minutes: int = 0,
+                      fixed_stop_bps: float | None = None,
                       cost_bps: float = 4.0) -> pd.DataFrame:
     """Run a priority FIRST book directly from decisions, including held-signal drops."""
     decision_frames = [signals(minutes, features, candidate) for candidate in candidates]
@@ -269,6 +276,8 @@ def make_first_trades(minutes: pd.DataFrame, features: pd.DataFrame,
     source = source.sort_values("open_time", kind="stable").reset_index(drop=True)
     times = source.open_time.array.asi8
     opens = source.open.to_numpy(float)
+    highs = source.high.to_numpy(float)
+    lows = source.low.to_numpy(float)
     data_end = source.open_time.iloc[-1] + pd.Timedelta(minutes=1)
     delay = pd.Timedelta(minutes=execution_delay_minutes)
     active: str | None = None
@@ -278,12 +287,28 @@ def make_first_trades(minutes: pd.DataFrame, features: pd.DataFrame,
     expiry: pd.Timestamp | None = None
     rows: list[dict[str, object]] = []
 
-    def close(time: pd.Timestamp, price: float) -> None:
+    def close(time: pd.Timestamp, price: float,
+              exit_reason: str = "MAX_HOLD_OR_REVERSE") -> None:
         nonlocal active, side, entry_time, entry_price, expiry
         rows.append({**_raw_trade(side, entry_time, time, entry_price, price, cost_bps),
-                     "candidate": active})
+                     "candidate": active, "exit_reason": exit_reason})
         active, side, entry_time, expiry = None, 0, None, None
         entry_price = np.nan
+
+    def close_at_stop(before: pd.Timestamp) -> bool:
+        if active is None or fixed_stop_bps is None:
+            return False
+        first = int(np.searchsorted(times, entry_time.value, side="right"))
+        last = int(np.searchsorted(times, before.value, side="left"))
+        stop = entry_price * np.exp(-side * fixed_stop_bps / 10_000)
+        touched = lows[first:last] <= stop if side > 0 else highs[first:last] >= stop
+        locations = np.flatnonzero(touched)
+        if not len(locations):
+            return False
+        location = first + int(locations[0])
+        gap = opens[location] < stop if side > 0 else opens[location] > stop
+        close(source.open_time.iloc[location], float(opens[location] if gap else stop), "STOP")
+        return True
 
     for values in decisions.itertuples(index=False, name=None):
         decision_time, *side_values = values
@@ -296,6 +321,7 @@ def make_first_trades(minutes: pd.DataFrame, features: pd.DataFrame,
             continue
         execution_time = source.open_time.iloc[location]
         execution_price = float(opens[location])
+        close_at_stop(execution_time)
         if active is not None and expiry is not None and expiry <= execution_time:
             expiry_location = int(np.searchsorted(times, expiry.value, side="left"))
             close(source.open_time.iloc[expiry_location], float(opens[expiry_location]))
@@ -309,8 +335,17 @@ def make_first_trades(minutes: pd.DataFrame, features: pd.DataFrame,
                 entry_time, entry_price = execution_time, execution_price
                 expiry = execution_time + pd.Timedelta(hours=SPECS[chosen].max_hold)
     if active is not None:
-        close(data_end, float(source.close.iloc[-1]))
-    return pd.DataFrame(rows, columns=[*TRADE_COLUMNS, "candidate"])
+        if fixed_stop_bps is None:
+            close(data_end, float(source.close.iloc[-1]))
+        else:
+            native_end = min(expiry, data_end) if expiry is not None else data_end
+            if not close_at_stop(native_end):
+                if native_end < data_end:
+                    location = int(np.searchsorted(times, native_end.value, side="left"))
+                    close(source.open_time.iloc[location], float(opens[location]))
+                else:
+                    close(data_end, float(source.close.iloc[-1]))
+    return pd.DataFrame(rows, columns=[*TRADE_COLUMNS, "candidate", "exit_reason"])
 
 
 def _make_time_trades(decisions: pd.DataFrame, source: pd.DataFrame, spec: RuleSpec,
@@ -359,5 +394,5 @@ def _make_time_trades(decisions: pd.DataFrame, source: pd.DataFrame, spec: RuleS
     return pd.DataFrame(rows, columns=TRADE_COLUMNS)
 
 
-__all__ = ["E1", "F3", "F3_5M", "F3_W30", "RULE_INPUT_COLUMNS", "RuleSpec", "SPECS", "aggregate_hourly",
+__all__ = ["E1", "F3", "F3_FLIP", "F3_5M", "F3_W30", "RULE_INPUT_COLUMNS", "RuleSpec", "SPECS", "aggregate_hourly",
            "condition_details", "make_first_trades", "make_trades", "signals"]

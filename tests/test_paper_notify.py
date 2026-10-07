@@ -24,7 +24,7 @@ def test_message_format_and_outbox_dedup_restart(tmp_path, monkeypatch) -> None:
     message = format_message("exit", {"book": "C1", "price": 100, "hold_minutes": 60,
         "reason": "MAX_HOLD", "gross_bps": 1.24, "cost_bps": 4,
         "funding_bps": -.06, "net_bps": -2.82, "cumulative_net_bps": 7.77})
-    assert "가격 +1.2 bps" in message and "순 -2.8 bps" in message
+    assert "매매손익 : +0.01 USDT" in message and "순실현손익 : -0.03 USDT\n순손익률 : -2.8 bps" in message
     notifier = TelegramNotifier(path, env_path=secrets)
     event = {"book": "C1", "side": -1, "price": 100, "candidate": "F3",
              "exit_time": "2026-10-07T00:00:00+00:00"}
@@ -126,6 +126,34 @@ def test_leverage_entry_distance_warning_once_and_liquidation_alert(tmp_path) ->
         rows = store.frame("notifications")
     assert rows.event_type.value_counts().to_dict() == {
         "entry": 1, "distance_warning": 1, "liquidation": 1}
+
+
+def test_catalog_fills_send_full_entry_messages(tmp_path) -> None:
+    path = tmp_path / "live.sqlite"
+    with PaperStore(path) as store:
+        store.connection.execute("CREATE TABLE catalog_fills (book TEXT, signal_time TEXT, fill_time TEXT, "
+                                 "side INTEGER, fill_price REAL)")
+        store.connection.execute("INSERT INTO catalog_fills VALUES "
+                                 "('K09_D','2026-10-07T00:00:00+00:00','2026-10-07T00:01:00+00:00',1,100),"
+                                 "('K09_D','2026-10-07T00:15:00+00:00','2026-10-07T00:16:00+00:00',1,101)")
+    notifier = TelegramNotifier(path, env_path=_secrets(tmp_path))
+    assert notifier.publish_store_events(since="2026-10-06T23:59:00+00:00") == 2
+    with PaperStore(path) as store:
+        payloads = list(store.frame("notifications").loc[lambda x: x.event_type.eq("entry"), "payload"])
+    assert len(payloads) == 2 and all("[모의 진입 체결] BTCUSDT · K09_D" in p for p in payloads)
+    assert "평균 진입가 : 100.00 USDT" in payloads[0] and "체결 수량 : 1.00000 BTC" in payloads[0]
+
+
+def test_detexit_take_leg_is_partial_exit_with_leg_rate() -> None:
+    from btcusdt_quant.paper.telegram_format import format_message
+    text = format_message("exit", {
+        "book": "K06_k0.5_D", "candidate": "K06_k0.5_D", "side": -1, "entry_price": 84023.89,
+        "entry_time": "2026-10-07T08:00:00+00:00", "exit_time": "2026-10-07T09:19:00+00:00",
+        "price": 83776.81, "hold_minutes": 79, "reason": "TAKE", "gross_bps": 7.36, "cost_bps": 1.0,
+        "funding_bps": -0.09, "net_bps": 6.27, "cumulative_net_bps": 6.27, "units": 0.25})
+    assert text.startswith("🟡 [모의 부분 종료] BTCUSDT · K06_k0.5_D")
+    assert "이번 종료 순손익 : +0.06 USDT" in text and "순손익률 : +25.1 bps" in text
+    assert "(보유 중)" in text and "[TP1]" in text and "방향 : SHORT" in text
 
 
 def test_ws_down_alert_respects_live_forming_bar(tmp_path):

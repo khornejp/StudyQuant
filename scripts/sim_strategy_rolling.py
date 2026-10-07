@@ -11,7 +11,8 @@ import numpy as np, pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from btcusdt_quant.sim import analytics, core, data, guard, provenance, registry, rolling  # noqa: E402
+from dataclasses import replace  # noqa: E402
+from btcusdt_quant.sim import analytics, core, costs, data, guard, provenance, registry, rolling  # noqa: E402
 from btcusdt_quant.sim.reference import SimConfig  # noqa: E402
 from btcusdt_quant.sim.strategies import CATALOG, Context, build_variant, grid  # noqa: E402
 
@@ -19,6 +20,8 @@ START = rolling.TRAIN_START
 OUT = ROOT / "out/k45_rl_r2_48_20261007/strategies"
 REGISTRY = ROOT / "out/sim_registry.jsonl"
 COSTS = (0.0, 4.0, 8.0, 12.0)
+BASE_TRIALS = 5125          # cumulative trials before R2-48 (spec / R2-47 revision 2); frozen, not read from the registry
+KNOWN_PREDICTION_GAPS = {"2023-12-31", "2025-12-31"}     # last day of each stage-1 segment (spec §1)
 HYPOTHESIS = ("강화학습 정책이 롤링 테스트에서 C1_X·단일 기법 최고·지도학습 정책보다 비용 차감 후 우위 "
               "(Plan 2: 기법 카탈로그 전 조합의 롤링 결과와 비교 기준 ② 산출)")
 _CTX: Context | None = None
@@ -56,11 +59,11 @@ def run_combo(combo, out_dir: str, end: str) -> dict:
             minutes = ctx.minutes.loc[ctx.minutes.open_time >= START].reset_index(drop=True)
             result = grid.simulate_grid(Context(minutes=minutes, metrics=ctx.metrics, premium=ctx.premium,
                                                 funding=ctx.funding, regime=ctx.regime, end=ctx.end, _bars=ctx._bars),
-                                        START, end_t, gate == "GATED")
+                                        START, end_t, gate == "GATED", SimConfig(close_at_end=True))
         else:
             table, config = build_variant(ctx, spec_id, gate == "GATED", style)
             minutes = ctx.minutes.loc[ctx.minutes.open_time >= START].reset_index(drop=True)
-            result = core.simulate(table, minutes, START, end_t, config)
+            result = core.simulate(table, minutes, START, end_t, replace(config, close_at_end=True))
         trades = result.trades
         daily = result.minute_pnl.groupby(result.minute_pnl.index.floor("D")).sum().rename("net_bps").to_frame()
         Path(out_dir, "trades").mkdir(parents=True, exist_ok=True)
@@ -81,19 +84,52 @@ def _fill_units(trades: pd.DataFrame, a: pd.Timestamp, b: pd.Timestamp) -> float
     return float(entries + exits)
 
 
-def window_rows(name: str, daily: pd.Series, trades: pd.DataFrame) -> list[dict]:
-    """Per window part: net at 0/4/8/12 bps from the minute ledger (fees at fills), counts, top-2 removed, drawdown."""
+def positions(trades: pd.DataFrame) -> pd.DataFrame:
+    """One row per position (DETEXIT legs and partial exits merged): first entry, last exit, side, net."""
+    if trades.empty:
+        return pd.DataFrame(columns=["position_id", "entry_time", "exit_time", "side", "net_bps", "legs"])
+    return trades.groupby("position_id", as_index=False).agg(
+        entry_time=("entry_time", "min"), exit_time=("exit_time", "max"), side=("side", "first"),
+        net_bps=("net_bps", "sum"), legs=("units", "size"))
+
+
+def position_window_pnl(trades: pd.DataFrame, closes: pd.Series, a: pd.Timestamp, b: pd.Timestamp,
+                        fee_per_side: float = 2.0, boundary: str = "PESS") -> pd.Series:
+    """Each position's P&L inside [a, b) on the minute-ledger rules: marks close to close (entry/exit at fill
+    prices), fees at the fill minutes, funding at settlement minutes."""
+    if trades.empty:
+        return pd.Series(dtype=float)
+    legs = trades.loc[(trades.entry_time < b) & (trades.exit_time >= a)]
+    out = {}
+    before_a, before_b = closes.asof(a - pd.Timedelta(minutes=1)), closes.asof(b - pd.Timedelta(minutes=1))
+    for leg in legs.itertuples(index=False):
+        start = leg.entry_price if leg.entry_time >= a else before_a
+        stop = leg.exit_price if leg.exit_time < b else before_b
+        value = leg.side * np.log(stop / start) * 1e4 * leg.units
+        value -= fee_per_side * leg.units * ((leg.entry_time >= a) + (leg.exit_time < b))
+        value += sum(v for when, v in costs.funding_events(leg.side, leg.entry_time, leg.exit_time, boundary)
+                     if a <= when < b) * leg.units
+        out[leg.position_id] = out.get(leg.position_id, 0.0) + value
+    return pd.Series(out, dtype=float)
+
+
+def window_rows(name: str, daily: pd.Series, trades: pd.DataFrame, closes: pd.Series | None = None) -> list[dict]:
+    """Per window part: net at 0/4/8/12 bps from the minute ledger (fees at fills), position counts, top-2
+    positions removed (their in-window P&L), drawdown."""
     rows = []
+    pos = positions(trades)
     for w in rolling.WINDOWS:
         for part, a, b in (("val", w.val_start, w.val_end), ("test", w.test_start, w.test_end)):
             d = daily.loc[(daily.index >= a) & (daily.index < b)]
             net4 = float(d.sum())
             units = _fill_units(trades, a, b)
-            exited = trades.loc[(trades.exit_time >= a) & (trades.exit_time < b)] if len(trades) else trades
+            exited = pos.loc[(pos.exit_time >= a) & (pos.exit_time < b)] if len(pos) else pos
+            inside = (position_window_pnl(trades, closes, a, b) if closes is not None and len(trades)
+                      else pd.Series(dtype=float))
             row = {"combo": name, "window": w.name, "part": part, "start": a, "end": b,
                    "trades": int(len(exited)), "long": int((exited.side == 1).sum()) if len(exited) else 0,
                    "short": int((exited.side == -1).sum()) if len(exited) else 0,
-                   "top2_removed_bps": net4 - float(exited.net_bps.nlargest(2).sum()) if len(exited) else net4,
+                   "top2_removed_bps": net4 - float(inside.nlargest(2).sum()),
                    "max_drawdown_bps": float((d.cumsum().cummax().clip(lower=0) - d.cumsum()).max()) if len(d) else 0.0,
                    "zero_reason": None if units > 0 else "no trades in window"}
             for cost in COSTS:   # fee per unit per side = cost / 2; the ledger was booked at 4 bps
@@ -119,7 +155,8 @@ def baseline2(windows: pd.DataFrame, daily: dict[str, pd.Series]) -> tuple[pd.Da
 def summarize(name: str, daily: pd.Series, trades: pd.DataFrame, trial_sharpes: np.ndarray, n_trials: int) -> dict:
     a, b = rolling.WINDOWS[0].test_start, rolling.WINDOWS[-1].test_end
     d = daily.loc[(daily.index >= a) & (daily.index < b)]
-    inside = trades.loc[(trades.entry_time >= a) & (trades.entry_time < b)] if len(trades) else trades
+    pos = positions(trades)
+    inside = pos.loc[(pos.entry_time >= a) & (pos.entry_time < b)] if len(pos) else pos
     sample = inside.sample(min(10, len(inside)), random_state=0).sort_values("entry_time") if len(inside) else inside
     units = _fill_units(trades, a, b)
     return {"id": name, "trade_n": int(len(inside)), "long_n": int((inside.side == 1).sum()) if len(inside) else 0,
@@ -131,12 +168,24 @@ def summarize(name: str, daily: pd.Series, trades: pd.DataFrame, trial_sharpes: 
             "sample_trades": json.loads(sample.to_json(orient="records", date_format="iso")) if len(sample) else []}
 
 
-def input_hashes() -> dict:
-    return {"market": provenance.file_sha256(data.MARKET_PATH),
-            "metrics": provenance.tree_sha256(data.METRICS_DIR, "*.zip")["sha256"],
-            "premium": provenance.tree_sha256(data.PREMIUM_DIR, "*.zip")["sha256"],
+def _files_hash(paths) -> str:
+    import hashlib
+    digest = hashlib.sha256()
+    for path in sorted(paths):
+        digest.update(Path(path).name.encode()); digest.update(provenance.file_sha256(path).encode())
+    return digest.hexdigest()
+
+
+def input_hashes(end: pd.Timestamp) -> dict:
+    """Only inputs dated before the cutoff are hashed (the market parquet is one file; rows >= cutoff are not read)."""
+    segments = [s for s, start in data.SEGMENT_STARTS.items() if pd.Timestamp(start, tz="UTC") < end]
+    return {"market_file": provenance.file_sha256(data.MARKET_PATH),
+            "market_note": "single parquet to 2026-06-30; load_minutes filters open_time < cutoff at read",
+            "metrics_before_cutoff": _files_hash(data.archive_files(data.METRICS_DIR, end)),
+            "premium_before_cutoff": _files_hash(data.archive_files(data.PREMIUM_DIR, end)),
             "funding": provenance.tree_sha256(ROOT / "artifacts/funding_2020_2026h1", "*")["sha256"],
-            "predictions": provenance.tree_sha256(data.PREDICTIONS_DIR, "*/fold_*_predictions.parquet")["sha256"],
+            "predictions_segments": segments,
+            "predictions": _files_hash([p for s in segments for p in (data.PREDICTIONS_DIR / s).glob("fold_*_predictions.parquet")]),
             "code": provenance.tree_sha256(ROOT / "btcusdt_quant/sim", "**/*.py")["sha256"]}
 
 
@@ -146,19 +195,27 @@ def main() -> None:
     parser.add_argument("--end", default=str(rolling.END))
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--out", default=str(OUT))
+    parser.add_argument("--no-register", action="store_true", help="smoke runs: do not append to the trial registry")
     args = parser.parse_args()
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     if pd.Timestamp(args.end) > rolling.END:
         raise SystemExit("end after 2026-01-01: 2026H1 is the one-shot final check")
     combos = combinations(args.ids)
     started = time.time()
+    end_t = pd.Timestamp(args.end)
+    predictions = data.load_predictions(end=end_t)                       # fail-closed checks (Codex #7)
+    coverage = data.prediction_coverage(predictions, START, end_t)
+    if coverage["retrain_after_timestamp"] or set(coverage["missing_days"]) - KNOWN_PREDICTION_GAPS:
+        raise SystemExit(f"prediction availability check failed: {coverage}")
     manifest = {"created_utc": datetime.now(timezone.utc).isoformat(), "source": "scripts/sim_strategy_rolling.py",
                 "spec": "docs/superpowers/specs/2026-10-07-rl-trading-design.md §3",
                 "plan": "docs/superpowers/plans/2026-10-07-strategy-rolling.md", "data_cutoff": "2025-12-31",
                 "simulation": {"start": str(START), "end": args.end, "cost_bps_round_trip": 4.0, "funding": "PESS",
                                "delay_min": 1},
                 "frozen_hypothesis": HYPOTHESIS, "ids": args.ids, "combinations": [combo_name(c) for c in combos],
-                "n_combinations": len(combos), "input_sha256": input_hashes()}
+                "n_combinations": len(combos), "input_sha256": input_hashes(end_t),
+                "prediction_coverage": {k: v for k, v in coverage.items()},
+                "n_trials": BASE_TRIALS + len(combos), "n_trials_rule": f"{BASE_TRIALS} prior + this run's combinations"}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     with ProcessPoolExecutor(max_workers=min(args.workers, 8), initializer=_init, initargs=(args.end,)) as pool:
         statuses = list(pool.map(run_combo, combos, [str(out)] * len(combos), [args.end] * len(combos)))
@@ -167,7 +224,8 @@ def main() -> None:
     ok = status.loc[status.status == "ok", "combo"].tolist()
     daily = {n: pd.read_parquet(out / "daily" / f"{n}.parquet").net_bps for n in ok}
     trades = {n: pd.read_parquet(out / "trades" / f"{n}.parquet") for n in ok}
-    windows = pd.DataFrame([r for n in ok for r in window_rows(n, daily[n], trades[n])])
+    closes = data.load_minutes(end=end_t).set_index("open_time").close
+    windows = pd.DataFrame([r for n in ok for r in window_rows(n, daily[n], trades[n], closes)])
     windows.to_parquet(out / "windows.parquet")
     picks, concat = baseline2(windows, daily)
     picks.to_parquet(out / "baseline2.parquet")
@@ -175,7 +233,10 @@ def main() -> None:
     a, b = rolling.WINDOWS[0].test_start, rolling.WINDOWS[-1].test_end
     sharpes = np.array([s.loc[(s.index >= a) & (s.index < b)].mean() / s.loc[(s.index >= a) & (s.index < b)].std(ddof=1)
                         for s in daily.values() if s.loc[(s.index >= a) & (s.index < b)].std(ddof=1) > 0])
-    n_trials = registry.cumulative_trials(REGISTRY) + len(combos)
+    n_trials = BASE_TRIALS + len(combos)
+    manifest["trial_sharpes"] = {"n": int(len(sharpes)), "mean": float(sharpes.mean()), "var": float(sharpes.var(ddof=1)),
+                                 "values_daily": [float(x) for x in sharpes]}
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     strategies = [summarize(n, daily[n], trades[n], sharpes, n_trials) for n in ok]
     strategies += [{"id": r["combo"], "trade_n": 0, "zero_reason": r.get("zero_reason") or r.get("error")}
                    for r in statuses if r["status"] != "ok"]
@@ -184,9 +245,10 @@ def main() -> None:
               "strategies": strategies}
     guard.check(report)
     (out / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
-    registry.record(REGISTRY, {"experiment": "R2-48 plan2 strategy rolling", "n_trials": len(combos),
-                               "config": manifest["simulation"], "input_hashes": manifest["input_sha256"],
-                               "result_summary": {"ok": len(ok), "baseline2_test_net_4bps": float(concat.sum())}})
+    if not args.no_register:
+        registry.record(REGISTRY, {"experiment": "R2-48 plan2 strategy rolling", "n_trials": len(combos),
+                                   "config": manifest["simulation"], "input_hashes": manifest["input_sha256"],
+                                   "result_summary": {"ok": len(ok), "baseline2_test_net_4bps": float(concat.sum())}})
     print(json.dumps({"combinations": len(combos), "ok": len(ok), "errors": int((status.status == "error").sum()),
                       "baseline2": picks[["window", "combo", "test_net_4bps"]].to_dict("records"),
                       "baseline2_test_net_4bps": float(concat.sum())}, indent=1, default=str))

@@ -52,9 +52,23 @@ def test_cost_rescaling_matches_resimulation():
 @pytest.mark.slow
 def test_runner_smoke(tmp_path):
     subprocess.run([sys.executable, "scripts/sim_strategy_rolling.py", "--ids", "K04", "K10", "--workers", "2",
-                    "--out", str(tmp_path)], check=True, cwd=ROOT)
+                    "--out", str(tmp_path), "--no-register"], check=True, cwd=ROOT)
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["n_combinations"] == 8 and manifest["data_cutoff"] == "2025-12-31"
     status = pd.read_parquet(tmp_path / "combos.parquet")
     assert set(status.status) <= {"ok", "skipped"} and (status.status == "skipped").sum() == 2
     assert len(pd.read_parquet(tmp_path / "baseline2.parquet")) == len(rolling.WINDOWS)
+
+
+def test_position_window_pnl_adds_up_to_the_ledger():
+    from tests.sim.test_core_differential import random_case
+    s, m = random_case(3)
+    cfg = SimConfig(exit_style="DETEXIT", close_at_end=True)
+    r = core.simulate(s, m, m.open_time.iloc[0], m.open_time.iloc[-1] + pd.Timedelta(minutes=1), cfg)
+    closes = m.set_index("open_time").close
+    a, b = m.open_time.iloc[700], m.open_time.iloc[2100]
+    window = r.minute_pnl.loc[(r.minute_pnl.index >= a) & (r.minute_pnl.index < b)].sum()
+    parts = runner.position_window_pnl(r.trades, closes, a, b)
+    assert len(parts) > 3 and np.isclose(parts.sum(), window, atol=1e-6)
+    pos = runner.positions(r.trades)
+    assert len(pos) == r.trades.position_id.nunique() < len(r.trades)       # DETEXIT legs merged per position

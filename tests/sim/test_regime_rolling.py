@@ -53,3 +53,14 @@ def test_lookups_with_no_predictions():
                           "prediction_exc_4h": pd.Series(dtype=float)})
     d = grid(3)
     assert np.isnan(regime.e_bps(empty, d, "4h")).all() and not regime.gate_mask(empty, d, "HIGH").any()
+
+def test_rank_against_uses_prior_grid_distribution():
+    t = grid(8 * 96)
+    ref = pd.DataFrame({"timestamp": t, **{f"prediction_{x}": np.arange(len(t), dtype=float)
+                                           for x in regime.M_TARGETS + regime.L_TARGETS}})
+    rows = pd.DataFrame({"timestamp": [t[-1] + pd.Timedelta(minutes=7)],
+                         **{f"prediction_{x}": [len(t) / 2] for x in regime.M_TARGETS + regime.L_TARGETS}})
+    out = regime.rank_against(ref, rows)
+    assert 0.49 < out.M.iloc[0] < 0.51 and np.isclose(out.M.iloc[0], out.L.iloc[0])
+    early = rows.assign(timestamp=[t[100]])                     # fewer than 7 days of reference -> NaN
+    assert np.isnan(regime.rank_against(ref, early).M.iloc[0])

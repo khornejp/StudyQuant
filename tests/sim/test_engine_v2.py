@@ -88,3 +88,56 @@ def test_core_reports_open_position():
     assert p["side"] == -1 and p["units"] == 1.0 and p["entry_time"] == T0 + M and p["max_hold_end"] is None
     closed = run(core.simulate, sig([{"decision_time": T0, "side": 1, "max_hold_min": 30}]), flat_minutes())
     assert closed.open_position is None
+
+
+@pytest.mark.parametrize("sim", SIMS)
+def test_open_position_reports_every_detexit_leg(sim):
+    s = sig([{"decision_time": T0, "side": 1, "max_hold_min": 0},
+             {"decision_time": T0 + 30 * M, "side": 1, "max_hold_min": 0}])
+    held = run(sim, s, flat_minutes(), exit_style="DETEXIT").open_position
+    assert held is not None and [leg["decision_time"] for leg in held["legs"]] == [T0, T0 + 30 * M]
+
+@pytest.mark.parametrize("sim", SIMS)
+def test_detexit_take_is_pro_rata_and_breakeven_keeps_average(sim):
+    m = flat_minutes(); m.loc[31:, ["open", "high", "low", "close"]] = 110.0
+    m.loc[60, "high"] = 125.0; m.loc[60, "low"] = 100.0           # take, then breakeven in the same minute
+    s = sig([{"decision_time": T0, "side": 1, "stop_bps": 1500, "take_bps": 1200},
+             {"decision_time": T0 + 30 * M, "side": 1, "stop_bps": 1500, "take_bps": 1200}])
+    t = run(sim, s, m, exit_style="DETEXIT").trades
+    avg = 1 / (.5 / 100 + .5 / 110)
+    takes, be = t.loc[t.exit_reason == "take"], t.loc[t.exit_reason == "breakeven"]
+    assert sorted(takes.entry_price) == [100.0, 110.0] and np.allclose(takes.units, .25)
+    assert np.allclose(be.exit_price, avg) and np.allclose(be.units, .25)
+    assert t.position_id.nunique() == 1
+
+@pytest.mark.parametrize("sim", SIMS)
+def test_oco_orders_live_until_their_own_expiry(sim):
+    m = flat_minutes(); m.loc[20, "high"] = 102.0
+    s = sig([{"decision_time": T0, "side": 0, "entry": "oco", "upper": 101.0, "lower": 99.0, "expiry_min": 60},
+             {"decision_time": T0 + 15 * M, "side": 0, "entry": "oco", "upper": 105.0, "lower": 95.0, "expiry_min": 60,
+              "component": 2}])
+    t = run(sim, s, m).trades
+    assert t.entry_time.iloc[0] == T0 + 20 * M and t.entry_price.iloc[0] == 101.0
+
+@pytest.mark.parametrize("sim", SIMS)
+def test_close_at_end_keeps_ledger_equal_to_trades(sim):
+    m = flat_minutes(); m.loc[300:, ["open", "high", "low", "close"]] = 103.0
+    s = sig([{"decision_time": T0, "side": 1, "max_hold_min": 0}])
+    r = sim(s, m, T0, T0 + pd.Timedelta(days=1), reference.SimConfig(include_funding=False, close_at_end=True))
+    assert r.trades.exit_reason.tolist() == ["data_end"] and r.open_position is None
+    assert np.isclose(r.minute_pnl.sum(), r.trades.net_bps.sum())
+
+@pytest.mark.parametrize("sim", SIMS)
+def test_funding_booked_at_settlement_minute(sim):
+    start = pd.Timestamp("2024-01-01 07:00", tz="UTC")
+    t = pd.date_range(start, periods=180, freq="1min", tz="UTC")
+    m = pd.DataFrame({"open_time": t, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 1.,
+                      "quote_volume": 1., "number_of_trades": 1, "taker_buy_base_volume": .5})
+    s = sig([{"decision_time": start, "side": 1, "max_hold_min": 120}])          # 07:01 .. 09:01 spans 08:00
+    cfg = reference.SimConfig()
+    before = sim(s, m, start, pd.Timestamp("2024-01-01 08:00", tz="UTC"), cfg)
+    full = sim(s, m, start, start + pd.Timedelta(hours=3), cfg)
+    funding = full.trades.funding_bps.sum()
+    assert funding != 0 and np.isclose(full.minute_pnl.sum(), full.trades.net_bps.sum())
+    assert np.isclose(before.minute_pnl.sum(), -2.0)                            # 08:00 settlement is outside
+    assert np.isclose(full.minute_pnl.loc[pd.Timestamp("2024-01-01 08:00", tz="UTC")], funding)

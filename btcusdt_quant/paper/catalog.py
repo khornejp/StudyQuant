@@ -11,6 +11,8 @@ from functools import lru_cache
 from pathlib import Path
 import numpy as np, pandas as pd
 from btcusdt_quant.sim import core, data, regime
+from btcusdt_quant.sim.exit_overlay import overlay
+from btcusdt_quant.sim.reference import SimResult, TRADE_COLUMNS
 import json
 from btcusdt_quant.sim.strategies import CATALOG, Context, apply_exit, apply_gate, build_variant, grid
 from . import book
@@ -34,6 +36,12 @@ def _variants() -> dict[str, tuple[str, bool, str]]:
 
 
 BOOKS = _variants()
+OVERLAY_RULES = {"K03_TRAIL": "R2_TRAIL", "K03_S150": "S150",
+                 "B2_BE": "R1_BREAKEVEN", "B2_S150": "S150"}
+BOOKS.update({"K03_TRAIL": ("K03", False, "NATIVE"), "K03_S150": ("K03", False, "NATIVE"),
+              "B2_BE": ("B2", False, "NATIVE"), "B2_S150": ("B2", False, "NATIVE")})
+OVERLAY_LABELS = {"K03_TRAIL": "K03 추적 손절(비교)", "K03_S150": "K03 고정 손절 -150(비교)",
+                  "B2_BE": "B2 본전 이동(비교)", "B2_S150": "B2 고정 손절 -150(비교)"}
 
 
 DEFINITIONS = {
@@ -88,10 +96,11 @@ def signal_rows(name: str, ctx: Context, since: pd.Timestamp) -> pd.DataFrame:
         table = pd.DataFrame({"decision_time": plan.decision_time, "side": 0, "entry": "grid",
                               "upper": plan.base * np.exp(plan.g / 1e4), "lower": plan.base * np.exp(-plan.g / 1e4),
                               "stop_bps": np.nan, "allow_entry": True, "exit_long": False, "exit_short": False,
+                              "expiry_min": grid.WINDOW_MIN,
                               "ind_grid_step_bps": plan.g, "ind_base": plan.base})
     else:
         spec = CATALOG[spec_id]
-        table = apply_exit(apply_gate(spec.build(ctx), ctx, spec.gate if gated else None), ctx, spec, style)
+        table = apply_exit(apply_gate(_build(spec_id, ctx), ctx, spec.gate if gated else None), ctx, spec, style)
         table["decision_time"] = pd.to_datetime(table.decision_time, utc=True)
         table = table.loc[table.decision_time >= since]
         if table.decision_time.duplicated().any():      # composite: one row per decision, priority order kept
@@ -116,7 +125,10 @@ def signal_rows(name: str, ctx: Context, since: pd.Timestamp) -> pd.DataFrame:
     indicator_columns = [c for c in table if c.startswith("ind_")]
     table["indicators"] = [json.dumps({c[4:]: (None if pd.isna(v) else round(float(v), 6)) for c, v in zip(indicator_columns, values)})
                            for values in table[indicator_columns].itertuples(index=False, name=None)] if indicator_columns else "{}"
-    keep = ["decision_time", "side", "entry", "upper", "lower", "stop_bps", "allow_entry", "exit_long", "exit_short",
+    if "expiry_min" not in table:
+        table["expiry_min"] = 0
+    keep = ["decision_time", "side", "entry", "upper", "lower", "stop_bps", "expiry_min",
+            "allow_entry", "exit_long", "exit_short",
             "M", "close", "indicators", "model"]
     return table[keep].assign(book=name).reset_index(drop=True)
 
@@ -129,10 +141,11 @@ def _merge_components(table: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for decision, group in table.groupby("decision_time", sort=True):
         chosen = group.loc[(group.side != 0) & group.allow_entry]
-        first = (chosen if len(chosen) else group).iloc[0]
+        signalled = group.loc[group.side != 0]
+        first = (chosen if len(chosen) else signalled if len(signalled) else group).iloc[0]
         row = first.to_dict()
-        row["side"] = int(first.side) if len(chosen) else 0
-        row["allow_entry"] = bool(group.allow_entry.any())
+        row["side"] = int(first.side)
+        row["allow_entry"] = bool(len(chosen))
         for _, part in group.iterrows():
             row[f"ind_{COMPONENT_NAMES.get(int(part.component), part.component)}_side"] = int(part.side)
         rows.append(row)
@@ -152,17 +165,16 @@ def needs_model(name: str) -> bool:
     return gated or style == "DETEXIT" or spec_id in MODEL_IDS
 
 
-_BUILDS: dict = {}
+_BUILDS: dict[str, tuple[Context, pd.DataFrame]] = {}
 
 
 def _build(spec_id: str, ctx: Context) -> pd.DataFrame:
     """One technique build per context (several books share it)."""
-    key = (id(ctx), spec_id)
-    if key not in _BUILDS:
-        if len(_BUILDS) > 64:
-            _BUILDS.clear()
-        _BUILDS[key] = CATALOG[spec_id].build(ctx)
-    return _BUILDS[key].copy()
+    cached = _BUILDS.get(spec_id)
+    if cached is None or cached[0] is not ctx:
+        cached = (ctx, CATALOG[spec_id].build(ctx))
+        _BUILDS[spec_id] = cached
+    return cached[1].copy()
 
 
 def raw_table(name: str, ctx: Context) -> pd.DataFrame:
@@ -191,6 +203,10 @@ def bind_predictions(predictions: pd.DataFrame, times: pd.DatetimeIndex) -> pd.D
                         "model_id": pd.Series(None, index=range(len(times)), dtype=object)})
     if predictions is None or not len(predictions):
         return out
+    minute = predictions.attrs.get("minute")
+    if minute is not None and len(minute):
+        minute = minute.loc[~minute.timestamp.isin(set(predictions.timestamp))]
+        predictions = pd.concat([predictions, minute], ignore_index=True).sort_values("timestamp", kind="stable")
     ts = pd.DatetimeIndex(predictions.timestamp).as_unit("ns")
     pos = np.searchsorted(ts.asi8, pd.DatetimeIndex(times).as_unit("ns").asi8, side="right") - 1
     ok = (pos >= 0)
@@ -199,6 +215,38 @@ def bind_predictions(predictions: pd.DataFrame, times: pd.DatetimeIndex) -> pd.D
     out.loc[ok, "available_at"] = pd.DatetimeIndex(predictions.available_at).as_unit("ns")[pos[ok]]
     out.loc[ok, "model_id"] = predictions.model_id.to_numpy()[pos[ok]]
     return out
+
+
+def fill_rows(name: str, trades: pd.DataFrame, held: dict | None,
+              decisions: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Filled entry legs linked back to the dashboard's original signal time."""
+    columns = ["book", "signal_time", "fill_time", "side", "fill_price"]
+    source = trades.attrs.get("fills") if trades is not None else None
+    if source is None:
+        source = (trades.loc[trades.boundary.eq("PESS"),
+                             ["decision_time", "entry_time", "side", "entry_price"]]
+                  if trades is not None and len(trades) else pd.DataFrame())
+    else:
+        source = source.copy()
+    legs = [] if held is None else held.get("legs", [])
+    if legs:
+        source = pd.concat([source, pd.DataFrame(legs).rename(columns={"fill_time": "entry_time",
+                                                                      "fill_price": "entry_price"})],
+                           ignore_index=True, sort=False)
+    if source.empty:
+        return pd.DataFrame(columns=columns)
+    source = source.rename(columns={"entry_time": "fill_time", "entry_price": "fill_price"})
+    source["decision_time"] = pd.to_datetime(source.decision_time, utc=True)
+    source["fill_time"] = pd.to_datetime(source.fill_time, utc=True)
+    mapping = {}
+    if decisions is not None and len(decisions):
+        decided = decisions.loc[decisions.status.eq("decided") & decisions.decision_time.notna()]
+        mapping = dict(zip(pd.to_datetime(decided.decision_time, utc=True),
+                           pd.to_datetime(decided.signal_time, utc=True)))
+    source["signal_time"] = source.decision_time.map(lambda value: mapping.get(value, value))
+    source.insert(0, "book", name)
+    return (source[columns].drop_duplicates().sort_values(["signal_time", "fill_time"], kind="stable")
+            .reset_index(drop=True))
 
 
 def decide(name: str, table: pd.DataFrame, predictions: pd.DataFrame, known: set, now: pd.Timestamp,
@@ -251,6 +299,8 @@ def live_table(table: pd.DataFrame, decisions: pd.DataFrame) -> pd.DataFrame:
 
 
 def label(name: str) -> str:
+    if name in OVERLAY_LABELS:
+        return OVERLAY_LABELS[name]
     spec_id, gated, style = BOOKS[name]
     return f"{spec_id} {CATALOG[spec_id].family}" + (" 관문" if gated else "") + (" DETEXIT" if style == "DETEXIT" else "")
 
@@ -280,12 +330,112 @@ def live_context(market: pd.DataFrame, features: pd.DataFrame, premium: pd.DataF
     fund["time"] = pd.to_datetime(fund.time, utc=True, format="mixed")
     if predictions is not None and len(predictions):
         reg = regime.load_regime(predictions)
+        minute = predictions.attrs.get("minute")
+        if minute is not None and len(minute):
+            minute = minute.loc[~minute.timestamp.isin(set(predictions.timestamp))]     # the 15 m row wins on the grid
+            reg = pd.concat([reg, regime.rank_against(predictions, minute)], ignore_index=True)
+            reg = reg.sort_values("timestamp", kind="stable").reset_index(drop=True)
     else:
         reg = pd.DataFrame({"timestamp": pd.Series(dtype="datetime64[ns, UTC]"), "M": pd.Series(dtype=float),
                             "L": pd.Series(dtype=float)})
     return Context(minutes=minutes.sort_values("open_time").reset_index(drop=True), metrics=metrics.reset_index(drop=True),
                    premium=prem, funding=fund.sort_values("time").reset_index(drop=True), regime=reg,
                    end=minutes.open_time.max() + pd.Timedelta(minutes=1))
+
+
+def _realized_minute_pnl(result, closes: pd.Series) -> pd.Series:
+    """Remove still-open legs from simulator MTM so daily_pnl remains a closed ledger."""
+    out = result.minute_pnl.copy()
+    legs = [] if result.open_position is None else result.open_position.get("legs", [])
+    for leg in legs:
+        index = out.index[out.index >= pd.Timestamp(leg["entry_time"])]
+        if not len(index):
+            continue
+        prices = closes.reindex(index).to_numpy(float)
+        previous = np.r_[float(leg["entry_price"]), prices[:-1]]
+        contribution = float(leg["side"]) * np.log(prices / previous) * 1e4 * float(leg["units"])
+        contribution[0] -= 2.0 * float(leg["units"])
+        out.loc[index] -= contribution
+    return out
+
+
+def _overlay_result(result: SimResult, minutes: pd.DataFrame, rule: str) -> SimResult:
+    """Apply the frozen minute overlay without changing the native entry sequence."""
+    trades = result.trades.copy()
+    times = pd.DatetimeIndex(minutes.open_time)
+    t_ns = times.as_unit("ns").asi8
+    o, h, l = (minutes[column].to_numpy(float) for column in ("open", "high", "low"))
+    reason = "stop" if rule.startswith("S") else "breakeven" if rule == "R1_BREAKEVEN" else "trail"
+    for index, trade in trades.iterrows():
+        i0 = int(np.searchsorted(t_ns, pd.Timestamp(trade.entry_time).value))
+        i_exit = int(np.searchsorted(t_ns, pd.Timestamp(trade.exit_time).value))
+        hit = overlay(int(trade.side), float(trade.entry_price), i0, i_exit, o, h, l, rule, np.nan)
+        if hit is None:
+            continue
+        exit_index, exit_price = hit
+        gross = int(trade.side) * np.log(exit_price / float(trade.entry_price)) * 1e4 * float(trade.units)
+        trades.loc[index, ["exit_time", "exit_price", "exit_reason", "gross_bps", "net_bps"]] = [
+            times[exit_index], exit_price, reason, gross, gross - float(trade.fee_bps)]
+
+    held = result.open_position
+    if held is not None:
+        i0 = int(np.searchsorted(t_ns, pd.Timestamp(held["entry_time"]).value))
+        hit = overlay(int(held["side"]), float(held["avg_price"]), i0, len(times), o, h, l, rule, np.nan)
+        if hit is not None:
+            exit_index, exit_price = hit
+            closed = []
+            for leg in held["legs"]:
+                gross = int(leg["side"]) * np.log(exit_price / float(leg["entry_price"])) * 1e4 * float(leg["units"])
+                fee = 4.0 * float(leg["units"])
+                closed.append({**leg, "exit_time": times[exit_index], "exit_price": exit_price,
+                               "exit_reason": reason, "gross_bps": gross, "fee_bps": fee,
+                               "funding_bps": 0.0, "net_bps": gross - fee})
+            trades = pd.concat([trades, pd.DataFrame(closed, columns=TRADE_COLUMNS)], ignore_index=True)
+            held = None
+    return SimResult(trades, result.minute_pnl, held)
+
+
+def _closed_minute_pnl(trades: pd.DataFrame, minutes: pd.DataFrame) -> pd.Series:
+    """Rebuild realized minute PnL after an overlay moved native exits."""
+    times = pd.DatetimeIndex(minutes.open_time)
+    t_ns = times.as_unit("ns").asi8
+    closes = minutes.close.to_numpy(float)
+    pnl = np.zeros(len(minutes))
+    for trade in trades.itertuples(index=False):
+        entry = int(np.searchsorted(t_ns, pd.Timestamp(trade.entry_time).value))
+        exit_ = int(np.searchsorted(t_ns, pd.Timestamp(trade.exit_time).value))
+        units, side = float(trade.units), int(trade.side)
+        if entry == exit_:
+            pnl[exit_] += float(trade.gross_bps) - float(trade.fee_bps)
+            continue
+        pnl[entry] += side * np.log(closes[entry] / float(trade.entry_price)) * 1e4 * units
+        pnl[entry] -= float(trade.fee_bps) / 2
+        if exit_ > entry + 1:
+            pnl[entry + 1:exit_] += side * np.log(closes[entry + 1:exit_] / closes[entry:exit_ - 1]) * 1e4 * units
+        pnl[exit_] += side * np.log(float(trade.exit_price) / closes[exit_ - 1]) * 1e4 * units
+        pnl[exit_] -= float(trade.fee_bps) / 2
+    return pd.Series(pnl, index=times)
+
+
+def _funding_by_day(legs: pd.DataFrame, funding: pd.DataFrame, boundary: str) -> pd.Series:
+    """Funding cashflows by settlement day, scaled by each simulator leg's units."""
+    if legs.empty or funding.empty:
+        return pd.Series(dtype=float)
+    times, rates = book._funding_arrays(funding)
+    values: dict[pd.Timestamp, float] = {}
+    for leg in legs.itertuples(index=False):
+        entry, exit_ = pd.Timestamp(leg.entry_time).value, pd.Timestamp(leg.exit_time).value
+        lo = int(np.searchsorted(times, entry, side="left"))
+        hi = int(np.searchsorted(times, exit_, side="right"))
+        for when, rate in zip(times[lo:hi], rates[lo:hi]):
+            cashflow = -float(leg.side) * float(rate) * 1e4 * float(leg.units)
+            edge = when == entry or when == exit_
+            if edge and not ((boundary == "PESS" and cashflow < 0) or
+                             (boundary == "OPT" and cashflow > 0)):
+                continue
+            day = pd.Timestamp(int(when), tz="UTC").floor("D")
+            values[day] = values.get(day, 0.0) + cashflow
+    return pd.Series(values, dtype=float).sort_index()
 
 
 def run_book(name: str, ctx: Context, funding: pd.DataFrame, book_start: pd.Timestamp, end: pd.Timestamp,
@@ -312,25 +462,39 @@ def run_book(name: str, ctx: Context, funding: pd.DataFrame, book_start: pd.Time
             table, config = build_variant(ctx, spec_id, gated, style)
             table = table.loc[table.decision_time >= book_start].reset_index(drop=True)
         result = core.simulate(table, ctx.minutes, book_start, end, replace(config, include_funding=False))
+    overlay_rule = OVERLAY_RULES.get(name)
+    if overlay_rule:
+        result = _overlay_result(result, ctx.minutes, overlay_rule)
     legs = result.trades
+    fills = (legs[["decision_time", "entry_time", "side", "entry_price"]].drop_duplicates().copy()
+             if len(legs) else pd.DataFrame(columns=["decision_time", "entry_time", "side", "entry_price"]))
     trade_rows, daily_rows = [], []
     fees = pd.concat([pd.Series(legs.units.to_numpy() * 2.0, index=legs.entry_time.dt.floor("D")),
                       pd.Series(legs.units.to_numpy() * 2.0, index=legs.exit_time.dt.floor("D"))]).groupby(level=0).sum() \
         if len(legs) else pd.Series(dtype=float)
-    pnl_ex_funding = result.minute_pnl.groupby(result.minute_pnl.index.floor("D")).sum()
+    closes = ctx.minutes.set_index("open_time").close
+    realized = (_closed_minute_pnl(legs, ctx.minutes).reindex(result.minute_pnl.index) if overlay_rule else
+                _realized_minute_pnl(result, closes))
+    pnl_ex_funding = realized.groupby(realized.index.floor("D")).sum()
     for boundary in ("PESS", "OPT"):
         if len(legs):
             priced = book.reprice(legs[["entry_time", "exit_time", "side", "entry_price", "exit_price"]],
                                   funding, boundary, 0.0)
             leg = legs.assign(funding_bps=priced.funding_bps.to_numpy() * legs.units.to_numpy())
             leg["net_bps"] = leg.gross_bps - leg.fee_bps + leg.funding_bps
-            merged = leg.groupby(["entry_time", "side"], as_index=False).agg(
-                exit_time=("exit_time", "max"), entry_price=("entry_price", "first"), exit_price=("exit_price", "last"),
-                gross_bps=("gross_bps", "sum"), cost_bps=("fee_bps", "sum"), funding_bps=("funding_bps", "sum"),
-                net_bps=("net_bps", "sum"), exit_reason=("exit_reason", lambda x: "+".join(x.str.upper())))
+            values = dict(decision_time=("decision_time", "first"), exit_time=("exit_time", "max"),
+                          entry_price=("entry_price", "first"), exit_price=("exit_price", "last"),
+                          gross_bps=("gross_bps", "sum"), cost_bps=("fee_bps", "sum"),
+                          funding_bps=("funding_bps", "sum"), net_bps=("net_bps", "sum"),
+                          exit_reason=("exit_reason", lambda x: "+".join(x.str.upper())))
+            if CATALOG[spec_id].simulator == "grid":
+                merged = leg.groupby("position_id", as_index=False).agg(
+                    entry_time=("entry_time", "min"), side=("side", "first"), **values)
+            else:
+                merged = leg.groupby(["entry_time", "side"], as_index=False).agg(**values)
             merged["hold_minutes"] = (merged.exit_time - merged.entry_time) / pd.Timedelta(minutes=1)
             trade_rows.append(merged.assign(book=name, boundary=boundary, candidate=spec_id))
-            funding_day = leg.groupby(leg.exit_time.dt.floor("D")).funding_bps.sum()
+            funding_day = _funding_by_day(legs, funding, boundary)
         else:
             funding_day = pd.Series(dtype=float)
         days = pd.DatetimeIndex(pnl_ex_funding.index.union(funding_day.index))
@@ -341,7 +505,8 @@ def run_book(name: str, ctx: Context, funding: pd.DataFrame, book_start: pd.Time
                                         "gross_bps": (net_ex + cost).to_numpy(), "cost_bps": cost.to_numpy(),
                                         "funding_bps": fund.to_numpy(), "net_bps": (net_ex + fund).to_numpy()}))
     trades = pd.concat(trade_rows, ignore_index=True) if trade_rows else pd.DataFrame()
+    trades.attrs["fills"] = fills
     return trades, pd.concat(daily_rows, ignore_index=True), result.open_position
 
 
-__all__ = ["BOOKS", "LIVE_IDS", "label", "live_context", "run_book"]
+__all__ = ["BOOKS", "LIVE_IDS", "fill_rows", "label", "live_context", "run_book"]

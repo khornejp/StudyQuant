@@ -19,13 +19,13 @@ class Context:
 
     @classmethod
     def load(cls, end: pd.Timestamp = DEFAULT_END, start: pd.Timestamp | None = None) -> "Context":
-        minutes = data.load_minutes()
-        keep = minutes.open_time < end
+        minutes = data.load_minutes(end=end)                # cutoff-aware: later rows are never read
         if start is not None:
-            keep &= minutes.open_time >= start
-        return cls(minutes=minutes.loc[keep].reset_index(drop=True), metrics=data.load_metrics(),
-                   premium=data.load_premium(), funding=costs._settlements()[["time", "rate"]].copy(),
-                   regime=regime.load_regime(data.load_predictions()), end=end).truncate(end)
+            minutes = minutes.loc[minutes.open_time >= start]
+        funding = costs._settlements()[["time", "rate"]]
+        return cls(minutes=minutes.reset_index(drop=True), metrics=data.load_metrics(end=end),
+                   premium=data.load_premium(end=end), funding=funding.loc[funding.time < end].copy(),
+                   regime=regime.load_regime(data.load_predictions(end=end)), end=end).truncate(end)
 
     def bars(self, minutes_per_bar: int) -> pd.DataFrame:
         if minutes_per_bar not in self._bars:
