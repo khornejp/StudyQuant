@@ -135,3 +135,19 @@ def test_input_importance_constant_policy_has_zero_drop():
     imp = E.input_importance([Fixed(1)], store, market(0, gaps=0), NO_FUNDING, [WIN])
     assert set(imp) == {"base_net", "detector", "signals", "summaries", "seq"}
     assert all(v["drop"] == 0 for k, v in imp.items() if k != "base_net") and imp["base_net"] != 0
+
+
+def test_pass_report_dsr_audit_and_n_trials_guard():
+    import hashlib
+    zero, seeds, comps, null, sharpes = flat_inputs()
+    no_trades = pd.DataFrame(columns=TRADE_COLUMNS)
+    with pytest.raises(ValueError, match="n_trials 100 != 5285"):
+        E.pass_report(zero, seeds, comps, null, 100, sharpes, rl_trades=no_trades)
+    rep = E.pass_report(zero, seeds, comps, null, 5285, sharpes[::-1], rl_trades=no_trades)
+    d = rep["criteria"]["c4"]["detail"]
+    assert d["n_trial_sharpes"] == 200 and d["n_trials"] == 5285
+    assert d["trial_sharpes_sha256"] == hashlib.sha256(np.sort(sharpes.astype(np.float64)).tobytes()).hexdigest()
+    other = E.pass_report(zero, seeds, comps, null, 100, sharpes, rl_trades=no_trades, n_trials_override="smoke")
+    assert other["n_trials"] == 100 and other["n_trials_override"] == "smoke"
+    assert rep["n_trials_override"] is None
+    guard.check(other)

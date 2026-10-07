@@ -2,7 +2,7 @@
 Every test-window P&L goes through window_result: action series via vec_env.replay (Ruling P3), signal tables via
 core.simulate with the same boundaries."""
 from __future__ import annotations
-import dataclasses, itertools, math
+import dataclasses, hashlib, itertools, math
 from dataclasses import replace
 from functools import lru_cache
 import numpy as np, pandas as pd, torch
@@ -89,11 +89,14 @@ def _criterion(value, threshold, passed, zero, reason="ok", detail=None) -> dict
 
 
 def pass_report(rl_daily: pd.Series, seed_dailies: list[pd.Series], comparators: dict[str, pd.Series],
-                null_nets: np.ndarray, n_trials: int, trial_sharpes, rl_trades: pd.DataFrame) -> dict:
+                null_nets: np.ndarray, n_trials: int, trial_sharpes, rl_trades: pd.DataFrame,
+                n_trials_override: str | None = None) -> dict:
     """Criteria 1-7 for one state variant. rl_daily / rl_trades: the C13 ensemble's stitched test windows (C18);
     seed_dailies: the 5 seeds (criterion 6); comparators: daily nets keyed C1_X, baseline2, supervised, buy_hold
     (others, e.g. random / flat, are reported only); null_nets: C16 stitched shuffled-control nets.
     No trades -> every criterion fails with zero_reason (spec review focus 5)."""
+    if n_trials != N_TRIALS and not n_trials_override:
+        raise ValueError(f"n_trials {n_trials} != {N_TRIALS}; pass n_trials_override=<reason> to use another value")
     if len(seed_dailies) != N_SEEDS:
         raise ValueError(f"criterion 6 needs {N_SEEDS} seeds")
     d = rl_daily.astype(float)
@@ -107,6 +110,10 @@ def pass_report(rl_daily: pd.Series, seed_dailies: list[pd.Series], comparators:
     bh = comparators["buy_hold"].reindex(d.index, fill_value=0.0)
     alpha = analytics.hac_alpha(d.to_numpy(), bh.to_numpy())
     dsr = analytics.deflated_sharpe(d.to_numpy(), trial_sharpes, n_trials)
+    ts = np.sort(np.asarray(trial_sharpes, np.float64).ravel())     # audit trail of the DSR null
+    dsr = {**dsr, "n_trials": int(n_trials),
+            "n_trials_override": n_trials_override, "n_trial_sharpes": int(len(ts)),
+           "trial_sharpes_sha256": hashlib.sha256(ts.tobytes()).hexdigest()}
     seeds = [float(s.sum()) for s in seed_dailies]
     q95 = float(np.quantile(null_nets, 0.95)) if len(null_nets) else math.nan
     criteria = {
@@ -124,6 +131,7 @@ def pass_report(rl_daily: pd.Series, seed_dailies: list[pd.Series], comparators:
     comps = {k: {"net_4bps": float(s.sum()), "diff": analytics.pw_mean_ci(d.sub(s, fill_value=0.0).to_numpy())}
              for k, s in comparators.items()}
     return {"criteria": criteria, "pass": all(c["pass"] for c in criteria.values()), "n_trials": int(n_trials),
+            "n_trials_override": n_trials_override,
             "strategies": [{"id": "rl_ensemble", "trade_n": n_tr, "zero_reason": zero, "net_4bps": net4}],
             "comparators": comps}
 
