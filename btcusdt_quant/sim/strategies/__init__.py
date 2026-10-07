@@ -84,4 +84,4 @@ def build_variant(ctx: Context, spec_id: str, gated: bool, style: str) -> tuple[
     return schema.validate(table), SimConfig(reentry=spec.reentry, exit_style=style)
 
 
-from . import legacy, volatility, grid, trend, reversion, futures  # noqa: E402,F401  register the catalog
+from . import legacy, volatility, grid, trend, reversion, futures, levels  # noqa: E402,F401  register the catalog

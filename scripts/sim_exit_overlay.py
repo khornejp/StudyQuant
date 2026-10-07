@@ -11,7 +11,7 @@ import numpy as np, pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from btcusdt_quant.sim import analytics, bars, costs, data, indicators, rolling  # noqa: E402
-from btcusdt_quant.sim.exit_overlay import overlay  # noqa: E402
+from btcusdt_quant.sim.exit_overlay import dynamic, dynamic_series, overlay  # noqa: E402
 from btcusdt_quant.sim.strategies import CATALOG  # noqa: E402
 
 O = ROOT / "out/k45_rl_r2_48_20261007"
@@ -32,6 +32,7 @@ def main(rule_set=("NATIVE", "R1_BREAKEVEN", "R2_TRAIL", "R3_ATR"), out_name: st
     times = minutes.open_time.array.asi8
     o, h, l, c = (minutes[k].to_numpy(float) for k in ("open", "high", "low", "close"))
     rows, daily_all = [], {}
+    series = dynamic_series(minutes) if any(r.startswith("V") for r in rule_set) else None
     for path in sorted((O / "strategies/trades").glob("*__NONE__NATIVE.parquet")):
         spec_id = path.stem.split("__")[0]
         if CATALOG[spec_id].simulator != "core" or (only and spec_id not in only):
@@ -47,7 +48,9 @@ def main(rule_set=("NATIVE", "R1_BREAKEVEN", "R2_TRAIL", "R3_ATR"), out_name: st
             for k, tr in enumerate(t.itertuples(index=False)):
                 exit_time, exit_price = tr.exit_time, tr.exit_price
                 if rule != "NATIVE":
-                    hit = overlay(tr.side, tr.entry_price, i0s[k], ixs[k], o, h, l, rule, atr[k])
+                    hit = (dynamic(tr.side, tr.entry_price, i0s[k], ixs[k], o, h, l, c, rule, series)
+                           if rule.startswith("V") else
+                           overlay(tr.side, tr.entry_price, i0s[k], ixs[k], o, h, l, rule, atr[k]))
                     if hit is not None:
                         exit_time, exit_price = minutes.open_time.iloc[hit[0]], hit[1]
                 gross = tr.side * np.log(exit_price / tr.entry_price) * 1e4
@@ -85,7 +88,9 @@ def main(rule_set=("NATIVE", "R1_BREAKEVEN", "R2_TRAIL", "R3_ATR"), out_name: st
 
 
 if __name__ == "__main__":
-    if "--fixed-stops" in sys.argv:
+    if "--dynamic" in sys.argv:
+        main(("NATIVE", "V1_CHANDELIER", "V2_RV_SPIKE_LOSS", "V3_M_SPIKE_LOSS"), "dynamic_exit_overlay.csv")
+    elif "--fixed-stops" in sys.argv:
         main(("NATIVE", "S150", "S200", "S300"), "fixed_stop_overlay.csv")
     else:
         main()

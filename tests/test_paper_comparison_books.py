@@ -15,7 +15,7 @@ from btcusdt_quant.paper.engine import BOOKS, EXECUTION_DELAYS, FIXED_STOP_BPS
 from btcusdt_quant.paper.notify import format_message
 from btcusdt_quant.paper.store import PaperStore
 from btcusdt_quant.paper.telegram_format import REASONS
-from btcusdt_quant.sim.exit_overlay import overlay
+from btcusdt_quant.sim.exit_overlay import dynamic, m_series, overlay
 from btcusdt_quant.sim.reference import SimResult
 
 
@@ -138,6 +138,59 @@ def test_catalog_exit_overlays_touch_and_gap(rule, mfe, stop, side, gap) -> None
     assert applied.exit_reason == ({"R1_BREAKEVEN": "breakeven", "R2_TRAIL": "trail"}.get(rule, "stop"))
 
 
+def _v3_result(closes, regime_rows, entry_index=0) -> SimResult:
+    times = pd.date_range("2026-01-01", periods=len(closes), freq="min", tz="UTC")
+    native = pd.DataFrame([{
+        "decision_time": times[entry_index], "entry_time": times[entry_index], "exit_time": times[-1],
+        "side": 1, "units": 1.0, "entry_price": 100.0, "exit_price": 100.0,
+        "exit_reason": "max_hold", "gross_bps": 0.0, "fee_bps": 4.0,
+        "funding_bps": 0.0, "net_bps": -4.0, "position_id": 1,
+    }])
+    minutes = pd.DataFrame({"open_time": times, "open": [100.0] * len(times),
+                            "high": [101.0] * len(times), "low": [98.0] * len(times), "close": closes})
+    regime_frame = pd.DataFrame(regime_rows)
+    return catalog._overlay_result(
+        SimResult(native, pd.Series(0.0, index=times)), minutes, "V3_M_SPIKE_LOSS", regime_frame)
+
+
+def test_v3_exits_next_open_only_while_position_is_in_loss() -> None:
+    regime_rows = {"timestamp": [pd.Timestamp("2026-01-01T00:00Z")], "M": [.95]}
+    stopped = _v3_result([99.0, 99.0, 100.0], regime_rows).trades.iloc[0]
+    assert stopped.exit_time == pd.Timestamp("2026-01-01T00:01Z")
+    assert stopped.exit_price == 100.0 and stopped.exit_reason == "VOL_EXIT"
+
+    profitable = _v3_result([101.0, 101.0, 100.0], regime_rows).trades.iloc[0]
+    assert profitable.exit_time == pd.Timestamp("2026-01-01T00:02Z")
+    assert profitable.exit_reason == "max_hold"
+
+
+def test_v3_rejects_stale_and_off_grid_m() -> None:
+    times = pd.date_range("2026-01-01", periods=18, freq="min", tz="UTC")
+    frame = pd.DataFrame({"timestamp": [times[0], times[1]], "M": [.1, .99]})
+    minutes = pd.DataFrame({"open_time": times, "open": 100.0, "high": 101.0, "low": 98.0, "close": 99.0})
+    values = m_series(minutes, frame)
+    assert values[1] == .1 and np.isnan(values[15])
+    result = _v3_result([99.0] * 18, frame, entry_index=15).trades.iloc[0]
+    assert result.exit_time == times[-1] and result.exit_reason == "max_hold"
+
+
+@pytest.mark.parametrize(("rule", "expected"), [
+    ("V1_CHANDELIER", (1, 98.0)),
+    ("V2_RV_SPIKE_LOSS", (2, 100.0)),
+    ("V3_M_SPIKE_LOSS", (1, 100.0)),
+])
+def test_research_script_uses_shared_dynamic_rules(rule, expected) -> None:
+    from scripts import sim_exit_overlay
+    o = np.array([100.0] * 4)
+    h = np.array([101.0, 102.0, 101.0, 100.0])
+    l = np.array([99.0, 98.0, 97.0, 96.0])
+    c = np.array([99.0, 99.0, 100.0, 100.0])
+    series = {"atr60": np.ones(4), "rv60": np.array([0.0, 2.0, 0.0, 0.0]),
+              "rv1440": np.ones(4), "m": np.array([0.0, .95, 0.0, 0.0])}
+    assert sim_exit_overlay.dynamic(1, 100.0, 0, 4, o, h, l, c, rule, series) == expected
+    assert sim_exit_overlay.dynamic is dynamic
+
+
 def test_config_dashboard_and_notify_expose_comparison_books() -> None:
     config = load_config("config/paper.toml")
     assert config.books[:3] == ("C1", "C1_FLIP", "C1_SL200")
@@ -152,36 +205,45 @@ def test_config_dashboard_and_notify_expose_comparison_books() -> None:
     assert CONDITION_BOOKS["C1_SL200"] == (rules.F3, rules.E1)
     assert EXECUTION_DELAYS["C1_FLIP"] == EXECUTION_DELAYS["C1_SL200"] == 0
     assert FIXED_STOP_BPS == {"C1_SL200": 200.0}
-    assert config.books[config.books.index("K03") + 1:config.books.index("K03") + 3] == (
-        "K03_TRAIL", "K03_S150")
-    assert config.books[config.books.index("B2") + 1:config.books.index("B2") + 3] == (
-        "B2_BE", "B2_S150")
+    assert config.books[config.books.index("K03") + 1:config.books.index("K03") + 4] == (
+        "K03_TRAIL", "K03_S150", "K03_V3")
+    assert config.books[config.books.index("B2") + 1:config.books.index("B2") + 4] == (
+        "B2_BE", "B2_S150", "B2_V3")
     assert config.comparison_books[config.comparison_books.index("K03") + 1:
-                                   config.comparison_books.index("K03") + 3] == ("K03_TRAIL", "K03_S150")
+                                   config.comparison_books.index("K03") + 4] == ("K03_TRAIL", "K03_S150", "K03_V3")
     assert config.comparison_books[config.comparison_books.index("B2") + 1:
-                                   config.comparison_books.index("B2") + 3] == ("B2_BE", "B2_S150")
+                                   config.comparison_books.index("B2") + 4] == ("B2_BE", "B2_S150", "B2_V3")
     assert config.book_start_times["K03_TRAIL"] == "2026-10-07T10:00:00Z"
     assert config.book_start_times["B2_BE"] == "2026-10-07T10:00:00Z"
     assert config.book_start_times["K03_S150"] == "2026-10-07T11:00:00Z"
     assert config.book_start_times["B2_S150"] == "2026-10-07T11:00:00Z"
-    assert not {"K03_TRAIL", "K03_S150", "B2_BE", "B2_S150"} & set(config.leverage_books)
+    assert config.book_start_times["K03_V3"] == "2026-10-07T12:00:00Z"
+    assert config.book_start_times["B2_V3"] == "2026-10-07T12:00:00Z"
+    assert not {"K03_TRAIL", "K03_S150", "K03_V3", "B2_BE", "B2_S150", "B2_V3"} & set(config.leverage_books)
     assert config.telegram_books is None
     assert catalog.BOOKS["K03_TRAIL"] == ("K03", False, "NATIVE")
     assert catalog.BOOKS["K03_S150"] == ("K03", False, "NATIVE")
     assert catalog.BOOKS["B2_BE"] == ("B2", False, "NATIVE")
     assert catalog.BOOKS["B2_S150"] == ("B2", False, "NATIVE")
+    assert catalog.BOOKS["K03_V3"] == ("K03", False, "NATIVE")
+    assert catalog.BOOKS["B2_V3"] == ("B2", False, "NATIVE")
     assert catalog.OVERLAY_RULES == {
-        "K03_TRAIL": "R2_TRAIL", "K03_S150": "S150",
-        "B2_BE": "R1_BREAKEVEN", "B2_S150": "S150",
+        "K03_TRAIL": "R2_TRAIL", "K03_S150": "S150", "K03_V3": "V3_M_SPIKE_LOSS",
+        "B2_BE": "R1_BREAKEVEN", "B2_S150": "S150", "B2_V3": "V3_M_SPIKE_LOSS",
     }
     assert BOOK_LABELS["K03_TRAIL"] == "K03 추적 손절(비교)"
     assert BOOK_LABELS["K03_S150"] == "K03 고정 손절 -150(비교)"
     assert BOOK_LABELS["B2_BE"] == "B2 본전 이동(비교)"
     assert BOOK_LABELS["B2_S150"] == "B2 고정 손절 -150(비교)"
+    assert BOOK_LABELS["K03_V3"] == "K03 변동성 급등 손절(비교)"
+    assert BOOK_LABELS["B2_V3"] == "B2 변동성 급등 손절(비교)"
     dashboard = Path("btcusdt_quant/paper/dashboard/index.html").read_text(encoding="utf-8")
     assert dashboard.index("K03_TRAIL") < dashboard.index("K03_S150")
     assert dashboard.index("B2_BE") < dashboard.index("B2_S150")
+    assert "K03 변동성 급등 손절(비교)" in dashboard
+    assert "B2 변동성 급등 손절(비교)" in dashboard
     assert REASONS["TRAIL"] == ("추적 손절", "TRAILING_STOP")
+    assert REASONS["VOL_EXIT"] == ("변동성 급등 손절", "RISK_EXIT")
     message = format_message("entry", {
         "book": "C1_SL200", "side": 1, "price": 100,
         "candidate": rules.F3, "exit_time": "later",

@@ -14,6 +14,17 @@ def true_range(b: pd.DataFrame) -> pd.Series:
 def atr(b: pd.DataFrame, n: int = 14) -> pd.Series:
     return _wilder(true_range(b), n)
 
+def adx(b: pd.DataFrame, n: int = 14) -> pd.Series:
+    """Wilder ADX."""
+    up, down = b.high.diff(), -b.low.diff()
+    plus = pd.Series(np.where((up > down) & (up > 0), up, 0.0), index=b.index)
+    minus = pd.Series(np.where((down > up) & (down > 0), down, 0.0), index=b.index)
+    a = atr(b, n)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        pdi, mdi = 100 * _wilder(plus, n) / a, 100 * _wilder(minus, n) / a
+        dx = 100 * (pdi - mdi).abs() / (pdi + mdi)
+    return _wilder(dx.fillna(0.0), n)
+
 def rsi(close: pd.Series, n: int = 14) -> pd.Series:
     d = close.diff()
     up, down = _wilder(d.clip(lower=0), n), _wilder((-d).clip(lower=0), n)

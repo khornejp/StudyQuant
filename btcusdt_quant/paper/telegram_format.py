@@ -15,6 +15,7 @@ REASONS = {"MAX_HOLD_OR_REVERSE": ("최대 보유 또는 반대 신호", "TIME_E
            "FLAG": ("청산 조건 충족", "SIGNAL_EXIT"), "STOP": ("손절 기준가 도달", "SL"),
            "TAKE": ("1차 익절 (절반)", "TP1"), "BREAKEVEN": ("본전 손절", "SL_BE"),
            "TRAIL": ("추적 손절", "TRAILING_STOP"),
+           "VOL_EXIT": ("변동성 급등 손절", "RISK_EXIT"),
            "DATA_END": ("데이터 끝", "DATA_END"), "REPLAY_END": ("데이터 끝", "DATA_END"),
            "liquidation": ("모의 강제청산", "LIQUIDATION")}
 

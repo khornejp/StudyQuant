@@ -32,8 +32,10 @@ BOOK_LABELS = {"C1_FLIP": "C1 추세(F3 뒤집기) (비교)",
                "C1_SL200": "C1 손절 -200bps (비교)",
                "K03_TRAIL": "K03 추적 손절(비교)",
                "K03_S150": "K03 고정 손절 -150(비교)",
+               "K03_V3": "K03 변동성 급등 손절(비교)",
                "B2_BE": "B2 본전 이동(비교)",
                "B2_S150": "B2 고정 손절 -150(비교)",
+               "B2_V3": "B2 변동성 급등 손절(비교)",
                "C1_5m": "C1 역추세5분 (비교)",
                "C1_T1": "C1 T+1분 진입 (비교)"}
 MAX_CANDLES = 2_000
@@ -347,6 +349,10 @@ INDICATOR_LABELS = {
     "funding_bps": "funding(bps)", "q05_bps": "q05(bps)", "q95_bps": "q95(bps)", "premium_z": "premium z",
     "taker_share_z": "taker 비중 z", "taker_share": "taker 비중", "cvd": "CVD", "cvd_at_prior_high": "직전 고점 CVD",
     "cvd_at_prior_low": "직전 저점 CVD", "new_high": "20봉 신고가", "new_low": "20봉 신저가",
+    "prior_day_high": "전일 고가", "prior_day_low": "전일 저가", "pivot": "피벗 P",
+    "r1": "피벗 R1", "s1": "피벗 S1", "swing_high": "스윙 고점", "swing_low": "스윙 저점",
+    "round_above": "라운드 위", "round_below": "라운드 아래",
+    "adx_1h": "1시간 ADX", "volume_z": "거래량 z", "atr15": "ATR15", "day_mid": "전일 중간값",
     "A2_side": "A2", "E1_side": "E1", "F3_side": "F3-30", "F3W_side": "F3W-30"}
 
 

@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 import numpy as np, pandas as pd
 from btcusdt_quant.sim import core, data, regime
-from btcusdt_quant.sim.exit_overlay import overlay
+from btcusdt_quant.sim.exit_overlay import dynamic, m_series, overlay
 from btcusdt_quant.sim.reference import SimResult, TRADE_COLUMNS
 import json
 from btcusdt_quant.sim.strategies import CATALOG, Context, apply_exit, apply_gate, build_variant, grid
@@ -19,7 +19,7 @@ from . import book
 
 LIVE_IDS = ("K02", "K03", "K04", "K05", "K06_k0.5", "K06_k1.0", "K07_k0.5", "K07_k1.0", "K08", "K09", "K10",
             "K11_15m", "K11_1h", "K12_30m", "K12_1h", "K13", "K14", "K15", "K16", "K17_N5", "K17_N7", "K18", "K19",
-            "K21_A", "K21_B", "K22", "B1", "B2", "B3")
+            "K21_A", "K21_B", "K22", "K25", "K26", "K27", "K28", "K29", "K30", "B1", "B2", "B3")
 SUFFIX = {(False, "NATIVE"): "", (True, "NATIVE"): "_G", (False, "DETEXIT"): "_D", (True, "DETEXIT"): "_GD"}
 Q3_PREMIUM = Path(__file__).resolve().parents[2] / "artifacts/hold_a_2026q3/premium_index"
 
@@ -36,12 +36,15 @@ def _variants() -> dict[str, tuple[str, bool, str]]:
 
 
 BOOKS = _variants()
-OVERLAY_RULES = {"K03_TRAIL": "R2_TRAIL", "K03_S150": "S150",
-                 "B2_BE": "R1_BREAKEVEN", "B2_S150": "S150"}
+OVERLAY_RULES = {"K03_TRAIL": "R2_TRAIL", "K03_S150": "S150", "K03_V3": "V3_M_SPIKE_LOSS",
+                 "B2_BE": "R1_BREAKEVEN", "B2_S150": "S150", "B2_V3": "V3_M_SPIKE_LOSS"}
 BOOKS.update({"K03_TRAIL": ("K03", False, "NATIVE"), "K03_S150": ("K03", False, "NATIVE"),
-              "B2_BE": ("B2", False, "NATIVE"), "B2_S150": ("B2", False, "NATIVE")})
+              "K03_V3": ("K03", False, "NATIVE"), "B2_BE": ("B2", False, "NATIVE"),
+              "B2_S150": ("B2", False, "NATIVE"), "B2_V3": ("B2", False, "NATIVE")})
 OVERLAY_LABELS = {"K03_TRAIL": "K03 추적 손절(비교)", "K03_S150": "K03 고정 손절 -150(비교)",
-                  "B2_BE": "B2 본전 이동(비교)", "B2_S150": "B2 고정 손절 -150(비교)"}
+                  "K03_V3": "K03 변동성 급등 손절(비교)", "B2_BE": "B2 본전 이동(비교)",
+                  "B2_S150": "B2 고정 손절 -150(비교)", "B2_V3": "B2 변동성 급등 손절(비교)"}
+NEGATIVE_IDS = {"K25", "K26", "K27", "K28", "K29", "K30"}
 
 
 DEFINITIONS = {
@@ -71,6 +74,12 @@ DEFINITIONS = {
     "K21_A": "TAKER_IMB A: 15분 taker 매수 비중 z(30일) > 2 롱 / < -2 숏, 2시간",
     "K21_B": "TAKER_IMB B: 15분 taker 매수 비중 z(30일) > 2 숏 / < -2 롱, 2시간",
     "K22": "CVD_DIV: 15분 종가 20봉 신고가인데 CVD가 직전 고점보다 낮으면 숏, 대칭 롱, 4시간",
+    "K25": "전일 고가·저가 반전: 15분봉 꼬리 돌파 후 안쪽 마감 시 반대 진입, 최대 4시간",
+    "K26": "피벗 R1·S1 반전(P 도달 청산): 15분봉 꼬리 돌파 후 안쪽 마감 시 반대 진입, 최대 4시간",
+    "K27": "스윙 고점·저점 반전(1시간봉 좌우 5봉): 15분봉 꼬리 돌파 후 안쪽 마감 시 반대 진입, 최대 4시간",
+    "K28": "1,000달러 라운드 넘버 반전: 15분봉 꼬리 돌파 후 안쪽 마감 시 반대 진입, 최대 4시간",
+    "K29": "필터 반전: 횡보(1시간 ADX<20)에서 검증된 지지·저항(7일 내 2회 이상 터치)을 꼬리로 뚫고 0.25 ATR 이상 안쪽 마감 + 거래량 z≥1.5 시 반대 진입, 손절 꼬리 너머, 전일 중간값 도달 또는 4시간 청산",
+    "K30": "돌파 후 되돌림: 추세(1시간 ADX≥25, EMA50 방향)에서 검증된 선을 1시간 종가로 0.25 ATR 이상 돌파 후 12시간 내 첫 되돌림에서 돌파 방향 진입, 손절 선 너머 0.5 ATR, 최대 8시간",
     "B1": "B1: A2-30 > E1-15 > F3-30 > F3W-30 우선순위 합성, 관문 없음",
     "B2": "B2: B1과 같은 우선순위, 탐지기 M ≥ 2/3일 때만 진입",
     "B3": "B3: M ≥ 2/3이면 A2·E1, M ≤ 1/3이고 L < 2/3이면 F3·F3W만 진입",
@@ -302,7 +311,8 @@ def label(name: str) -> str:
     if name in OVERLAY_LABELS:
         return OVERLAY_LABELS[name]
     spec_id, gated, style = BOOKS[name]
-    return f"{spec_id} {CATALOG[spec_id].family}" + (" 관문" if gated else "") + (" DETEXIT" if style == "DETEXIT" else "")
+    label = f"{spec_id} {CATALOG[spec_id].family}" + (" 관문" if gated else "") + (" DETEXIT" if style == "DETEXIT" else "")
+    return label + (" (연구 음수)" if spec_id in NEGATIVE_IDS else "")
 
 
 @lru_cache(maxsize=1)
@@ -359,17 +369,22 @@ def _realized_minute_pnl(result, closes: pd.Series) -> pd.Series:
     return out
 
 
-def _overlay_result(result: SimResult, minutes: pd.DataFrame, rule: str) -> SimResult:
+def _overlay_result(result: SimResult, minutes: pd.DataFrame, rule: str,
+                    regime_frame: pd.DataFrame | None = None) -> SimResult:
     """Apply the frozen minute overlay without changing the native entry sequence."""
     trades = result.trades.copy()
     times = pd.DatetimeIndex(minutes.open_time)
     t_ns = times.as_unit("ns").asi8
-    o, h, l = (minutes[column].to_numpy(float) for column in ("open", "high", "low"))
-    reason = "stop" if rule.startswith("S") else "breakeven" if rule == "R1_BREAKEVEN" else "trail"
+    o, h, l, c = (minutes[column].to_numpy(float) for column in ("open", "high", "low", "close"))
+    series = {"m": m_series(minutes, regime_frame)} if rule == "V3_M_SPIKE_LOSS" else None
+    reason = ("VOL_EXIT" if rule == "V3_M_SPIKE_LOSS" else "stop" if rule.startswith("S") else
+              "breakeven" if rule == "R1_BREAKEVEN" else "trail")
     for index, trade in trades.iterrows():
         i0 = int(np.searchsorted(t_ns, pd.Timestamp(trade.entry_time).value))
         i_exit = int(np.searchsorted(t_ns, pd.Timestamp(trade.exit_time).value))
-        hit = overlay(int(trade.side), float(trade.entry_price), i0, i_exit, o, h, l, rule, np.nan)
+        hit = (dynamic(int(trade.side), float(trade.entry_price), i0, i_exit, o, h, l, c, rule, series)
+               if rule == "V3_M_SPIKE_LOSS" else
+               overlay(int(trade.side), float(trade.entry_price), i0, i_exit, o, h, l, rule, np.nan))
         if hit is None:
             continue
         exit_index, exit_price = hit
@@ -380,7 +395,9 @@ def _overlay_result(result: SimResult, minutes: pd.DataFrame, rule: str) -> SimR
     held = result.open_position
     if held is not None:
         i0 = int(np.searchsorted(t_ns, pd.Timestamp(held["entry_time"]).value))
-        hit = overlay(int(held["side"]), float(held["avg_price"]), i0, len(times), o, h, l, rule, np.nan)
+        hit = (dynamic(int(held["side"]), float(held["avg_price"]), i0, len(times), o, h, l, c, rule, series)
+               if rule == "V3_M_SPIKE_LOSS" else
+               overlay(int(held["side"]), float(held["avg_price"]), i0, len(times), o, h, l, rule, np.nan))
         if hit is not None:
             exit_index, exit_price = hit
             closed = []
@@ -464,7 +481,7 @@ def run_book(name: str, ctx: Context, funding: pd.DataFrame, book_start: pd.Time
         result = core.simulate(table, ctx.minutes, book_start, end, replace(config, include_funding=False))
     overlay_rule = OVERLAY_RULES.get(name)
     if overlay_rule:
-        result = _overlay_result(result, ctx.minutes, overlay_rule)
+        result = _overlay_result(result, ctx.minutes, overlay_rule, ctx.regime)
     legs = result.trades
     fills = (legs[["decision_time", "entry_time", "side", "entry_price"]].drop_duplicates().copy()
              if len(legs) else pd.DataFrame(columns=["decision_time", "entry_time", "side", "entry_price"]))

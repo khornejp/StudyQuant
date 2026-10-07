@@ -144,6 +144,14 @@ def test_catalog_fills_send_full_entry_messages(tmp_path) -> None:
     assert "평균 진입가 : 100.00 USDT" in payloads[0] and "체결 수량 : 1.00000 BTC" in payloads[0]
 
 
+def test_advanced_level_books_keep_research_label_in_telegram() -> None:
+    message = format_message("entry", {
+        "book": "K29", "side": -1, "price": 100, "candidate": "K29",
+        "entry_time": "2026-10-07T12:01:00+00:00", "exit_time": "2026-10-07T16:01:00+00:00",
+    })
+    assert "기법 : K29 levels (연구 음수)" in message
+
+
 def test_detexit_take_leg_is_partial_exit_with_leg_rate() -> None:
     from btcusdt_quant.paper.telegram_format import format_message
     text = format_message("exit", {

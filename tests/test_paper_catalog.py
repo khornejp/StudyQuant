@@ -2,6 +2,39 @@ import numpy as np, pandas as pd
 from btcusdt_quant.paper import catalog
 
 
+def test_level_books_are_enabled_after_existing_k_series() -> None:
+    from pathlib import Path
+    from btcusdt_quant.paper.config import load_config
+    from btcusdt_quant.paper.dashboard.server import INDICATOR_LABELS
+    config = load_config("config/paper.toml")
+    existing = tuple(f"K{number}{suffix}" for number in range(25, 29) for suffix in ("", "_G", "_D", "_GD"))
+    added = tuple(f"K{number}{suffix}" for number in range(29, 31) for suffix in ("", "_G", "_D", "_GD"))
+    variants = existing + added
+    start = config.books.index("K25")
+    assert config.books[start:start + 24] == variants
+    assert config.books[start - 1] == "K22_GD" and config.books[start + 24] == "B1"
+    assert config.comparison_books[config.comparison_books.index("K25"):
+                                   config.comparison_books.index("K25") + 24] == variants
+    assert all(config.book_start_times[name] == "2026-10-07T12:00:00Z" for name in added)
+    assert not set(variants) & set(config.leverage_books)
+    assert all(catalog.label(name).endswith("(연구 음수)") for name in variants)
+    assert {key: INDICATOR_LABELS[key] for key in (
+        "prior_day_high", "prior_day_low", "pivot", "r1", "s1", "swing_high", "swing_low",
+        "round_above", "round_below", "adx_1h", "volume_z", "atr15", "day_mid")
+    } == {"prior_day_high": "전일 고가", "prior_day_low": "전일 저가", "pivot": "피벗 P",
+         "r1": "피벗 R1", "s1": "피벗 S1", "swing_high": "스윙 고점", "swing_low": "스윙 저점",
+         "round_above": "라운드 위", "round_below": "라운드 아래", "adx_1h": "1시간 ADX",
+         "volume_z": "거래량 z", "atr15": "ATR15", "day_mid": "전일 중간값"}
+    assert catalog.DEFINITIONS["K25"].startswith("전일 고가·저가 반전")
+    assert catalog.DEFINITIONS["K26"].startswith("피벗 R1·S1 반전(P 도달 청산)")
+    assert catalog.DEFINITIONS["K27"].startswith("스윙 고점·저점 반전(1시간봉 좌우 5봉)")
+    assert catalog.DEFINITIONS["K28"].startswith("1,000달러 라운드 넘버 반전")
+    assert catalog.DEFINITIONS["K29"] == "필터 반전: 횡보(1시간 ADX<20)에서 검증된 지지·저항(7일 내 2회 이상 터치)을 꼬리로 뚫고 0.25 ATR 이상 안쪽 마감 + 거래량 z≥1.5 시 반대 진입, 손절 꼬리 너머, 전일 중간값 도달 또는 4시간 청산"
+    assert catalog.DEFINITIONS["K30"] == "돌파 후 되돌림: 추세(1시간 ADX≥25, EMA50 방향)에서 검증된 선을 1시간 종가로 0.25 ATR 이상 돌파 후 12시간 내 첫 되돌림에서 돌파 방향 진입, 손절 선 너머 0.5 ATR, 최대 8시간"
+    assert all((config.telegram_entry, config.telegram_exit, config.telegram_daily_summary, config.telegram_alert))
+    assert "K(?:2[5-9]|30)" in Path("btcusdt_quant/paper/dashboard/index.html").read_text(encoding="utf-8")
+
+
 def test_catalog_book_trades_and_open_position_from_paper_tables():
     t = pd.date_range("2026-07-01", periods=6 * 24 * 60, freq="1min", tz="UTC")
     close = 100 * np.exp(np.cumsum(np.random.default_rng(0).normal(0, 1e-3, len(t))))

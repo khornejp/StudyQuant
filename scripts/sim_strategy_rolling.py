@@ -196,6 +196,9 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--out", default=str(OUT))
     parser.add_argument("--no-register", action="store_true", help="smoke runs: do not append to the trial registry")
+    parser.add_argument("--base-trials", type=int, default=BASE_TRIALS,
+                        help="prior trials for DSR; follow-up runs add earlier R2-48 runs (R2-49: 5125 + 128)")
+    parser.add_argument("--experiment", default="R2-48 plan2 strategy rolling")
     args = parser.parse_args()
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     if pd.Timestamp(args.end) > rolling.END:
@@ -215,7 +218,7 @@ def main() -> None:
                 "frozen_hypothesis": HYPOTHESIS, "ids": args.ids, "combinations": [combo_name(c) for c in combos],
                 "n_combinations": len(combos), "input_sha256": input_hashes(end_t),
                 "prediction_coverage": {k: v for k, v in coverage.items()},
-                "n_trials": BASE_TRIALS + len(combos), "n_trials_rule": f"{BASE_TRIALS} prior + this run's combinations"}
+                "n_trials": args.base_trials + len(combos), "n_trials_rule": f"{args.base_trials} prior + this run's combinations"}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     with ProcessPoolExecutor(max_workers=min(args.workers, 8), initializer=_init, initargs=(args.end,)) as pool:
         statuses = list(pool.map(run_combo, combos, [str(out)] * len(combos), [args.end] * len(combos)))
@@ -233,7 +236,7 @@ def main() -> None:
     a, b = rolling.WINDOWS[0].test_start, rolling.WINDOWS[-1].test_end
     sharpes = np.array([s.loc[(s.index >= a) & (s.index < b)].mean() / s.loc[(s.index >= a) & (s.index < b)].std(ddof=1)
                         for s in daily.values() if s.loc[(s.index >= a) & (s.index < b)].std(ddof=1) > 0])
-    n_trials = BASE_TRIALS + len(combos)
+    n_trials = args.base_trials + len(combos)
     manifest["trial_sharpes"] = {"n": int(len(sharpes)), "mean": float(sharpes.mean()), "var": float(sharpes.var(ddof=1)),
                                  "values_daily": [float(x) for x in sharpes]}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -246,7 +249,7 @@ def main() -> None:
     guard.check(report)
     (out / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     if not args.no_register:
-        registry.record(REGISTRY, {"experiment": "R2-48 plan2 strategy rolling", "n_trials": len(combos),
+        registry.record(REGISTRY, {"experiment": args.experiment, "n_trials": len(combos),
                                    "config": manifest["simulation"], "input_hashes": manifest["input_sha256"],
                                    "result_summary": {"ok": len(ok), "baseline2_test_net_4bps": float(concat.sum())}})
     print(json.dumps({"combinations": len(combos), "ok": len(ok), "errors": int((status.status == "error").sum()),
