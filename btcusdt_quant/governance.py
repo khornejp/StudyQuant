@@ -33,7 +33,17 @@ UNTRACKED_CONTENT_MAX_BYTES = 1024 * 1024
 # Jinja2, MarkupSafe, and typing_extensions already satisfied torch's graph.
 # This splits run-of-record provenance from the former CPU/no-torch environment
 # ``734b2e0ce8508d6ce7432914ee04f6dd32b7887083d2d5a488c69a9afc2477ef``.
-PINNED_ENVIRONMENT_FINGERPRINT = "b7557fe9da19047e5d5e9135bd796ffe0ac7a26ccd9ac4857d5fc08547d0de7f"
+#
+# Re-pinned 2026-10-07 (user-approved) after the R2-48 sim engine work added
+# numba 0.68.0 + llvmlite 0.50.0 (sim/core.py JIT), hypothesis 6.168.5 +
+# sortedcontainers 2.4.0 (property tests) and mutmut 3.8.0 with click, libcst,
+# rich, textual, setproctitle, markdown-it-py, mdit-py-plugins, mdurl and
+# linkify-it-py (mutmut refuses Windows; scripts/sim_mutation.py is used instead).
+# pip check is clean.  The set minus those packages does not hash back to the
+# 2026-08-21 pin, so one more unrecorded change happened between the pins.
+# Runs before this date were under
+# ``b7557fe9da19047e5d5e9135bd796ffe0ac7a26ccd9ac4857d5fc08547d0de7f``.
+PINNED_ENVIRONMENT_FINGERPRINT = "dcfbc932c8767086093ffae614227889d9c074168ecf17c5f0581bb59cd509f7"
 
 
 PIPELINE_STAGES = [
@@ -319,14 +329,31 @@ def _capture_runtime() -> dict[str, object]:
         }
 
 
-def _installed_distribution_fingerprint() -> str:
-    """Hash the complete installed distribution name/version set deterministically."""
-    distributions = sorted(
+def _installed_distribution_lines() -> list[str]:
+    """Sorted ``name==version`` for every installed distribution."""
+    return [f"{name}=={version}" for name, version in sorted(
         (distribution.metadata["Name"].lower(), distribution.version)
         for distribution in importlib.metadata.distributions()
         if distribution.metadata.get("Name")
-    )
-    return sha256_text("\n".join(f"{name}=={version}" for name, version in distributions))
+    )]
+
+
+def _installed_distribution_fingerprint() -> str:
+    """Hash the complete installed distribution name/version set deterministically."""
+    return sha256_text("\n".join(_installed_distribution_lines()))
+
+
+# The plain-text list behind PINNED_ENVIRONMENT_FINGERPRINT, so a mismatch names the packages that moved.
+# Re-pin: python -m btcusdt_quant.governance --write-pin, then paste the printed hash into the constant.
+PINNED_ENVIRONMENT_FILE = Path(__file__).with_name("pinned_environment.txt")
+
+
+def pinned_environment_diff() -> dict[str, list[str]]:
+    """Packages added to / removed from the installed set relative to PINNED_ENVIRONMENT_FILE."""
+    pinned = set(PINNED_ENVIRONMENT_FILE.read_text(encoding="utf-8").splitlines()) \
+        if PINNED_ENVIRONMENT_FILE.exists() else set()
+    installed = set(_installed_distribution_lines())
+    return {"added": sorted(installed - pinned), "removed": sorted(pinned - installed)}
 
 
 def require_pinned_runtime(*, allow_unpinned_runtime: bool = False) -> dict[str, object]:
@@ -339,11 +366,13 @@ def require_pinned_runtime(*, allow_unpinned_runtime: bool = False) -> dict[str,
         "matches_pinned_runtime": matches,
         "allow_unpinned_runtime": allow_unpinned_runtime,
     }
+    if not matches:
+        decision["environment_diff"] = pinned_environment_diff()
     if not matches and not allow_unpinned_runtime:
         raise RuntimeError(
             "run-of-record refused: installed distribution fingerprint does not match "
             "the pinned environment; rerun with venv_btcusdt or pass "
-            "--allow-unpinned-runtime for a recorded experiment"
+            f"--allow-unpinned-runtime for a recorded experiment; diff: {decision['environment_diff']}"
         )
     return decision
 def _capture_input_fingerprints(
@@ -1084,3 +1113,8 @@ def verify_manifest(output_dir: Path) -> tuple[bool, list[str]]:
         elif sha256_file(path) != expected:
             errors.append(f"hash mismatch: {relative}")
     return not errors, errors
+
+
+if __name__ == "__main__" and "--write-pin" in sys.argv:
+    PINNED_ENVIRONMENT_FILE.write_text("\n".join(_installed_distribution_lines()), encoding="utf-8")
+    print(_installed_distribution_fingerprint())
