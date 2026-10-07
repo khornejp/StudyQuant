@@ -93,7 +93,9 @@ class VecTradingEnv:
         self.m_lo = np.searchsorted(self.t_ns, np.r_[store.times, store.times[-1] + STEP_NS])  # step k: [m_lo[k], m_lo[k+1])
         steps = config.episode_steps
         k = np.arange(max(len(store.times) - steps + 1, 0))
-        ok = ((store.times[k] >= pd.Timestamp(start).value) & (store.times[k] + steps * STEP_NS <= pd.Timestamp(end).value)
+        valid = np.flatnonzero(~store.mask_missing)          # warm-up rows (detector not yet valid) never start one
+        first = store.times[valid[0]] if len(valid) else np.iinfo(np.int64).max
+        ok = ((store.times[k] >= max(pd.Timestamp(start).value, first)) &(store.times[k] + steps * STEP_NS <= pd.Timestamp(end).value)
               & (self.m_lo[k + steps] > self.m_lo[k + steps - 1]))      # the last step has a minute to close at
         self.starts = k[ok]
         if not len(self.starts):

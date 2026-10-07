@@ -139,6 +139,22 @@ def test_episode_never_crosses_train_end():
     assert 4 <= env.cost.min() and env.cost.max() <= 12 and 0 <= env.slip.min() and env.slip.max() <= 10
 
 
+def test_episode_never_starts_in_warmup():
+    t0 = pd.Timestamp("2022-03-01", tz="UTC")                 # rolling.TRAIN_START; M/L need 7 days of warm-up
+    missing = np.zeros(22 * 96, bool)
+    missing[:7 * 96 + 5] = True
+    missing[[800, 900]] = True                                 # later missing rows do not move the first valid T
+    store = make_store(t0, t0 + pd.Timedelta(days=22), missing=missing)
+    m = market(0, days=22, gaps=0).assign(open_time=lambda f: f.open_time - T0 + t0)
+    env = VecTradingEnv(store, m, NO_FUNDING, t0, t0 + pd.Timedelta(days=22), 1000, EnvConfig(randomize=True), 0)
+    first = store.times[7 * 96 + 5]
+    starts = np.concatenate([store.times[(env.reset(), env.k0)[1]] for _ in range(10)])
+    assert len(starts) == 10_000 and starts.min() == first and (starts >= first).all()
+    with pytest.raises(ValueError):
+        VecTradingEnv(make_store(t0, t0 + pd.Timedelta(days=21), missing=np.ones(21 * 96, bool)), m, NO_FUNDING,
+                      t0, t0 + pd.Timedelta(days=21), 1, EnvConfig(), 0)
+
+
 def test_pending_fill_after_episode_end_cancelled():
     m = flat_market({k: 100 * math.exp(2e-3) for k in range(50, 60)})
     store = make_store(T0, T0 + 4 * STEP)
@@ -214,6 +230,8 @@ def test_real_data_parity_and_benchmark():
     _, static, mask = env.reset()
     assert static.shape == (n, len(store.feature_names) + len(ACCOUNT_NAMES))
     k0, cost, slip, delay = env.k0.copy(), env.cost.copy(), env.slip.copy(), env.delay.copy()
+    first = store.times[np.flatnonzero(~store.mask_missing)[0]]
+    assert first > w.train_start.value and env.starts.min() == np.searchsorted(store.times, first)   # no warm-up start
     sides, minute = [], []
     tic = time.perf_counter()
     for _ in range(1344):
