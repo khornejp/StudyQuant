@@ -100,6 +100,34 @@ def test_learns_tiny_mdp(tmp_path):
     assert p[0, 1] > 0.95 and p[1, 2] > 0.95
 
 
+class BpsEnv(ToyEnv):
+    """One-step episodes, reward = 100 * x regardless of action: V(x) = 100 x is fully explainable."""
+
+    def step(self, actions):
+        x = self.x.astype(np.float64) * 100
+        *obs, _, _, done, info = super().step(actions)
+        return (*obs, x, x, np.ones(self.n, bool), info)
+
+
+def test_reward_scale_is_learner_only_and_lets_critic_fit(tmp_path):
+    runs = {}
+    for scale in (0.01, 1.0):
+        runs[scale] = train(BpsEnv(64, 0), lambda m: 123.0, PPOConfig(n_steps=16, minibatch=256, reward_scale=scale),
+                            seed=0, max_transitions=8 * 16 * 64, eval_every=4, ckpt_dir=tmp_path / str(scale),
+                            device="cpu")
+    env = BpsEnv(64, 0)                                     # reward ignores the action: replay the raw bps stream
+    env.reset()
+    raw = np.mean([env.step(np.zeros(64, np.int64))[3] for _ in range(16)])
+    for r in runs.values():                                 # val and reported reward stay raw bps
+        assert r.best_val == 123.0 and {h["val"] for h in r.history if "val" in h} == {123.0}
+        assert r.history[0]["reward_mean"] == pytest.approx(raw, abs=1e-4)
+    ck = torch.load(tmp_path / "0.01" / "best.pt", weights_only=False)
+    assert ck["cfg"]["reward_scale"] == 0.01
+    ev = {s: r.history[-1]["explained_var"] for s, r in runs.items()}
+    print("explained_var after 7 updates", ev)
+    assert ev[0.01] > 0.5 and ev[1.0] < 0.2              # value clip 0.2 in raw bps pins the critic near init
+
+
 def test_resume_is_bitwise_identical(tmp_path):
     cfg = PPOConfig(n_steps=16, minibatch=128, encoder="gru")
     per = 16 * 32

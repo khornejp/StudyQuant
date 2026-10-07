@@ -29,6 +29,7 @@ class PPOConfig:
     weight_decay: float = 1e-4
     lr: float = 3e-4            # C11: {1e-4, 3e-4}
     encoder: str = "conv"
+    reward_scale: float = 0.01  # learner only (bps -> percent): GAE/value targets; validation and metrics stay bps
 
 
 @dataclass
@@ -139,7 +140,7 @@ def train(env, val_fn: Callable[[nn.Module], float], cfg: PPOConfig, seed: int, 
                     buf[key].append(x.to(device))
             last_value = model(*as_t(obs))[1]
         b = {k: torch.stack(v) for k, v in buf.items()}
-        adv, ret = compute_gae(b["rewards"], b["values"], b["dones"], last_value, cfg.gamma, cfg.lam)
+        adv, ret = compute_gae(b["rewards"] * cfg.reward_scale, b["values"], b["dones"], last_value, cfg.gamma, cfg.lam)
         flat = {k: b[k].flatten(0, 1) for k in ("seq", "static", "mask", "actions", "logp", "values")}
         flat["adv"], flat["returns"] = adv.flatten(), ret.flatten()
         rec = ppo_update(model, opt, flat, cfg)
