@@ -31,6 +31,8 @@ class EnvConfig:
     slip_bps: tuple = (0, 10)        # per market fill, adverse
     delay_mix: float = 0.5           # P(delay ~ U{1..delay_max}), else 1 minute
     delay_max: int = 5
+    loss_coef: float = 2.0           # reward = net - loss_coef*max(0,-net) - dd_coef*dMDD (frozen: 2, 1; "net" variant: 0, 0)
+    dd_coef: float = 1.0
 
 
 @numba.njit(cache=True)
@@ -162,7 +164,7 @@ class VecTradingEnv:
               self.fund_ns, self.fund_rate, self.out, self.minute_net)
         out = self.out
         net = out[:, NET].copy()
-        loss, dd = 2 * np.maximum(0.0, -net), out[:, DMDD].copy()
+        loss, dd = self.config.loss_coef * np.maximum(0.0, -net), self.config.dd_coef * out[:, DMDD]
         reward = net - loss - dd                                     # frozen: r = net - 2 max(0, -net) - dMDD
         info = {"net": net, "loss_penalty": loss, "dd_penalty": dd, "fees": out[:, FEES].copy(),
                 "slippage": out[:, SLIP].copy(), "funding": out[:, FUND].copy(),

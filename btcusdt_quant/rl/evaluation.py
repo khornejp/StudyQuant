@@ -15,7 +15,7 @@ from .vec_env import SIDES, STEP_MIN, STEP_NS, EnvConfig, VecTradingEnv, replay
 STEP = pd.Timedelta(minutes=STEP_MIN)
 VS = ("C1_X", "baseline2", "supervised")       # criterion 2: comparators 1, 2, 3
 DSR_MIN, SEEDS_MIN, N_SEEDS = 0.95, 4, 5
-N_TRIALS = 5277 + 8                            # cumulative trials before plan 3 + its 8 candidate policies
+N_TRIALS = {"frozen": 5285, "net": 5293}       # 5277 prior trials + 8 candidate policies; the net-reward variant adds 8 more
 
 
 @lru_cache(maxsize=1)
@@ -90,13 +90,13 @@ def _criterion(value, threshold, passed, zero, reason="ok", detail=None) -> dict
 
 def pass_report(rl_daily: pd.Series, seed_dailies: list[pd.Series], comparators: dict[str, pd.Series],
                 null_nets: np.ndarray, n_trials: int, trial_sharpes, rl_trades: pd.DataFrame,
-                n_trials_override: str | None = None) -> dict:
+                experiment: str, n_trials_override: str | None = None) -> dict:
     """Criteria 1-7 for one state variant. rl_daily / rl_trades: the C13 ensemble's stitched test windows (C18);
     seed_dailies: the 5 seeds (criterion 6); comparators: daily nets keyed C1_X, baseline2, supervised, buy_hold
     (others, e.g. random / flat, are reported only); null_nets: C16 stitched shuffled-control nets.
     No trades -> every criterion fails with zero_reason (spec review focus 5)."""
-    if n_trials != N_TRIALS and not n_trials_override:
-        raise ValueError(f"n_trials {n_trials} != {N_TRIALS}; pass n_trials_override=<reason> to use another value")
+    if n_trials != N_TRIALS[experiment] and not n_trials_override:
+        raise ValueError(f"n_trials {n_trials} != {N_TRIALS[experiment]} ({experiment}); pass n_trials_override=<reason> to use another value")
     if len(seed_dailies) != N_SEEDS:
         raise ValueError(f"criterion 6 needs {N_SEEDS} seeds")
     d = rl_daily.astype(float)

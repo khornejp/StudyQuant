@@ -14,6 +14,8 @@ from .ppo import PPOConfig, train
 from .vec_env import SIDES, STEP_NS, EnvConfig, VecTradingEnv, replay
 
 HYPOTHESIS = "강화학습 정책이 롤링 테스트에서 C1_X·단일 기법 최고·지도학습 정책보다 비용 차감 후 우위"
+REWARDS = {"frozen": (2.0, 1.0, "docs/superpowers/specs/2026-10-07-rl-trading-design.md"),
+           "net": (0.0, 0.0, "out/k45_rl_r2_48_20261007/rl/r2_51_net_reward_freeze.json")}   # loss_coef, dd_coef, freeze file
 NOMINAL = {"cost_bps": 4.0, "delay": 1, "slip": 0.0, "funding": "PESS", "units": 1}
 
 
@@ -50,7 +52,9 @@ def make_val_fn(store, minutes, funding, start, end, device):
     return val_fn
 
 
-def run_config(window: Window, variant: str, encoder: str, lr: float, seed: int, out: Path, smoke: bool = False) -> dict:
+def run_config(window: Window, variant: str, encoder: str, lr: float, seed: int, out: Path, smoke: bool = False,
+               reward: str = "frozen") -> dict:
+    loss_coef, dd_coef, freeze_file = REWARDS[reward]
     t_start, out = time.time(), Path(out)
     out.mkdir(parents=True, exist_ok=True)
     day = pd.Timedelta(days=1)
@@ -69,7 +73,7 @@ def run_config(window: Window, variant: str, encoder: str, lr: float, seed: int,
     check_minutes(minutes)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = VecTradingEnv(store, minutes, funding, train_start, window.train_end, env_n,
-                        EnvConfig(episode_steps=steps, randomize=True), seed)
+                        EnvConfig(episode_steps=steps, randomize=True, loss_coef=loss_coef, dd_coef=dd_coef), seed)
     val_fn = make_val_fn(store, minutes, funding, window.val_start, val_end, device)
     cfg = PPOConfig(lr=lr, encoder=encoder)
     res = train(env, val_fn, cfg, seed, max_transitions=max_tr, eval_every=ev, patience=5, ckpt_dir=out, device=device)
@@ -78,6 +82,7 @@ def run_config(window: Window, variant: str, encoder: str, lr: float, seed: int,
     trace = [{"update": r["update"], "transitions": r["transitions"], "val_net_bps": r["val"]}
              for r in res.history if "val" in r]
     summary = {"window": window.name, "variant": variant, "encoder": encoder, "lr": lr, "seed": seed, "smoke": smoke,
+               "reward": reward, "loss_coef": loss_coef, "dd_coef": dd_coef, "reward_freeze_file": freeze_file,
                "val_net_bps": res.best_val, "best_step": res.best_step, "transitions": res.history[-1]["transitions"],
                "wall_seconds": time.time() - t_start,
                "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",

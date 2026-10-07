@@ -46,3 +46,17 @@ def test_selection_trace_uses_validation_only(smoke_run):
     assert all(set(r) == {"update", "transitions", "val_net_bps"} for r in man["selection_trace"])
     assert not any("test" in k for k in man)
     assert str(WINDOWS[0].test_start) not in text and str(WINDOWS[0].test_end) not in text
+
+
+def test_manifest_records_reward(smoke_run):
+    _, out = smoke_run
+    man = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert (man["reward"], man["loss_coef"], man["dd_coef"]) == ("frozen", 2.0, 1.0)
+    assert man["reward_freeze_file"].endswith("2026-10-07-rl-trading-design.md")
+
+
+def test_net_reward_manifest(tmp_path):
+    T.run_config(WINDOWS[0], "S1", "conv", 3e-4, 0, tmp_path, smoke=True, reward="net")
+    man = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert (man["reward"], man["loss_coef"], man["dd_coef"]) == ("net", 0.0, 0.0)
+    assert man["reward_freeze_file"].endswith("r2_51_net_reward_freeze.json")

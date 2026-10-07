@@ -202,6 +202,19 @@ def test_action_mask_on_missing_detector():
         env.step(np.array([3], np.int8))
 
 
+def test_net_reward_equals_net_bps():
+    up = 100 * math.exp(1e-3)
+    m = flat_market({20: 100 * math.exp(-5e-4), **{k: up for k in range(30, 60)}})
+    store = make_store(T0, T0 + 4 * STEP)
+    assert EnvConfig().loss_coef == 2.0 and EnvConfig().dd_coef == 1.0
+    cfg = EnvConfig(episode_steps=4, randomize=False, cost_bps=(20, 20), loss_coef=0.0, dd_coef=0.0)
+    env = VecTradingEnv(store, m, NO_FUNDING, T0, T0 + 4 * STEP, 1, cfg, 0)
+    env.reset()
+    got = [env.step(np.array([1], np.int8)) for _ in range(4)]
+    np.testing.assert_allclose([g[3][0] for g in got], [g[4][0] for g in got], rtol=0, atol=0)
+    np.testing.assert_allclose([g[4][0] for g in got], [-10, 0, 10, -10], rtol=0, atol=1e-9)
+
+
 def test_always_flat_zero_reward():
     m = market(1)
     store = make_store(T0, T0 + pd.Timedelta(days=3))

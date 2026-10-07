@@ -95,7 +95,7 @@ def flat_inputs(days=120, seed=0):
 
 def test_pass_report_all_flat_policy():
     zero, seeds, comps, null, sharpes = flat_inputs()
-    rep = E.pass_report(zero, seeds, comps, null, 5285, sharpes, rl_trades=pd.DataFrame(columns=TRADE_COLUMNS))
+    rep = E.pass_report(zero, seeds, comps, null, 5285, sharpes, rl_trades=pd.DataFrame(columns=TRADE_COLUMNS), experiment="frozen")
     assert set(rep["criteria"]) == {f"c{k}" for k in range(1, 8)} and rep["pass"] is False
     for c in rep["criteria"].values():
         assert c["pass"] is False and c["zero_reason"] and {"value", "threshold"} <= set(c)
@@ -117,7 +117,7 @@ def test_pass_report_counts_trades_and_seeds():
     rl = comps["C1_X"] + 100
     trades = pd.DataFrame({"net_bps": [500.0, 400.0, 10.0], "units": [1.0, 1.0, 1.0]})
     seeds = [rl + s for s in (-1e4, 1, 2, 3, 4)]
-    rep = E.pass_report(rl, seeds, comps, null, 5285, sharpes, rl_trades=trades)
+    rep = E.pass_report(rl, seeds, comps, null, 5285, sharpes, rl_trades=trades, experiment="frozen")
     c = rep["criteria"]
     assert c["c1"]["value"] == pytest.approx(rl.sum()) and c["c6"]["value"] == 4 and c["c6"]["pass"]
     assert c["c5"]["detail"] == pytest.approx({"top2_removed": rl.sum() - 900, "net_8bps": rl.sum() - 12})
@@ -142,12 +142,23 @@ def test_pass_report_dsr_audit_and_n_trials_guard():
     zero, seeds, comps, null, sharpes = flat_inputs()
     no_trades = pd.DataFrame(columns=TRADE_COLUMNS)
     with pytest.raises(ValueError, match="n_trials 100 != 5285"):
-        E.pass_report(zero, seeds, comps, null, 100, sharpes, rl_trades=no_trades)
-    rep = E.pass_report(zero, seeds, comps, null, 5285, sharpes[::-1], rl_trades=no_trades)
+        E.pass_report(zero, seeds, comps, null, 100, sharpes, rl_trades=no_trades, experiment="frozen")
+    rep = E.pass_report(zero, seeds, comps, null, 5285, sharpes[::-1], rl_trades=no_trades, experiment="frozen")
     d = rep["criteria"]["c4"]["detail"]
     assert d["n_trial_sharpes"] == 200 and d["n_trials"] == 5285
     assert d["trial_sharpes_sha256"] == hashlib.sha256(np.sort(sharpes.astype(np.float64)).tobytes()).hexdigest()
-    other = E.pass_report(zero, seeds, comps, null, 100, sharpes, rl_trades=no_trades, n_trials_override="smoke")
+    other = E.pass_report(zero, seeds, comps, null, 100, sharpes, rl_trades=no_trades, experiment="frozen", n_trials_override="smoke")
     assert other["n_trials"] == 100 and other["n_trials_override"] == "smoke"
     assert rep["n_trials_override"] is None
     guard.check(other)
+
+
+def test_n_trials_guard_per_experiment():
+    zero, seeds, comps, null, sharpes = flat_inputs()
+    nt = pd.DataFrame(columns=TRADE_COLUMNS)
+    assert E.N_TRIALS == {"frozen": 5285, "net": 5293}
+    with pytest.raises(ValueError, match="n_trials 5285 != 5293"):
+        E.pass_report(zero, seeds, comps, null, 5285, sharpes, rl_trades=nt, experiment="net")
+    with pytest.raises(ValueError, match="n_trials 5293 != 5285"):
+        E.pass_report(zero, seeds, comps, null, 5293, sharpes, rl_trades=nt, experiment="frozen")
+    assert E.pass_report(zero, seeds, comps, null, 5293, sharpes, rl_trades=nt, experiment="net")["n_trials"] == 5293
