@@ -216,6 +216,25 @@ def test_always_flat_zero_reward():
         assert (static[:, 3:9] == 0).all()
 
 
+def test_state_dict_round_trip():
+    """PPO resume: restoring a saved env state replays the same future exactly."""
+    m, rng = market(2), np.random.default_rng(0)
+    make = lambda seed: VecTradingEnv(make_store(T0, T0 + pd.Timedelta(days=3)), m, costs._settlement_arrays(), T0,
+                                      T0 + pd.Timedelta(days=3), 8, EnvConfig(episode_steps=16), seed)
+    env = make(1)
+    _, _, mask = env.reset()
+    for _ in range(21):
+        _, _, mask, *_ = env.step(sample(mask, rng))
+    state, acts = env.state_dict(), [sample(mask, rng) for _ in range(30)]
+    other = make(7)
+    other.reset()
+    other.load_state_dict(state)
+    for a in acts:
+        a = np.where(env.mask[np.arange(8), a], a, 0).astype(np.int8)
+        for x, y in zip(env.step(a)[:6], other.step(a)[:6]):
+            np.testing.assert_array_equal(x, y)
+
+
 @pytest.mark.slow
 def test_real_data_parity_and_benchmark():
     from btcusdt_quant.rl.state import cached_state_store

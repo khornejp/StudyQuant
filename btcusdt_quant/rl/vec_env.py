@@ -140,6 +140,17 @@ class VecTradingEnv:
         self._reset(np.arange(self.n))
         return self._obs()
 
+    _STATE = ("si", "sf", "acc", "k0", "t", "cost", "slip", "delay", "mask")
+
+    def state_dict(self) -> dict:
+        """Mutable episode state + RNG, for bitwise PPO resume (data and config are rebuilt by the caller)."""
+        return {"rng": self.rng.bit_generator.state, **{k: getattr(self, k).copy() for k in self._STATE}}
+
+    def load_state_dict(self, d: dict) -> None:
+        self.rng.bit_generator.state = d["rng"]
+        for k in self._STATE:
+            setattr(self, k, d[k].copy())
+
     def step(self, actions):
         a = np.asarray(actions)
         if a.shape != (self.n,) or ((a < 0) | (a > 2)).any() or not self.mask[np.arange(self.n), a].all():
