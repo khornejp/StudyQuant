@@ -35,10 +35,10 @@ def _core(frame: pd.DataFrame) -> pd.DataFrame:
 
 def test_config_enables_comparison_book_without_overlay() -> None:
     config = load_config("config/paper.toml")
-    assert config.books == ("C1", "C1_5m", "C1_T1", "F3", "E1", "C4")
-    assert config.book_start_times == {
-        "C1_5m": "2026-10-06T04:00:00Z", "C1_T1": "2026-10-06T05:00:00Z"}
-    assert config.comparison_books == ("C1_5m", "C1_T1")
+    assert config.books[:6] == ("C1", "C1_5m", "C1_T1", "F3", "E1", "C4")   # then the R2-48 catalog books
+    assert config.book_start_times.items() >= {
+        "C1_5m": "2026-10-06T04:00:00Z", "C1_T1": "2026-10-06T05:00:00Z"}.items()
+    assert config.comparison_books[:2] == ("C1_5m", "C1_T1")
     assert config.leverage_books == ("C1", "F3", "E1", "C4")
     assert BOOKS["C1_5m"] == (rules.F3_5M, rules.E1)
 

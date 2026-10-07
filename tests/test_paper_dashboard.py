@@ -179,6 +179,24 @@ def test_v2_api_schemas_and_candles_match_pandas_resample(tmp_path, monkeypatch)
     assert all(row["trade_id"] == 1 and row["net_bps"] == -14 for row in markers["rows"])
 
 
+def test_open_position_entry_is_marked_on_chart(tmp_path) -> None:
+    # Live bug: markers came only from closed trades, so an open entry never showed on the chart.
+    path = tmp_path / "live.sqlite"
+    stamp = "2026-07-01T00:05:00+00:00"
+    with PaperStore(path) as store:
+        store.upsert("positions", {"book": "C1", "side": 1, "candidate": rules.F3,
+            "entry_time": stamp, "entry_price": 101.5, "exit_time": "2026-07-02T00:05:00+00:00",
+            "remaining_minutes": 1400, "unrealized_bps": -5.0, "updated_at": stamp})
+    server, thread, base = _serve(path, tmp_path, books=("C1",), start_time="2026-07-01T00:00:00Z")
+    try:
+        markers = _get(base, "/api/markers?book=C1")["rows"]
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+    assert [(row["kind"], row["side"], row["price"], row["exit_reason"]) for row in markers] == [
+        ("entry", 1, 101.5, "보유 중")]
+    assert markers[0]["time"] == int(pd.Timestamp(stamp).timestamp())
+
+
 def test_condition_ratio_percent_and_both_distances() -> None:
     row = pd.Series({
         "decision_time": pd.Timestamp("2026-10-06T01:00:00Z"),
@@ -301,6 +319,29 @@ def test_buy_hold_benchmark_starts_at_t0() -> None:
     assert round(after["buy_hold_bps"], 6) == round(float(np.log(121 / 110) * 10_000), 6)
 
 
+def test_buy_hold_anchors_at_t0_minute_and_comparison_counts_open_position() -> None:
+    import sqlite3
+
+    from btcusdt_quant.paper.dashboard.server import _performance
+
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    for table in ("daily_pnl", "trades"):
+        connection.execute(f"create table {table} (book text, boundary text, date text, net_bps real, entry_time text)")
+    connection.execute("create table klines_1m (open_time text, open real, close real, closed integer)")
+    connection.executemany("insert into klines_1m values (?,?,?,1)", [
+        ("2026-10-06T02:59:00+00:00", 99.0, 99.0), ("2026-10-06T03:00:00+00:00", 100.0, 100.5)])
+    connection.execute("create table positions (book text, side integer, unrealized_bps real)")
+    connection.execute("insert into positions values ('C1', 1, -254.0)")
+    # T0 falls inside the 2026-10-06 daily bar, which opens at 102 (before T0)
+    prices = [{"time_utc": "2026-10-06T00:00:00Z", "open": 102.0, "close": 98.0}]
+    summary = _performance(connection, "C1", prices, "2026-10-06T03:00:00Z")["summary"]
+    buy_hold = float(np.log(98 / 100) * 10_000)
+    assert round(summary["buy_hold_bps"], 6) == round(buy_hold, 6)
+    assert summary["unrealized_bps"] == -254.0
+    assert round(summary["vs_buy_hold_bps"], 6) == round(0.0 - 254.0 - buy_hold, 6)
+
+
 @pytest.mark.parametrize("tf", ["1m", "5m", "15m", "1h", "4h", "1d"])
 def test_default_candle_window_works_for_every_timeframe(tmp_path, tf) -> None:
     # The page requests candles without from/to; "1m"/"5m" must not be read as pandas month offsets.
@@ -402,3 +443,18 @@ def test_public_dashboard_never_shows_secret_fragments(tmp_path, monkeypatch) ->
         server.shutdown(); server.server_close(); thread.join()
     for body in bodies:
         assert "wxyz" not in body and "stuv" not in body and "HQac" not in body
+
+
+def test_buy_hold_empty_before_book_start() -> None:
+    import sqlite3
+
+    from btcusdt_quant.paper.dashboard.server import _performance
+
+    connection = sqlite3.connect(":memory:")
+    for table in ("daily_pnl", "trades"):
+        connection.execute(f"create table {table} (book text, boundary text, date text, net_bps real, entry_time text)")
+    connection.execute("create table klines_1m (open_time text, open real, close real, closed integer)")
+    connection.execute("insert into klines_1m values ('2026-10-07T05:00:00+00:00', 100, 100, 1)")
+    prices = [{"time_utc": "2026-10-07T00:00:00Z", "open": 102.0, "close": 98.0}]
+    summary = _performance(connection, "K09", prices, "2026-10-07T06:00:00Z")["summary"]
+    assert summary["buy_hold_bps"] is None and summary["vs_buy_hold_bps"] is None

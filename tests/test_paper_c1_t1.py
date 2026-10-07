@@ -37,7 +37,7 @@ def test_config_dashboard_and_notifications_expose_comparison_book() -> None:
     assert BOOK_LABELS["C1_T1"] == "C1 T+1분 진입 (비교)"
     message = format_message("entry", {"book": "C1_T1", "side": -1, "price": 100,
                                         "candidate": "F3", "exit_time": "later"})
-    assert message == "진입 | C1_T1 숏 | 100.0 | 신호 F3 | 예정 later"
+    assert message == "[진입] C1_T1 ▼숏\n가격 100.0\n신호 F3\n최대 보유 끝 later KST"
 
 
 def test_r2_39_c1_x_exact_and_q3_restart(tmp_path) -> None:

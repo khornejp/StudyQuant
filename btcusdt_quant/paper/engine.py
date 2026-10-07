@@ -11,7 +11,7 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
-from . import book, leverage, rules
+from . import book, catalog, leverage, rules
 from .broker import PaperBroker
 from .config import PaperConfig
 from .store import PaperStore, utc_text
@@ -162,7 +162,7 @@ class PaperEngine:
         funding.attrs["_time_ns"] = funding.time.array.asi8
         funding.attrs["_rates"] = funding.rate.to_numpy(float)
         candidates_used = tuple(dict.fromkeys(
-            candidate for name in self.config.books for candidate in BOOKS[name]))
+            candidate for name in self.config.books if name in BOOKS for candidate in BOOKS[name]))
         generated = {candidate: rules.make_trades(market, features, candidate)
                      for candidate in candidates_used}
         end_price = float(market.loc[market.open_time.lt(end), "close"].iloc[-1])
@@ -195,10 +195,12 @@ class PaperEngine:
         leverage_books = (self.config.books if self.config.leverage_books is None else
                           self.config.leverage_books)
         for name in self.config.books:
-            candidates = BOOKS[name]
             book_start = pd.Timestamp(self.config.book_start_times.get(name, start))
             if book_start.tzinfo is None:
                 raise ValueError("book start must be timezone-aware")
+            if name in catalog.BOOKS:        # written by scripts/paper_catalog.py
+                continue
+            candidates = BOOKS[name]
             execution_delay = EXECUTION_DELAYS.get(name, 0)
             if execution_delay:
                 raw = window(rules.make_first_trades(
@@ -267,10 +269,12 @@ class PaperEngine:
             daily.insert(0, "boundary", boundary); daily.insert(0, "book", name)
             daily_parts.append(daily)
         daily = pd.concat(daily_parts, ignore_index=True) if daily_parts else pd.DataFrame()
+        catalog_names = tuple(catalog.BOOKS)
+        own = ",".join("?" * len(catalog_names))
         with self.store.transaction() as connection:
-            connection.execute("DELETE FROM trades")
-            connection.execute("DELETE FROM daily_pnl")
-            connection.execute("DELETE FROM positions")
+            connection.execute(f"DELETE FROM trades WHERE book NOT IN ({own})", catalog_names)
+            connection.execute(f"DELETE FROM daily_pnl WHERE book NOT IN ({own})", catalog_names)
+            connection.execute(f"DELETE FROM positions WHERE book NOT IN ({own})", catalog_names)
             connection.execute("DELETE FROM leverage_state")
             connection.execute("DELETE FROM leverage_positions")
             connection.execute("DELETE FROM leverage_trades")

@@ -68,7 +68,8 @@ def main() -> None:
                     logging.exception("paper cycle failed: %s", type(error).__name__)
                 completed += 1
                 if not args.minutes or completed < args.minutes:
-                    delay = max(1.0, 62.0 - pd.Timestamp.now(tz="UTC").second)
+                    # REST runs at :10 so the WebSocket close (at :00) stores the bar first; REST only fills misses.
+                    delay = max(1.0, 70.0 - pd.Timestamp.now(tz="UTC").second)
                     time.sleep(delay)
         finally:
             collector.close()

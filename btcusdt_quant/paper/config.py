@@ -38,6 +38,7 @@ class PaperConfig:
     telegram_alert: bool = True
     telegram_retry_base_seconds: float = 5.0
     telegram_retry_max_seconds: float = 300.0
+    telegram_books: tuple[str, ...] | None = None   # None = every book; catalog books stay off Telegram
     alert_collector_lag_seconds: float = 10.0
     alert_gap_minutes: int = 1
     alert_disk_free_ratio: float = 0.10
@@ -86,7 +87,7 @@ def load_config(path: str | Path = "config/paper.toml") -> PaperConfig:
     values = payload.get("paper", payload)
     if "books" in values:
         values["books"] = tuple(values["books"])
-    for name in ("comparison_books", "leverage_books"):
+    for name in ("comparison_books", "leverage_books", "telegram_books"):
         if name in values:
             values[name] = tuple(values[name])
     config = PaperConfig(**values)

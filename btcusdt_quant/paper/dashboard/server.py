@@ -19,7 +19,8 @@ import numpy as np
 import pandas as pd
 from plotly.offline import get_plotlyjs
 
-from .. import rules
+from .. import catalog, rules
+from btcusdt_quant.sim.strategies import CATALOG
 from ..config import credential_status, telegram_status
 
 STATIC = Path(__file__).with_name("index.html")
@@ -319,14 +320,178 @@ class _ConditionCache:
             return self.value
 
 
+INDICATOR_LABELS = {
+    "global_ls": "LS 비율", "q10": "q10", "q90": "q90", "q20": "q20", "q80": "q80",
+    "volume_z": "거래량 z", "close": "종가", "high20": "직전20봉 고가", "high55": "직전55봉 고가",
+    "low55": "직전55봉 저가", "low10": "직전10봉 저가", "high10": "직전10봉 고가",
+    "pred_range_1h_bps": "예측 range_1h(bps)", "pred_exc_1h_bps": "예측 exc_1h(bps)",
+    "squeeze_bars": "스퀴즈 연속봉", "bb_mid": "BB 중앙", "bb_lower": "BB 하단", "bb_upper": "BB 상단",
+    "kc_upper": "KC 상단", "kc_lower": "KC 하단", "rsi": "RSI", "grid_step_bps": "그리드 간격(bps)", "base": "기준가",
+    "ema9_minus_ema21": "EMA9−EMA21", "ema9": "EMA9", "ema21": "EMA21", "supertrend_direction": "슈퍼트렌드 방향",
+    "sign_15m": "15분 부호", "sign_1h": "1시간 부호", "sign_4h": "4시간 부호", "range_high": "범위 고가",
+    "range_low": "범위 저가", "range_bps": "범위(bps)", "vwap_gap_z": "VWAP 괴리 z", "vwap": "VWAP",
+    "lower_wick_atr": "아래꼬리/ATR", "upper_wick_atr": "위꼬리/ATR", "streak": "연속봉(+양/−음)",
+    "funding_bps": "funding(bps)", "q05_bps": "q05(bps)", "q95_bps": "q95(bps)", "premium_z": "premium z",
+    "taker_share_z": "taker 비중 z", "taker_share": "taker 비중", "cvd": "CVD", "cvd_at_prior_high": "직전 고점 CVD",
+    "cvd_at_prior_low": "직전 저점 CVD", "new_high": "20봉 신고가", "new_low": "20봉 신저가",
+    "A2_side": "A2", "E1_side": "E1", "F3_side": "F3-30", "F3W_side": "F3W-30"}
+
+
+def _indicator_text(values: dict) -> str:
+    parts = []
+    for key, value in values.items():
+        if value is None:
+            continue
+        text = f"{value:,.0f}" if abs(value) >= 1000 else f"{value:.4g}"
+        parts.append(f"{INDICATOR_LABELS.get(key, key)} {text}")
+    return " · ".join(parts)
+
+
+def _catalog_row_text(row: dict) -> str:
+    side = int(row["side"] or 0)
+    parts = ["롱 신호" if side > 0 else "숏 신호" if side < 0 else "신호 없음"]
+    indicators = json.loads(row.get("indicators") or "{}")
+    if indicators:
+        parts.append(_indicator_text(indicators))
+    if row.get("entry") == "oco" and row.get("upper") is not None:
+        parts.append(f"역지정가 위 {row['upper']:,.1f} / 아래 {row['lower']:,.1f}")
+    if row.get("entry") == "grid" and row.get("upper") is not None:
+        parts.append(f"그리드 1단 위 {row['upper']:,.1f} / 아래 {row['lower']:,.1f}")
+    if row.get("M") is not None:
+        parts.append(f"탐지기 M {row['M'] * 100:.0f}%")
+    if row.get("stop_bps") is not None:
+        parts.append(f"E {row['stop_bps']:.0f} bps")
+    if row.get("exit_long"):
+        parts.append("롱 청산 조건")
+    if row.get("exit_short"):
+        parts.append("숏 청산 조건")
+    if not row.get("allow_entry"):
+        parts.append("진입 차단(관문·예측 없음)")
+    return " · ".join(parts)
+
+
+def _catalog_conditions(connection: sqlite3.Connection, book: str, tf: str,
+                        start_time: str | None) -> dict[str, object]:
+    spec_id = catalog.BOOKS[book][0]
+    spec = CATALOG[spec_id]
+    try:
+        signals = _frame(connection, "catalog_signals", "book=?", (book,))
+    except Exception:
+        signals = pd.DataFrame()
+    trades = _frame(connection, "trades", "book=? AND boundary='PESS'", (book,))
+    filled = set(pd.to_datetime(trades.entry_time, utc=True)) if not trades.empty else set()
+    for row in _frame(connection, "positions", "book=?", (book,)).itertuples(index=False):
+        filled.add(pd.Timestamp(row.entry_time))
+    gated = catalog.BOOKS[book][1]
+    try:
+        decided = _frame(connection, "catalog_decisions", "book=?", (book,))
+    except Exception:
+        decided = pd.DataFrame()
+    decision_of = ({pd.Timestamp(r["signal_time"]): r for r in _records(decided)} if not decided.empty else {})
+    rows, model_rows = [], []
+    for row in _records(signals.sort_values("decision_time")) if not signals.empty else []:
+        decision = pd.Timestamp(row["decision_time"])
+        side = int(row["side"] or 0)
+        status = reason = None
+        if side or row.get("entry") in ("oco", "grid"):
+            status = "filled" if decision + pd.Timedelta(minutes=1) in filled else ("dropped" if side else None)
+            reason = None if status != "dropped" else ("holding" if row["allow_entry"] else "gate")
+        indicators = json.loads(row.get("indicators") or "{}")
+        primary = next(iter(indicators), None)
+        value = ((None if row.get("M") is None else row["M"] * 100) if gated else
+                 indicators.get(primary) if primary is not None else row.get("close"))
+        event = decision_of.get(decision)
+        text = _catalog_row_text(row)
+        if catalog.needs_model(book) and (side or row.get("entry") in ("oco", "grid")):
+            text += " · " + _decision_text(event)
+        rows.append({"time": int(decision.timestamp()), "decision_time": _iso(decision), "side": side,
+                     "value": value, "close": row.get("close"), "condition_met": bool(side),
+                     "direction": "long" if side > 0 else "short" if side < 0 else None,
+                     "signal_status": status, "signal_reason": reason, "text": text})
+        model = json.loads(row.get("model") or "null")
+        if model is not None:
+            model_rows.append({"time": int(decision.timestamp()), "decision_time": _iso(decision), "side": 0,
+                               "value": None if model["M"] is None else model["M"] * 100, "condition_met": False,
+                               "signal_status": None, "text": _model_text(model, gated, spec.gate)})
+    last = rows[-1] if rows else None
+    primary_key = (next(iter(json.loads(signals.indicators.iloc[-1] or "{}")), None)
+                   if not signals.empty and "indicators" in signals else None)
+    holding = not _frame(connection, "positions", "book=?", (book,)).empty
+    cadence = spec.cadence_min or 60
+    now = pd.Timestamp.now(tz="UTC")
+    next_decision = now.floor(f"{cadence}min") + pd.Timedelta(minutes=cadence)
+    leg = {"candidate": f"catalog:{spec_id}", "name": f"{catalog.label(book)} — {catalog.definition(book)}",
+           "kind": "catalog", "value_label": "탐지기 M %" if gated else INDICATOR_LABELS.get(primary_key, primary_key or "종가"),
+           "decision_cadence_minutes": cadence, "max_hold_hours": round(spec.hold_min / 60, 2),
+           "last_decision": None if last is None else {"decision_time": last["decision_time"], "text": last["text"]},
+           "next_estimate": None, "current_text": None if last is None else last["text"], "rows": rows,
+           **{k: None for k in ("long_account_pct", "upper_pct", "lower_pct", "distance_to_short", "distance_to_long")}}
+    legs = [leg]
+    if model_rows:
+        model_leg = {"candidate": f"model:{spec_id}", "name": "PatchTST 예측 (w730_raw, 15분마다)", "kind": "catalog",
+                     "value_label": "탐지기 M %", "decision_cadence_minutes": 15, "max_hold_hours": None,
+                     "last_decision": {"decision_time": model_rows[-1]["decision_time"], "text": model_rows[-1]["text"]},
+                     "next_estimate": None, "current_text": model_rows[-1]["text"], "rows": model_rows,
+                     **{k: None for k in ("long_account_pct", "upper_pct", "lower_pct", "distance_to_short",
+                                          "distance_to_long")}}
+        legs.append(model_leg)
+    return {"schema_version": 3, "book": book, "tf": tf, "start_time": start_time, "source": "paper_catalog",
+            "generated_at": _iso(now), "data_cutoff": None if last is None else last["decision_time"],
+            "summary": {"holding": holding, "holding_text": "보유 중, 신호 무시" if holding else "미보유",
+                        "next_decision_time": _iso(next_decision),
+                        "next_decision_kst": next_decision.tz_convert("Asia/Seoul").isoformat(),
+                        "minutes_remaining": max(0, math.ceil((next_decision - now) / pd.Timedelta(minutes=1))),
+                        "estimate_label": "5분 주기 계산",
+                        "legs": [{k: x[k] for k in ("candidate", "name", "kind", "max_hold_hours",
+                                                    "decision_cadence_minutes", "last_decision", "next_estimate",
+                                                    "current_text")} for x in legs]},
+            "legs": legs}
+
+
+def _decision_text(event: dict | None) -> str:
+    if event is None:
+        return "결정 대기(예측 대기)"
+    status = event["status"]
+    if status == "decided":
+        lag = (pd.Timestamp(event["decided_at"]) - pd.Timestamp(event["signal_time"])).total_seconds()
+        return f"결정 {_kst_hm(event['decision_time'])} KST · 체결 +1분 (신호 후 {lag:.0f}초)"
+    return "만료(예측이 늦음)" if status == "expired_late" else "만료(예측 없음)"
+
+
+def _kst_hm(value) -> str:
+    return pd.Timestamp(value).tz_convert("Asia/Seoul").strftime("%H:%M")
+
+
+def _model_text(model: dict, gated: bool, gate: str | None) -> str:
+    parts = []
+    if model.get("M") is not None:
+        parts.append(f"M {model['M'] * 100:.0f}%")
+    if model.get("L") is not None:
+        parts.append(f"L {model['L'] * 100:.0f}%")
+    if model.get("E_bps") is not None:
+        parts.append(f"E(exc_{model['E_head']}) {model['E_bps']:.0f} bps")
+    if model.get("available_at") and model.get("prediction_ts"):
+        lag = (pd.Timestamp(model["available_at"]) - pd.Timestamp(model["prediction_ts"])).total_seconds()
+        parts.append(f"예측 {_kst_hm(model['prediction_ts'])} KST, 생성 지연 {lag:.0f}초" if lag < 3600
+                     else f"예측 {_kst_hm(model['prediction_ts'])} KST (백필)")
+    elif model.get("M") is None:
+        parts.append("예측 없음 → 신규 진입 금지")
+    if gated and model.get("M") is not None:
+        open_ = model["M"] >= 2 / 3 if gate == "HIGH" else model["M"] <= 1 / 3
+        parts.append(("관문 열림" if open_ else "관문 닫힘") + (" (M ≥ 67%)" if gate == "HIGH" else " (M ≤ 33%)"))
+    return " · ".join(parts)
+
+
 def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
                         book: str, tf: str,
                         start_time: str | None = None) -> dict[str, object]:
     requested_book = book
     if book.endswith("_x3"):
         book = book[:-3]
-    if book not in CONDITION_BOOKS:
-        raise ValueError(f"book must be one of {','.join(CONDITION_BOOKS)}")
+    if book in catalog.BOOKS:
+        return _catalog_conditions(connection, book, tf, start_time)
+    if book not in CONDITION_BOOKS and book not in catalog.BOOKS:
+        raise ValueError(f"book must be one of {','.join((*CONDITION_BOOKS, *catalog.BOOKS))}")
     if tf not in TF_SECONDS:
         raise ValueError("tf must be one of 1m,5m,15m,1h,4h,1d")
     cached = cache.get(connection)
@@ -346,8 +511,11 @@ def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
     position_table = "leverage_positions" if requested_book.endswith("_x3") else "positions"
     position = _frame(connection, position_table, "book=?", (requested_book,))
     holding = not position.empty
+    # An open position is a filled entry too; without this the live entry showed as "dropped".
+    for row in _frame(connection, "positions", "book=?", (book,)).itertuples(index=False):
+        accepted.add((pd.Timestamp(row.entry_time).value, None))
     legs = []
-    for candidate in CONDITION_BOOKS[book]:
+    for candidate in CONDITION_BOOKS.get(book, ()):    # catalog books have no condition panel yet
         frame = cached["details"][candidate]
         rows = []
         for row in frame.itertuples(index=False):
@@ -397,7 +565,8 @@ def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
                         for name in readable_fields},
                      "current_text": _condition_text(candidate, current), "rows": rows})
     now = pd.Timestamp.now(tz="UTC")
-    cadence = 5 if rules.F3_5M in CONDITION_BOOKS[book] else 60
+    cadence = (CATALOG[catalog.BOOKS[book][0]].cadence_min or 60 if book in catalog.BOOKS else
+               5 if rules.F3_5M in CONDITION_BOOKS[book] else 60)
     next_decision = now.floor(f"{cadence}min") + pd.Timedelta(minutes=cadence)
     remaining = max(0, math.ceil((next_decision - now) / pd.Timedelta(minutes=1)))
     return {"schema_version": 3, "book": requested_book, "tf": tf,
@@ -478,6 +647,17 @@ def _candle_rows(connection: sqlite3.Connection, tf: str, start: str | None,
     return payload, {"latest_price": float(last_row["close"]), "latest_time": _iso(last_time)}
 
 
+def _position_markers(positions: pd.DataFrame) -> list[dict[str, object]]:
+    rows = []
+    for position in positions.to_dict("records"):
+        side = int(position["side"])
+        rows.append({"trade_id": None, "side": side, "side_label": "롱" if side > 0 else "숏",
+                     "kind": "entry", "time": int(_utc(position["entry_time"]).timestamp()),
+                     "time_utc": position["entry_time"], "price": float(position["entry_price"]),
+                     "net_bps": None, "pnl_usd": None, "exit_reason": "보유 중"})
+    return rows
+
+
 def _trade_markers(trades: pd.DataFrame) -> list[dict[str, object]]:
     if trades.empty:
         return []
@@ -533,6 +713,31 @@ def _drawdown(values: pd.Series) -> pd.Series:
     return values.cummax().clip(lower=0) - values
 
 
+def _first_open_at(connection: sqlite3.Connection, time: pd.Timestamp) -> float | None:
+    try:
+        row = connection.execute("SELECT open FROM klines_1m WHERE closed=1 AND open_time>=? "
+                                 "ORDER BY open_time LIMIT 1", (time.isoformat(),)).fetchone()
+    except sqlite3.OperationalError:   # no 1m table (e.g. a reduced test database)
+        return None
+    return None if row is None else float(row[0])
+
+
+def _has_minutes(connection: sqlite3.Connection) -> bool:
+    try:
+        return connection.execute("SELECT 1 FROM klines_1m LIMIT 1").fetchone() is not None
+    except sqlite3.OperationalError:
+        return False
+
+
+def _open_unrealized_bps(connection: sqlite3.Connection, book: str) -> float:
+    """Gross mark of the open position (no exit cost), 0 when flat."""
+    try:
+        row = connection.execute("SELECT unrealized_bps FROM positions WHERE book=?", (book,)).fetchone()
+    except sqlite3.OperationalError:
+        return 0.0
+    return 0.0 if row is None or row[0] is None else float(row[0])
+
+
 def _performance(connection: sqlite3.Connection, book: str,
                  daily_prices: list[dict[str, object]] | None = None,
                  start_time: str | None = None) -> dict[str, object]:
@@ -586,16 +791,26 @@ def _performance(connection: sqlite3.Connection, book: str,
     if daily_prices is None:
         daily_prices, _ = _candle_rows(connection, "1d", None, None)
     prices = pd.DataFrame(daily_prices or [])
+    anchor = None
     if start_time is not None and not prices.empty:
-        # Buy-and-hold is the paper benchmark, so it starts at T0 like the books (none before T0).
-        prices = prices.loc[pd.to_datetime(prices.time_utc, utc=True) >= _utc(start_time)]
+        # Buy-and-hold is the paper benchmark, so it starts at T0 like the books (none before T0):
+        # keep the daily bar that contains T0 and price the entry at the first 1m open at or after T0.
+        t0 = _utc(start_time)
+        prices = prices.loc[pd.to_datetime(prices.time_utc, utc=True) >= t0.floor("D")]
+        anchor = _first_open_at(connection, t0)
+        if anchor is None and _has_minutes(connection):     # book not started yet: no benchmark
+            prices = prices.iloc[0:0]
     if not prices.empty:
-        buy_hold = np.log(prices.close.astype(float) / float(prices.open.iloc[0])) * 10_000
+        entry = anchor if anchor is not None else float(prices.open.iloc[0])
+        buy_hold = np.log(prices.close.astype(float) / entry) * 10_000
         series.append({"name": "BUY_HOLD", "date": prices.time_utc.str[:10].tolist(),
                        "cumulative_net_bps": buy_hold.tolist(),
                        "drawdown_bps": _drawdown(buy_hold).tolist()})
+        # The open position's mark-to-market belongs in the comparison; closed trades alone hide it.
+        unrealized = _open_unrealized_bps(connection, book)
+        summary["unrealized_bps"] = unrealized
         summary["buy_hold_bps"] = float(buy_hold.iloc[-1])
-        summary["vs_buy_hold_bps"] = float(summary["net_pess_bps"]) - float(buy_hold.iloc[-1])
+        summary["vs_buy_hold_bps"] = float(summary["net_pess_bps"]) + unrealized - float(buy_hold.iloc[-1])
     return {"schema_version": 2, "book": book, "summary": summary,
             "series": series, "monthly": monthly_rows}
 
@@ -623,7 +838,8 @@ def _book_rows(connection: sqlite3.Connection, book_names: tuple[str, ...],
             not trade_part.empty and "boundary" in trade_part) else trade_part
         cumulative = daily_part.loc[daily_part.boundary.eq("PESS"), "net_bps"].cumsum(
             ) if not daily_part.empty else pd.Series(dtype=float)
-        rows.append({"book": name, "display_book": BOOK_LABELS.get(name, name),
+        rows.append({"book": name, "display_book": BOOK_LABELS.get(name) or (
+                         catalog.label(name) if name in catalog.BOOKS else name),
                      "start_time": book_start,
                      "position": None if position.empty else _records(position)[0],
                      "trades": int(len(pess)),
@@ -678,6 +894,9 @@ def _all_trades(connection: sqlite3.Connection) -> pd.DataFrame:
 
 
 class DashboardServer(ThreadingHTTPServer):
+    # Default backlog of 5 overflowed when a page refresh (~8 parallel calls through the
+    # tunnel) met a slow conditions request; Windows then refused connections outright.
+    request_queue_size = 128
     store_path: Path
     data_root: Path
 
@@ -754,8 +973,11 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
             if path == "/api/markers":
                 book = query.get("book", [configured_books[0]])[0]
                 table = "leverage_trades" if book.endswith("_x3") else "trades"
+                open_table = "leverage_positions" if book.endswith("_x3") else "positions"
+                rows = (_trade_markers(_frame(connection, table, "book=?", (book,))) +
+                        _position_markers(_frame(connection, open_table, "book=?", (book,))))
                 self._json({"schema_version": 2, "book": book,
-                            "rows": _trade_markers(_frame(connection, table, "book=?", (book,)))})
+                            "rows": sorted(rows, key=lambda row: (row["time"], row["kind"] != "entry"))})
                 return True
             if path in {"/api/positions", "/api/positions.csv"}:
                 frame = _all_positions(connection)

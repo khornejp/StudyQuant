@@ -24,7 +24,7 @@ def test_message_format_and_outbox_dedup_restart(tmp_path, monkeypatch) -> None:
     message = format_message("exit", {"book": "C1", "price": 100, "hold_minutes": 60,
         "reason": "MAX_HOLD", "gross_bps": 1.24, "cost_bps": 4,
         "funding_bps": -.06, "net_bps": -2.82, "cumulative_net_bps": 7.77})
-    assert "총 +1.2 bps" in message and "순 -2.8 bps" in message
+    assert "가격 +1.2 bps" in message and "순 -2.8 bps" in message
     notifier = TelegramNotifier(path, env_path=secrets)
     event = {"book": "C1", "side": -1, "price": 100, "candidate": "F3",
              "exit_time": "2026-10-07T00:00:00+00:00"}
@@ -126,3 +126,23 @@ def test_leverage_entry_distance_warning_once_and_liquidation_alert(tmp_path) ->
         rows = store.frame("notifications")
     assert rows.event_type.value_counts().to_dict() == {
         "entry": 1, "distance_warning": 1, "liquidation": 1}
+
+
+def test_ws_down_alert_respects_live_forming_bar(tmp_path):
+    import json
+    import pandas as pd
+    from btcusdt_quant.paper.config import PaperConfig
+    from btcusdt_quant.paper.notify import TelegramNotifier
+    from btcusdt_quant.paper.store import PaperStore
+    path = tmp_path / "live.sqlite"
+    old = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=2)).floor("min").isoformat()
+    with PaperStore(path) as store:
+        store.upsert("collector_health", {"minute": old, "source": "ws", "lag_ms": 0.0, "gaps": 0, "retries": 0,
+                                          "status": "OK"})
+        store.set_meta("forming_kline", json.dumps({"updated_at": pd.Timestamp.now(tz="UTC").isoformat()}))
+    notifier = TelegramNotifier(path, PaperConfig(sqlite_path=str(path)))
+    notifier.configured = True
+    notifier.publish_health_alerts(tmp_path)
+    with PaperStore(path) as store:
+        keys = [r[0] for r in store.connection.execute("SELECT event_key FROM notifications")]
+    assert not [k for k in keys if k.startswith("alert:ws_down:")]      # socket alive, REST simply won the race
