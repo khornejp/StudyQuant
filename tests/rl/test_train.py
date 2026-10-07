@@ -16,6 +16,15 @@ def test_nonfinite_validation_raises(monkeypatch):
         val_fn(TemporalActorCritic(4, 3 + 7, "conv"))
 
 
+@pytest.mark.parametrize("bad", [np.nan, 0.0, -1.0])
+def test_bad_prices_raise_value_error(bad):
+    m = market(0, gaps=0)
+    T.check_minutes(m)
+    m.loc[5000, "low"] = bad
+    with pytest.raises(ValueError, match="finite and > 0"):
+        T.check_minutes(m)
+
+
 @pytest.fixture(scope="module")
 def smoke_run(tmp_path_factory):
     out = tmp_path_factory.mktemp("rl_run")

@@ -17,6 +17,13 @@ HYPOTHESIS = "강화학습 정책이 롤링 테스트에서 C1_X·단일 기법 
 NOMINAL = {"cost_bps": 4.0, "delay": 1, "slip": 0.0, "funding": "PESS", "units": 1}
 
 
+def check_minutes(minutes: pd.DataFrame) -> None:
+    """numba cannot raise on bad prices (native crash): refuse non-finite or non-positive OHLC up front."""
+    px = minutes[["open", "high", "low", "close"]].to_numpy(float)
+    if not (np.isfinite(px) & (px > 0)).all():
+        raise ValueError("minutes OHLC must be finite and > 0")
+
+
 def make_val_fn(store, minutes, funding, start, end, device):
     """val_fn(model) -> raw-bps net of the deterministic masked-argmax policy over the whole window, via replay."""
     steps = int(((store.times >= pd.Timestamp(start).value) & (store.times < pd.Timestamp(end).value)).sum())
@@ -59,6 +66,7 @@ def run_config(window: Window, variant: str, encoder: str, lr: float, seed: int,
         env_n, steps, max_tr, ev = 256, 1344, 5_000_000, 10
     store = state.fit_normalizer(full, window.train_end).apply(full)       # C9: train rows only
     minutes, funding = ctx.minutes, costs._settlement_arrays()
+    check_minutes(minutes)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = VecTradingEnv(store, minutes, funding, train_start, window.train_end, env_n,
                         EnvConfig(episode_steps=steps, randomize=True), seed)
