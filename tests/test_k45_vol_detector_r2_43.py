@@ -42,6 +42,25 @@ def test_labels_use_t_onward_and_only_t_minus_one_anchor():
     changed = r243.future_targets(anchor, origin)
     assert np.isclose(baseline[0, 0], changed[0, 0])
     assert not np.isclose(baseline[0, 5], changed[0, 5])
+    assert not np.isclose(baseline[0, 10], changed[0, 10])
+
+
+def test_excursion_is_measured_from_decision_price_and_bounded_by_range():
+    frame = minute_frame()
+    origin = pd.DatetimeIndex([frame.open_time.iloc[100]])
+    frame.loc[110, "high"] = 103.0
+    targets = np.expm1(r243.future_targets(frame, origin)[0])
+    prior = frame.close.iloc[99]
+    part = frame.iloc[100:130]
+    expected = max(np.log(part.high.max() / prior), np.log(prior / part.low.min())) * 1e4
+    assert r243.TARGETS[10] == "exc_30m" and len(r243.TARGETS) == 15
+    assert np.isclose(targets[10], expected, rtol=1e-5)
+    assert (targets[10:] <= targets[:5] + 1e-3).all()
+    past = r243.past_targets(frame, pd.DatetimeIndex([frame.open_time.iloc[200]]))[0]
+    window = frame.iloc[170:200]
+    anchor = frame.close.iloc[169]
+    assert np.isclose(past[10], max(np.log(window.high.max() / anchor),
+                                    np.log(anchor / window.low.min())) * 1e4, rtol=1e-5)
 
 
 def test_completed_bars_and_missing_minutes_are_not_interpolated():
