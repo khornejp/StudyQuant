@@ -84,14 +84,26 @@ def adaptive_state(component, k, e0, r0, r, best, armed, anchor_upper, anchor_lo
             "r0_bps": float(r0), "r_bps": float(r), "best_price": float(best), "trail_armed": bool(armed),
             "anchor_upper": float(anchor_upper), "anchor_lower": float(anchor_lower)}
 
+def adaptive_inputs(signals: pd.DataFrame, n: int, e_bps, e_min_bps) -> tuple[np.ndarray, np.ndarray]:
+    """R2_52A inputs, one value per minute row (availability, finite >0 and age <=24h applied by the caller):
+    e_bps = latest valid E as of open(m), NaN when none (OCO E0); e_min_bps = minimum of every valid E that became
+    available in (open(m-1), open(m)], NaN when none (R_t update). e_min_bps defaults to e_bps (one E per minute)."""
+    if "e0_bps" not in signals or "k" not in signals:
+        raise ValueError("R2_52A needs signal columns e0_bps and k")
+    e = np.full(n, np.nan) if e_bps is None else np.asarray(e_bps, np.float64)
+    e_min = e if e_min_bps is None else np.asarray(e_min_bps, np.float64)
+    if len(e) != n or len(e_min) != n:
+        raise ValueError("e_bps / e_min_bps must have one value per minute")
+    return e, e_min
+
 def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp,
-             config: SimConfig, e_bps: np.ndarray | None = None) -> SimResult:
-    """e_bps (R2_52A only): per minute row, the latest valid E as of that minute's open (availability, finite >0
-    and age <=24h applied by the caller), NaN when none. It tightens R_t and gives an OCO fill its E0."""
+             config: SimConfig, e_bps: np.ndarray | None = None, e_min_bps: np.ndarray | None = None) -> SimResult:
+    """e_bps / e_min_bps: R2_52A only, see adaptive_inputs."""
     if config.reentry not in ("strict", "stop_and_reverse") or config.exit_style not in ("NATIVE", "DETEXIT"):
         raise ValueError("bad config")
     if check_policy(config):
-        return _simulate_r2_52a(signals, minutes, start, end, config, e_bps)
+        return _simulate_r2_52a(signals, minutes, start, end, config, *adaptive_inputs(signals, len(minutes), e_bps,
+                                                                                       e_min_bps))
     if config.action_mode:
         signals = action_rows(signals, config)
     s_bps = config.market_slippage_bps
@@ -219,7 +231,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
     return finish(trades, pnl, t_index, c, config, open_legs, start, end)
 
 
-def _simulate_r2_52a(signals, minutes, start, end, config, e_bps) -> SimResult:
+def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min) -> SimResult:
     """R2-52A frozen minute order: E update -> stop at the open -> known state/native exit at the open -> (flat at
     the open only) market entries / OCO placement -> OCO fills -> entry bar vs hard stop -> carried stop touch ->
     best price / MFE for the next minute. One unit; hard stop entry*exp(-side*R_t), trail best*exp(-side*0.5*R_t)
@@ -227,9 +239,6 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e_bps) -> SimResult:
     s_bps, stop_slip, fee = config.market_slippage_bps, config.stop_slippage_bps, config.fee_per_side
     t_index = pd.DatetimeIndex(minutes.open_time)
     o, h, l, c = (minutes[k].to_numpy(float) for k in ("open", "high", "low", "close"))
-    e = np.full(len(minutes), np.nan) if e_bps is None else np.asarray(e_bps, float)
-    if len(e) != len(minutes):
-        raise ValueError("e_bps must have one value per minute")
     signals = signals.assign(**{name: np.nan for name in ("anchor_upper", "anchor_lower", "anchor_price")
                                 if name not in signals})
     by_exec = {}
@@ -285,8 +294,8 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e_bps) -> SimResult:
             side = pos["side"]
             if i > 0:
                 pnl[i] += side * math.log(o[i] / c[i - 1]) * 1e4 * 1.0
-            if i > pos["i"] and valid(e[i]):
-                pos["r"] = min(pos["r"], pos["k"] * e[i], 300.0)
+            if i > pos["i"] and valid(e_min[i]):
+                pos["r"] = min(pos["r"], pos["k"] * e_min[i], 300.0)
             level, reason = active_stop()
             if (side == 1 and o[i] <= level) or (side == -1 and o[i] >= level):
                 book_exit(i, o[i] * (1 - side * stop_slip / 1e4), reason)
@@ -315,13 +324,11 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e_bps) -> SimResult:
                 keep = []
                 for row, expiry in pending:
                     hit = orders.fill_oco(float(row.upper), float(row.lower), o[i], h[i], l[i])
-                    if hit is None:
-                        keep.append((row, expiry))
-                    elif valid(e[i]):
+                    if hit is not None and valid(e[i]):
                         open_pos(i, hit[0], hit[1], row, float(e[i]))
                         keep = []
                         break
-                    # ponytail: a touched OCO without E is dropped (NO_ENTRY_E), never re-filled later
+                    keep.append((row, expiry))        # untouched, or touched in a NO_ENTRY_E minute: stays live
                 pending = keep
             if pos is not None:       # entry bar: full high/low against the new hard stop
                 side = pos["side"]

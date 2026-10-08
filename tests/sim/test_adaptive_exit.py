@@ -24,9 +24,10 @@ def sig(rows, t0=T0):
                                          for r in rows]).drop(columns="at"))
 
 
-def run(mod, s, m, e=None, **kw):
+def run(mod, s, m, e=None, e_min=None, **kw):
     cfg = reference.SimConfig(**{"include_funding": False, "exit_policy": "R2_52A", **kw})
-    return mod.simulate(s, m, m.open_time.iloc[0], m.open_time.iloc[-1] + pd.Timedelta(minutes=1), cfg, e_bps=e)
+    return mod.simulate(s, m, m.open_time.iloc[0], m.open_time.iloc[-1] + pd.Timedelta(minutes=1), cfg, e_bps=e,
+                        e_min_bps=e_min)
 
 
 def at(k, t0=T0):
@@ -97,7 +98,8 @@ def test_no_entry_without_e(mod):
     assert run(mod, oco, m).trades.empty                        # OCO E0 comes from the series at the fill minute
     m.loc[25, "high"] = 102.0
     e = np.full(len(m), 300.0); e[20] = np.nan
-    assert run(mod, oco, m, e, close_at_end=True).trades.empty  # the touched order without E is dropped, not reused
+    t = run(mod, oco, m, e, close_at_end=True).trades           # no-E minute is NO_ENTRY_E; the order stays live
+    assert t.entry_time.iloc[0] == at(25) and t.entry_price.iloc[0] == 101.0
     r = run(mod, oco, m, np.full(len(m), 300.0), close_at_end=True)
     assert r.trades.entry_time.iloc[0] == at(20) and r.trades.exit_reason.iloc[0] == "data_end"
 
@@ -227,6 +229,8 @@ def random_case(seed):
     m = pd.DataFrame({"open_time": t, "open": open_, "high": high, "low": low, "close": close, "volume": 1.,
                       "quote_volume": 1., "number_of_trades": 1, "taker_buy_base_volume": .5})
     e = pd.Series(np.where(np.arange(n) % 60 == 0, rng.uniform(20, 160, n), np.nan)).ffill(limit=40).to_numpy()
+    arrive = np.arange(n) % 60 == 0                              # a second, sometimes smaller E in the arrival minute
+    e_min = np.where(arrive, np.minimum(e, rng.uniform(20, 200, n)), np.nan)
     d = t[5::5][:700]
     idx = t.get_indexer(d)
     mid = close[idx]
@@ -240,7 +244,7 @@ def random_case(seed):
         "e0_bps": np.where(rng.random(len(d)) < .1, np.nan, e[idx]), "k": rng.choice([0.5, 1.0, 2.0], len(d)),
         "anchor_upper": mid * 0.997, "anchor_lower": mid * 1.003,
         "anchor_price": np.where(rng.random(len(d)) < .3, mid, np.nan)}))
-    return s, m, e
+    return s, m, e, e_min
 
 
 def same_state(a, b):
@@ -256,14 +260,60 @@ def same_state(a, b):
 @pytest.mark.parametrize("seed", range(12))
 @pytest.mark.parametrize("close_at_end", [False, True])
 def test_core_matches_reference_adaptive(seed, close_at_end):
-    s, m, e = random_case(seed)
+    s, m, e, e_min = random_case(seed)
     kw = {"include_funding": seed % 2 == 0, "close_at_end": close_at_end, "stop_slippage_bps": 1.0 * (seed % 3),
           "market_slippage_bps": 0.5 * (seed % 2)}
-    a = run(reference, s, m, e, **kw)
-    b = run(core, s, m, e, **kw)
+    a = run(reference, s, m, e, e_min, **kw)
+    b = run(core, s, m, e, e_min, **kw)
     assert len(a.trades) >= 10 and {"stop", "trail"} <= set(a.trades.exit_reason)
     pd.testing.assert_frame_equal(a.trades, b.trades, atol=1e-9, rtol=0)
     assert np.allclose(a.minute_pnl.to_numpy(), b.minute_pnl.to_numpy(), atol=1e-9, rtol=0)
     assert same_state(a.open_position, b.open_position)
     if close_at_end:
         assert ledger_ok(a) and a.open_position is None
+
+
+# Independent expected values: literals computed by hand (100*exp(-R/1e4)), not by either engine.
+@MODS
+def test_hand_k_scaling_and_cap(mod):
+    m = flat(); m.loc[30, "low"] = 98.0
+    t = run(mod, sig([{"at": 15, "side": 1, "k": 1.5}]), m).trades.iloc[0]          # R0 = 1.5*100 = 150
+    assert t.exit_time == at(30) and abs(t.exit_price - 98.51119396030626) < 1e-9
+    m = flat(); m.loc[30, "low"] = 96.0
+    t = run(mod, sig([{"at": 15, "side": 1, "k": 2.0, "e0_bps": 200.0}]), m).trades.iloc[0]   # 400 -> cap 300
+    assert t.exit_time == at(30) and abs(t.exit_price - 97.04455335485082) < 1e-9
+    m = flat(); m.loc[35, "low"] = 99.5; m.loc[40, "low"] = 99.1
+    e = np.full(len(m), np.nan); e[20:] = 40.0                  # R_t = min(300, 2*40) = 80 -> 99.2032; E alone: 99.6008
+    t = run(mod, sig([{"at": 15, "side": 1, "k": 2.0, "e0_bps": 200.0}]), m, e).trades.iloc[0]
+    assert t.exit_time == at(40) and abs(t.exit_price - 99.20319148370606) < 1e-9
+
+
+@MODS
+def test_hand_several_e_in_one_minute(mod):
+    m = flat(); m.loc[30, "low"] = 99.7
+    e = np.full(len(m), np.nan); e[20:] = 100.0                 # latest E at open(20) is 100 ...
+    e_min = np.full(len(m), np.nan); e_min[20] = 20.0           # ... but E=20 also arrived in that minute
+    t = run(mod, sig([{"at": 15, "side": 1}]), m, e, e_min).trades.iloc[0]
+    assert t.exit_time == at(30) and abs(t.exit_price - 99.80019986673331) < 1e-9
+    m = flat(); m.loc[20, "high"] = 102.0; m.loc[25, "low"] = 99.9
+    oco = sig([{"at": 15, "side": 0, "entry": "oco", "upper": 101.0, "lower": 99.0, "expiry_min": 60}])
+    e = np.full(len(m), 100.0); e_min = np.full(len(m), np.nan); e_min[20] = 20.0
+    t = run(mod, oco, m, e, e_min).trades.iloc[0]               # OCO E0 = latest (100): hard 101*exp(-.01)
+    assert t.entry_time == at(20) and t.exit_time == at(25) and abs(t.exit_price - 99.99503320866597) < 1e-9
+
+
+@MODS
+def test_hand_oco_survives_no_e_minute(mod):
+    m = flat(); m.loc[20, "high"] = 102.0; m.loc[30, "high"] = 101.5
+    oco = sig([{"at": 15, "side": 0, "entry": "oco", "upper": 101.0, "lower": 99.0, "expiry_min": 60}])
+    e = np.full(len(m), np.nan); e[30:] = 300.0
+    r = run(mod, oco, m, e, close_at_end=True)
+    t = r.trades.iloc[0]
+    assert t.entry_time == at(30) and t.entry_price == 101.0 and t.exit_reason == "data_end"
+
+
+def test_missing_adaptive_columns_rejected():
+    m = flat(); s = sig([{"at": 15, "side": 1}]).drop(columns="k")
+    for mod in (reference, core):
+        with pytest.raises(ValueError, match="e0_bps and k"):
+            run(mod, s, m)

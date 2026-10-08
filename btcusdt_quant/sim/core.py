@@ -4,7 +4,8 @@ import math
 import numba
 import numpy as np, pandas as pd
 from . import costs
-from .reference import TRADE_COLUMNS, SimConfig, SimResult, action_rows, adaptive_state, check_policy, finish
+from .reference import (TRADE_COLUMNS, SimConfig, SimResult, action_rows, adaptive_inputs, adaptive_state,
+                        check_policy, finish)
 
 REASONS = ("stop", "breakeven", "take", "max_hold", "reverse", "flag", "trail", "state")
 # R2_52A float state slots (reference._simulate_r2_52a pos dict)
@@ -341,7 +342,8 @@ def _valid(x):
 
 @numba.njit(cache=True)
 def _adaptive_loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lower, d_expiry, d_component,
-                   d_exit_long, d_exit_short, d_allow, d_e0, d_k, d_up, d_lo, d_px, e, fee_per_side, stop_slip, mslip):
+                   d_exit_long, d_exit_short, d_allow, d_e0, d_k, d_up, d_lo, d_px, e, e_min, fee_per_side, stop_slip,
+                   mslip):
     """R2_52A; line-for-line reference._simulate_r2_52a. One leg, so leg slot 0 is the position."""
     n = len(o)
     pnl = np.zeros(n)
@@ -361,8 +363,8 @@ def _adaptive_loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_uppe
             side = ist[SIDE]
             if i > 0:
                 pnl[i] += side * math.log(o[i] / c[i - 1]) * 1e4 * 1.0
-            if i > leg_tidx[0] and _valid(e[i]):
-                ast[AR] = min(ast[AR], ast[AK] * e[i], 300.0)
+            if i > leg_tidx[0] and _valid(e_min[i]):
+                ast[AR] = min(ast[AR], ast[AK] * e_min[i], 300.0)
             level, reason = _adaptive_stop(side, leg_price[0], ast)
             if (side == 1 and o[i] <= level) or (side == -1 and o[i] >= level):
                 _book_exit(i, 1.0, o[i] * (1 - side * stop_slip / 1e4), reason, o, c, pnl, ist, leg_units, leg_price,
@@ -413,15 +415,13 @@ def _adaptive_loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_uppe
                         side = 1; price = up
                     elif not math.isnan(down):
                         side = -1; price = down
-                    if side == 0:
-                        oco_rows[kept] = oco_rows[q]; oco_exp[kept] = oco_exp[q]; kept += 1
-                    elif _valid(e[i]):
+                    if side != 0 and _valid(e[i]):
                         _adaptive_open(i, side, price, oco_row, e[i], t_ns, c, pnl, ist, fst, leg_units, leg_price,
                                        leg_tidx, leg_dec, no_hold, no_bps, d_component, d_k, d_up, d_lo, ast,
                                        fee_per_side)
                         kept = 0
                         break
-                    # ponytail: a touched OCO without E is dropped (NO_ENTRY_E), never re-filled later
+                    oco_rows[kept] = oco_rows[q]; oco_exp[kept] = oco_exp[q]; kept += 1
                 n_oco = kept
             if ist[OPEN] == 1:
                 side = ist[SIDE]
@@ -449,8 +449,8 @@ def _adaptive_loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_uppe
 
 
 def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp,
-             config: SimConfig, e_bps: np.ndarray | None = None) -> SimResult:
-    """e_bps: R2_52A per-minute E series, same contract as reference.simulate."""
+             config: SimConfig, e_bps: np.ndarray | None = None, e_min_bps: np.ndarray | None = None) -> SimResult:
+    """e_bps / e_min_bps: R2_52A per-minute E series, contract in reference.adaptive_inputs."""
     if config.reentry not in ("strict", "stop_and_reverse") or config.exit_style not in ("NATIVE", "DETEXIT"):
         raise ValueError("bad config")
     adaptive = check_policy(config)
@@ -473,9 +473,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
     o, h, l, c = (minutes[k].to_numpy(np.float64) for k in ("open", "high", "low", "close"))
     ast = None
     if adaptive:
-        e = np.full(len(t_ns), np.nan) if e_bps is None else np.asarray(e_bps, np.float64)
-        if len(e) != len(t_ns):
-            raise ValueError("e_bps must have one value per minute")
+        e, e_min = adaptive_inputs(signals, len(t_ns), e_bps, e_min_bps)
         col = lambda name: (signals[name] if name in signals else pd.Series(np.nan, index=signals.index)).to_numpy(
             np.float64)
         *loop, ast = _adaptive_loop(
@@ -485,7 +483,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
             (signals.component if "component" in signals else pd.Series(0, index=signals.index)).to_numpy(np.int64),
             signals.exit_long.to_numpy(bool), signals.exit_short.to_numpy(bool), signals.allow_entry.to_numpy(bool),
             signals.e0_bps.to_numpy(np.float64), signals.k.to_numpy(np.float64), col("anchor_upper"),
-            col("anchor_lower"), col("anchor_price"), e, float(config.fee_per_side), float(config.stop_slippage_bps),
+            col("anchor_lower"), col("anchor_price"), e, e_min, float(config.fee_per_side), float(config.stop_slippage_bps),
             float(config.market_slippage_bps))
     elif config.action_mode:
         side = action_rows(signals, config).side.to_numpy(np.int64)
