@@ -20,6 +20,15 @@ def _z_side(z: pd.Series, momentum: bool = True) -> np.ndarray:
     return side if momentum else -side
 
 
+def _z_state(z, long_sign: int) -> dict:
+    """R2-52A: exit when current_z * entry_z <= 0, both finite. A long entered with sign(entry_z) = long_sign
+    (a short with the opposite sign), so the row flags need only the current z."""
+    z = np.asarray(z, float)
+    with np.errstate(invalid="ignore"):
+        return {"ax_exit_long": np.isfinite(z) & (z * long_sign <= 0),
+                "ax_exit_short": np.isfinite(z) & (z * long_sign >= 0)}
+
+
 def k18_funding_extreme(ctx: Context) -> pd.DataFrame:
     """At the first 15 m decision after each settlement: rate above the prior-90-day (270 settlements) q95 ->
     short, below q05 -> long; 8 h hold."""
@@ -43,7 +52,8 @@ def k19_premium_mr(ctx: Context) -> pd.DataFrame:
     z = pd.Series(indicators.zscore_past(hourly["mean"].reset_index(drop=True), DAYS30_1H, DAYS30_1H // 2).to_numpy(),
                   index=hourly.index + pd.Timedelta(hours=1))
     decisions = ctx.bars(60).decision_time          # one row per hour; hours without a full premium bar stay flat
-    return make_table(decisions, -_z_side(z.reindex(decisions)), 1, 240, ind_premium_z=z.reindex(decisions).to_numpy())
+    return make_table(decisions, -_z_side(z.reindex(decisions)), 1, 240, ind_premium_z=z.reindex(decisions).to_numpy(),
+                      **_z_state(z.reindex(decisions), -1))
 
 
 def k20_oi_price(variant: str):
@@ -70,7 +80,7 @@ def k21_taker_imbalance(variant: str):
         share = b.taker_buy / b.volume.replace(0, np.nan)
         z = indicators.zscore_past(share, DAYS30_15M, DAYS30_15M // 2)
         return make_table(b.decision_time, _z_side(z, variant == "A"), 1, 120, ind_taker_share_z=z.to_numpy(),
-                          ind_taker_share=share.to_numpy())
+                          ind_taker_share=share.to_numpy(), **_z_state(z, 1 if variant == "A" else -1))
     return build
 
 
@@ -105,14 +115,16 @@ def k23_toptrader_ls(ctx: Context) -> pd.DataFrame:
     top = pd.Series(_metric(ctx, "top_ls", b.decision_time))
     roll = top.rolling(DAYS30_1H, min_periods=DAYS30_1H)
     side = np.where(top >= roll.quantile(.90), -1, np.where(top <= roll.quantile(.10), 1, 0))
-    return make_table(b.decision_time, side, 1, 240)
+    q50 = roll.quantile(.5)                                          # R2-52A state: exit at the median
+    return make_table(b.decision_time, side, 1, 240, ax_exit_long=(top >= q50).to_numpy(),
+                      ax_exit_short=(top <= q50).to_numpy())
 
 
 def k24_taker_lsr(ctx: Context) -> pd.DataFrame:
     """Taker long/short volume ratio z (30 days): > 2 long, < -2 short; 2 h hold."""
     b = ctx.bars(15)
     z = indicators.zscore_past(pd.Series(_metric(ctx, "taker_lsr", b.decision_time)), DAYS30_15M, DAYS30_15M // 2)
-    return make_table(b.decision_time, _z_side(z), 1, 120)
+    return make_table(b.decision_time, _z_side(z), 1, 120, **_z_state(z, 1))
 
 
 register(Spec("K18", "futures", 0, 480, "12h", "HIGH", k18_funding_extreme))

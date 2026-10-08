@@ -22,7 +22,8 @@ def hourly_levels(ctx: Context) -> pd.DataFrame:
     roll, roll_w = g.rolling(2160, min_periods=720), g.rolling(720, min_periods=720)
     return pd.DataFrame({"decision_time": h.decision_time, "g": g,
                          "f3_lo": roll.quantile(.10), "f3_hi": roll.quantile(.90),
-                         "f3w_lo": roll_w.quantile(.20), "f3w_hi": roll_w.quantile(.80)})
+                         "f3w_lo": roll_w.quantile(.20), "f3w_hi": roll_w.quantile(.80),
+                         "f3_mid": roll.quantile(.5), "f3w_mid": roll_w.quantile(.5)})   # R2-52A F3/F3W state
 
 
 def _side(current, lo, hi) -> np.ndarray:
@@ -31,17 +32,37 @@ def _side(current, lo, hi) -> np.ndarray:
         return np.where(current >= hi, -1, np.where(current <= lo, 1, 0))
 
 
+def _k01_state(component, h: pd.DataFrame, levels: pd.DataFrame, prior_high: pd.Series) -> dict:
+    """R2-52A: F3 rows exit long when global_ls >= q50 (short <=); E1 rows carry the prior-20 h high as the anchor
+    stored at fill and the completed hourly close as the value compared with it (long exits when close <= level)."""
+    f3 = np.asarray(component) == F3
+    with np.errstate(invalid="ignore"):
+        return {"ax_exit_long": f3 & (levels.g >= levels.f3_mid).to_numpy(),
+                "ax_exit_short": f3 & (levels.g <= levels.f3_mid).to_numpy(),
+                "anchor_upper": np.where(f3, np.nan, prior_high), "anchor_price": np.where(f3, np.nan, h.close)}
+
+
 def k01_c1x(ctx: Context) -> pd.DataFrame:
     """R2-39 C1_X: hourly; F3 (24 h, reversed only by F3) has priority over E1 (20 h)."""
     h = ctx.bars(60)
     levels = hourly_levels(ctx)
     f3 = _side(levels.g, levels.f3_lo, levels.f3_hi)
     vol = h.volume.rolling(20, min_periods=20)
-    e1 = ((h.volume - vol.mean()) / vol.std(ddof=0) > 3) & (h.close > h.high.rolling(20, min_periods=20).max().shift())
+    prior_high = h.high.rolling(20, min_periods=20).max().shift()
+    e1 = ((h.volume - vol.mean()) / vol.std(ddof=0) > 3) & (h.close > prior_high)
     e1 = e1.to_numpy(bool)
     use_f3 = f3 != 0
-    return make_table(h.decision_time, np.where(use_f3, f3, np.where(e1, 1, 0)), np.where(use_f3 | ~e1, F3, E1),
-                      np.where(use_f3, 24 * 60, 20 * 60))
+    component = np.where(use_f3 | ~e1, F3, E1)
+    return make_table(h.decision_time, np.where(use_f3, f3, np.where(e1, 1, 0)), component,
+                      np.where(use_f3, 24 * 60, 20 * 60), **_k01_state(component, h, levels, prior_high))
+
+
+def k01_ax_rows(ctx: Context, table: pd.DataFrame) -> pd.DataFrame:
+    """R2-52A: the other component's inert row each hour, so both F3 and E1 positions see every hourly state."""
+    h, levels = ctx.bars(60), hourly_levels(ctx)
+    other = np.where(table.component.to_numpy() == F3, E1, F3)
+    return make_table(h.decision_time, 0, other, table.max_hold_min.to_numpy(), allow_entry=False,
+                      **_k01_state(other, h, levels, h.high.rolling(20, min_periods=20).max().shift()))
 
 
 def fast_signals(ctx: Context) -> pd.DataFrame:
@@ -50,6 +71,7 @@ def fast_signals(ctx: Context) -> pd.DataFrame:
     vm, vs = b15.volume.rolling(20).mean(), b15.volume.rolling(20).std(ddof=0)
     e1_z, e1_high = (b15.volume - vm) / vs, b15.high.rolling(20).max().shift()
     e1 = ((e1_z > 3) & (b15.close > e1_high)).astype(int)
+    e1_ax_long = (b15.high < e1_high).to_numpy()        # R2-52A K04 state: completed bar fails the breakout level
     a2_high, a2_low = b30.high.rolling(55).max().shift(), b30.low.rolling(55).min().shift()
     a2 = np.select([b30.close > a2_high, b30.close < a2_low], [1, -1], 0)
     a2_exit_long = (b30.close < b30.low.rolling(10).min().shift()).fillna(False)
@@ -61,6 +83,10 @@ def fast_signals(ctx: Context) -> pd.DataFrame:
                         "a2_exit_short": a2_exit_short.to_numpy(bool),
                         "F3-30": _side(current, fixed.f3_lo, fixed.f3_hi),
                         "F3W-30": _side(current, fixed.f3w_lo, fixed.f3w_hi),
+                        "F3_ax_long": current >= fixed.f3_mid.to_numpy(),
+                        "F3_ax_short": current <= fixed.f3_mid.to_numpy(),
+                        "F3W_ax_long": current >= fixed.f3w_mid.to_numpy(),
+                        "F3W_ax_short": current <= fixed.f3w_mid.to_numpy(),
                         "ind_A2_close": b30.close.to_numpy(), "ind_A2_high55": a2_high.to_numpy(),
                         "ind_A2_low55": a2_low.to_numpy(),
                         "ind_A2_low10": b30.low.rolling(10).min().shift().to_numpy(),
@@ -69,12 +95,14 @@ def fast_signals(ctx: Context) -> pd.DataFrame:
                         "ind_F3W_q20": fixed.f3w_lo.to_numpy(), "ind_F3W_q80": fixed.f3w_hi.to_numpy()})
     grid = pd.DataFrame({"decision_time": pd.date_range(b15.decision_time.min(), b15.decision_time.max(),
                                                         freq="15min", tz="UTC")})
-    out = grid.merge(pd.DataFrame({"decision_time": b15.decision_time, "E1-15": e1, "ind_E1_volume_z": e1_z.to_numpy(),
+    out = grid.merge(pd.DataFrame({"decision_time": b15.decision_time, "E1-15": e1, "E1_ax_long": e1_ax_long,
+                                   "ind_E1_volume_z": e1_z.to_numpy(),
                                    "ind_E1_close": b15.close.to_numpy(), "ind_E1_high20": e1_high.to_numpy()}),
                      how="left").merge(s30, how="left")
     for name in ("E1-15", "A2-30", "F3-30", "F3W-30"):
         out[name] = out[name].fillna(0).astype(int)
-    for name in ("a2_exit_long", "a2_exit_short"):
+    for name in ("a2_exit_long", "a2_exit_short", "E1_ax_long", "F3_ax_long", "F3_ax_short", "F3W_ax_long",
+                 "F3W_ax_short"):
         out[name] = out[name].astype("boolean").fillna(False).astype(bool)
     return out
 
@@ -97,6 +125,11 @@ def _component_rows(fast: pd.DataFrame, name: str, cadence: int | None = None) -
         flags = {"ind_" + c[len(prefix):]: rows[c].to_numpy() for c in rows if c.startswith(prefix)}
     if name == "A2-30":
         flags.update({"exit_long": rows.a2_exit_long.to_numpy(), "exit_short": rows.a2_exit_short.to_numpy()})
+    # R2-52A state: A2 keeps its native flags; E1 is long only (no short state); F3/F3W exit at the q50
+    long, short = {"E1-15": ("E1_ax_long", None), "F3-30": ("F3_ax_long", "F3_ax_short"),
+                   "F3W-30": ("F3W_ax_long", "F3W_ax_short")}.get(name, (None, None))
+    flags["ax_exit_long"] = rows[long].to_numpy() if long else False
+    flags["ax_exit_short"] = rows[short].to_numpy() if short else False
     return make_table(rows.decision_time, rows[name], component, hold, **flags)
 
 
@@ -124,7 +157,7 @@ def _composite(book: str):
     return build
 
 
-register(Spec("K01", "baseline", 60, 24 * 60, "24h", None, k01_c1x, reentry="stop_and_reverse"))
+register(Spec("K01", "baseline", 60, 24 * 60, "24h", None, k01_c1x, reentry="stop_and_reverse", ax_rows=k01_ax_rows))
 register(Spec("K02", "reversion", 30, 4 * 60, "4h", "LOW", _single("F3-30", 30)))
 register(Spec("K03", "reversion", 30, 12 * 60, "12h", "LOW", _single("F3W-30", 30)))
 register(Spec("K04", "volatility", 15, 5 * 60, "4h", "HIGH", _single("E1-15", 15)))

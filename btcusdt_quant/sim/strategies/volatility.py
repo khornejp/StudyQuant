@@ -20,6 +20,7 @@ def _oco_band(ctx: Context, cadence: int, column: str, k: float) -> pd.DataFrame
         upper, lower = close * np.exp(k * width / 1e4), close * np.exp(-k * width / 1e4)
     return make_table(b.decision_time, 0, 1, 240, entry="oco", upper=upper, lower=lower, expiry_min=60,
                       allow_entry=np.isfinite(width) & (width > 0), ind_close=close,
+                      anchor_upper=upper, anchor_lower=lower, anchor_price=close,   # R2-52A: band stored at fill
                       **{f"ind_pred_{column.split('_', 1)[1]}_bps": width})
 
 

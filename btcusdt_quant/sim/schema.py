@@ -11,6 +11,9 @@ OPTIONAL_COLUMNS = {"component": 0}
 # anchor_upper / anchor_lower = levels stored in the position at fill, anchor_price = completed-cadence value on a
 # held-component row: long exits when anchor_price <= stored anchor_upper, short when >= stored anchor_lower.
 ADAPTIVE_COLUMNS = ("e0_bps", "k", "anchor_upper", "anchor_lower", "anchor_price")
+# R2-52A family state flags (bool, passed through when present): R2_52A exits on exit_long | ax_exit_long (short
+# alike); BASE ignores them.
+ADAPTIVE_FLAGS = ("ax_exit_long", "ax_exit_short")
 
 def validate(signals: pd.DataFrame) -> pd.DataFrame:
     missing = [c for c in SIGNAL_COLUMNS if c not in signals]
@@ -22,6 +25,9 @@ def validate(signals: pd.DataFrame) -> pd.DataFrame:
     for name in ADAPTIVE_COLUMNS:
         if name in signals:
             out[name] = signals[name].to_numpy(float)
+    for name in ADAPTIVE_FLAGS:
+        if name in signals:
+            out[name] = signals[name].to_numpy(bool)
     out["decision_time"] = pd.to_datetime(out.decision_time, utc=True)
     out = out.sort_values("decision_time", kind="stable").reset_index(drop=True)   # row order within T = priority
     if out.duplicated(["decision_time", "component"]).any():

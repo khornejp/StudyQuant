@@ -16,7 +16,8 @@ def k11_ema_cross(minutes_per_bar: int):
         diff = fast - slow
         prev = diff.shift()
         side = np.where((diff > 0) & (prev <= 0), 1, np.where((diff < 0) & (prev >= 0), -1, 0))
-        return make_table(b.decision_time, side, 1, 720, ind_ema9_minus_ema21=diff.to_numpy(),
+        return make_table(b.decision_time, side, 1, 720, ax_exit_long=(diff <= 0).to_numpy(),
+                          ax_exit_short=(diff >= 0).to_numpy(), ind_ema9_minus_ema21=diff.to_numpy(),
                           ind_ema9=fast.to_numpy(), ind_ema21=slow.to_numpy())
     return build
 
@@ -28,7 +29,8 @@ def k12_supertrend(minutes_per_bar: int):
         direction = indicators.supertrend(b, 10, 3.0)
         side = np.where(direction != direction.shift(), direction, 0)
         side[0] = 0
-        return make_table(b.decision_time, side, 1, 720, ind_supertrend_direction=direction.to_numpy(),
+        return make_table(b.decision_time, side, 1, 720, ax_exit_long=(direction != 1).to_numpy(),
+                          ax_exit_short=(direction != -1).to_numpy(), ind_supertrend_direction=direction.to_numpy(),
                           ind_close=b.close.to_numpy())
     return build
 
@@ -62,8 +64,18 @@ def k14_session_orb(ctx: Context) -> pd.DataFrame:
     return make_table(frame.decision_time, 0, 1, 8 * 60 - 31, entry="oco", upper=frame.upper.to_numpy(),
                       lower=frame.lower.to_numpy(), expiry_min=210,
                       stop_bps=np.log(frame.upper.to_numpy() / frame.lower.to_numpy()) * 1e4,
+                      anchor_upper=frame.upper.to_numpy(), anchor_lower=frame.lower.to_numpy(),
+                      anchor_price=b.close.loc[is_last].to_numpy(),
                       ind_range_high=frame.upper.to_numpy(), ind_range_low=frame.lower.to_numpy(),
                       ind_range_bps=np.log(frame.upper.to_numpy() / frame.lower.to_numpy()) * 1e4)
+
+
+def k14_ax_rows(ctx: Context, table: pd.DataFrame) -> pd.DataFrame:
+    """R2-52A: an inert row on every other complete 5 m bar; long exits when its close <= the stored range upper,
+    short when >= the stored lower."""
+    b = ctx.bars(5)
+    b = b.loc[~b.decision_time.isin(table.decision_time)]
+    return make_table(b.decision_time, 0, 1, 0, allow_entry=False, anchor_price=b.close.to_numpy())
 
 
 for _m, _name in ((15, "15m"), (60, "1h")):
@@ -71,4 +83,4 @@ for _m, _name in ((15, "15m"), (60, "1h")):
 for _m, _name, _head in ((30, "30m", "4h"), (60, "1h", "12h")):
     register(Spec(f"K12_{_name}", "trend", _m, 720, _head, "HIGH", k12_supertrend(_m)))
 register(Spec("K13", "trend", 15, 720, "4h", "HIGH", k13_mtf_momentum))
-register(Spec("K14", "trend", 0, 8 * 60 - 31, "4h", "HIGH", k14_session_orb))
+register(Spec("K14", "trend", 0, 8 * 60 - 31, "4h", "HIGH", k14_session_orb, ax_rows=k14_ax_rows))

@@ -84,6 +84,12 @@ def adaptive_state(component, k, e0, r0, r, best, armed, anchor_upper, anchor_lo
             "r0_bps": float(r0), "r_bps": float(r), "best_price": float(best), "trail_armed": bool(armed),
             "anchor_upper": float(anchor_upper), "anchor_lower": float(anchor_lower)}
 
+def adaptive_exits(signals: pd.DataFrame) -> pd.DataFrame:
+    """R2_52A exits on the native flag or the family state flag of the same row (schema.ADAPTIVE_FLAGS)."""
+    flags = {f"exit_{s}": signals[f"exit_{s}"] | signals[f"ax_exit_{s}"] for s in ("long", "short")
+             if f"ax_exit_{s}" in signals}
+    return signals.assign(**flags)
+
 def adaptive_inputs(signals: pd.DataFrame, n: int, e_bps, e_min_bps) -> tuple[np.ndarray, np.ndarray]:
     """R2_52A inputs, one value per minute row (availability, finite >0 and age <=24h applied by the caller):
     e_bps = latest valid E as of open(m), NaN when none (OCO E0); e_min_bps = minimum of every valid E that became
@@ -104,7 +110,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
     if config.reentry not in ("strict", "stop_and_reverse") or config.exit_style not in ("NATIVE", "DETEXIT"):
         raise ValueError("bad config")
     if check_policy(config):
-        return _simulate_r2_52a(signals, minutes, start, end, config, *adaptive_inputs(signals, len(minutes), e_bps,
+        return _simulate_r2_52a(adaptive_exits(signals), minutes, start, end, config, *adaptive_inputs(signals, len(minutes), e_bps,
                                                                                        e_min_bps))
     if config.action_mode:
         signals = action_rows(signals, config)

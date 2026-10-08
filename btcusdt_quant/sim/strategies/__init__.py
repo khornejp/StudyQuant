@@ -21,6 +21,7 @@ class Spec:
     build: Callable[[Context], pd.DataFrame]
     reentry: str = "strict"
     simulator: str = "core"     # "core" or "grid"
+    ax_rows: Callable[[Context, pd.DataFrame], pd.DataFrame] | None = None   # R2-52A inert state rows (K01, K14)
 
 
 CATALOG: dict[str, Spec] = {}
@@ -74,11 +75,23 @@ def apply_exit(table: pd.DataFrame, ctx: Context, spec: Spec, style: str) -> pd.
     return out
 
 
-def build_variant(ctx: Context, spec_id: str, gated: bool, style: str) -> tuple[pd.DataFrame, SimConfig]:
+# R2-52A family state columns (r2_52a_exit_freeze.json family_state_exits) and their no-exit defaults
+AX_DEFAULTS = {"ax_exit_long": False, "ax_exit_short": False, "anchor_upper": np.nan, "anchor_lower": np.nan,
+               "anchor_price": np.nan}
+
+
+def build_variant(ctx: Context, spec_id: str, gated: bool, style: str,
+                  ax: bool = False) -> tuple[pd.DataFrame, SimConfig]:
+    """ax=True (R2-52A): also the side-0 rows a family needs for its state checks, and every state column. The
+    default output keeps the pre-R2-52A rows (RL state and paper read it); state columns ride along either way."""
     spec = CATALOG[spec_id]
     if gated and spec.gate is None:
         raise ValueError(f"{spec_id} has no gate axis")
     table = spec.build(ctx)
+    if ax:
+        if spec.ax_rows is not None:
+            table = pd.concat([table, spec.ax_rows(ctx, table)], ignore_index=True)
+        table = table.assign(**{c: v for c, v in AX_DEFAULTS.items() if c not in table})
     table = apply_gate(table, ctx, spec.gate if gated else None)
     table = apply_exit(table, ctx, spec, style)
     return schema.validate(table), SimConfig(reentry=spec.reentry, exit_style=style)

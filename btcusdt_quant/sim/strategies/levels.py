@@ -144,7 +144,7 @@ def k30_break_retest(ctx: Context) -> pd.DataFrame:
     bt = b.bar_start.array.asi8
     blow, bhigh, bclose = b.low.to_numpy(), b.high.to_numpy(), b.close.to_numpy()
     a15 = indicators.atr(b, 14).to_numpy()
-    side, stop = np.zeros(len(b), int), np.full(len(b), np.nan)
+    side, stop, level_at = np.zeros(len(b), int), np.full(len(b), np.nan), np.full(len(b), np.nan)
     with np.errstate(invalid="ignore"):
         trend_up, trend_down = (hadx >= 25) & (rising > 0), (hadx >= 25) & (rising < 0)
         # a break is a 1 h close through the level from the other side (previous close not yet beyond it)
@@ -166,11 +166,13 @@ def k30_break_retest(ctx: Context) -> pd.DataFrame:
                 continue
             i = lo + int(first[0])
             if side[i] not in (0, direction):
-                side[i], stop[i] = 0, np.nan          # opposite retests on one bar cancel
+                side[i], stop[i], level_at[i] = 0, np.nan, np.nan          # opposite retests on one bar cancel
                 continue
-            side[i] = direction
+            side[i], level_at[i] = direction, level
             stop[i] = _stop_bps(bclose[i], level - direction * 0.5 * a15[i], direction)
-    return make_table(b.decision_time, side, 1, 480, stop_bps=stop, ind_atr15=a15)
+    # R2-52A: the retest level is stored at fill; long exits when a later 15 m close <= it, short when >= it
+    return make_table(b.decision_time, side, 1, 480, stop_bps=stop, ind_atr15=a15, ind_level=level_at,
+                      anchor_upper=level_at, anchor_lower=level_at, anchor_price=bclose)
 
 
 for _id, _build in (("K25", k25_prior_day), ("K26", k26_pivot), ("K27", k27_swing), ("K28", k28_round)):

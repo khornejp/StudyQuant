@@ -4,8 +4,8 @@ import math
 import numba
 import numpy as np, pandas as pd
 from . import costs
-from .reference import (TRADE_COLUMNS, SimConfig, SimResult, action_rows, adaptive_inputs, adaptive_state,
-                        check_policy, finish)
+from .reference import (TRADE_COLUMNS, SimConfig, SimResult, action_rows, adaptive_exits, adaptive_inputs,
+                        adaptive_state, check_policy, finish)
 
 REASONS = ("stop", "breakeven", "take", "max_hold", "reverse", "flag", "trail", "state")
 # R2_52A float state slots (reference._simulate_r2_52a pos dict)
@@ -474,6 +474,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
     ast = None
     if adaptive:
         e, e_min = adaptive_inputs(signals, len(t_ns), e_bps, e_min_bps)
+        signals = adaptive_exits(signals)
         col = lambda name: (signals[name] if name in signals else pd.Series(np.nan, index=signals.index)).to_numpy(
             np.float64)
         *loop, ast = _adaptive_loop(
