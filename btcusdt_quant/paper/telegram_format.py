@@ -17,6 +17,8 @@ REASONS = {"MAX_HOLD_OR_REVERSE": ("최대 보유 또는 반대 신호", "TIME_E
            "TRAIL": ("추적 손절", "TRAILING_STOP"),
            "VOL_EXIT": ("변동성 급등 손절", "RISK_EXIT"),
            "DATA_END": ("데이터 끝", "DATA_END"), "REPLAY_END": ("데이터 끝", "DATA_END"),
+           "STATE": ("상태 무효화 청산", "SIGNAL_EXIT"), "V3": ("변동성 급등 손절", "RISK_EXIT"),
+           "LIQUIDATED": ("모의 강제청산", "LIQUIDATION"), "MIGRATION_END": ("장부 전환 청산", "MIGRATION_END"),
            "liquidation": ("모의 강제청산", "LIQUIDATION")}
 
 
@@ -54,18 +56,23 @@ def _reason(value: object) -> str:
 
 
 def _technique(value: object) -> str:
-    from . import catalog
     text = str(value)
-    if text in CANDIDATE_NAMES:
-        return CANDIDATE_NAMES[text]
-    return catalog.label(text) if text in catalog.BOOKS else text
+    return CANDIDATE_NAMES.get(text) or _name(text)
+
+
+def _name(book: object) -> str:
+    """Visible AX x3 books (and their hidden sources) by their plain Korean name; legacy books by their id."""
+    from . import catalog
+    text = str(book)
+    return catalog.label(text) if catalog.source_of(text) in catalog.BOOKS else text
 
 
 def _trade_id(book: object, entry_time: object) -> str:
     try:
         stamp = pd.Timestamp(entry_time)
         stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp
-        return f"{book}-{stamp.tz_convert('Asia/Seoul'):%m%d-%H%M}"
+        prefix = "" if _name(book) != str(book) else f"{book}-"       # AX books: no internal code in messages
+        return f"{prefix}{stamp.tz_convert('Asia/Seoul'):%m%d-%H%M}"
     except (ValueError, TypeError):
         return str(book)
 
@@ -80,7 +87,7 @@ def _given(event: Mapping[str, object], key: str) -> bool:
 
 
 def entry_message(event: Mapping[str, object]) -> str:
-    lines = [f"🟢 [모의 진입 체결] BTCUSDT · {event['book']}", "",
+    lines = [f"🟢 [모의 진입 체결] BTCUSDT · {_name(event['book'])}", "",
              f"기법 : {_technique(event.get('candidate', event['book']))}",
              f"방향 : {_side(event['side'])}",
              f"평균 진입가 : {float(event['price']):,.2f} USDT"]
@@ -104,7 +111,7 @@ def entry_message(event: Mapping[str, object]) -> str:
 
 def exit_message(event: Mapping[str, object]) -> str:
     if "pnl_usd" in event:                                       # x3 overlay books (USD fields)
-        lines = [("✅" if float(event["pnl_usd"]) >= 0 else "❌") + f" [모의 포지션 종료] BTCUSDT · {event['book']}", "",
+        lines = [("✅" if float(event["pnl_usd"]) >= 0 else "❌") + f" [모의 포지션 종료] BTCUSDT · {_name(event['book'])}", "",
                  f"순실현손익 : {float(event['pnl_usd']):+,.2f} USDT", "",
                  f"종료가 : {float(event['price']):,.2f}",
                  f"진입 명목 : {float(event['notional_usd']):,.2f} USDT · 증거금 {float(event['margin_usd']):,.2f} USDT",
@@ -116,7 +123,7 @@ def exit_message(event: Mapping[str, object]) -> str:
     partial = str(event["reason"]) == "TAKE"
     entry = float(event.get("entry_price", event["price"]))
     title = "🟡 [모의 부분 종료]" if partial else ("✅" if net >= 0 else "❌") + " [모의 포지션 종료]"
-    lines = [f"{title} BTCUSDT · {event['book']}", "",
+    lines = [f"{title} BTCUSDT · {_name(event['book'])}", "",
              f"{'이번 종료 순손익' if partial else '순실현손익'} : {_usdt(net):+,.2f} USDT",
              f"순손익률 : {net / units:+.1f} bps", ""]
     if _given(event, "candidate"):
@@ -141,7 +148,7 @@ def exit_message(event: Mapping[str, object]) -> str:
 
 
 def liquidation_message(event: Mapping[str, object]) -> str:
-    return "\n".join([f"🚨 [모의 강제청산] BTCUSDT · {event['book']}", "",
+    return "\n".join([f"🚨 [모의 강제청산] BTCUSDT · {_name(event['book'])}", "",
                       f"청산 체결가 : {float(event['price']):,.2f} (모의, 청산가 기준)",
                       f"청산가 : {float(event['liquidation_price']):,.2f}",
                       f"순실현손익 : {float(event['pnl_usd']):+,.2f} USDT",
@@ -150,28 +157,26 @@ def liquidation_message(event: Mapping[str, object]) -> str:
 
 
 def daily_message(event: Mapping[str, object]) -> str:
-    rows = sorted(event.get("rows", []), key=lambda r: float(r["day_net_bps"]), reverse=True)
-    total = sum(float(r["day_net_bps"]) for r in rows)
+    """x3 USD rows only (R2-52A paper_rollout.telegram_daily); books without a closed trade that day are absent."""
+    rows = sorted(event.get("rows", []), key=lambda r: float(r["day_pnl_usd"]), reverse=True)
+    total = sum(float(r["day_pnl_usd"]) for r in rows)
     trades = sum(int(r["trades"]) for r in rows)
     wins, longs = (sum(int(r.get(k, 0)) for r in rows) for k in ("wins", "longs"))
     pct = lambda a, b: "—" if not b else f"{100 * a / b:.1f}%"
-    avg = lambda net, n: "—" if not n else f"{float(net) / n:+.1f} bps"
+    usd = lambda v: f"{float(v):+,.2f} USD"
     lines = ["📊 [모의 일일 거래 요약]", "", f"대상일 : {event['date']} (UTC 00:00~24:00)",
-             "집계 : 당일 종료 거래", "정렬 : 순손익 USDT 내림차순", f"단위 : 1단위 = {UNIT_NOTIONAL_USDT:,.0f} USDT",
-             f"BTC 보유 비교 : {_money(event['buy_hold_bps'])}", "",
-             "[전체 성과]", f"순손익 : {_usdt(total):+,.2f} USDT", f"평균 순손익 : {avg(total, trades)}",
-             f"완료 거래 : {trades}회", f"승률 : {pct(wins, trades)}",
+             "집계 : 당일 종료 거래 (3배 장부, 시작 잔고 100 USD)", "정렬 : 순손익 USD 내림차순", "",
+             "[전체 성과]", f"순손익 : {usd(total)}", f"완료 거래 : {trades}회", f"승률 : {pct(wins, trades)}",
              f"롱 / 숏 : {longs}회 / {trades - longs}회", "", "[장부별 성과]", ""]
     for k, r in enumerate(rows, 1):
         n, w, lg = int(r["trades"]), int(r.get("wins", 0)), int(r.get("longs", 0))
-        lines += [f"{k}. {r['book']}",
-                  f"순손익 : {_usdt(r['day_net_bps']):+,.2f} USDT · 누적 {_usdt(r['total_net_bps']):+,.2f} USDT",
-                  f"평균 순손익 : {avg(r['day_net_bps'], n)}",
-                  f"거래 : {n}회 | 승률 : {pct(w, n)}",
-                  f"롱 {lg} / 숏 {n - lg} | {pct(lg, n)} / {pct(n - lg, n)}" if n else "롱 / 숏 : —", ""]
+        lines += [f"{k}. {_name(r['book'])}",
+                  f"순손익 : {usd(r['day_pnl_usd'])} · 잔고 {float(r['balance_usd']):,.2f} USD",
+                  f"거래 : {n}회 | 승률 : {pct(w, n)} | 롱 {lg} / 숏 {n - lg}"
+                  + (" | 강제청산" if int(r.get("liquidated", 0)) else ""), ""]
     if "open_positions" in event:
         lines += ["[현재 보유]", f"미종료 거래 : {int(event['open_positions'])}건",
-                  f"평가손익 : {_usdt(event['open_unrealized_bps']):+,.2f} USDT"]
+                  f"평가손익 : {usd(event.get('open_unrealized_usd', 0.0))}"]
     return "\n".join(lines).strip()
 
 
@@ -183,7 +188,7 @@ def format_message(event_type: str, event: Mapping[str, object]) -> str:
     if event_type == "liquidation":
         return liquidation_message(event)
     if event_type == "distance_warning":
-        return "\n".join([f"⚠️ [모의 청산 경고] BTCUSDT · {event['book']}", "",
+        return "\n".join([f"⚠️ [모의 청산 경고] BTCUSDT · {_name(event['book'])}", "",
                           f"청산가까지 거리 : {float(event['distance_pct']):.2f}%",
                           f"현재가 : {float(event['price']):,.2f} · 청산가 {float(event['liquidation_price']):,.2f}"])
     if event_type == "dropped_signal":

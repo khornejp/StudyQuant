@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 
@@ -14,6 +15,20 @@ class LeverageResult:
     skips: pd.DataFrame
     state: dict[str, object]
     position: dict[str, object] | None
+
+
+PHASES = ("OPEN", "INTRAMINUTE_STOP", "CLOSE")
+
+
+def exit_phases(trades: pd.DataFrame, minutes: pd.DataFrame) -> pd.Series:
+    """Source exit execution phase: OPEN when it filled at the exit minute's open, INTRAMINUTE_STOP for a stop or
+    trail touched inside the minute, else CLOSE (e.g. a replay/data end after the last stored minute)."""
+    opens = minutes.assign(open_time=pd.to_datetime(minutes.open_time, utc=True)).set_index("open_time").open
+    at = opens.reindex(pd.to_datetime(trades.exit_time, utc=True)).to_numpy(float)
+    price = trades.exit_price.to_numpy(float)
+    stop = trades.exit_reason.astype(str).str.upper().isin(["STOP", "TRAIL"]).to_numpy()
+    phase = np.where(price == at, "OPEN", np.where(stop & np.isfinite(at), "INTRAMINUTE_STOP", "CLOSE"))
+    return pd.Series(phase, index=trades.index)
 
 
 def liquidation_price(entry_price: float, side: int, margin_usd: float,
@@ -50,14 +65,15 @@ def simulate_book(accepted: pd.DataFrame, minutes: pd.DataFrame, funding: pd.Dat
                   budget_usd: float = 100.0, maintenance_margin_rate: float = .004,
                   liquidation_fee_rate: float = 0.0, cost_bps: float = 4.0,
                   minimum_balance_usd: float = 1.0) -> LeverageResult:
-    """Apply xN isolated margin without creating or changing any signal."""
+    """Apply xN isolated margin without creating or changing any signal. Each closed source row carries its
+    exit_reason and exit_phase; an `_active` row is the still-open source position (no max hold of its own)."""
     start, end = pd.Timestamp(start), pd.Timestamp(end)
     if start.tzinfo is None or end.tzinfo is None:
         raise ValueError("bounds must be timezone-aware")
     if leverage <= 0 or budget_usd <= 0 or not 0 <= maintenance_margin_rate < 1:
         raise ValueError("invalid leverage settings")
     book_name = f"{source_book}_x{leverage:g}"
-    market = minutes[["open_time", "high", "low", "close"]].copy()
+    market = minutes[["open_time", "open", "high", "low", "close"]].copy()
     market["open_time"] = pd.to_datetime(market.open_time, utc=True)
     market = market.sort_values("open_time", kind="stable").drop_duplicates("open_time", keep="last")
     market_times = pd.DatetimeIndex(market.open_time).as_unit("ns").asi8
@@ -72,6 +88,14 @@ def simulate_book(accepted: pd.DataFrame, minutes: pd.DataFrame, funding: pd.Dat
     peak_equity = balance
     liquidation_time: pd.Timestamp | None = None  # also needed when there are no trades yet
 
+    def observe(stamp: pd.Timestamp, equity: float) -> None:
+        nonlocal peak_equity, max_drawdown, max_drawdown_pct
+        peak_equity = max(peak_equity, equity)
+        max_drawdown = max(max_drawdown, peak_equity - equity)
+        max_drawdown_pct = max(max_drawdown_pct, (peak_equity - equity) / peak_equity * 100.0
+                               if peak_equity else 0.0)
+        observations.append((stamp, equity))
+
     source = accepted.copy().sort_values("entry_time", kind="stable").reset_index(drop=True)
     for row in source.to_dict("records"):
         entry, scheduled_exit = pd.Timestamp(row["entry_time"]), pd.Timestamp(row["exit_time"])
@@ -83,9 +107,13 @@ def simulate_book(accepted: pd.DataFrame, minutes: pd.DataFrame, funding: pd.Dat
                               "entry_time": entry, "candidate": row.get("candidate"),
                               "reason": status})
             continue
+        phase = row.get("exit_phase")
+        if not active and (pd.isna(row.get("exit_reason")) or phase not in PHASES):
+            raise ValueError("a closed source trade needs exit_reason and exit_phase OPEN|INTRAMINUTE_STOP|CLOSE")
 
         side = int(row["side"])
         entry_price = float(row["entry_price"])
+        source_price = float(row["exit_price"])
         margin = balance
         notional = leverage * margin
         entry_fee = notional * cost_bps / 20_000.0
@@ -94,33 +122,39 @@ def simulate_book(accepted: pd.DataFrame, minutes: pd.DataFrame, funding: pd.Dat
         initial_liq = liquidation_price(entry_price, side, margin, notional,
                                         maintenance_margin_rate, cashflows.get(entry, 0.0))
         worst_pnl = -entry_fee
-        liquidated = False
-        liquidation_time = None
         current_liq = initial_liq
         left = int(market_times.searchsorted(entry.value, side="left"))
-        right = int(market_times.searchsorted(scheduled_exit.value, side="left"))
+        right = int(market_times.searchsorted(scheduled_exit.value, side="left" if active else "right"))
         held = market.iloc[left:right]
-        for minute in held.itertuples(index=False):
+        outcome = None                      # "LIQUIDATED" or "EXIT" once decided inside the held minutes
+        for k, minute in enumerate(held.itertuples(index=False)):
+            # r2_52a_exit_freeze.json paper_rollout.leverage_execution_order
             stamp = pd.Timestamp(minute.open_time)
             cumulative_funding += cashflows.get(stamp, 0.0)
             current_liq = liquidation_price(entry_price, side, margin, notional,
                                             maintenance_margin_rate, cumulative_funding)
+            crossed = (lambda price: price <= current_liq) if side > 0 else (lambda price: price >= current_liq)
+            exit_minute = not active and stamp == scheduled_exit
+            opened = float(minute.open)
             adverse = float(minute.low if side > 0 else minute.high)
-            price_pnl = notional * side * (adverse / entry_price - 1.0)
-            adverse_pnl = price_pnl + cumulative_funding - entry_fee
-            worst_pnl = min(worst_pnl, adverse_pnl)
-            adverse_equity = max(0.0, margin + adverse_pnl)
-            peak_equity = max(peak_equity, adverse_equity)
-            max_drawdown = max(max_drawdown, peak_equity - adverse_equity)
-            max_drawdown_pct = max(max_drawdown_pct, (peak_equity - adverse_equity) /
-                                   peak_equity * 100.0 if peak_equity else 0.0)
-            observations.append((stamp, adverse_equity))
-            crossed = adverse <= current_liq if side > 0 else adverse >= current_liq
-            if crossed:
-                liquidated, liquidation_time = True, stamp
+            worst_pnl = min(worst_pnl, notional * side * (adverse / entry_price - 1.0)
+                            + cumulative_funding - entry_fee)
+            if k and crossed(opened):
+                outcome = "LIQUIDATED"
+            elif exit_minute and phase == "OPEN":
+                outcome = "EXIT"
+            elif exit_minute and phase == "INTRAMINUTE_STOP":       # first adverse barrier from the open; tie -> LIQ
+                first = crossed(adverse) and abs(opened - current_liq) <= abs(opened - source_price)
+                outcome = "LIQUIDATED" if first else "EXIT"
+            elif crossed(adverse):
+                outcome = "LIQUIDATED"
+            elif exit_minute:               # CLOSE executes after the intraminute liquidation test
+                outcome = "EXIT"
+            if outcome == "LIQUIDATED":
+                liquidation_time = stamp
                 balance = 0.0
                 status = "LIQUIDATED"
-                observations.append((stamp, 0.0))
+                observe(stamp, 0.0)
                 closed_rows.append({
                     "book": book_name, "source_book": source_book,
                     "candidate": row.get("candidate"), "entry_time": entry,
@@ -136,16 +170,14 @@ def simulate_book(accepted: pd.DataFrame, minutes: pd.DataFrame, funding: pd.Dat
                     "hold_minutes": float((stamp - entry) / pd.Timedelta(minutes=1)),
                     "exit_reason": "LIQUIDATED"})
                 break
-            close_pnl = (notional * side * (float(minute.close) / entry_price - 1.0)
-                         + cumulative_funding - entry_fee)
-            close_equity = max(0.0, margin + close_pnl)
-            peak_equity = max(peak_equity, close_equity)
-            max_drawdown = max(max_drawdown, peak_equity - close_equity)
-            max_drawdown_pct = max(max_drawdown_pct, (peak_equity - close_equity) /
-                                   peak_equity * 100.0 if peak_equity else 0.0)
-            observations.append((stamp, close_equity))
+            if outcome == "EXIT":
+                break
+            observe(stamp, max(0.0, margin + notional * side * (adverse / entry_price - 1.0)
+                               + cumulative_funding - entry_fee))
+            observe(stamp, max(0.0, margin + notional * side * (float(minute.close) / entry_price - 1.0)
+                               + cumulative_funding - entry_fee))
 
-        if liquidated:
+        if outcome == "LIQUIDATED":
             continue
         cumulative_funding = sum(cashflows.values())
         current_liq = liquidation_price(entry_price, side, margin, notional,
@@ -166,29 +198,24 @@ def simulate_book(accepted: pd.DataFrame, minutes: pd.DataFrame, funding: pd.Dat
                         "updated_at": end}
             break
 
-        exit_price = float(row["exit_price"])
-        gross = notional * side * (exit_price / entry_price - 1.0)
+        gross = notional * side * (source_price / entry_price - 1.0)
         cost = notional * cost_bps / 10_000.0
         pnl = gross + cumulative_funding - cost
         before = balance
         balance += pnl
-        observations.append((scheduled_exit, max(0.0, balance)))
-        peak_equity = max(peak_equity, balance)
-        max_drawdown = max(max_drawdown, peak_equity - balance)
-        max_drawdown_pct = max(max_drawdown_pct, (peak_equity - balance) /
-                               peak_equity * 100.0 if peak_equity else 0.0)
+        observe(scheduled_exit, max(0.0, balance))
         closed_rows.append({
             "book": book_name, "source_book": source_book,
             "candidate": row.get("candidate"), "entry_time": entry,
             "exit_time": scheduled_exit, "side": side, "entry_price": entry_price,
-            "exit_price": exit_price, "notional_usd": notional, "margin_usd": margin,
+            "exit_price": source_price, "notional_usd": notional, "margin_usd": margin,
             "initial_liquidation_price": initial_liq, "liquidation_price": current_liq,
             "max_adverse_pnl_usd": worst_pnl, "liquidated": 0,
             "gross_pnl_usd": gross, "cost_usd": cost,
             "funding_usd": cumulative_funding, "pnl_usd": pnl,
             "balance_before_usd": before, "balance_after_usd": balance,
             "hold_minutes": float((scheduled_exit - entry) / pd.Timedelta(minutes=1)),
-            "exit_reason": row.get("exit_reason", "MAX_HOLD_OR_REVERSE")})
+            "exit_reason": row["exit_reason"]})
         if balance < minimum_balance_usd:
             status = "STOPPED_BUDGET"
 
@@ -224,4 +251,4 @@ def simulate_book(accepted: pd.DataFrame, minutes: pd.DataFrame, funding: pd.Dat
                           pd.DataFrame(skip_rows), state, position)
 
 
-__all__ = ["LeverageResult", "liquidation_price", "simulate_book"]
+__all__ = ["LeverageResult", "PHASES", "exit_phases", "liquidation_price", "simulate_book"]

@@ -1,125 +1,126 @@
-"""Live paper books for the R2-48 technique catalog on btcusdt_quant.sim (computed by scripts/paper_catalog.py).
+"""R2-52A AX paper books on btcusdt_quant.sim (computed by scripts/paper_catalog.py).
 
-Book name = technique id + variant suffix: "" (no gate, NATIVE), "_G" (gate), "_D" (DETEXIT), "_GD".
-Inputs: the collector's 1 m klines, global long/short ratio, premium and funding, plus the live R2-44 PatchTST
-predictions (btcusdt_quant.paper.detector). OI-, top-trader- and taker-LSR-based techniques (K20, K23, K24) have no
-live input; K01 is the existing C1 book.
+Frozen spec: out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json paper_rollout. Exactly 27 hidden 1x source books
+(ungated NATIVE signal table, build_variant(..., ax=True), core exit_policy="R2_52A", k from the last pre-cutoff
+validation window) and their 27 visible x3 overlays "<source>_x3". C1_AX maps to K01. Every other paper book is
+retired: its rows stay in the database as the record and are never processed again.
 """
 from __future__ import annotations
-from dataclasses import replace
+import json
+import sys
 from functools import lru_cache
 from pathlib import Path
 import numpy as np, pandas as pd
-from btcusdt_quant.sim import core, data, regime
-from btcusdt_quant.sim.exit_overlay import dynamic, m_series, overlay
-from btcusdt_quant.sim.reference import SimResult, TRADE_COLUMNS
-import json
-from btcusdt_quant.sim.strategies import CATALOG, Context, apply_exit, apply_gate, build_variant, grid
-from . import book
+from btcusdt_quant.sim import core, data, regime, schema
+from btcusdt_quant.sim.reference import SimConfig
+from btcusdt_quant.sim.strategies import CATALOG, Context, build_variant
+from . import book, leverage
 
-LIVE_IDS = ("K02", "K03", "K04", "K05", "K06_k0.5", "K06_k1.0", "K07_k0.5", "K07_k1.0", "K08", "K09", "K10",
-            "K11_15m", "K11_1h", "K12_30m", "K12_1h", "K13", "K14", "K15", "K16", "K17_N5", "K17_N7", "K18", "K19",
-            "K21_A", "K21_B", "K22", "K25", "K26", "K27", "K28", "K29", "K30", "B1", "B2", "B3")
-SUFFIX = {(False, "NATIVE"): "", (True, "NATIVE"): "_G", (False, "DETEXIT"): "_D", (True, "DETEXIT"): "_GD"}
-Q3_PREMIUM = Path(__file__).resolve().parents[2] / "artifacts/hold_a_2026q3/premium_index"
+ROOT = Path(__file__).resolve().parents[2]
+Q3_PREMIUM = ROOT / "artifacts/hold_a_2026q3/premium_index"
+SELECTED_K = ROOT / "out/k45_rl_r2_48_20261007/r2_52a/selected_k.csv"
+K_WINDOW = (pd.Timestamp("2025-09-01T00:00Z"), pd.Timestamp("2025-12-01T00:00Z"))    # paper_rollout.initial_k
+CONFIG = SimConfig(exit_policy="R2_52A", include_funding=False)      # funding is repriced per boundary below
 
-
-def _variants() -> dict[str, tuple[str, bool, str]]:
-    out = {}
-    for spec_id in LIVE_IDS:
-        spec = CATALOG[spec_id]
-        for (gated, style), suffix in SUFFIX.items():
-            if (gated and spec.gate is None) or (style == "DETEXIT" and spec.simulator == "grid"):
-                continue
-            out[spec_id + suffix] = (spec_id, gated, style)
-    return out
-
-
-BOOKS = _variants()
-OVERLAY_RULES = {"K03_TRAIL": "R2_TRAIL", "K03_S150": "S150", "K03_V3": "V3_M_SPIKE_LOSS",
-                 "B2_BE": "R1_BREAKEVEN", "B2_S150": "S150", "B2_V3": "V3_M_SPIKE_LOSS"}
-BOOKS.update({"K03_TRAIL": ("K03", False, "NATIVE"), "K03_S150": ("K03", False, "NATIVE"),
-              "K03_V3": ("K03", False, "NATIVE"), "B2_BE": ("B2", False, "NATIVE"),
-              "B2_S150": ("B2", False, "NATIVE"), "B2_V3": ("B2", False, "NATIVE")})
-OVERLAY_LABELS = {"K03_TRAIL": "K03 추적 손절(비교)", "K03_S150": "K03 고정 손절 -150(비교)",
-                  "K03_V3": "K03 변동성 급등 손절(비교)", "B2_BE": "B2 본전 이동(비교)",
-                  "B2_S150": "B2 고정 손절 -150(비교)", "B2_V3": "B2 변동성 급등 손절(비교)"}
-NEGATIVE_IDS = {"K25", "K26", "K27", "K28", "K29", "K30"}
-
-
-DEFINITIONS = {
-    "K02": "F3-30: 30분마다 global LS가 90일 q90 이상 숏 / q10 이하 롱, 4시간 보유, 반대 신호 반전",
-    "K03": "F3W-30: 30분마다 global LS가 30일 q80 이상 숏 / q20 이하 롱, 12시간 보유, 반대 신호 반전",
-    "K04": "E1-15: 15분봉 거래량 z(20) > 3 이고 종가가 직전 20봉 고가 돌파 → 롱, 5시간 보유",
-    "K05": "A2-30: 30분봉 종가가 직전 55봉 고가 돌파 롱 / 저가 이탈 숏, 반대쪽 10봉 채널 이탈 시 청산",
-    "K06_k0.5": "VB: 매시 종가±0.5×예측 range_1h에 양방향 역지정가, 1시간 만료, 4시간 보유",
-    "K06_k1.0": "VB: 매시 종가±1.0×예측 range_1h에 양방향 역지정가, 1시간 만료, 4시간 보유",
-    "K07_k0.5": "STRADDLE: 15분마다 종가±0.5×예측 exc_1h 양방향 역지정가, 1시간 만료, 4시간 보유",
-    "K07_k1.0": "STRADDLE: 15분마다 종가±1.0×예측 exc_1h 양방향 역지정가, 1시간 만료, 4시간 보유",
-    "K08": "SQUEEZE: 15분 BB(20,2)가 KC(20,1.5) 안에 6봉 이상 후 해제 봉, 종가 vs BB 중앙 방향, 반대 KC 이탈 청산, 8시간",
-    "K09": "LOWVOL_MR: 15분 종가 BB 하단 아래+RSI<30 롱 / 상단 위+RSI>70 숏, BB 중앙 도달 청산, 4시간",
-    "K10": "GRID: 기준가±(0.5×예측 range_1h) 간격 위아래 3단 지정가, 1단 이익 청산, ±4단 이탈 전량 손절, 4시간 창",
-    "K11_15m": "EMA_X 15분: EMA9가 EMA21 상향 교차 롱 / 하향 숏, 반대 교차 반전, 12시간",
-    "K11_1h": "EMA_X 1시간: EMA9가 EMA21 상향 교차 롱 / 하향 숏, 반대 교차 반전, 12시간",
-    "K12_30m": "SUPERTREND(10,3) 30분: 방향 전환 시 진입·반전, 12시간",
-    "K12_1h": "SUPERTREND(10,3) 1시간: 방향 전환 시 진입·반전, 12시간",
-    "K13": "MTF_MOM: 직전 15분·1시간·4시간 봉 수익률 부호가 모두 같으면 그 방향, 하나라도 다르면 청산, 12시간",
-    "K14": "SESSION_ORB: UTC 00:00·07:00·13:30 첫 30분 고저 돌파 역지정가, 손절 반대편, 세션 시작+8시간 청산",
-    "K15": "VWAP_MR: UTC 일 VWAP 괴리 z(30일) > 2 숏 / < -2 롱, VWAP 도달 청산, 4시간",
-    "K16": "WICK_REV: 5분 꼬리 > 3×ATR(14)이고 반대 꼬리 < ATR → 꼬리 반대 방향, 1시간",
-    "K17_N5": "STREAK_REV: 15분 같은 색 5봉 연속 후 반대 진입, 2시간",
-    "K17_N7": "STREAK_REV: 15분 같은 색 7봉 연속 후 반대 진입, 2시간",
-    "K18": "FUNDING_EXT: 정산 직후 funding이 직전 90일 상위 5% 숏 / 하위 5% 롱, 8시간",
-    "K19": "PREMIUM_MR: 1시간 premium 평균 z(30일) > 2 숏 / < -2 롱, 4시간",
-    "K21_A": "TAKER_IMB A: 15분 taker 매수 비중 z(30일) > 2 롱 / < -2 숏, 2시간",
-    "K21_B": "TAKER_IMB B: 15분 taker 매수 비중 z(30일) > 2 숏 / < -2 롱, 2시간",
-    "K22": "CVD_DIV: 15분 종가 20봉 신고가인데 CVD가 직전 고점보다 낮으면 숏, 대칭 롱, 4시간",
-    "K25": "전일 고가·저가 반전: 15분봉 꼬리 돌파 후 안쪽 마감 시 반대 진입, 최대 4시간",
-    "K26": "피벗 R1·S1 반전(P 도달 청산): 15분봉 꼬리 돌파 후 안쪽 마감 시 반대 진입, 최대 4시간",
-    "K27": "스윙 고점·저점 반전(1시간봉 좌우 5봉): 15분봉 꼬리 돌파 후 안쪽 마감 시 반대 진입, 최대 4시간",
-    "K28": "1,000달러 라운드 넘버 반전: 15분봉 꼬리 돌파 후 안쪽 마감 시 반대 진입, 최대 4시간",
-    "K29": "필터 반전: 횡보(1시간 ADX<20)에서 검증된 지지·저항(7일 내 2회 이상 터치)을 꼬리로 뚫고 0.25 ATR 이상 안쪽 마감 + 거래량 z≥1.5 시 반대 진입, 손절 꼬리 너머, 전일 중간값 도달 또는 4시간 청산",
-    "K30": "돌파 후 되돌림: 추세(1시간 ADX≥25, EMA50 방향)에서 검증된 선을 1시간 종가로 0.25 ATR 이상 돌파 후 12시간 내 첫 되돌림에서 돌파 방향 진입, 손절 선 너머 0.5 ATR, 최대 8시간",
-    "B1": "B1: A2-30 > E1-15 > F3-30 > F3W-30 우선순위 합성, 관문 없음",
-    "B2": "B2: B1과 같은 우선순위, 탐지기 M ≥ 2/3일 때만 진입",
-    "B3": "B3: M ≥ 2/3이면 A2·E1, M ≤ 1/3이고 L < 2/3이면 F3·F3W만 진입",
+AX_BOOKS = ("C1_AX", "B1_AX", "B2_AX", "B3_AX", "K02_AX", "K03_AX", "K04_AX", "K05_AX", "K06_k0.5_AX",
+            "K06_k1.0_AX", "K07_k0.5_AX", "K07_k1.0_AX", "K08_AX", "K09_AX", "K11_15m_AX", "K11_1h_AX", "K12_30m_AX",
+            "K12_1h_AX", "K13_AX", "K14_AX", "K15_AX", "K19_AX", "K21_A_AX", "K21_B_AX", "K26_AX", "K29_AX", "K30_AX")
+BOOKS = {name: ("K01" if name == "C1_AX" else name[:-3], False, "NATIVE") for name in AX_BOOKS}
+X3_BOOKS = tuple(f"{name}_x3" for name in AX_BOOKS)
+# presentation_addendum_2026-10-08.name_list (verbatim): the visible x3 book's plain Korean label
+NAMES = {
+    "C1_AX": "롱숏비율 역추세 + 거래량 급증 돌파",
+    "K02_AX": "롱숏비율 역추세 (30분)",
+    "K03_AX": "롱숏비율 역추세 (30일 기준)",
+    "K04_AX": "거래량 급증 돌파 (15분)",
+    "K05_AX": "채널 돌파 (30분)",
+    "K06_k0.5_AX": "변동성 돌파 (예측폭 0.5배)",
+    "K06_k1.0_AX": "변동성 돌파 (예측폭 1배)",
+    "K07_k0.5_AX": "양방향 돌파 주문 (예측폭 0.5배)",
+    "K07_k1.0_AX": "양방향 돌파 주문 (예측폭 1배)",
+    "K08_AX": "변동성 수축 후 돌파",
+    "K09_AX": "저변동성 평균회귀 (볼린저)",
+    "K11_15m_AX": "이동평균 교차 (15분)",
+    "K11_1h_AX": "이동평균 교차 (1시간)",
+    "K12_30m_AX": "추세선 전환 (30분)",
+    "K12_1h_AX": "추세선 전환 (1시간)",
+    "K13_AX": "다중 시간대 추세 일치",
+    "K14_AX": "장 시작 범위 돌파",
+    "K15_AX": "VWAP 평균회귀",
+    "K19_AX": "선물 프리미엄 평균회귀",
+    "K26_AX": "피벗 지지·저항 반전",
+    "K29_AX": "지지·저항 필터 반전",
+    "K30_AX": "돌파 후 되돌림",
+    "B1_AX": "채널·거래량 돌파와 롱숏비율 극단값 반전 종합",
+    "B2_AX": "단기 변동 확대 예상 때만 돌파·롱숏비율 반전 종합",
+    "B3_AX": "단기 변동 확대 때 돌파, 단기 변동 축소·장기 변동 상위권 제외 때 롱숏비율 반전",
+    "K21_A_AX": "테이커 매수 비중 극단값 추세추종 (15분·30일 기준)",
+    "K21_B_AX": "테이커 매수 비중 극단값 역추세 (15분·30일 기준)",
 }
-GATE_TEXT = {"HIGH": "관문: 탐지기 M ≥ 2/3", "LOW": "관문: 탐지기 M ≤ 1/3"}
 
 
-def definition(name: str) -> str:
-    spec_id, gated, style = BOOKS[name]
-    parts = [DEFINITIONS[spec_id]]
-    if gated:
-        parts.append(GATE_TEXT[CATALOG[spec_id].gate])
-    if style == "DETEXIT":
-        parts.append("DETEXIT: 절반 진입+다음 판단 같은 방향이면 절반 추가, 손절·익절 = 예측 이탈폭 E, 익절 시 절반 청산 후 본전 손절")
-    return " · ".join(parts)
+def _adaptive():
+    """scripts/sim_adaptive_exit.py helpers (E, E-min, heads, E0): paper uses exactly the research construction."""
+    scripts = str(ROOT / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import sim_adaptive_exit
+    return sim_adaptive_exit
+
+
+def source_of(name: str) -> str:
+    return name[:-3] if name.endswith("_x3") else name
+
+
+def label(name: str) -> str:
+    """Plain Korean label of a visible x3 book (or its hidden source); no internal code, no 3x suffix."""
+    return NAMES[source_of(name)]
+
+
+@lru_cache(maxsize=4)
+def paper_k(path: Path = SELECTED_K) -> dict[str, float]:
+    """k per research id from the last completed validation window inside K_WINDOW (4 bps, tie -> 2.0 applied by
+    the research run that wrote the file)."""
+    frame = pd.read_csv(path)
+    for column in ("val_start", "val_end"):
+        frame[column] = pd.to_datetime(frame[column], utc=True)
+    inside = frame.loc[(frame.val_start >= K_WINDOW[0]) & (frame.val_end <= K_WINDOW[1])]
+    last = inside.sort_values("val_end", kind="stable").groupby("id").tail(1)
+    return {row.id: float(row.k) for row in last.itertuples(index=False)}
+
+
+def needs_model(name: str) -> bool:
+    return name in BOOKS        # AX needs E for every entry: always model-dependent
+
+
+_TABLES: dict[str, tuple[Context, pd.DataFrame]] = {}
+
+
+def raw_table(name: str, ctx: Context) -> pd.DataFrame:
+    """AX signal rows at their signal time T (before any live decision shift); one build per context."""
+    spec_id = BOOKS[name][0]
+    cached = _TABLES.get(spec_id)
+    if cached is None or cached[0] is not ctx:
+        table, _ = build_variant(ctx, spec_id, False, "NATIVE", ax=True)
+        table["decision_time"] = pd.to_datetime(table.decision_time, utc=True)
+        cached = (ctx, table)
+        _TABLES[spec_id] = cached
+    return cached[1].copy()
 
 
 def signal_rows(name: str, ctx: Context, since: pd.Timestamp) -> pd.DataFrame:
     """Recent decisions of a book for the dashboard condition panel."""
-    spec_id, gated, style = BOOKS[name]
-    if CATALOG[spec_id].simulator == "grid":
-        plan = grid.grid_plan(ctx, gated)
-        table = pd.DataFrame({"decision_time": plan.decision_time, "side": 0, "entry": "grid",
-                              "upper": plan.base * np.exp(plan.g / 1e4), "lower": plan.base * np.exp(-plan.g / 1e4),
-                              "stop_bps": np.nan, "allow_entry": True, "exit_long": False, "exit_short": False,
-                              "expiry_min": grid.WINDOW_MIN,
-                              "ind_grid_step_bps": plan.g, "ind_base": plan.base})
-    else:
-        spec = CATALOG[spec_id]
-        table = apply_exit(apply_gate(_build(spec_id, ctx), ctx, spec.gate if gated else None), ctx, spec, style)
-        table["decision_time"] = pd.to_datetime(table.decision_time, utc=True)
-        table = table.loc[table.decision_time >= since]
-        if table.decision_time.duplicated().any():      # composite: one row per decision, priority order kept
-            table = _merge_components(table)
+    spec_id = BOOKS[name][0]
+    table = raw_table(name, ctx)
+    table = table.loc[table.decision_time >= since]
+    if table.decision_time.duplicated().any():      # composite: one row per decision, priority order kept
+        table = _merge_components(table)
     table = table.loc[table.decision_time >= since].copy()
     times = pd.DatetimeIndex(table.decision_time)
     table["M"] = regime._asof(ctx.regime, times, "M", pd.Timedelta(minutes=14)) if "M" in ctx.regime else np.nan
     closes = ctx.minutes.set_index("open_time").close
     table["close"] = closes.reindex(times - pd.Timedelta(minutes=1)).to_numpy()
-    if needs_model(name) and "M" in ctx.regime:
+    if "M" in ctx.regime:
         L = regime._asof(ctx.regime, times, "L", BIND_AGE)
         E = regime.e_bps(ctx.regime, times, CATALOG[spec_id].e_head)
         bound = bind_predictions(ctx.regime if "available_at" in ctx.regime else None, times)
@@ -162,42 +163,10 @@ def _merge_components(table: pd.DataFrame) -> pd.DataFrame:
     return out.drop(columns=[c for c in out if c.startswith("ind_") and not c.endswith("_side")])
 
 
-MODEL_IDS = {"K06_k0.5", "K06_k1.0", "K07_k0.5", "K07_k1.0", "K10", "B2", "B3"}
 BIND_AGE = pd.Timedelta(minutes=14)     # the prediction bound to signal time T: latest origin <= T, at most 14 min old
 MAX_WAIT = pd.Timedelta(minutes=60)     # a signal waits for its prediction at most until the next signal (<= 60 min)
 DECISION_COLUMNS = ["book", "signal_time", "decision_time", "status", "prediction_ts", "available_at", "decided_at",
                     "model_id"]
-
-
-def needs_model(name: str) -> bool:
-    spec_id, gated, style = BOOKS[name]
-    return gated or style == "DETEXIT" or spec_id in MODEL_IDS
-
-
-_BUILDS: dict[str, tuple[Context, pd.DataFrame]] = {}
-
-
-def _build(spec_id: str, ctx: Context) -> pd.DataFrame:
-    """One technique build per context (several books share it)."""
-    cached = _BUILDS.get(spec_id)
-    if cached is None or cached[0] is not ctx:
-        cached = (ctx, CATALOG[spec_id].build(ctx))
-        _BUILDS[spec_id] = cached
-    return cached[1].copy()
-
-
-def raw_table(name: str, ctx: Context) -> pd.DataFrame:
-    """Signal rows at their signal time T (before any live decision shift); grid books: one row per candidate grid."""
-    spec_id, gated, style = BOOKS[name]
-    spec = CATALOG[spec_id]
-    if spec.simulator == "grid":
-        plan = grid.grid_plan(ctx, gated)
-        return pd.DataFrame({"decision_time": pd.to_datetime(plan.decision_time, utc=True), "side": 0, "entry": "grid",
-                             "base": plan.base.to_numpy(), "g": plan.g.to_numpy(), "exit_long": False,
-                             "exit_short": False, "allow_entry": True, "component": 1})
-    table = apply_exit(apply_gate(_build(spec_id, ctx), ctx, spec.gate if gated else None), ctx, spec, style)
-    table["decision_time"] = pd.to_datetime(table.decision_time, utc=True)
-    return table
 
 
 def _opens(table: pd.DataFrame) -> pd.Series:
@@ -292,27 +261,27 @@ def decide(name: str, table: pd.DataFrame, predictions: pd.DataFrame, known: set
     return events
 
 
+STATE_FLAGS = ("exit_long", "exit_short", "ax_exit_long", "ax_exit_short")
+
+
 def live_table(table: pd.DataFrame, decisions: pd.DataFrame) -> pd.DataFrame:
-    """Opening rows move to their confirmed decision time; undecided or expired ones cannot open. Exit flags stay at T."""
+    """Opening rows move to their confirmed decision time; undecided or expired ones cannot open. Exit and state
+    values (native flags, family state flags, the state-check price) stay at their signal time T."""
     decided = (decisions.loc[decisions.status == "decided"].set_index("signal_time").decision_time
                if len(decisions) else pd.Series(dtype="datetime64[ns, UTC]"))
+    flags = [c for c in STATE_FLAGS if c in table]
     opening = _opens(table)
     keep = table.loc[~opening].copy()
-    exits = table.loc[opening & (table.exit_long | table.exit_short)].copy()
+    state = table[flags].any(axis=1) | (table.anchor_price.notna() if "anchor_price" in table else False)
+    exits = table.loc[opening & state].copy()
     exits["side"] = 0; exits["allow_entry"] = False; exits["entry"] = "market"
     moved = table.loc[opening & table.decision_time.isin(decided.index)].copy()
     moved["decision_time"] = moved.decision_time.map(decided)
-    moved["exit_long"] = False; moved["exit_short"] = False
+    moved[flags] = False
+    if "anchor_price" in moved:
+        moved["anchor_price"] = np.nan
     out = pd.concat([keep, exits, moved], ignore_index=True)
     return out.sort_values("decision_time", kind="stable").reset_index(drop=True)
-
-
-def label(name: str) -> str:
-    if name in OVERLAY_LABELS:
-        return OVERLAY_LABELS[name]
-    spec_id, gated, style = BOOKS[name]
-    label = f"{spec_id} {CATALOG[spec_id].family}" + (" 관문" if gated else "") + (" DETEXIT" if style == "DETEXIT" else "")
-    return label + (" (연구 음수)" if spec_id in NEGATIVE_IDS else "")
 
 
 @lru_cache(maxsize=1)
@@ -353,6 +322,32 @@ def live_context(market: pd.DataFrame, features: pd.DataFrame, premium: pd.DataF
                    end=minutes.open_time.max() + pd.Timedelta(minutes=1))
 
 
+def e_frame(ctx: Context) -> pd.DataFrame:
+    """E source = the immutable 15-minute prediction grid with its logical available_at (research E updates every
+    15 min; the per-minute mixed rows are dashboard-only and are pruned after 3 days)."""
+    reg = ctx.regime
+    if not len(reg) or "timestamp" not in reg:
+        return reg
+    stamp = pd.DatetimeIndex(reg.timestamp)
+    return reg.loc[(stamp.minute % 15 == 0) & (stamp.second == 0)].reset_index(drop=True)
+
+
+def row_e0(table: pd.DataFrame, frame: pd.DataFrame, spec_id: str) -> np.ndarray:
+    """Market-entry E0 bound to each row's (effective) decision time; NaN when no causal E (NO_ENTRY_E)."""
+    if not len(frame) or not any(c.startswith("prediction_exc_") for c in frame):
+        return np.full(len(table), np.nan)
+    return _adaptive().row_e0(table, frame, spec_id)
+
+
+def _e_inputs(frame: pd.DataFrame, minutes: pd.DataFrame, spec_id: str) -> tuple[np.ndarray, np.ndarray]:
+    helpers = _adaptive()
+    names = helpers.heads(spec_id)
+    if not len(frame) or not all(f"prediction_exc_{h}" in frame for h in names):
+        empty = np.full((len(minutes), len(names)), np.nan)
+        return empty, empty.copy()
+    return helpers.e_matrix(frame, pd.DatetimeIndex(minutes.open_time), names)
+
+
 def _realized_minute_pnl(result, closes: pd.Series) -> pd.Series:
     """Remove still-open legs from simulator MTM so daily_pnl remains a closed ledger."""
     out = result.minute_pnl.copy()
@@ -367,71 +362,6 @@ def _realized_minute_pnl(result, closes: pd.Series) -> pd.Series:
         contribution[0] -= 2.0 * float(leg["units"])
         out.loc[index] -= contribution
     return out
-
-
-def _overlay_result(result: SimResult, minutes: pd.DataFrame, rule: str,
-                    regime_frame: pd.DataFrame | None = None) -> SimResult:
-    """Apply the frozen minute overlay without changing the native entry sequence."""
-    trades = result.trades.copy()
-    times = pd.DatetimeIndex(minutes.open_time)
-    t_ns = times.as_unit("ns").asi8
-    o, h, l, c = (minutes[column].to_numpy(float) for column in ("open", "high", "low", "close"))
-    series = {"m": m_series(minutes, regime_frame)} if rule == "V3_M_SPIKE_LOSS" else None
-    reason = ("VOL_EXIT" if rule == "V3_M_SPIKE_LOSS" else "stop" if rule.startswith("S") else
-              "breakeven" if rule == "R1_BREAKEVEN" else "trail")
-    for index, trade in trades.iterrows():
-        i0 = int(np.searchsorted(t_ns, pd.Timestamp(trade.entry_time).value))
-        i_exit = int(np.searchsorted(t_ns, pd.Timestamp(trade.exit_time).value))
-        hit = (dynamic(int(trade.side), float(trade.entry_price), i0, i_exit, o, h, l, c, rule, series)
-               if rule == "V3_M_SPIKE_LOSS" else
-               overlay(int(trade.side), float(trade.entry_price), i0, i_exit, o, h, l, rule, np.nan))
-        if hit is None:
-            continue
-        exit_index, exit_price = hit
-        gross = int(trade.side) * np.log(exit_price / float(trade.entry_price)) * 1e4 * float(trade.units)
-        trades.loc[index, ["exit_time", "exit_price", "exit_reason", "gross_bps", "net_bps"]] = [
-            times[exit_index], exit_price, reason, gross, gross - float(trade.fee_bps)]
-
-    held = result.open_position
-    if held is not None:
-        i0 = int(np.searchsorted(t_ns, pd.Timestamp(held["entry_time"]).value))
-        hit = (dynamic(int(held["side"]), float(held["avg_price"]), i0, len(times), o, h, l, c, rule, series)
-               if rule == "V3_M_SPIKE_LOSS" else
-               overlay(int(held["side"]), float(held["avg_price"]), i0, len(times), o, h, l, rule, np.nan))
-        if hit is not None:
-            exit_index, exit_price = hit
-            closed = []
-            for leg in held["legs"]:
-                gross = int(leg["side"]) * np.log(exit_price / float(leg["entry_price"])) * 1e4 * float(leg["units"])
-                fee = 4.0 * float(leg["units"])
-                closed.append({**leg, "exit_time": times[exit_index], "exit_price": exit_price,
-                               "exit_reason": reason, "gross_bps": gross, "fee_bps": fee,
-                               "funding_bps": 0.0, "net_bps": gross - fee})
-            trades = pd.concat([trades, pd.DataFrame(closed, columns=TRADE_COLUMNS)], ignore_index=True)
-            held = None
-    return SimResult(trades, result.minute_pnl, held)
-
-
-def _closed_minute_pnl(trades: pd.DataFrame, minutes: pd.DataFrame) -> pd.Series:
-    """Rebuild realized minute PnL after an overlay moved native exits."""
-    times = pd.DatetimeIndex(minutes.open_time)
-    t_ns = times.as_unit("ns").asi8
-    closes = minutes.close.to_numpy(float)
-    pnl = np.zeros(len(minutes))
-    for trade in trades.itertuples(index=False):
-        entry = int(np.searchsorted(t_ns, pd.Timestamp(trade.entry_time).value))
-        exit_ = int(np.searchsorted(t_ns, pd.Timestamp(trade.exit_time).value))
-        units, side = float(trade.units), int(trade.side)
-        if entry == exit_:
-            pnl[exit_] += float(trade.gross_bps) - float(trade.fee_bps)
-            continue
-        pnl[entry] += side * np.log(closes[entry] / float(trade.entry_price)) * 1e4 * units
-        pnl[entry] -= float(trade.fee_bps) / 2
-        if exit_ > entry + 1:
-            pnl[entry + 1:exit_] += side * np.log(closes[entry + 1:exit_] / closes[entry:exit_ - 1]) * 1e4 * units
-        pnl[exit_] += side * np.log(float(trade.exit_price) / closes[exit_ - 1]) * 1e4 * units
-        pnl[exit_] -= float(trade.fee_bps) / 2
-    return pd.Series(pnl, index=times)
 
 
 def _funding_by_day(legs: pd.DataFrame, funding: pd.DataFrame, boundary: str) -> pd.Series:
@@ -455,33 +385,25 @@ def _funding_by_day(legs: pd.DataFrame, funding: pd.DataFrame, boundary: str) ->
     return pd.Series(values, dtype=float).sort_index()
 
 
+def ax_table(name: str, ctx: Context, decisions: pd.DataFrame | None, book_start: pd.Timestamp) -> pd.DataFrame:
+    """Live AX rows: decided openings at their effective decision time with E0 bound there, the head column of the
+    opening component (composites) and the paper k."""
+    spec_id = BOOKS[name][0]
+    table = live_table(raw_table(name, ctx), decisions if decisions is not None else pd.DataFrame())
+    table = schema.validate(table.loc[table.decision_time >= book_start].reset_index(drop=True))
+    return table.assign(e0_bps=row_e0(table, e_frame(ctx), spec_id),
+                        e_col=_adaptive().e_cols(table, spec_id).astype(float), k=paper_k()[spec_id])
+
+
 def run_book(name: str, ctx: Context, funding: pd.DataFrame, book_start: pd.Timestamp, end: pd.Timestamp,
              decisions: pd.DataFrame | None = None) -> tuple[pd.DataFrame, pd.DataFrame, dict | None]:
-    """(trades, daily, open position) in the paper tables' shape for both funding boundaries. Model-dependent books
-    replay only their confirmed decision events (`decisions`), never a re-decided history."""
-    spec_id, gated, style = BOOKS[name]
-    model = needs_model(name)
-    if model:
-        table = live_table(raw_table(name, ctx), decisions if decisions is not None else pd.DataFrame())
-        table = table.loc[table.decision_time >= book_start].reset_index(drop=True)
-    if CATALOG[spec_id].simulator == "grid":
-        minutes = ctx.minutes.loc[ctx.minutes.open_time >= book_start].reset_index(drop=True)
-        plan = table.loc[table.entry == "grid", ["decision_time", "base", "g"]] if model else None
-        result = grid.simulate_grid(replace(ctx, minutes=minutes), book_start, end, gated,
-                                    grid.SimConfig(include_funding=False), plan=plan)
-    else:
-        if model:
-            from btcusdt_quant.sim import schema
-            from btcusdt_quant.sim.reference import SimConfig
-            table = schema.validate(table)
-            config = SimConfig(reentry=CATALOG[spec_id].reentry, exit_style=style)
-        else:
-            table, config = build_variant(ctx, spec_id, gated, style)
-            table = table.loc[table.decision_time >= book_start].reset_index(drop=True)
-        result = core.simulate(table, ctx.minutes, book_start, end, replace(config, include_funding=False))
-    overlay_rule = OVERLAY_RULES.get(name)
-    if overlay_rule:
-        result = _overlay_result(result, ctx.minutes, overlay_rule, ctx.regime)
+    """(trades, daily, open position) in the paper tables' shape for both funding boundaries; replays only the
+    confirmed decision events (`decisions`), never a re-decided history. trades.attrs: "legs" (core trades),
+    "source" (the x3 input: accepted fills, source exits with phase, the open position as _active) and "fills"."""
+    spec_id = BOOKS[name][0]
+    table = ax_table(name, ctx, decisions, book_start)
+    e, e_min = _e_inputs(e_frame(ctx), ctx.minutes, spec_id)
+    result = core.simulate(table, ctx.minutes, book_start, end, CONFIG, e_bps=e, e_min_bps=e_min)
     legs = result.trades
     fills = (legs[["decision_time", "entry_time", "side", "entry_price"]].drop_duplicates().copy()
              if len(legs) else pd.DataFrame(columns=["decision_time", "entry_time", "side", "entry_price"]))
@@ -490,8 +412,7 @@ def run_book(name: str, ctx: Context, funding: pd.DataFrame, book_start: pd.Time
                       pd.Series(legs.units.to_numpy() * 2.0, index=legs.exit_time.dt.floor("D"))]).groupby(level=0).sum() \
         if len(legs) else pd.Series(dtype=float)
     closes = ctx.minutes.set_index("open_time").close
-    realized = (_closed_minute_pnl(legs, ctx.minutes).reindex(result.minute_pnl.index) if overlay_rule else
-                _realized_minute_pnl(result, closes))
+    realized = _realized_minute_pnl(result, closes)
     pnl_ex_funding = realized.groupby(realized.index.floor("D")).sum()
     for boundary in ("PESS", "OPT"):
         if len(legs):
@@ -499,16 +420,12 @@ def run_book(name: str, ctx: Context, funding: pd.DataFrame, book_start: pd.Time
                                   funding, boundary, 0.0)
             leg = legs.assign(funding_bps=priced.funding_bps.to_numpy() * legs.units.to_numpy())
             leg["net_bps"] = leg.gross_bps - leg.fee_bps + leg.funding_bps
-            values = dict(decision_time=("decision_time", "first"), exit_time=("exit_time", "max"),
-                          entry_price=("entry_price", "first"), exit_price=("exit_price", "last"),
-                          gross_bps=("gross_bps", "sum"), cost_bps=("fee_bps", "sum"),
-                          funding_bps=("funding_bps", "sum"), net_bps=("net_bps", "sum"),
-                          exit_reason=("exit_reason", lambda x: "+".join(x.str.upper())))
-            if CATALOG[spec_id].simulator == "grid":
-                merged = leg.groupby("position_id", as_index=False).agg(
-                    entry_time=("entry_time", "min"), side=("side", "first"), **values)
-            else:
-                merged = leg.groupby(["entry_time", "side"], as_index=False).agg(**values)
+            merged = leg.groupby(["entry_time", "side"], as_index=False).agg(
+                decision_time=("decision_time", "first"), exit_time=("exit_time", "max"),
+                entry_price=("entry_price", "first"), exit_price=("exit_price", "last"),
+                gross_bps=("gross_bps", "sum"), cost_bps=("fee_bps", "sum"),
+                funding_bps=("funding_bps", "sum"), net_bps=("net_bps", "sum"),
+                exit_reason=("exit_reason", lambda x: "+".join(x.str.upper())))
             merged["hold_minutes"] = (merged.exit_time - merged.entry_time) / pd.Timedelta(minutes=1)
             trade_rows.append(merged.assign(book=name, boundary=boundary, candidate=spec_id))
             funding_day = _funding_by_day(legs, funding, boundary)
@@ -522,8 +439,40 @@ def run_book(name: str, ctx: Context, funding: pd.DataFrame, book_start: pd.Time
                                         "gross_bps": (net_ex + cost).to_numpy(), "cost_bps": cost.to_numpy(),
                                         "funding_bps": fund.to_numpy(), "net_bps": (net_ex + fund).to_numpy()}))
     trades = pd.concat(trade_rows, ignore_index=True) if trade_rows else pd.DataFrame()
-    trades.attrs["fills"] = fills
-    return trades, pd.concat(daily_rows, ignore_index=True), result.open_position
+    source = legs[["entry_time", "exit_time", "side", "entry_price", "exit_price"]].assign(
+        exit_reason=legs.exit_reason.str.upper(), candidate=spec_id, _active=False)
+    source["exit_phase"] = leverage.exit_phases(source, ctx.minutes) if len(source) else pd.Series(dtype=object)
+    held = result.open_position
+    if held is not None:
+        source = pd.concat([source, pd.DataFrame([{
+            "entry_time": held["entry_time"], "exit_time": end, "side": held["side"], "entry_price": held["avg_price"],
+            "exit_price": float(closes.iloc[-1]), "exit_reason": None, "candidate": spec_id, "_active": True,
+            "exit_phase": None}])], ignore_index=True)
+    trades.attrs.update(fills=fills, legs=legs, source=source)
+    return trades, pd.concat(daily_rows, ignore_index=True), held
 
 
-__all__ = ["BOOKS", "LIVE_IDS", "fill_rows", "label", "live_context", "run_book"]
+def ax_state(name: str, held: dict, ctx: Context, end: pd.Timestamp) -> dict:
+    """Dashboard state of the open AX position: E0, E_t, k, R0, R_t, hard stop, trail, best price, anchors."""
+    spec_id, side = BOOKS[name][0], int(held["side"])
+    helpers = _adaptive()
+    names = helpers.heads(spec_id)
+    head = names[0] if len(names) == 1 else helpers.legacy_heads().get(int(held["component"]))
+    frame = e_frame(ctx)
+    e_t = (float(helpers.e_at(frame, pd.DatetimeIndex([end]), head)[0])
+           if head is not None and len(frame) and f"prediction_exc_{head}" in frame else None)
+    entry, r = float(held["avg_price"]), float(held["r_bps"])
+    hard = entry * np.exp(-side * r / 1e4)
+    trail = float(held["best_price"]) * np.exp(-side * 0.5 * r / 1e4) if held["trail_armed"] else None
+    clean = lambda v: None if v is None or not np.isfinite(v) else float(v)
+    return {"book": name, "position_id": int(held["position_id"]), "status": "OPEN", "side": side,
+            "entry_time": pd.Timestamp(held["entry_time"]).isoformat(), "entry_price": entry,
+            "k": float(held["k"]), "e_head": head, "e0_bps": float(held["e0_bps"]), "e_t_bps": clean(e_t),
+            "r0_bps": float(held["r0_bps"]), "r_bps": r, "hard_stop": hard,
+            "trail_armed": int(bool(held["trail_armed"])), "best_price": float(held["best_price"]),
+            "trail_stop": clean(trail), "anchor_upper": clean(held.get("anchor_upper")),
+            "anchor_lower": clean(held.get("anchor_lower")), "updated_at": pd.Timestamp(end).isoformat()}
+
+
+__all__ = ["AX_BOOKS", "BOOKS", "NAMES", "X3_BOOKS", "ax_state", "fill_rows", "label", "live_context", "paper_k",
+           "run_book"]

@@ -12,13 +12,14 @@ def _trade(side=1, entry=100.0, exit_=110.0, start="2026-01-01T00:00Z",
            end="2026-01-01T00:02Z") -> pd.DataFrame:
     return pd.DataFrame([{"entry_time": pd.Timestamp(start), "exit_time": pd.Timestamp(end),
                           "side": side, "entry_price": entry, "exit_price": exit_,
-                          "candidate": "test", "exit_reason": "NORMAL", "_active": False}])
+                          "candidate": "test", "exit_reason": "NORMAL", "exit_phase": "OPEN",
+                          "_active": False}])
 
 
 def _minutes(lows=(99.0, 99.0), highs=(101.0, 101.0), closes=(100.0, 100.0)):
     return pd.DataFrame({"open_time": pd.date_range("2026-01-01", periods=len(lows),
                                                      freq="min", tz="UTC"),
-                         "low": lows, "high": highs, "close": closes})
+                         "open": closes, "low": lows, "high": highs, "close": closes})
 
 
 def test_long_and_short_liquidation_price() -> None:
@@ -52,7 +53,7 @@ def test_liquidation_skips_later_trades() -> None:
                                                    end="2026-01-01T00:04Z")], ignore_index=True)
     minutes = pd.DataFrame({"open_time": pd.date_range("2026-01-01", periods=4,
                                                         freq="min", tz="UTC"),
-                            "low": [60, 99, 99, 99], "high": [101] * 4,
+                            "open": [100] * 4, "low": [60, 99, 99, 99], "high": [101] * 4,
                             "close": [100] * 4})
     result = simulate_book(trades, minutes, pd.DataFrame(columns=["time", "rate"]), "C1",
                            pd.Timestamp("2026-01-01T00:00Z"),
@@ -66,7 +67,7 @@ def test_compounding_and_notional_cost() -> None:
                        ignore_index=True)
     minutes = pd.DataFrame({"open_time": pd.date_range("2026-01-01", periods=5,
                                                         freq="min", tz="UTC"),
-                            "low": [99] * 5, "high": [111] * 5, "close": [100] * 5})
+                            "open": [100] * 5, "low": [99] * 5, "high": [111] * 5, "close": [100] * 5})
     result = simulate_book(trades, minutes, pd.DataFrame(columns=["time", "rate"]), "C1",
                            pd.Timestamp("2026-01-01T00:00Z"),
                            pd.Timestamp("2026-01-01T00:06Z"))
@@ -119,7 +120,7 @@ def test_simulate_book_with_no_trades_returns_initial_state() -> None:
     from btcusdt_quant.paper import leverage
 
     start = pd.Timestamp("2026-10-06T03:00:00Z")
-    minutes = pd.DataFrame({"open_time": [start], "high": [1.0], "low": [1.0], "close": [1.0]})
+    minutes = pd.DataFrame({"open_time": [start], "open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0]})
     empty = pd.DataFrame(columns=["entry_time", "exit_time", "side", "entry_price", "exit_price"])
     funding = pd.DataFrame(columns=["time", "rate"])
     result = leverage.simulate_book(empty, minutes, funding, "C1", start, start + pd.Timedelta(minutes=1))

@@ -144,14 +144,6 @@ def test_catalog_fills_send_full_entry_messages(tmp_path) -> None:
     assert "평균 진입가 : 100.00 USDT" in payloads[0] and "체결 수량 : 1.00000 BTC" in payloads[0]
 
 
-def test_advanced_level_books_keep_research_label_in_telegram() -> None:
-    message = format_message("entry", {
-        "book": "K29", "side": -1, "price": 100, "candidate": "K29",
-        "entry_time": "2026-10-07T12:01:00+00:00", "exit_time": "2026-10-07T16:01:00+00:00",
-    })
-    assert "기법 : K29 levels (연구 음수)" in message
-
-
 def test_detexit_take_leg_is_partial_exit_with_leg_rate() -> None:
     from btcusdt_quant.paper.telegram_format import format_message
     text = format_message("exit", {
@@ -184,18 +176,3 @@ def test_ws_down_alert_respects_live_forming_bar(tmp_path):
     assert not [k for k in keys if k.startswith("alert:ws_down:")]      # socket alive, REST simply won the race
 
 
-def test_daily_summary_lists_only_books_that_traded(tmp_path) -> None:
-    path = tmp_path / "live.sqlite"
-    with PaperStore(path) as store:
-        for book in ("C1", "F3"):
-            store.upsert("daily_pnl", {"book": book, "boundary": "PESS", "date": "2026-10-07",
-                                       "gross_bps": 5.0, "cost_bps": 0.0, "funding_bps": 0.0, "net_bps": 5.0})
-        store.insert("trades", {"book": "C1", "boundary": "PESS", "candidate": "F3", "side": 1,
-                                "entry_time": "2026-10-07T01:00:00+00:00", "exit_time": "2026-10-07T02:00:00+00:00",
-                                "entry_price": 100.0, "exit_price": 101.0, "gross_bps": 99.0, "cost_bps": 4.0,
-                                "funding_bps": 0.0, "net_bps": 95.0, "hold_minutes": 60.0, "exit_reason": "MAX_HOLD"})
-    notifier = TelegramNotifier(path, env_path=_secrets(tmp_path))
-    assert notifier.publish_daily_summary("2026-10-07")
-    with PaperStore(path) as store:
-        payload = store.frame("notifications").loc[lambda x: x.event_type.eq("daily_summary"), "payload"].iloc[0]
-    assert "1. C1" in payload and "F3\n" not in payload and "2. " not in payload

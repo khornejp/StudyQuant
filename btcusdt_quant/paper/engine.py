@@ -11,7 +11,7 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
-from . import book, catalog, leverage, rules
+from . import book, leverage, rules
 from .broker import PaperBroker
 from .config import PaperConfig
 from .store import PaperStore, utc_text
@@ -26,6 +26,7 @@ BOOKS = {"H1": (rules.F3,), "H2": (rules.E1,),
          "C1_5m": (rules.F3_5M, rules.E1),
          "C4": (rules.F3_W30, rules.E1)}
 
+LEVERAGE_TABLES = ("leverage_state", "leverage_positions", "leverage_trades", "leverage_daily", "leverage_skips")
 EXECUTION_DELAYS = {"C1_FLIP": 0, "C1_SL200": 0, "C1_T1": 1}
 # out/k45_rl_r2_48_20261007/fixed_stop_freeze.json: K01 S200 test
 # 2023-09..2025-12 +10,714 vs +11,555 bps; max drawdown 1,910 vs 2,987.
@@ -167,8 +168,10 @@ class PaperEngine:
         funding = funding.drop_duplicates("time", keep="last").reset_index(drop=True)
         funding.attrs["_time_ns"] = funding.time.array.asi8
         funding.attrs["_rates"] = funding.rate.to_numpy(float)
-        candidates_used = tuple(dict.fromkeys(
-            candidate for name in self.config.books if name in BOOKS for candidate in BOOKS[name]))
+        # Only active legacy books are replayed; catalog (AX) books are written by scripts/paper_catalog.py and
+        # retired books are never touched again (r2_52a_exit_freeze.json paper_rollout.retirement).
+        legacy = tuple(name for name in self.config.books if name in BOOKS)
+        candidates_used = tuple(dict.fromkeys(candidate for name in legacy for candidate in BOOKS[name]))
         generated = {candidate: rules.make_trades(market, features, candidate)
                      for candidate in candidates_used}
         end_price = float(market.loc[market.open_time.lt(end), "close"].iloc[-1])
@@ -204,12 +207,10 @@ class PaperEngine:
         leverage_results: list[leverage.LeverageResult] = []
         leverage_books = (self.config.books if self.config.leverage_books is None else
                           self.config.leverage_books)
-        for name in self.config.books:
+        for name in legacy:
             book_start = pd.Timestamp(self.config.book_start_times.get(name, start))
             if book_start.tzinfo is None:
                 raise ValueError("book start must be timezone-aware")
-            if name in catalog.BOOKS:        # written by scripts/paper_catalog.py
-                continue
             candidates = BOOKS[name]
             execution_delay = EXECUTION_DELAYS.get(name, 0)
             fixed_stop_bps = FIXED_STOP_BPS.get(name)
@@ -260,6 +261,7 @@ class PaperEngine:
             if name in leverage_books:
                 # The x3 overlay is reference only; its failure must not block the 1x books.
                 try:
+                    raw = raw.assign(exit_phase=leverage.exit_phases(raw, market))
                     leverage_results.append(leverage.simulate_book(
                         raw, market, funding, name, book_start, end,
                         leverage=self.config.leverage, budget_usd=self.config.budget_usd,
@@ -282,17 +284,12 @@ class PaperEngine:
             daily.insert(0, "boundary", boundary); daily.insert(0, "book", name)
             daily_parts.append(daily)
         daily = pd.concat(daily_parts, ignore_index=True) if daily_parts else pd.DataFrame()
-        catalog_names = tuple(catalog.BOOKS)
-        own = ",".join("?" * len(catalog_names))
+        x3 = tuple(f"{name}_x{self.config.leverage:g}" for name in legacy if name in leverage_books)
         with self.store.transaction() as connection:
-            connection.execute(f"DELETE FROM trades WHERE book NOT IN ({own})", catalog_names)
-            connection.execute(f"DELETE FROM daily_pnl WHERE book NOT IN ({own})", catalog_names)
-            connection.execute(f"DELETE FROM positions WHERE book NOT IN ({own})", catalog_names)
-            connection.execute("DELETE FROM leverage_state")
-            connection.execute("DELETE FROM leverage_positions")
-            connection.execute("DELETE FROM leverage_trades")
-            connection.execute("DELETE FROM leverage_daily")
-            connection.execute("DELETE FROM leverage_skips")
+            for table, names in (("trades", legacy), ("daily_pnl", legacy), ("positions", legacy),
+                                 *((table, x3) for table in LEVERAGE_TABLES)):
+                if names:       # per-book rewrite of the active legacy books only; never table-wide
+                    connection.execute(f"DELETE FROM {table} WHERE book IN ({','.join('?' * len(names))})", names)
             for position in open_rows:
                 self.store.upsert("positions", position, connection)
             for row in published.itertuples(index=False):

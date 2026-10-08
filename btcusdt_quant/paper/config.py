@@ -39,6 +39,7 @@ class PaperConfig:
     telegram_retry_base_seconds: float = 5.0
     telegram_retry_max_seconds: float = 300.0
     telegram_books: tuple[str, ...] | None = None   # None = every book; catalog books stay off Telegram
+    retired_books: tuple[str, ...] = ()     # R2-52A switch snapshot: rows kept as the record, never processed again
     alert_collector_lag_seconds: float = 10.0
     alert_gap_minutes: int = 1
     alert_disk_free_ratio: float = 0.10
@@ -59,6 +60,8 @@ class PaperConfig:
             raise ValueError("comparison_books must be enabled non-primary books")
         if self.leverage_books is not None and set(self.leverage_books) - set(self.books):
             raise ValueError("leverage_books must be enabled books")
+        if set(self.retired_books) & (set(self.books) | {f"{name}_x3" for name in self.leverage_books or ()}):
+            raise ValueError("retired_books must not be active")
         for value in (self.start_time, *self.book_start_times.values()):
             stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
             if stamp.tzinfo is None:
@@ -87,7 +90,7 @@ def load_config(path: str | Path = "config/paper.toml") -> PaperConfig:
     values = payload.get("paper", payload)
     if "books" in values:
         values["books"] = tuple(values["books"])
-    for name in ("comparison_books", "leverage_books", "telegram_books"):
+    for name in ("comparison_books", "leverage_books", "telegram_books", "retired_books"):
         if name in values:
             values[name] = tuple(values[name])
     config = PaperConfig(**values)

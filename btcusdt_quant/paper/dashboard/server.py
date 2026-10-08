@@ -409,7 +409,7 @@ def _catalog_conditions(connection: sqlite3.Connection, book: str, tf: str,
         linked["fill_time"] = pd.to_datetime(linked.fill_time, utc=True)
         linked = linked.sort_values(["signal_time", "fill_time"], kind="stable")
         fill_of = {pd.Timestamp(row.signal_time): row for row in linked.drop_duplicates("signal_time").itertuples()}
-    gated = catalog.BOOKS[book][1]
+    gated = False                      # AX books use the ungated NATIVE table
     has_decisions = _has_table(connection, "catalog_decisions")
     try:
         decided = _frame(connection, "catalog_decisions", "book=?", (book,))
@@ -473,9 +473,9 @@ def _catalog_conditions(connection: sqlite3.Connection, book: str, tf: str,
     cadence = spec.cadence_min or 60
     now = pd.Timestamp.now(tz="UTC")
     next_decision = now.floor(f"{cadence}min") + pd.Timedelta(minutes=cadence)
-    leg = {"candidate": f"catalog:{spec_id}", "name": f"{catalog.label(book)} — {catalog.definition(book)}",
+    leg = {"candidate": f"catalog:{spec_id}", "name": catalog.label(book),
            "kind": "catalog", "value_label": "탐지기 M %" if gated else INDICATOR_LABELS.get(primary_key, primary_key or "종가"),
-           "decision_cadence_minutes": cadence, "max_hold_hours": round(spec.hold_min / 60, 2),
+           "decision_cadence_minutes": cadence, "max_hold_hours": None,      # R2-52A: no max hold
            "last_decision": None if last is None else {"decision_time": last["decision_time"], "text": last["text"]},
            "next_estimate": None, "current_text": None if last is None else last["text"], "rows": rows,
            **{k: None for k in ("long_account_pct", "upper_pct", "lower_pct", "distance_to_short", "distance_to_long")}}
@@ -488,6 +488,13 @@ def _catalog_conditions(connection: sqlite3.Connection, book: str, tf: str,
                      **{k: None for k in ("long_account_pct", "upper_pct", "lower_pct", "distance_to_short",
                                           "distance_to_long")}}
         legs.append(model_leg)
+    ax = _ax_state(connection, book)
+    if ax is not None:
+        legs.append({"candidate": f"ax:{spec_id}", "name": "적응형 청산 상태", "kind": "catalog",
+                     "value_label": None, "decision_cadence_minutes": 1, "max_hold_hours": None,
+                     "last_decision": None, "next_estimate": None, "current_text": _ax_text(ax), "rows": [], "ax": ax,
+                     **{k: None for k in ("long_account_pct", "upper_pct", "lower_pct", "distance_to_short",
+                                          "distance_to_long")}})
     cutoff = processed + pd.Timedelta(minutes=1) if processed is not None else None
     return {"schema_version": 3, "book": book, "tf": tf, "start_time": start_time, "source": "paper_catalog",
             "generated_at": _iso(now), "data_cutoff": (_iso(cutoff) if cutoff is not None else
@@ -501,6 +508,22 @@ def _catalog_conditions(connection: sqlite3.Connection, book: str, tf: str,
                                                     "decision_cadence_minutes", "last_decision", "next_estimate",
                                                     "current_text")} for x in legs]},
             "legs": legs}
+
+
+def _ax_state(connection: sqlite3.Connection, book: str) -> dict | None:
+    """Open AX position state (scripts/paper_catalog.py catalog_ax_state)."""
+    frame = _frame(connection, "catalog_ax_state", "book=? AND status='OPEN'", (book,))
+    return None if frame.empty else _records(frame.sort_values("position_id"))[-1]
+
+
+def _ax_text(ax: dict) -> str:
+    value = lambda v, unit="": "—" if v is None else f"{float(v):,.2f}{unit}"
+    return " · ".join([f"E0 {value(ax.get('e0_bps'), ' bps')}", f"E_t {value(ax.get('e_t_bps'), ' bps')}",
+                       f"k {value(ax.get('k'))}", f"R0 {value(ax.get('r0_bps'), ' bps')}",
+                       f"R_t {value(ax.get('r_bps'), ' bps')}", f"손절가 {value(ax.get('hard_stop'))}",
+                       "추적 무장 " + ("예" if ax.get("trail_armed") else "아니오"),
+                       f"최고/최저가 {value(ax.get('best_price'))}", f"추적 손절가 {value(ax.get('trail_stop'))}",
+                       f"상태 청산 기준 {value(ax.get('anchor_upper') if ax.get('side', 0) > 0 else ax.get('anchor_lower'))}"])
 
 
 def _decision_text(event: dict | None) -> str:
@@ -544,7 +567,12 @@ def _conditions_payload(connection: sqlite3.Connection, cache: _ConditionCache,
     if book.endswith("_x3"):
         book = book[:-3]
     if book in catalog.BOOKS:
-        return _catalog_conditions(connection, book, tf, start_time)
+        payload = _catalog_conditions(connection, book, tf, start_time)
+        payload["book"] = requested_book
+        state = _frame(connection, "leverage_state", "book=?", (requested_book,))
+        if requested_book != book and not state.empty and state.status.iloc[0] != "RUNNING":
+            payload["summary"]["note"] = "청산·중지된 장부입니다. 아래 값은 내부 원천 장부(1배) 상태입니다."
+        return payload
     if book not in CONDITION_BOOKS and book not in catalog.BOOKS:
         raise ValueError(f"book must be one of {','.join((*CONDITION_BOOKS, *catalog.BOOKS))}")
     if tf not in TF_SECONDS:
@@ -874,11 +902,12 @@ def _performance(connection: sqlite3.Connection, book: str,
 def _book_rows(connection: sqlite3.Connection, book_names: tuple[str, ...],
                start_time: str | None,
                book_start_times: Mapping[str, str] | None = None,
-               leverage_book_names: tuple[str, ...] | None = None) -> list[dict[str, object]]:
+               leverage_book_names: tuple[str, ...] | None = None,
+               x3_only: bool = False) -> list[dict[str, object]]:
     positions, trades, daily = (_frame(connection, name) for name in ("positions", "trades", "daily_pnl"))
     last = _meta(connection, "last_processed_minute")
-    names = list(dict.fromkeys((*book_names, *sorted(set(trades.get("book", ())) |
-                                                   set(positions.get("book", ()))))))
+    names = [] if x3_only else list(dict.fromkeys((*book_names, *sorted(set(trades.get("book", ())) |
+                                                                      set(positions.get("book", ()))))))
     starts = book_start_times or {}
     next_funding = _iso(_utc(last).floor("8h") + pd.Timedelta(hours=8)) if last else None
     rows = []
@@ -910,7 +939,7 @@ def _book_rows(connection: sqlite3.Connection, book_names: tuple[str, ...],
     states = _frame(connection, "leverage_state")
     leverage_positions = _frame(connection, "leverage_positions")
     leverage_trades = _frame(connection, "leverage_trades")
-    if states.empty:
+    if states.empty and not x3_only:
         return rows
     for source_name in leverage_book_names or book_names:
         book_start = starts.get(source_name, start_time)
@@ -922,7 +951,8 @@ def _book_rows(connection: sqlite3.Connection, book_names: tuple[str, ...],
         trade_part = (leverage_trades.loc[leverage_trades.book.eq(name)]
                       if not leverage_trades.empty else leverage_trades)
         value = {} if state.empty else _records(state)[0]
-        rows.append({"book": name, "display_book": f"{source_name} ×3",
+        rows.append({"book": name, "display_book": (catalog.label(name) if source_name in catalog.BOOKS else
+                                                    f"{source_name} ×3"),
                      "position": None if position.empty else _records(position)[0],
                      "trades": len(trade_part),
                      "win_rate": None if trade_part.empty else float((trade_part.pnl_usd > 0).mean()),
@@ -960,10 +990,26 @@ class DashboardServer(ThreadingHTTPServer):
 def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
              start_time: str | None = None,
              book_start_times: Mapping[str, str] | None = None,
-             leverage_books: tuple[str, ...] | None = None) -> type[BaseHTTPRequestHandler]:
+             leverage_books: tuple[str, ...] | None = None,
+             primary_book: str | None = None) -> type[BaseHTTPRequestHandler]:
     configured_books = books or DEFAULT_BOOKS
     configured_starts = dict(book_start_times or {})
     configured_leverage = configured_books if leverage_books is None else leverage_books
+    # R2-52A: with AX sources only the derived x3 books are visible; hidden 1x sources and retired rows never appear
+    x3_only = bool(configured_leverage) and all(name in catalog.BOOKS for name in configured_leverage)
+    visible = tuple(f"{name}_x3" for name in configured_leverage) if x3_only else None
+    default_book = ((f"{primary_book}_x3" if primary_book and f"{primary_book}_x3" in visible else visible[0])
+                    if x3_only else configured_books[0])
+    configured_books = visible if x3_only else configured_books
+
+    def shown(frame: pd.DataFrame) -> pd.DataFrame:
+        return frame.loc[frame.book.isin(visible)] if x3_only and not frame.empty else frame
+
+    def requested(query: dict[str, list[str]]) -> str:
+        book = query.get("book", [default_book])[0]
+        if x3_only and book not in visible:
+            raise ValueError(f"book must be one of {','.join(visible)}")
+        return book
 
     def book_start(book: str) -> str | None:
         source = book[:-3] if book.endswith("_x3") else book
@@ -1027,7 +1073,7 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                 self._json({"schema_version": 2, "tf": tf, "max_rows": MAX_CANDLES,
                             "rows": rows, **latest}); return True
             if path == "/api/markers":
-                book = query.get("book", [configured_books[0]])[0]
+                book = requested(query)
                 table = "leverage_trades" if book.endswith("_x3") else "trades"
                 open_table = "leverage_positions" if book.endswith("_x3") else "positions"
                 rows = (_trade_markers(_frame(connection, table, "book=?", (book,))) +
@@ -1036,7 +1082,7 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                             "rows": sorted(rows, key=lambda row: (row["time"], row["kind"] != "entry"))})
                 return True
             if path in {"/api/positions", "/api/positions.csv"}:
-                frame = _all_positions(connection)
+                frame = shown(_all_positions(connection))
                 if query.get("book") and not frame.empty: frame = frame.loc[frame.book.eq(query["book"][0])]
                 self._csv(frame) if path.endswith(".csv") else self._json({"schema_version": 2, "rows": _records(frame)})
                 return True
@@ -1048,7 +1094,7 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                 if query.get("from"): clauses.append(f"{time_column}>=?"); parameters.append(_iso(_utc(query["from"][0])))
                 if query.get("to"): clauses.append(f"{time_column}<?"); parameters.append(_iso(_utc(query["to"][0])))
                 if table == "trades":
-                    frame = _all_trades(connection)
+                    frame = shown(_all_trades(connection))
                     if query.get("book") and not frame.empty:
                         frame = frame.loc[frame.book.eq(query["book"][0])]
                     if query.get("from") and not frame.empty:
@@ -1056,17 +1102,17 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                     if query.get("to") and not frame.empty:
                         frame = frame.loc[pd.to_datetime(frame[time_column], utc=True) < _utc(query["to"][0])]
                 else:
-                    frame = _frame(connection, table, " AND ".join(clauses), tuple(parameters))
+                    frame = shown(_frame(connection, table, " AND ".join(clauses), tuple(parameters)))
                 if not frame.empty: frame = frame.sort_values(time_column, ascending=False, kind="stable")
                 self._csv(frame) if path.endswith(".csv") else self._json({"schema_version": 1, "rows": _records(frame)})
                 return True
             if path == "/api/performance":
-                book = query.get("book", [configured_books[0]])[0]
+                book = requested(query)
                 self._json(_performance(connection, book, start_time=book_start(book))); return True
             if path == "/api/status":
                 self._json(self._status(connection)); return True
             if path == "/api/conditions":
-                book = query.get("book", [configured_books[0]])[0]
+                book = requested(query)
                 tf = query.get("tf", ["1h"])[0]
                 self._json(_conditions_payload(connection, condition_cache, book, tf,
                                                 book_start(book))); return True
@@ -1075,15 +1121,17 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
         def _v1(self, connection: sqlite3.Connection, path: str,
                 query: dict[str, list[str]]) -> bool:
             if path == "/api/summary":
-                positions, trades, signals, daily = (_frame(connection, name) for name in
+                positions, trades, signals, daily = (shown(_frame(connection, name)) for name in
                                                       ("positions", "trades", "signals", "daily_pnl"))
+                if x3_only:
+                    positions, trades = shown(_all_positions(connection)), shown(_all_trades(connection))
                 self._json({"schema_version": 1, "books": sorted(set(trades.get("book", ()))),
                             "position_count": len(positions), "trade_count": len(trades),
                             "signal_count": len(signals), "daily_count": len(daily)}); return True
             if path == "/api/books":
-                self._json({"schema_version": 1, "rows": _book_rows(
+                self._json({"schema_version": 1, "default_book": default_book, "rows": _book_rows(
                     connection, configured_books, start_time, configured_starts,
-                    configured_leverage)}); return True
+                    configured_leverage, x3_only)}); return True
             if path == "/api/chart":
                 rows = []
                 daily_prices, _ = _candle_rows(connection, "1d", None, None)
@@ -1091,11 +1139,12 @@ def _handler(store_path: Path, data_root: Path, books: tuple[str, ...] = (),
                     for item in _performance(connection, book, daily_prices, book_start(book))["series"]:
                         rows.append({"book": book if item["name"] != "BUY_HOLD" else "BUY_HOLD",
                                      "boundary": item["name"], **{key: item[key] for key in
-                                     ("date", "cumulative_net_bps", "drawdown_bps")}, "monthly": {}})
+                                     ("date", "cumulative_net_bps", "drawdown_bps", "cumulative_pnl_usd",
+                                      "drawdown_usd") if key in item}, "monthly": {}})
                 self._json({"schema_version": 1, "series": rows}); return True
             if path == "/api/price":
                 candles, _ = _candle_rows(connection, "1h", None, None)
-                trades = _frame(connection, "trades")
+                trades = shown(_all_trades(connection)) if x3_only else _frame(connection, "trades")
                 markers = [] if trades.empty else _records(trades[["book", "entry_time", "exit_time",
                                                                    "entry_price", "exit_price", "side"]])
                 self._json({"schema_version": 1, "price": [{"open_time": x["time_utc"], "close": x["close"]}
@@ -1196,14 +1245,15 @@ def make_server(store_path: str | Path, data_root: str | Path,
                 host: str = "127.0.0.1", port: int = 8765, books: tuple[str, ...] = (),
                 start_time: str | None = None,
                 book_start_times: Mapping[str, str] | None = None,
-                leverage_books: tuple[str, ...] | None = None) -> DashboardServer:
+                leverage_books: tuple[str, ...] | None = None,
+                primary_book: str | None = None) -> DashboardServer:
     if host != "127.0.0.1":
         raise ValueError("dashboard must bind 127.0.0.1")
     path = Path(store_path)
     if not path.exists():
         raise FileNotFoundError(path)
     server = DashboardServer((host, port), _handler(
-        path, Path(data_root), tuple(books), start_time, book_start_times, leverage_books))
+        path, Path(data_root), tuple(books), start_time, book_start_times, leverage_books, primary_book))
     server.store_path, server.data_root = path, Path(data_root)
     return server
 

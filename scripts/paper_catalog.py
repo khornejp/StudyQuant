@@ -1,17 +1,19 @@
-"""Live R2-44 PatchTST predictions and R2-48 catalog paper books (both read-only research code).
+"""Live R2-44 PatchTST predictions and the R2-52A AX paper books (both read-only research code).
 
-Every cycle: train any due weekly fold, append 15 m predictions, recompute every catalog book and replace only
-those books' rows in trades / daily_pnl / positions. Usage: python scripts/paper_catalog.py [--once]
+Every cycle: train any due weekly fold, append 15 m predictions, recompute every active AX source book and its x3
+overlay and replace only those books' rows (trades / daily_pnl / positions / catalog_fills and the source's own
+<source>_x3 leverage_* rows), source and x3 in the same transaction. Retired books are never touched.
+Usage: python scripts/paper_catalog.py [--once]
 """
 from __future__ import annotations
-import argparse, logging, sys, time
+import argparse, json, logging, sys, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import numpy as np, pandas as pd, torch  # noqa: E402
-from btcusdt_quant.paper import catalog, detector  # noqa: E402
+from btcusdt_quant.paper import catalog, detector, leverage  # noqa: E402
 from btcusdt_quant.paper.config import load_config  # noqa: E402
 from btcusdt_quant.paper.store import PaperStore, utc_text  # noqa: E402
 
@@ -28,6 +30,15 @@ SIGNAL_TABLE = ("CREATE TABLE IF NOT EXISTS catalog_signals (book TEXT NOT NULL,
 FILL_TABLE = ("CREATE TABLE IF NOT EXISTS catalog_fills (book TEXT NOT NULL, signal_time TEXT NOT NULL, "
               "fill_time TEXT NOT NULL, side INTEGER NOT NULL, fill_price REAL NOT NULL, "
               "PRIMARY KEY(book, signal_time, fill_time, side, fill_price))")
+AX_STATE_TABLE = ("CREATE TABLE IF NOT EXISTS catalog_ax_state (book TEXT NOT NULL, position_id INTEGER NOT NULL, "
+                  "status TEXT NOT NULL, side INTEGER, entry_time TEXT, entry_price REAL, k REAL, e_head TEXT, "
+                  "e0_bps REAL, e_t_bps REAL, r0_bps REAL, r_bps REAL, hard_stop REAL, trail_armed INTEGER, "
+                  "best_price REAL, trail_stop REAL, anchor_upper REAL, anchor_lower REAL, updated_at TEXT, "
+                  "PRIMARY KEY(book, position_id))")
+AX_EVENT_TABLE = ("CREATE TABLE IF NOT EXISTS catalog_ax_events (book TEXT NOT NULL, position_id INTEGER NOT NULL, "
+                  "event_time TEXT NOT NULL, event_type TEXT NOT NULL, event_seq INTEGER NOT NULL, payload TEXT, "
+                  "PRIMARY KEY(book, position_id, event_time, event_type, event_seq))")      # immutable: INSERT OR IGNORE
+LEVERAGE_TABLES = ("leverage_state", "leverage_positions", "leverage_trades", "leverage_daily", "leverage_skips")
 log = logging.getLogger("paper_catalog")
 
 
@@ -97,6 +108,13 @@ def ensure_catalog_tables(connection) -> None:
     if "expiry_min" not in have:
         connection.execute("ALTER TABLE catalog_signals ADD COLUMN expiry_min INTEGER")
     connection.execute(FILL_TABLE)
+    connection.execute(AX_STATE_TABLE)
+    connection.execute(AX_EVENT_TABLE)
+
+
+def active_books(config) -> list[str]:
+    retired = set(getattr(config, "retired_books", ()))
+    return [n for n in config.books if n in catalog.BOOKS and n not in retired]
 
 
 def decide_model_books(store: PaperStore, config, ctx, predictions: pd.DataFrame) -> int:
@@ -104,7 +122,7 @@ def decide_model_books(store: PaperStore, config, ctx, predictions: pd.DataFrame
     now = pd.Timestamp.now(tz="UTC")
     known = read_decisions(store)
     events = []
-    for name in (n for n in config.books if n in catalog.BOOKS and catalog.needs_model(n)):
+    for name in (n for n in active_books(config) if catalog.needs_model(n)):
         start = pd.Timestamp(config.book_start_times.get(name, config.start_time))
         if start > now:
             continue
@@ -163,12 +181,59 @@ def update_minute_predictions(store: PaperStore, now: pd.Timestamp, device) -> i
     return written
 
 
+def _x3(name: str, result, minutes, funding, start, end):
+    """x3 overlay of one AX source: the same adaptive result (accepted fills, source exits with phase, the open
+    position as _active); no independent signal, E, stop or max hold."""
+    source = result.attrs.get("source")
+    if source is None:
+        source = pd.DataFrame(columns=["entry_time", "exit_time", "side", "entry_price", "exit_price", "exit_reason",
+                                       "exit_phase", "candidate", "_active"])
+    return leverage.simulate_book(source, minutes, funding, name, start, end)
+
+
+def _ax_rows(name: str, trades, held, ctx, end):
+    """catalog_ax_state for the open position and immutable ENTRY/EXIT events per position."""
+    legs = trades.attrs.get("legs", pd.DataFrame())
+    events = []
+    for leg in legs.itertuples(index=False):
+        pid = int(leg.position_id)
+        events.append((name, pid, utc_text(leg.entry_time), "ENTRY", 0, json.dumps(
+            {"side": int(leg.side), "price": float(leg.entry_price)})))
+        events.append((name, pid, utc_text(leg.exit_time), "EXIT", 0, json.dumps(
+            {"price": float(leg.exit_price), "reason": str(leg.exit_reason).upper()})))
+    state = None
+    if held is not None:
+        state = catalog.ax_state(name, held, ctx, end)
+        events.append((name, state["position_id"], utc_text(held["entry_time"]), "ENTRY", 0, json.dumps(
+            {"side": state["side"], "price": state["entry_price"], "k": state["k"], "e0_bps": state["e0_bps"],
+             "r0_bps": state["r0_bps"]})))
+    return state, events
+
+
+def _write_x3(store: PaperStore, connection, result) -> None:
+    state = dict(result.state)
+    state["liquidated_at"] = None if state["liquidated_at"] is None else utc_text(state["liquidated_at"])
+    state["updated_at"] = utc_text(state["updated_at"])
+    store.upsert("leverage_state", state, connection)
+    if result.position is not None:
+        position = {**result.position, "entry_time": utc_text(result.position["entry_time"]),
+                    "updated_at": utc_text(result.position["updated_at"])}
+        store.upsert("leverage_positions", position, connection)
+    for row in result.trades.to_dict("records"):
+        store.insert("leverage_trades", {**row, "entry_time": utc_text(row["entry_time"]),
+                                         "exit_time": utc_text(row["exit_time"])}, connection)
+    for row in result.daily.to_dict("records"):
+        store.upsert("leverage_daily", row, connection)
+    for row in result.skips.to_dict("records"):
+        store.insert("leverage_skips", {**row, "entry_time": utc_text(row["entry_time"])}, connection)
+
+
 def recompute_books(store: PaperStore, config, end: pd.Timestamp, ctx=None, funding=None,
                     with_signals: bool = True) -> int:
     if ctx is None:
         ctx, funding, _ = load_context(store)
     decisions = read_decisions(store)
-    names = [n for n in config.books if n in catalog.BOOKS]
+    names = active_books(config)
     results, signals = {}, {}
     end_price = float(ctx.minutes.close.iloc[-1])
     for name in names:
@@ -179,39 +244,36 @@ def recompute_books(store: PaperStore, config, end: pd.Timestamp, ctx=None, fund
                 log.exception("catalog signals %s failed", name)
         start = pd.Timestamp(config.book_start_times.get(name, config.start_time))
         if start >= end:
-            results[name] = (pd.DataFrame(), pd.DataFrame(), None, pd.DataFrame())
             continue
         try:
-            t, d, held = catalog.run_book(name, ctx, funding, start, end,
-                                          decisions.loc[decisions.book == name])
+            t, d, held = catalog.run_book(name, ctx, funding, start, end, decisions.loc[decisions.book == name])
             position = None
             if held is not None:
-                limit = held.get("max_hold_end")       # grid books have no max-hold end
-                legs = held.get("legs", [])
-                unrealized = (sum(float(leg["side"]) * np.log(end_price / float(leg["entry_price"])) * 1e4
-                                  * float(leg["units"]) for leg in legs) if legs else
-                              float(held["side"] * np.log(end_price / held["avg_price"]) * 1e4 * held["units"]))
+                unrealized = sum(float(leg["side"]) * np.log(end_price / float(leg["entry_price"])) * 1e4
+                                 * float(leg["units"]) for leg in held.get("legs", []))
                 position = {"book": name, "side": held["side"], "candidate": catalog.BOOKS[name][0],
                             "entry_time": utc_text(held["entry_time"]), "entry_price": float(held["avg_price"]),
-                            "exit_time": utc_text(limit if limit is not None else end),
-                            "remaining_minutes": None if limit is None else max(
-                                0, int((limit - end) / pd.Timedelta(minutes=1))),
+                            "exit_time": None, "remaining_minutes": None,      # no max hold (paper_rollout.position_row)
                             "unrealized_bps": float(unrealized), "updated_at": utc_text(end)}
             fills = catalog.fill_rows(name, t, held, decisions.loc[decisions.book == name])
             if not fills.empty:
                 fills = fills.loc[fills.signal_time >= end - pd.Timedelta(days=SIGNAL_DAYS)].reset_index(drop=True)
-            results[name] = (t, d, position, fills)
+            x3 = _x3(name, t, ctx.minutes, funding, start, end)
+            state, events = _ax_rows(name, t, held, ctx, end)
+            results[name] = (t, d, position, fills, x3, state, events)
         except Exception:
             log.exception("catalog book %s failed", name)
     published = 0
     with store.transaction() as connection:
         ensure_catalog_tables(connection)
-        for index, (name, (trades, daily, position, fills)) in enumerate(results.items()):
+        for index, (name, (trades, daily, position, fills, x3, state, events)) in enumerate(results.items()):
             savepoint = f"catalog_book_{index}"
             connection.execute(f"SAVEPOINT {savepoint}")
             try:
                 for table in ("trades", "daily_pnl", "positions", "catalog_fills"):
                     connection.execute(f"DELETE FROM {table} WHERE book=?", (name,))
+                for table in LEVERAGE_TABLES:          # only this active source's own x3 overlay
+                    connection.execute(f"DELETE FROM {table} WHERE book=?", (f"{name}_x3",))
                 if position is not None:
                     store.upsert("positions", position, connection)
                 for row in trades.itertuples(index=False):
@@ -229,6 +291,13 @@ def recompute_books(store: PaperStore, config, end: pd.Timestamp, ctx=None, fund
                     connection.execute("INSERT INTO catalog_fills VALUES (?,?,?,?,?)", (
                         row.book, utc_text(row.signal_time), utc_text(row.fill_time), int(row.side),
                         float(row.fill_price)))
+                _write_x3(store, connection, x3)
+                connection.execute("UPDATE catalog_ax_state SET status='CLOSED' WHERE book=? AND status='OPEN' "
+                                   "AND position_id IS NOT ?", (name, None if state is None else state["position_id"]))
+                if state is not None:
+                    connection.execute(f"INSERT OR REPLACE INTO catalog_ax_state ({','.join(state)}) VALUES "
+                                       f"({','.join('?' * len(state))})", tuple(state.values()))
+                connection.executemany("INSERT OR IGNORE INTO catalog_ax_events VALUES (?,?,?,?,?,?)", events)
             except Exception:
                 connection.execute(f"ROLLBACK TO {savepoint}")
                 connection.execute(f"RELEASE {savepoint}")

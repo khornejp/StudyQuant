@@ -7,6 +7,7 @@ import logging
 import math
 import shutil
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
@@ -18,6 +19,7 @@ from .config import PaperConfig, load_env_slots
 from .store import PaperStore
 
 LOG = logging.getLogger(__name__)
+SEND_INTERVAL_SECONDS = 1.0       # r2_52a_exit_freeze.json paper_rollout.telegram_daily: at most 1 request per second
 
 
 # Message layout lives in telegram_format (user format 2026-10-07).
@@ -38,6 +40,8 @@ class TelegramNotifier:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        self._clock, self._sleep = time.monotonic, time.sleep     # injectable for tests
+        self._next_send = 0.0
 
     def _enabled(self, event_type: str) -> bool:
         setting = {
@@ -83,20 +87,38 @@ class TelegramNotifier:
                 "WHERE status IN ('pending','failed') AND "
                 "(next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY id", (stamp.isoformat(),)
             ).fetchall()
+            throttled = store.connection.execute(
+                "SELECT MIN(id) FROM notifications WHERE status='failed' AND last_error='HTTP_429' "
+                "AND next_attempt_at>?", (stamp.isoformat(),)).fetchone()[0]
+            if throttled is not None:          # FIFO: nothing newer goes out before the throttled message
+                rows = [row for row in rows if int(row["id"]) < int(throttled)]
             for row in rows:
                 attempts = int(row["attempts"]) + 1
+                wait = self._next_send - self._clock()
+                if wait > 0:          # FIFO pacing on the outbox worker thread, never the paper loop
+                    self._sleep(wait)
+                retry_after = None
                 try:
                     response = requests.post(
                         f"https://api.telegram.org/bot{self._token}/sendMessage",
                         data={"chat_id": self._chat_id, "text": row["payload"]}, timeout=15)
+                    self._next_send = self._clock() + SEND_INTERVAL_SECONDS
+                    if response.status_code == 429:
+                        try:
+                            retry_after = float(response.json().get("parameters", {}).get("retry_after", 1))
+                        except Exception:
+                            retry_after = 1.0
+                        self._next_send = self._clock() + retry_after
+                        raise RuntimeError("HTTP_429")
                     if response.status_code != 200:
                         raise RuntimeError(f"HTTP_{response.status_code}")
                     body = response.json()
                     if not bool(body.get("ok")):
                         raise RuntimeError(f"API_{body.get('error_code', 'ERROR')}")
                 except Exception as error:  # delivery must never escape into the engine loop
-                    delay = min(self.config.telegram_retry_max_seconds,
-                                self.config.telegram_retry_base_seconds * (2 ** (attempts - 1)))
+                    delay = retry_after if retry_after is not None else min(
+                        self.config.telegram_retry_max_seconds,
+                        self.config.telegram_retry_base_seconds * (2 ** (attempts - 1)))
                     next_attempt = stamp + pd.Timedelta(seconds=delay)
                     error_text = str(error)
                     safe_error = (error_text if isinstance(error, RuntimeError) and
@@ -106,6 +128,9 @@ class TelegramNotifier:
                         "last_error=? WHERE id=?",
                         (attempts, next_attempt.isoformat(), safe_error, row["id"]))
                     LOG.warning("telegram delivery failed: %s", safe_error)
+                    if retry_after is not None:       # throttled: later rows wait behind this one (FIFO)
+                        store.connection.commit()
+                        break
                 else:
                     store.connection.execute(
                         "UPDATE notifications SET status='sent',attempts=?,sent_at=?,"
@@ -150,11 +175,17 @@ class TelegramNotifier:
         if not trades.empty:
             trades["cumulative_net_bps"] = trades.groupby("book").net_bps.cumsum()
         if self.config.telegram_books is not None:
+            # R2-52A: only the visible x3 books; every 1x, retired and MIGRATION_END event is suppressed
             keep = set(self.config.telegram_books)
-            positions, trades, dropped = (frame.loc[frame.book.isin(keep)] if not frame.empty else frame
-                                          for frame in (positions, trades, dropped))
+            positions, trades, dropped, leverage_positions, leverage_trades = (
+                frame.loc[frame.book.isin(keep)] if not frame.empty else frame
+                for frame in (positions, trades, dropped, leverage_positions, leverage_trades))
             if not catalog_fills.empty:
                 catalog_fills = catalog_fills.loc[catalog_fills.book.isin(keep)]
+        if not trades.empty:
+            trades = trades.loc[~trades.exit_reason.str.contains("MIGRATION_END")]
+        if not leverage_trades.empty:
+            leverage_trades = leverage_trades.loc[~leverage_trades.exit_reason.str.contains("MIGRATION_END")]
         from . import catalog
         is_catalog = (lambda frame: frame.book.isin(set(catalog.BOOKS)) if not frame.empty
                       else pd.Series(dtype=bool))
@@ -191,15 +222,31 @@ class TelegramNotifier:
                 # ponytail: leg size inferred from the 4 bps round-trip fee; store units if fees ever vary
                 "units": float(row.cost_bps) / 4.0 if float(row.cost_bps) > 0 else 1.0})
         warning_positions = leverage_positions.copy()
+        # x3 entries come from the immutable source fills: open x3 positions plus x3 trades that already closed
+        # (same-minute or within one cycle); the shared entry key dedupes them.
+        ax_closed = (leverage_trades.loc[leverage_trades.source_book.isin(set(catalog.BOOKS))]
+                     if not leverage_trades.empty else leverage_trades)
+        leverage_entries = pd.concat([leverage_positions, ax_closed.rename(columns={
+            "initial_liquidation_price": "_liq0", "balance_before_usd": "_balance0"})], ignore_index=True, sort=False)
+        if not leverage_entries.empty and "_liq0" in leverage_entries:
+            closed = leverage_entries._liq0.notna()
+            leverage_entries.loc[closed, "liquidation_price"] = leverage_entries.loc[closed, "_liq0"]
+            leverage_entries.loc[closed, "balance_usd"] = leverage_entries.loc[closed, "_balance0"]
         if since is not None:
             cutoff = pd.Timestamp(since)
+            if not leverage_entries.empty:
+                # catalog x3 rows are written by paper_catalog after this loop's minute: same 30 min look-back
+                lag = leverage_entries.source_book.isin(set(catalog.BOOKS)).map(
+                    {True: pd.Timedelta(minutes=30), False: pd.Timedelta(0)})
+                leverage_entries = leverage_entries.loc[
+                    pd.to_datetime(leverage_entries.entry_time, utc=True).gt(cutoff - lag)]
+                lag = leverage_trades.source_book.isin(set(catalog.BOOKS)).map(
+                    {True: pd.Timedelta(minutes=30), False: pd.Timedelta(0)})
+                leverage_trades = leverage_trades.loc[
+                    pd.to_datetime(leverage_trades.exit_time, utc=True).gt(cutoff - lag)]
             positions = positions.loc[pd.to_datetime(positions.entry_time, utc=True).gt(cutoff)]
             trades = trades.loc[pd.to_datetime(trades.exit_time, utc=True).gt(cutoff)]
             dropped = dropped.loc[pd.to_datetime(dropped.entry_time, utc=True).gt(cutoff)]
-            leverage_positions = leverage_positions.loc[
-                pd.to_datetime(leverage_positions.entry_time, utc=True).gt(cutoff)]
-            leverage_trades = leverage_trades.loc[
-                pd.to_datetime(leverage_trades.exit_time, utc=True).gt(cutoff)]
         for row in positions.itertuples(index=False):
             queued += self.enqueue(f"entry:{row.book}:{row.entry_time}", "entry", {
                 "book": row.book, "side": row.side, "price": row.entry_price,
@@ -212,8 +259,8 @@ class TelegramNotifier:
                 "reason": row.exit_reason, "gross_bps": row.gross_bps,
                 "cost_bps": row.cost_bps, "funding_bps": row.funding_bps,
                 "net_bps": row.net_bps, "cumulative_net_bps": row.cumulative_net_bps})
-        for row in leverage_positions.itertuples(index=False):
-            event = {"book": row.book, "side": row.side, "price": row.entry_price,
+        for row in leverage_entries.drop_duplicates(["book", "entry_time"]).itertuples(index=False):
+            event = {"book": row.book, "side": row.side, "price": row.entry_price, "entry_time": row.entry_time,
                      "notional_usd": row.notional_usd, "margin_usd": row.margin_usd,
                      "liquidation_price": row.liquidation_price,
                      "balance_usd": row.balance_usd}
@@ -240,34 +287,32 @@ class TelegramNotifier:
         return queued
 
     def publish_daily_summary(self, day: str) -> bool:
+        """One logical daily summary: x3 USD rows only, for visible x3 books with a trade closed that UTC day
+        (leverage_trades / leverage_daily); no 1x bps section; rows=[] when nothing closed."""
+        end = (pd.Timestamp(day, tz="UTC") + pd.Timedelta(days=1)).isoformat()
         with PaperStore(self.store_path) as store:
-            daily = store.frame("daily_pnl", "date=? AND boundary='PESS'", (day,))
-            all_daily = store.frame("daily_pnl", "boundary='PESS'")
-            trades = store.frame("trades", "boundary='PESS' AND exit_time>=? AND exit_time<?",
-                                 (f"{day}T00:00:00+00:00",
-                                  (pd.Timestamp(day, tz="UTC") + pd.Timedelta(days=1)).isoformat()))
-            bars = store.frame("klines_1m", "open_time>=? AND open_time<?",
-                               (f"{day}T00:00:00+00:00",
-                                (pd.Timestamp(day, tz="UTC") + pd.Timedelta(days=1)).isoformat()))
-            positions = store.frame("positions")
-        rows = []
-        if self.config.telegram_books is not None and not daily.empty:
-            daily = daily.loc[daily.book.isin(set(self.config.telegram_books))]
-        for row in daily.itertuples(index=False):
-            from . import catalog
-            mine = trades.loc[trades.book.eq(row.book)] if not trades.empty else trades
-            if not len(mine):          # user 2026-10-08: only books that closed a trade that day
-                continue
-            rows.append({"book": row.book, "catalog": row.book in catalog.BOOKS, "day_net_bps": row.net_bps,
-                         "total_net_bps": all_daily.loc[all_daily.book.eq(row.book), "net_bps"].sum(),
-                         "trades": len(mine), "wins": int(mine.net_bps.gt(0).sum()) if len(mine) else 0,
-                         "longs": int(mine.side.gt(0).sum()) if len(mine) else 0})
+            trades = store.frame("leverage_trades", "exit_time>=? AND exit_time<?", (f"{day}T00:00:00+00:00", end))
+            daily = store.frame("leverage_daily", "date=?", (day,))
+            bars = store.frame("klines_1m", "open_time>=? AND open_time<?", (f"{day}T00:00:00+00:00", end))
+            positions = store.frame("leverage_positions")
+        keep = (set(self.config.telegram_books) if self.config.telegram_books is not None else
+                {b for b in trades.get("book", ()) if str(b).endswith("_x3")})
+        if not trades.empty:
+            trades = trades.loc[trades.book.isin(keep) & ~trades.exit_reason.str.contains("MIGRATION_END")]
+        if not positions.empty:
+            positions = positions.loc[positions.book.isin(keep)]
+        balance = dict(zip(daily.book, daily.balance_usd)) if not daily.empty else {}
+        rows = [{"book": book, "day_pnl_usd": float(part.pnl_usd.sum()),
+                 "balance_usd": float(balance.get(book, part.sort_values("exit_time").balance_after_usd.iloc[-1])),
+                 "trades": len(part), "wins": int(part.pnl_usd.gt(0).sum()), "longs": int(part.side.gt(0).sum()),
+                 "liquidated": int(part.liquidated.sum())}
+                for book, part in (trades.groupby("book") if not trades.empty else ())]
         buy_hold = 0.0 if len(bars) < 2 else float(
             math.log(float(bars.close.iloc[-1]) / float(bars.open.iloc[0])) * 10_000)
         return self.enqueue(f"daily:{day}", "daily_summary",
                             {"date": day, "rows": rows, "buy_hold_bps": buy_hold,
                              "open_positions": len(positions),
-                             "open_unrealized_bps": float(positions.unrealized_bps.sum()) if len(positions) else 0.0})
+                             "open_unrealized_usd": float(positions.unrealized_pnl_usd.sum()) if len(positions) else 0.0})
 
     def publish_health_alerts(self, data_root: str | Path, since: object | None = None) -> int:
         queued = 0

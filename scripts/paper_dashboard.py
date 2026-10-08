@@ -27,7 +27,7 @@ def main() -> None:
                          config.dashboard_host, config.dashboard_port,
                          books=config.books, start_time=config.start_time,
                          book_start_times=config.book_start_times,
-                         leverage_books=config.leverage_books)
+                         leverage_books=config.leverage_books, primary_book=config.primary_book)
     print(f"http://{config.dashboard_host}:{config.dashboard_port}", flush=True)
     server.serve_forever()
 
