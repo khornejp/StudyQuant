@@ -1,6 +1,7 @@
 """R2-52A paper switch (out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json paper_rollout.retirement): one-shot.
 
-Run with paper_run.py and paper_catalog.py stopped. effective_switch_time = the open of the first minute after the
+Run with paper_run.py and paper_catalog.py stopped (both locks are taken and held). Phases and recovery: see
+switch(); every input is validated before the first write, the DB is backed up to <db>.pre_r2_52a.sqlite. effective_switch_time = the open of the first minute after the
 last processed minute. Every open retired 1x / x3 position is closed at that open (MIGRATION_END, normal exit fee,
 PESS funding up to the switch, no synthetic entry fee); the retired books are snapshotted, their per-table row
 counts and hashes are recorded before and after, and the new AX configuration (27 sources, 27 x3, telegram x3 only)
@@ -8,7 +9,8 @@ is written. Paper only: the price comes from the store or Binance public REST kl
 Usage: python scripts/paper_ax_switch.py [--config config/paper.toml] [--out-config config/paper.toml]
 """
 from __future__ import annotations
-import argparse, hashlib, json, shutil, sys
+import argparse, hashlib, json, shutil, sqlite3, sys
+from contextlib import ExitStack
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,9 +22,11 @@ import numpy as np, pandas as pd  # noqa: E402
 from btcusdt_quant.paper import book, catalog, leverage  # noqa: E402
 from btcusdt_quant.paper.collector import PublicBinanceClient, parse_kline  # noqa: E402
 from btcusdt_quant.paper.config import PaperConfig, load_config  # noqa: E402
-from btcusdt_quant.paper.store import PaperStore, utc_text  # noqa: E402
+from btcusdt_quant.paper.store import PaperStore, exclusive_lock, utc_text  # noqa: E402
 
 MANIFEST = ROOT / "out/k45_rl_r2_48_20261007/r2_52a/paper_switch_manifest.json"
+FREEZE = ROOT / "out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json"
+SELECTED_K = catalog.SELECTED_K
 TABLES = ("trades", "daily_pnl", "positions", "signals", "catalog_decisions", "catalog_signals", "catalog_fills",
           "leverage_state", "leverage_positions", "leverage_trades", "leverage_daily", "leverage_skips")
 REASON = "MIGRATION_END"
@@ -134,28 +138,39 @@ def _close_1x(store, connection, position, switch, price, funding, closes) -> No
 
 
 def _close_x3(store, connection, position, switch, price, funding) -> None:
+    """Retired x3 at the switch open with the leverage.simulate_book order: the open is tested against the
+    funding-adjusted liquidation price first (LIQUIDATED at that price, balance 0), else MIGRATION_END."""
     side, notional, margin = int(position.side), float(position.notional_usd), float(position.margin_usd)
-    entry = pd.Timestamp(position.entry_time)
+    entry, entry_price = pd.Timestamp(position.entry_time), float(position.entry_price)
     funding_usd = sum(leverage._funding_cashflows(funding, side, notional, entry, switch).values())
-    gross = notional * side * (price / float(position.entry_price) - 1.0)
-    cost = notional * 4.0 / 10_000.0                           # the existing x3 rule: round trip booked at the close
-    pnl = gross + funding_usd - cost
+    liq = leverage.liquidation_price(entry_price, side, margin, notional, .004, funding_usd)
+    entry_fee = notional * 4.0 / 20_000.0
     state = pd.read_sql_query("SELECT * FROM leverage_state WHERE book=?", connection, params=(position.book,))
     before = float(state.balance_usd.iloc[0]) if len(state) else float(position.balance_usd)
-    after = before + pnl
+    liquidated = price <= liq if side > 0 else price >= liq
+    if liquidated:          # existing liquidation rule: fill at the liquidation price, the whole margin is lost
+        exit_price, gross, cost, pnl, reason = liq, -margin - funding_usd + entry_fee, entry_fee, -margin, "LIQUIDATED"
+    else:
+        exit_price, reason = price, REASON
+        gross = notional * side * (price / entry_price - 1.0)
+        cost = notional * 4.0 / 10_000.0                       # the existing x3 rule: round trip booked at the close
+        pnl = gross + funding_usd - cost
+    after = 0.0 if liquidated else before + pnl
     store.insert("leverage_trades", {
         "book": position.book, "source_book": position.source_book, "candidate": position.candidate,
         "entry_time": utc_text(entry), "exit_time": utc_text(switch), "side": side,
-        "entry_price": float(position.entry_price), "exit_price": price, "notional_usd": notional,
+        "entry_price": entry_price, "exit_price": exit_price, "notional_usd": notional,
         "margin_usd": margin, "initial_liquidation_price": float(position.liquidation_price),
-        "liquidation_price": float(position.liquidation_price), "max_adverse_pnl_usd": min(0.0, pnl), "liquidated": 0,
+        "liquidation_price": liq, "max_adverse_pnl_usd": min(0.0, pnl), "liquidated": int(liquidated),
         "gross_pnl_usd": gross, "cost_usd": cost, "funding_usd": funding_usd, "pnl_usd": pnl,
         "balance_before_usd": before, "balance_after_usd": after,
-        "hold_minutes": float((switch - entry) / pd.Timedelta(minutes=1)), "exit_reason": REASON}, connection)
+        "hold_minutes": float((switch - entry) / pd.Timedelta(minutes=1)), "exit_reason": reason}, connection)
     budget = 100.0
     connection.execute("UPDATE leverage_state SET balance_usd=?, cumulative_pnl_usd=?, cumulative_return_pct=?, "
-                       "updated_at=? WHERE book=?", (after, after - budget, (after / budget - 1) * 100, utc_text(switch),
-                                                     position.book))
+                       "updated_at=?, status=CASE WHEN ? THEN 'LIQUIDATED' ELSE status END, "
+                       "liquidated_at=CASE WHEN ? THEN ? ELSE liquidated_at END WHERE book=?",
+                       (after, after - budget, (after / budget - 1) * 100, utc_text(switch), int(liquidated),
+                        int(liquidated), utc_text(switch), position.book))
     day = switch.strftime("%Y-%m-%d")
     prior = connection.execute("SELECT balance_usd FROM leverage_daily WHERE book=? AND date<? ORDER BY date DESC "
                                "LIMIT 1", (position.book, day)).fetchone()
@@ -165,69 +180,135 @@ def _close_x3(store, connection, position, switch, price, funding) -> None:
                        "day_pnl_usd=excluded.day_pnl_usd", (position.book, day, after, after - previous))
 
 
-def switch(old: PaperConfig, out_config: Path, manifest_path: Path = MANIFEST, price=None,
-           check_lock: bool = True) -> dict:
-    with PaperStore(old.sqlite_path) as store:
-        if store.get_meta("r2_52a_effective_switch_time"):
-            raise SystemExit("R2-52A switch already applied: " + store.get_meta("r2_52a_effective_switch_time"))
-        if check_lock:
-            import msvcrt
-            with open(Path(old.sqlite_path).with_suffix(".run.lock"), "a+") as lock:
-                try:
-                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-                    msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-                except OSError:
-                    raise SystemExit("paper_run.py is running: stop it (and paper_catalog.py) first")
-        last = store.get_meta("last_processed_minute")
-        if last is None:
-            raise SystemExit("no processed minute")
-        at = pd.Timestamp(last) + pd.Timedelta(minutes=1)          # effective_switch_time
-        price = float((price or public_open)(at))
-        retired = retired_books(old)
-        before = retired_hashes(store, retired)
-        funding = store.frame("funding")[["time", "rate"]]
-        funding["time"] = pd.to_datetime(funding.time, utc=True, format="mixed")
-        funding = funding.sort_values("time").reset_index(drop=True)
-        closes = store.frame("klines_1m")[["open_time", "close"]]
-        closes = pd.Series(closes.close.to_numpy(float), index=pd.to_datetime(closes.open_time, utc=True))
-        closes.loc[at] = price               # the exit minute: the leg ends at the switch open
-        closes = closes.sort_index()
-        positions = store.frame("positions")
-        positions = positions.loc[positions.book.isin(retired)] if not positions.empty else positions
-        x3 = store.frame("leverage_positions")
-        x3 = x3.loc[x3.book.isin(retired)] if not x3.empty else x3
-        if (pd.to_datetime(positions.entry_time, utc=True) >= at).any():
-            raise SystemExit("a retired position opened at/after the switch; the ledgers are not as of the switch")
-        new_text = config_toml(old, at, retired)
-        with store.transaction() as connection:
-            for position in positions.itertuples(index=False):
-                _close_1x(store, connection, position, at, price, funding, closes)
-            for position in x3.itertuples(index=False):
-                _close_x3(store, connection, position, at, price, funding)
-            config_hash = hashlib.sha256(new_text.encode()).hexdigest()
-            for key, value in (("r2_52a_effective_switch_time", at.isoformat()),
-                               ("r2_52a_retired_books", json.dumps(retired)),
-                               ("r2_52a_ax_config_hash", config_hash)):
-                connection.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET "
-                                   "value=excluded.value", (key, value))
-        after = retired_hashes(store, retired)
-    out_config = Path(out_config)
-    if out_config.exists():
-        shutil.copy2(out_config, out_config.with_name(out_config.stem + ".pre_r2_52a.toml"))
-    out_config.write_text(new_text, encoding="utf-8")
-    new = load_config(out_config)
-    manifest = {"created_utc": datetime.now(timezone.utc).isoformat(), "source": "scripts/paper_ax_switch.py",
-                "freeze": "out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json",
-                "effective_switch_time": at.isoformat(), "switch_open_price": price,
-                "retired_books": list(retired), "closed_1x_positions": positions.book.tolist(),
-                "closed_x3_positions": x3.book.tolist(), "active_books": list(new.books),
-                "visible_books": list(new.telegram_books), "paper_k": {n: catalog.paper_k()[catalog.BOOKS[n][0]]
-                                                                       for n in new.books},
-                "ax_config_hash": config_hash, "ax_config_path": str(out_config), "paper_config_hash": new.hash,
-                "retired_before": before, "retired_after": after}
-    Path(manifest_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(manifest_path).write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+PHASES = ("validated", "backed_up", "staged", "committed")      # fail_at: test hook, raise right after that phase
+
+
+def backup_path(db: Path) -> Path:
+    return Path(db).with_name(Path(db).stem + ".pre_r2_52a.sqlite")
+
+
+def _staged(path: Path) -> Path:
+    return Path(path).with_name(Path(path).name + ".r2_52a.tmp")
+
+
+def _fail(fail_at, phase) -> None:
+    if fail_at == phase:
+        raise RuntimeError(f"injected failure after {phase}")
+
+
+def _validate(old: PaperConfig, out_config: Path, manifest_path: Path, store: PaperStore, price) -> dict:
+    """Every input the switch needs, before anything is written (freeze, selected_k, names, config, paths, price)."""
+    if not FREEZE.exists():
+        raise SystemExit(f"freeze missing: {FREEZE}")
+    rollout = json.loads(FREEZE.read_text(encoding="utf-8"))["paper_rollout"]
+    if tuple(rollout["new_books"]) != catalog.AX_BOOKS:
+        raise SystemExit("catalog.AX_BOOKS differs from the freeze new_books")
+    if rollout["presentation_addendum_2026-10-08"]["name_list"] != catalog.NAMES:
+        raise SystemExit("catalog.NAMES differs from the freeze name_list")
+    if not SELECTED_K.exists():
+        raise SystemExit(f"research k selection missing: {SELECTED_K}")
+    picks = catalog.paper_k(SELECTED_K)
+    missing = sorted({catalog.BOOKS[n][0] for n in catalog.AX_BOOKS} - set(picks))
+    if missing:
+        raise SystemExit(f"no paper k for {missing}")
+    last = store.get_meta("last_processed_minute")
+    if last is None:
+        raise SystemExit("no processed minute")
+    at = pd.Timestamp(last) + pd.Timedelta(minutes=1)          # effective_switch_time
+    retired = retired_books(old)
+    text = config_toml(old, at, retired)
+    for target in (out_config, manifest_path, backup_path(Path(old.sqlite_path))):
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+        probe = _staged(target).with_suffix(".probe")
+        probe.write_text("", encoding="utf-8"); probe.unlink()          # writable
+    open_price = float((price or public_open)(at))
+    return {"at": at, "retired": retired, "text": text, "price": open_price,
+            "paper_k": {n: picks[catalog.BOOKS[n][0]] for n in catalog.AX_BOOKS}}
+
+
+def _finalize(store: PaperStore, out_config: Path, manifest_path: Path, pending: dict) -> dict:
+    """Phase after the DB commit (idempotent; a rerun resumes here): config backup + atomic replace, manifest."""
+    text = pending.pop("config_text")
+    staged = _staged(out_config)
+    if out_config.exists() and out_config.read_text(encoding="utf-8") != text:
+        backup = out_config.with_name(out_config.stem + ".pre_r2_52a.toml")
+        if not backup.exists():
+            shutil.copy2(out_config, backup)
+    staged.write_text(text, encoding="utf-8")
+    new = load_config(staged)
+    staged.replace(out_config)
+    manifest = {**pending, "created_utc": datetime.now(timezone.utc).isoformat(), "ax_config_path": str(out_config),
+                "paper_config_hash": new.hash, "retired_after": retired_hashes(store, pending["retired_books"])}
+    staged_manifest = _staged(manifest_path)
+    staged_manifest.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    staged_manifest.replace(manifest_path)
+    store.set_meta("r2_52a_switch_phase", "done")
     return manifest
+
+
+def switch(old: PaperConfig, out_config: Path, manifest_path: Path = MANIFEST, price=None, fail_at=None) -> dict:
+    """Phases: validate (no write) -> DB backup (sqlite backup API) -> stage config/manifest temp files -> one DB
+    transaction (closes + meta, r2_52a_switch_phase='committed') -> finalize (config replace, manifest,
+    phase='done'). Both paper_run's and paper_catalog's locks are held throughout; a run that failed after the commit
+    resumes at finalize when rerun, and the processes refuse to start while the phase is 'committed'."""
+    db, out_config, manifest_path = Path(old.sqlite_path), Path(out_config), Path(manifest_path)
+    with ExitStack() as locks:
+        for suffix in (".run.lock", ".catalog.lock"):
+            try:
+                locks.enter_context(exclusive_lock(db.with_suffix(suffix)))
+            except RuntimeError:
+                raise SystemExit(f"paper_run.py or paper_catalog.py is running ({suffix} held): stop both first")
+        with PaperStore(db) as store:
+            phase = store.get_meta("r2_52a_switch_phase")
+            if phase == "done" or (phase is None and store.get_meta("r2_52a_effective_switch_time")):
+                raise SystemExit("R2-52A switch already applied: " + str(store.get_meta("r2_52a_effective_switch_time")))
+            if phase == "committed":
+                return _finalize(store, out_config, manifest_path, json.loads(store.get_meta("r2_52a_switch_pending")))
+            plan = _validate(old, out_config, manifest_path, store, price)
+            _fail(fail_at, "validated")
+            at, retired, text, price = plan["at"], plan["retired"], plan["text"], plan["price"]
+            with sqlite3.connect(backup_path(db)) as target:       # restore point for every later phase
+                store.connection.backup(target)
+            _fail(fail_at, "backed_up")
+            before = retired_hashes(store, retired)
+            funding = store.frame("funding")[["time", "rate"]]
+            funding["time"] = pd.to_datetime(funding.time, utc=True, format="mixed")
+            funding = funding.sort_values("time").reset_index(drop=True)
+            closes = store.frame("klines_1m")[["open_time", "close"]]
+            closes = pd.Series(closes.close.to_numpy(float), index=pd.to_datetime(closes.open_time, utc=True))
+            closes.loc[at] = price               # the exit minute: the leg ends at the switch open
+            closes = closes.sort_index()
+            positions = store.frame("positions")
+            positions = positions.loc[positions.book.isin(retired)] if not positions.empty else positions
+            x3 = store.frame("leverage_positions")
+            x3 = x3.loc[x3.book.isin(retired)] if not x3.empty else x3
+            if (pd.to_datetime(positions.entry_time, utc=True) >= at).any():
+                raise SystemExit("a retired position opened at/after the switch; the ledgers are not as of the switch")
+            config_hash = hashlib.sha256(text.encode()).hexdigest()
+            pending = {"source": "scripts/paper_ax_switch.py", "freeze": str(FREEZE.relative_to(ROOT))
+                       if FREEZE.is_relative_to(ROOT) else str(FREEZE),
+                       "effective_switch_time": at.isoformat(), "switch_open_price": price,
+                       "retired_books": list(retired), "closed_1x_positions": positions.book.tolist(),
+                       "closed_x3_positions": x3.book.tolist(), "active_books": list(catalog.AX_BOOKS),
+                       "visible_books": list(catalog.X3_BOOKS), "paper_k": plan["paper_k"],
+                       "ax_config_hash": config_hash, "db_backup": str(backup_path(db)),
+                       "retired_before": before, "config_text": text}
+            _staged(out_config).write_text(text, encoding="utf-8")
+            _fail(fail_at, "staged")
+            with store.transaction() as connection:
+                for position in positions.itertuples(index=False):
+                    _close_1x(store, connection, position, at, price, funding, closes)
+                for position in x3.itertuples(index=False):
+                    _close_x3(store, connection, position, at, price, funding)
+                for key, value in (("r2_52a_effective_switch_time", at.isoformat()),
+                                   ("r2_52a_retired_books", json.dumps(retired)),
+                                   ("r2_52a_ax_config_hash", config_hash),
+                                   ("r2_52a_switch_pending", json.dumps(pending, ensure_ascii=False)),
+                                   ("r2_52a_switch_phase", "committed")):
+                    connection.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET "
+                                       "value=excluded.value", (key, value))
+            _fail(fail_at, "committed")
+            return _finalize(store, out_config, manifest_path, pending)
 
 
 def main() -> None:
@@ -238,7 +319,7 @@ def main() -> None:
     args = parser.parse_args()
     manifest = switch(load_config(args.config), Path(args.out_config), Path(args.manifest))
     print(json.dumps({k: manifest[k] for k in ("effective_switch_time", "switch_open_price", "closed_1x_positions",
-                                              "closed_x3_positions", "ax_config_hash")}, indent=1))
+                                              "closed_x3_positions", "ax_config_hash", "db_backup")}, indent=1))
 
 
 if __name__ == "__main__":

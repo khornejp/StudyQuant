@@ -15,7 +15,7 @@ from btcusdt_quant.paper.collector import Collector
 from btcusdt_quant.paper.config import load_config
 from btcusdt_quant.paper.engine import PaperEngine
 from btcusdt_quant.paper.notify import TelegramNotifier
-from btcusdt_quant.paper.store import PaperStore
+from btcusdt_quant.paper.store import PaperStore, refuse_pending_switch
 
 
 def main() -> None:
@@ -37,6 +37,7 @@ def main() -> None:
     except OSError:
         sys.exit(f"paper_run already running for {config.sqlite_path}")
     with PaperStore(config.sqlite_path) as store:
+        refuse_pending_switch(store)
         collector = Collector(PaperEngine(store, config), f"{config.data_root}/raw")
         notifier = TelegramNotifier(store.path, config)
         completed = 0

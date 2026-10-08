@@ -136,6 +136,29 @@ DATASET_TABLE = {
 }
 
 
+@contextmanager
+def exclusive_lock(path: str | Path) -> Iterator[None]:
+    """Non-blocking exclusive byte lock (the paper_run.py convention); RuntimeError when another holder exists."""
+    import msvcrt
+    with open(path, "a+") as handle:
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError as error:
+            raise RuntimeError(f"lock held: {path}") from error
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def refuse_pending_switch(store: "PaperStore") -> None:
+    """paper_run.py / paper_catalog.py must not start on a half-applied R2-52A switch (scripts/paper_ax_switch.py)."""
+    if store.get_meta("r2_52a_switch_phase") not in (None, "done"):
+        raise SystemExit("R2-52A switch pending: rerun scripts/paper_ax_switch.py (resume) or roll back first")
+
+
 def utc_text(value: object) -> str:
     stamp = pd.Timestamp(value)
     if stamp.tzinfo is None:

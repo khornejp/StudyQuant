@@ -21,23 +21,28 @@ from btcusdt_quant.paper.notify import TelegramNotifier
 from btcusdt_quant.paper.store import PaperStore
 
 ROOT = Path(__file__).resolve().parents[1]
-FREEZE = json.loads((ROOT / "out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json").read_text(encoding="utf-8"))
-ROLLOUT = FREEZE["paper_rollout"]
-NEW_BOOKS = tuple(ROLLOUT["new_books"])
+FREEZE_PATH = ROOT / "out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json"
+OUT_OK = FREEZE_PATH.exists() and catalog.SELECTED_K.exists()
+# the untracked research outputs (freeze json, selected_k.csv) are needed by AX replay and the switch: skip, not fail
+needs_out = pytest.mark.skipif(not OUT_OK, reason="untracked out/ freeze json or r2_52a/selected_k.csv absent")
+ROLLOUT = json.loads(FREEZE_PATH.read_text(encoding="utf-8"))["paper_rollout"] if OUT_OK else {}
+NEW_BOOKS = catalog.AX_BOOKS
 X3 = tuple(f"{name}_x3" for name in NEW_BOOKS)
 CODE = re.compile(r"(?:\b[KBC]\d|F3|E1|_AX|_x3|\(3x\)|×3|x3)")
 HEADS = ("30m", "1h", "4h", "12h", "24h")
 
 
 # ---------------------------------------------------------------- configuration / names
+@needs_out
 def test_ax_books_are_exactly_the_frozen_27_sources() -> None:
-    assert tuple(catalog.BOOKS) == NEW_BOOKS and len(NEW_BOOKS) == 27
+    assert tuple(catalog.BOOKS) == tuple(ROLLOUT["new_books"]) == NEW_BOOKS and len(NEW_BOOKS) == 27
     assert catalog.BOOKS["C1_AX"] == ("K01", False, "NATIVE")
     assert all(catalog.BOOKS[n] == (n[:-3], False, "NATIVE") for n in NEW_BOOKS if n != "C1_AX")
     assert catalog.X3_BOOKS == X3
     assert all(catalog.needs_model(n) for n in NEW_BOOKS)           # AX is always model-dependent (E)
 
 
+@needs_out
 def test_plain_korean_names_without_codes_or_3x_suffix() -> None:
     names = ROLLOUT["presentation_addendum_2026-10-08"]["name_list"]
     assert catalog.NAMES == names                                    # verbatim from the freeze
@@ -46,6 +51,7 @@ def test_plain_korean_names_without_codes_or_3x_suffix() -> None:
         assert not CODE.search(catalog.label(x3)), catalog.label(x3)
 
 
+@needs_out
 def test_paper_k_is_the_last_validation_window_before_cutoff(tmp_path) -> None:
     path = tmp_path / "selected_k.csv"
     pd.DataFrame({"id": ["K02"] * 3, "window": ["W09", "W10", "W11"],
@@ -58,6 +64,7 @@ def test_paper_k_is_the_last_validation_window_before_cutoff(tmp_path) -> None:
     assert real["K01"] == 1.5            # out/k45_rl_r2_48_20261007/r2_52a/selected_k.csv K01 W10
 
 
+@needs_out
 def test_switch_config_matches_the_freeze_configuration(tmp_path) -> None:
     sys.path.insert(0, str(ROOT / "scripts"))
     import paper_ax_switch
@@ -118,6 +125,7 @@ def _decisions(name, ctx, predictions, start, end):
 
 
 # ---------------------------------------------------------------- AX source replay
+@needs_out
 def test_ax_e0_is_bound_causally_at_the_decision_time() -> None:
     ctx, _, predictions = _ctx()
     t = pd.DatetimeIndex(ctx.regime.timestamp)[200]
@@ -130,6 +138,7 @@ def test_ax_e0_is_bound_causally_at_the_decision_time() -> None:
     assert e0[1] == frame.loc[frame.timestamp == t, "prediction_exc_4h"].iloc[0]
 
 
+@needs_out
 def test_ax_book_has_no_max_hold_and_publishes_exit_phases() -> None:
     ctx, funding, predictions = _ctx()
     name = "K11_15m_AX"
@@ -153,6 +162,7 @@ def test_ax_book_has_no_max_hold_and_publishes_exit_phases() -> None:
     assert np.isclose(daily.loc[daily.boundary.eq("PESS"), "net_bps"].sum(), pess.net_bps.sum())
 
 
+@needs_out
 def test_ax_book_without_e_never_enters() -> None:
     ctx, funding, predictions = _ctx(e_bps=np.nan)
     name = "K11_15m_AX"
@@ -277,6 +287,7 @@ def test_engine_replay_with_ax_config_touches_no_rows(tmp_path) -> None:
         assert _hash(store, ("C1", "C1_x3", "K09")) == before
 
 
+@needs_out
 def test_all_27_real_ax_sources_create_x3(tmp_path) -> None:
     sys.path.insert(0, str(ROOT / "scripts"))
     import paper_catalog
@@ -565,9 +576,8 @@ def test_telegram_delivery_is_paced_fifo_and_honours_429(tmp_path, monkeypatch) 
 
 
 # ---------------------------------------------------------------- retirement (MIGRATION_END)
-def test_switch_closes_retired_positions_at_the_switch_open_and_freezes_them(tmp_path) -> None:
-    sys.path.insert(0, str(ROOT / "scripts"))
-    import paper_ax_switch
+def _switch_db(tmp_path, x3_entry=100.0):
+    """A pre-switch DB: open retired 1x C1 and DETEXIT half K09_D (TAKE already booked) and an open C1_x3."""
     path = tmp_path / "live.sqlite"
     market = _store_with_minutes(path)
     switch = market.open_time.iloc[-1] + pd.Timedelta(minutes=1)
@@ -585,7 +595,7 @@ def test_switch_closes_retired_positions_at_the_switch_open_and_freezes_them(tmp
                                     "entry_price": 100.0, "exit_price": 101.0, "gross_bps": 10.0, "cost_bps": 2.0,
                                     "funding_bps": 0.0, "net_bps": 8.0, "hold_minutes": 60.0, "exit_reason": "TAKE"})
         store.upsert("leverage_positions", {"book": "C1_x3", "source_book": "C1", "side": 1, "candidate": "F3",
-                                            "entry_time": "2026-07-01T12:00:00+00:00", "entry_price": 100.0,
+                                            "entry_time": "2026-07-01T12:00:00+00:00", "entry_price": x3_entry,
                                             "mark_price": 100.0, "notional_usd": 300.0, "margin_usd": 100.0,
                                             "liquidation_price": 67.0, "liquidation_distance_pct": 33.0,
                                             "unrealized_pnl_usd": 0.0, "balance_usd": 100.0,
@@ -595,8 +605,16 @@ def test_switch_closes_retired_positions_at_the_switch_open_and_freezes_them(tmp
                                         "max_drawdown_pct": 0.0, "liquidated_at": None, "updated_at": switch.isoformat()})
     old = PaperConfig(books=("C1", "F3", "K09_D"), primary_book="C1", leverage_books=("C1",), sqlite_path=str(path),
                       start_time="2026-07-01T00:00:00Z")
+    return path, switch, old
+
+
+@needs_out
+def test_switch_closes_retired_positions_at_the_switch_open_and_freezes_them(tmp_path) -> None:
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import paper_ax_switch
+    path, switch, old = _switch_db(tmp_path)
     out = tmp_path / "paper_ax.toml"
-    manifest = paper_ax_switch.switch(old, out, tmp_path / "manifest.json", price=lambda t: 102.0, check_lock=False)
+    manifest = paper_ax_switch.switch(old, out, tmp_path / "manifest.json", price=lambda t: 102.0)
     assert manifest["effective_switch_time"] == switch.isoformat()
     assert manifest["retired_books"] == ["C1", "C1_x3", "F3", "K09_D"]
     with PaperStore(path) as store:
@@ -617,4 +635,137 @@ def test_switch_closes_retired_positions_at_the_switch_open_and_freezes_them(tmp
         assert manifest["retired_after"]["trades"]["rows"] == 4
     assert load_config(out).books == NEW_BOOKS
     with pytest.raises(SystemExit):
-        paper_ax_switch.switch(old, out, tmp_path / "manifest.json", price=lambda t: 102.0, check_lock=False)
+        paper_ax_switch.switch(old, out, tmp_path / "manifest.json", price=lambda t: 102.0)
+
+
+# ---------------------------------------------------------------- fix round 1 (Codex review)
+def _switch_module():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import paper_ax_switch
+    return paper_ax_switch
+
+
+@needs_out
+def test_switch_liquidates_a_retired_x3_whose_liquidation_the_switch_open_crossed(tmp_path) -> None:
+    s = _switch_module()
+    path, switch, old = _switch_db(tmp_path, x3_entry=160.0)        # long 160: liquidation ~107.3 > open 102
+    s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=lambda t: 102.0)
+    liq = leverage.liquidation_price(160.0, 1, 100.0, 300.0, .004)
+    with PaperStore(path) as store:
+        x3 = store.frame("leverage_trades").iloc[0]
+        state = store.frame("leverage_state").iloc[0]
+    assert x3.exit_reason == "LIQUIDATED" and x3.liquidated == 1 and np.isclose(x3.exit_price, liq)
+    assert x3.pnl_usd == -100.0 and x3.balance_after_usd == 0.0
+    assert state.status == "LIQUIDATED" and state.balance_usd == 0.0 and state.liquidated_at == switch.isoformat()
+
+
+def _untouched(path, tmp_path) -> None:
+    with PaperStore(path) as store:
+        assert store.get_meta("r2_52a_switch_phase") is None
+        assert not store.frame("trades").exit_reason.str.contains("MIGRATION_END").any()
+    assert not (tmp_path / "paper_ax.toml").exists() and not (tmp_path / "manifest.json").exists()
+
+
+@needs_out
+def test_switch_validates_every_input_before_any_write(tmp_path, monkeypatch) -> None:
+    s = _switch_module()
+    path, switch, old = _switch_db(tmp_path)
+    for patch in (("FREEZE", tmp_path / "missing.json"), ("SELECTED_K", tmp_path / "missing.csv")):
+        with monkeypatch.context() as m:
+            m.setattr(s, *patch)
+            with pytest.raises(SystemExit):
+                s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=lambda t: 102.0)
+        _untouched(path, tmp_path)
+
+    def no_price(t):
+        raise OSError("network down")
+    with pytest.raises(OSError):
+        s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=no_price)
+    _untouched(path, tmp_path)
+    assert not s.backup_path(path).exists()
+
+
+@needs_out
+@pytest.mark.parametrize("phase", ["validated", "backed_up", "staged", "committed"])
+def test_switch_failure_after_each_phase_is_recoverable(tmp_path, phase) -> None:
+    s = _switch_module()
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import paper_catalog
+    path, switch, old = _switch_db(tmp_path)
+    out, manifest_path = tmp_path / "paper_ax.toml", tmp_path / "manifest.json"
+    out.write_text("# old config\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="injected"):
+        s.switch(old, out, manifest_path, price=lambda t: 102.0, fail_at=phase)
+    assert out.read_text(encoding="utf-8") == "# old config\n" and not manifest_path.exists()
+    assert s.backup_path(path).exists() == (phase != "validated")
+    with PaperStore(path) as store:
+        migrated = store.frame("trades").exit_reason.str.contains("MIGRATION_END").any()
+        assert migrated == (phase == "committed")
+        assert store.get_meta("r2_52a_switch_phase") == ("committed" if phase == "committed" else None)
+        if phase == "committed":       # paper processes refuse to start on a half-applied switch
+            with pytest.raises(SystemExit):
+                paper_catalog.refuse_pending_switch(store)
+    manifest = s.switch(old, out, manifest_path, price=lambda t: 999.0)      # rerun: resume or redo
+    assert manifest["switch_open_price"] == 102.0 if phase == "committed" else 999.0
+    with PaperStore(path) as store:
+        trades = store.frame("trades")
+        assert len(trades) == 4 and store.get_meta("r2_52a_switch_phase") == "done"
+        assert manifest["retired_after"] == s.retired_hashes(store, manifest["retired_books"])
+        paper_catalog.refuse_pending_switch(store)
+    assert load_config(out).books == NEW_BOOKS and (tmp_path / "paper_ax.pre_r2_52a.toml").exists()
+    assert not list(tmp_path.glob("*.r2_52a.tmp"))
+
+
+@needs_out
+@pytest.mark.parametrize("lock", [".run.lock", ".catalog.lock"])
+def test_switch_refuses_while_paper_run_or_catalog_holds_its_lock(tmp_path, lock) -> None:
+    from btcusdt_quant.paper.store import exclusive_lock
+    s = _switch_module()
+    path, switch, old = _switch_db(tmp_path)
+    with exclusive_lock(path.with_suffix(lock)):
+        with pytest.raises(SystemExit, match="running"):
+            s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=lambda t: 102.0)
+    _untouched(path, tmp_path)
+
+
+def test_switch_lock_is_held_for_the_whole_switch(tmp_path) -> None:
+    from btcusdt_quant.paper.store import exclusive_lock
+    held = tmp_path / "x.lock"
+    with exclusive_lock(held):
+        with pytest.raises(RuntimeError):
+            with exclusive_lock(held):
+                pass
+    with exclusive_lock(held):          # released after the block
+        pass
+
+
+@pytest.mark.parametrize("failure", ["http500", "timeout"])
+def test_telegram_fifo_head_failure_stops_the_cycle(tmp_path, monkeypatch, failure) -> None:
+    import requests as http
+    path = tmp_path / "live.sqlite"
+    with PaperStore(path):
+        pass
+    notifier = TelegramNotifier(path, env_path=_secrets(tmp_path))
+    notifier._sleep = lambda s: None
+    for k in range(3):
+        notifier.enqueue(f"alert:{k}", "alert", {"kind": "x", "detail": str(k)})
+    calls = []
+
+    class Response:
+        status_code = 500
+
+        @staticmethod
+        def json():
+            return {"ok": False}
+
+    def post(*a, **k):
+        calls.append(k["data"]["text"])
+        if failure == "timeout":
+            raise http.Timeout()
+        return Response()
+    monkeypatch.setattr("btcusdt_quant.paper.notify.requests.post", post)
+    now = pd.Timestamp.now(tz="UTC") + pd.Timedelta(minutes=1)
+    assert notifier.deliver_pending(now) == 0 and len(calls) == 1
+    assert notifier.deliver_pending(now + pd.Timedelta(seconds=1)) == 0 and len(calls) == 1   # head still backing off
+    with PaperStore(path) as store:
+        assert store.frame("notifications").sort_values("id").status.tolist() == ["failed", "pending", "pending"]

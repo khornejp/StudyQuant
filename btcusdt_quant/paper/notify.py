@@ -88,9 +88,9 @@ class TelegramNotifier:
                 "(next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY id", (stamp.isoformat(),)
             ).fetchall()
             throttled = store.connection.execute(
-                "SELECT MIN(id) FROM notifications WHERE status='failed' AND last_error='HTTP_429' "
-                "AND next_attempt_at>?", (stamp.isoformat(),)).fetchone()[0]
-            if throttled is not None:          # FIFO: nothing newer goes out before the throttled message
+                "SELECT MIN(id) FROM notifications WHERE status='failed' AND next_attempt_at>?",
+                (stamp.isoformat(),)).fetchone()[0]
+            if throttled is not None:          # FIFO: nothing newer goes out before a backing-off message
                 rows = [row for row in rows if int(row["id"]) < int(throttled)]
             for row in rows:
                 attempts = int(row["attempts"]) + 1
@@ -128,9 +128,8 @@ class TelegramNotifier:
                         "last_error=? WHERE id=?",
                         (attempts, next_attempt.isoformat(), safe_error, row["id"]))
                     LOG.warning("telegram delivery failed: %s", safe_error)
-                    if retry_after is not None:       # throttled: later rows wait behind this one (FIFO)
-                        store.connection.commit()
-                        break
+                    store.connection.commit()         # FIFO: any head failure (429, 5xx, timeout) ends the cycle
+                    break
                 else:
                     store.connection.execute(
                         "UPDATE notifications SET status='sent',attempts=?,sent_at=?,"
