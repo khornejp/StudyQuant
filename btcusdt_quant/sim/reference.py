@@ -20,6 +20,7 @@ class SimConfig:
     close_at_end: bool = False      # research runs: book any open position at the last close (exit fee charged)
     market_slippage_bps: float = 0.0    # adverse on every market fill: buys at o*(1+s/1e4), sells at o*(1-s/1e4)
     action_mode: bool = False       # rows are target positions (R2-48 C1): only decision_time and side are read
+    exit_policy: str = "BASE"       # "R2_52A": adaptive full-position exits (r2_52a_exit_freeze.json), no max hold
 
 @dataclass
 class SimResult:
@@ -71,10 +72,26 @@ def slip(price: float, direction: int, bps: float) -> float:
     """Market fill price for a buy (direction +1) or a sell (-1): always adverse."""
     return price * (1 + direction * bps / 1e4)
 
+def check_policy(config: SimConfig) -> bool:
+    """True for R2_52A, which runs NATIVE/strict rows only (no DETEXIT legs, no action targets)."""
+    if config.exit_policy not in ("BASE", "R2_52A") or (config.exit_policy == "R2_52A" and (
+            config.exit_style != "NATIVE" or config.reentry != "strict" or config.action_mode)):
+        raise ValueError("bad config")
+    return config.exit_policy == "R2_52A"
+
+def adaptive_state(component, k, e0, r0, r, best, armed, anchor_upper, anchor_lower) -> dict:
+    return {"component": int(component), "max_hold_end": None, "k": float(k), "e0_bps": float(e0),
+            "r0_bps": float(r0), "r_bps": float(r), "best_price": float(best), "trail_armed": bool(armed),
+            "anchor_upper": float(anchor_upper), "anchor_lower": float(anchor_lower)}
+
 def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp,
-             config: SimConfig) -> SimResult:
+             config: SimConfig, e_bps: np.ndarray | None = None) -> SimResult:
+    """e_bps (R2_52A only): per minute row, the latest valid E as of that minute's open (availability, finite >0
+    and age <=24h applied by the caller), NaN when none. It tightens R_t and gives an OCO fill its E0."""
     if config.reentry not in ("strict", "stop_and_reverse") or config.exit_style not in ("NATIVE", "DETEXIT"):
         raise ValueError("bad config")
+    if check_policy(config):
+        return _simulate_r2_52a(signals, minutes, start, end, config, e_bps)
     if config.action_mode:
         signals = action_rows(signals, config)
     s_bps = config.market_slippage_bps
@@ -200,6 +217,136 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
     open_legs = [] if pos is None else [(leg.decision, leg.time, pos.side, leg.units, leg.price, pos.position_id)
                                          for leg in pos.legs]
     return finish(trades, pnl, t_index, c, config, open_legs, start, end)
+
+
+def _simulate_r2_52a(signals, minutes, start, end, config, e_bps) -> SimResult:
+    """R2-52A frozen minute order: E update -> stop at the open -> known state/native exit at the open -> (flat at
+    the open only) market entries / OCO placement -> OCO fills -> entry bar vs hard stop -> carried stop touch ->
+    best price / MFE for the next minute. One unit; hard stop entry*exp(-side*R_t), trail best*exp(-side*0.5*R_t)
+    once MFE >= R0 on prices up to the previous minute; R_t = min(R_t, k*E_t, 300) from the minute after entry."""
+    s_bps, stop_slip, fee = config.market_slippage_bps, config.stop_slippage_bps, config.fee_per_side
+    t_index = pd.DatetimeIndex(minutes.open_time)
+    o, h, l, c = (minutes[k].to_numpy(float) for k in ("open", "high", "low", "close"))
+    e = np.full(len(minutes), np.nan) if e_bps is None else np.asarray(e_bps, float)
+    if len(e) != len(minutes):
+        raise ValueError("e_bps must have one value per minute")
+    signals = signals.assign(**{name: np.nan for name in ("anchor_upper", "anchor_lower", "anchor_price")
+                                if name not in signals})
+    by_exec = {}
+    for row in signals.itertuples(index=False):
+        by_exec.setdefault(pd.Timestamp(row.decision_time) + pd.Timedelta(minutes=config.delay_min), []).append(row)
+    pnl = np.zeros(len(minutes))
+    trades: list[dict] = []
+    pos: dict | None = None
+    pending: list = []
+    opened = 0
+
+    def book_exit(i, price, reason):
+        nonlocal pos
+        gross = pos["side"] * math.log(price / pos["price"]) * 1e4 * 1.0
+        trades.append({"decision_time": pos["decision"], "entry_time": t_index[pos["i"]], "exit_time": t_index[i],
+                       "side": pos["side"], "units": 1.0, "entry_price": pos["price"], "exit_price": price,
+                       "exit_reason": reason, "gross_bps": gross, "fee_bps": costs.fee_bps(1.0, fee) * 2,
+                       "funding_bps": 0.0, "net_bps": gross - costs.fee_bps(1.0, fee) * 2,
+                       "position_id": pos["position_id"]})
+        pnl[i] += -costs.fee_bps(1.0, fee)
+        base = c[i] if pos["i"] == i else o[i]
+        pnl[i] += pos["side"] * math.log(price / base) * 1e4 * 1.0
+        pos = None
+
+    def open_pos(i, side, price, row, e0):
+        nonlocal pos, opened
+        opened += 1
+        r0 = min(row.k * e0, 300.0)
+        pos = {"side": side, "price": price, "i": i, "decision": pd.Timestamp(row.decision_time),
+               "component": int(row.component), "k": float(row.k), "e0": e0, "r0": r0, "r": r0, "best": price,
+               "armed": False, "anchor_upper": float(row.anchor_upper), "anchor_lower": float(row.anchor_lower),
+               "position_id": opened}
+        pnl[i] += -costs.fee_bps(1.0, fee)
+        pnl[i] += side * math.log(c[i] / price) * 1e4 * 1.0
+        pending.clear()                                      # any open cancels every pending OCO
+
+    def active_stop():
+        side, r = pos["side"], pos["r"]
+        hard = pos["price"] * math.exp(-side * r / 1e4)
+        if pos["armed"]:
+            trail = pos["best"] * math.exp(-side * 0.5 * r / 1e4)
+            if side * (trail - hard) > 0:
+                return trail, "trail"
+        return hard, "stop"
+
+    def valid(x):
+        return math.isfinite(x) and x > 0
+
+    for i, now in enumerate(t_index):
+        held_at_open = pos is not None
+        rows = by_exec.get(now, [])
+        if pos is not None:
+            side = pos["side"]
+            if i > 0:
+                pnl[i] += side * math.log(o[i] / c[i - 1]) * 1e4 * 1.0
+            if i > pos["i"] and valid(e[i]):
+                pos["r"] = min(pos["r"], pos["k"] * e[i], 300.0)
+            level, reason = active_stop()
+            if (side == 1 and o[i] <= level) or (side == -1 and o[i] >= level):
+                book_exit(i, o[i] * (1 - side * stop_slip / 1e4), reason)
+            else:
+                for row in rows:          # a row acts on the held position only through its own component
+                    if row.component != pos["component"]:
+                        continue
+                    reverse = row.side == -side
+                    flag = (row.exit_long and side == 1) or (row.exit_short and side == -1)
+                    state = ((side == 1 and row.anchor_price <= pos["anchor_upper"])
+                             or (side == -1 and row.anchor_price >= pos["anchor_lower"]))   # NaN: no exit
+                    if reverse or flag or state:
+                        book_exit(i, slip(o[i], -side, s_bps), "reverse" if reverse else "flag" if flag else "state")
+                        break
+        if not held_at_open:          # no same-minute reentry; rows seen while held are never reused
+            for row in rows:
+                if pos is not None:
+                    break
+                if row.allow_entry and row.side != 0 and row.entry == "market":
+                    if valid(row.e0_bps):                     # else NO_ENTRY_E
+                        open_pos(i, int(row.side), slip(o[i], int(row.side), s_bps), row, float(row.e0_bps))
+                elif row.allow_entry and row.entry == "oco":
+                    pending.append((row, now + pd.Timedelta(minutes=int(row.expiry_min))))
+            pending = [(row, expiry) for row, expiry in pending if now < expiry]
+            if pos is None:
+                keep = []
+                for row, expiry in pending:
+                    hit = orders.fill_oco(float(row.upper), float(row.lower), o[i], h[i], l[i])
+                    if hit is None:
+                        keep.append((row, expiry))
+                    elif valid(e[i]):
+                        open_pos(i, hit[0], hit[1], row, float(e[i]))
+                        keep = []
+                        break
+                    # ponytail: a touched OCO without E is dropped (NO_ENTRY_E), never re-filled later
+                pending = keep
+            if pos is not None:       # entry bar: full high/low against the new hard stop
+                side = pos["side"]
+                hard = pos["price"] * math.exp(-side * pos["r"] / 1e4)
+                if (side == 1 and l[i] <= hard) or (side == -1 and h[i] >= hard):
+                    book_exit(i, hard * (1 - side * stop_slip / 1e4), "stop")
+        elif pos is not None:         # carried position: the open was inside the stop, test the bar
+            side = pos["side"]
+            level, reason = active_stop()
+            if (side == 1 and l[i] <= level) or (side == -1 and h[i] >= level):
+                book_exit(i, level * (1 - side * stop_slip / 1e4), reason)
+        if pos is not None:
+            side = pos["side"]
+            if pos["i"] < i:
+                pnl[i] += side * math.log(c[i] / o[i]) * 1e4 * 1.0
+            pos["best"] = max(pos["best"], h[i]) if side == 1 else min(pos["best"], l[i])
+            pos["armed"] = pos["armed"] or side * math.log(pos["best"] / pos["price"]) * 1e4 >= pos["r0"]
+    open_legs = [] if pos is None else [(pos["decision"], t_index[pos["i"]], pos["side"], 1.0, pos["price"],
+                                         pos["position_id"])]
+    result = finish(trades, pnl, t_index, c, config, open_legs, start, end)
+    if result.open_position is not None:
+        result.open_position.update(adaptive_state(pos["component"], pos["k"], pos["e0"], pos["r0"], pos["r"],
+                                                   pos["best"], pos["armed"], pos["anchor_upper"],
+                                                   pos["anchor_lower"]))
+    return result
 
 
 def finish(trades: list[dict], pnl: np.ndarray, t_index: pd.DatetimeIndex, close: np.ndarray, config: SimConfig,

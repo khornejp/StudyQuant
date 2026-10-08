@@ -4,9 +4,11 @@ import math
 import numba
 import numpy as np, pandas as pd
 from . import costs
-from .reference import TRADE_COLUMNS, SimConfig, SimResult, action_rows, finish
+from .reference import TRADE_COLUMNS, SimConfig, SimResult, action_rows, adaptive_state, check_policy, finish
 
-REASONS = ("stop", "breakeven", "take", "max_hold", "reverse", "flag")
+REASONS = ("stop", "breakeven", "take", "max_hold", "reverse", "flag", "trail", "state")
+# R2_52A float state slots (reference._simulate_r2_52a pos dict)
+AK, AE0, AR0, AR, ABEST, AARMED, AUP, ALO = range(8)
 MAX_LEGS = 8
 MINUTE_NS = 60_000_000_000
 NO_END = np.iinfo(np.int64).max
@@ -313,10 +315,145 @@ def _loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lowe
         leg_tidx[:n_legs].copy(), leg_dec[:n_legs].copy()
 
 
+@numba.njit(cache=True)
+def _adaptive_stop(side, entry, ast):
+    hard = entry * math.exp(-side * ast[AR] / 1e4)
+    if ast[AARMED] == 1.0:
+        trail = ast[ABEST] * math.exp(-side * 0.5 * ast[AR] / 1e4)
+        if side * (trail - hard) > 0:
+            return trail, 6
+    return hard, 0
+
+
+@numba.njit(cache=True)
+def _adaptive_open(i, side, price, j, e0, t_ns, c, pnl, ist, fst, leg_units, leg_price, leg_tidx, leg_dec,
+                   no_hold, no_bps, d_component, d_k, d_up, d_lo, ast, fee_per_side):
+    _open_leg(i, side, 1.0, price, j, t_ns, c, pnl, ist, fst, leg_units, leg_price, leg_tidx, leg_dec,
+              no_hold, no_bps, no_bps, d_component, 0, fee_per_side)
+    ast[AK] = d_k[j]; ast[AE0] = e0; ast[AR0] = min(d_k[j] * e0, 300.0); ast[AR] = ast[AR0]
+    ast[ABEST] = price; ast[AARMED] = 0.0; ast[AUP] = d_up[j]; ast[ALO] = d_lo[j]
+
+
+@numba.njit(cache=True)
+def _valid(x):
+    return np.isfinite(x) and x > 0
+
+
+@numba.njit(cache=True)
+def _adaptive_loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lower, d_expiry, d_component,
+                   d_exit_long, d_exit_short, d_allow, d_e0, d_k, d_up, d_lo, d_px, e, fee_per_side, stop_slip, mslip):
+    """R2_52A; line-for-line reference._simulate_r2_52a. One leg, so leg slot 0 is the position."""
+    n = len(o)
+    pnl = np.zeros(n)
+    cap = len(d_side) + 8
+    out_int = np.zeros((cap, 6), np.int64)
+    out_float = np.zeros((cap, 5))
+    ist = np.zeros(10, np.int64)
+    fst = np.full(4, math.nan)
+    ast = np.full(8, math.nan)
+    leg_units = np.zeros(MAX_LEGS); leg_price = np.zeros(MAX_LEGS)
+    leg_tidx = np.zeros(MAX_LEGS, np.int64); leg_dec = np.zeros(MAX_LEGS, np.int64)
+    no_hold = np.zeros(len(d_side), np.int64); no_bps = np.full(len(d_side), math.nan)
+    oco_rows = np.zeros(MAX_OCO, np.int64); oco_exp = np.zeros(MAX_OCO, np.int64); n_oco = 0
+    for i in range(n):
+        held_at_open = ist[OPEN] == 1
+        if held_at_open:
+            side = ist[SIDE]
+            if i > 0:
+                pnl[i] += side * math.log(o[i] / c[i - 1]) * 1e4 * 1.0
+            if i > leg_tidx[0] and _valid(e[i]):
+                ast[AR] = min(ast[AR], ast[AK] * e[i], 300.0)
+            level, reason = _adaptive_stop(side, leg_price[0], ast)
+            if (side == 1 and o[i] <= level) or (side == -1 and o[i] >= level):
+                _book_exit(i, 1.0, o[i] * (1 - side * stop_slip / 1e4), reason, o, c, pnl, ist, leg_units, leg_price,
+                           leg_tidx, leg_dec, out_int, out_float, fee_per_side)
+            else:
+                for j in range(exec_start[i], exec_end[i]):
+                    if d_component[j] != ist[COMPONENT]:
+                        continue
+                    reverse = d_side[j] == -side
+                    flag = (d_exit_long[j] and side == 1) or (d_exit_short[j] and side == -1)
+                    state = (side == 1 and d_px[j] <= ast[AUP]) or (side == -1 and d_px[j] >= ast[ALO])
+                    if reverse or flag or state:
+                        _book_exit(i, 1.0, _slip(o[i], -side, mslip), 4 if reverse else 5 if flag else 7, o, c, pnl,
+                                   ist, leg_units, leg_price, leg_tidx, leg_dec, out_int, out_float, fee_per_side)
+                        break
+        if not held_at_open:
+            for j in range(exec_start[i], exec_end[i]):
+                if ist[OPEN] == 1:
+                    break
+                if d_allow[j] and d_side[j] != 0 and not d_oco[j]:
+                    if _valid(d_e0[j]):
+                        _adaptive_open(i, d_side[j], _slip(o[i], d_side[j], mslip), j, d_e0[j], t_ns, c, pnl, ist,
+                                       fst, leg_units, leg_price, leg_tidx, leg_dec, no_hold, no_bps, d_component,
+                                       d_k, d_up, d_lo, ast, fee_per_side)
+                        n_oco = 0
+                elif d_allow[j] and d_oco[j]:
+                    if n_oco >= MAX_OCO:
+                        raise ValueError("too many pending OCO orders")
+                    oco_rows[n_oco] = j; oco_exp[n_oco] = t_ns[i] + d_expiry[j] * MINUTE_NS; n_oco += 1
+            kept = 0
+            for q in range(n_oco):
+                if t_ns[i] < oco_exp[q]:
+                    oco_rows[kept] = oco_rows[q]; oco_exp[kept] = oco_exp[q]; kept += 1
+            n_oco = kept
+            if ist[OPEN] == 0:
+                kept = 0
+                for q in range(n_oco):
+                    oco_row = oco_rows[q]
+                    up = _fill_stop(1, d_upper[oco_row], o[i], h[i], l[i])
+                    down = _fill_stop(-1, d_lower[oco_row], o[i], h[i], l[i])
+                    side = 0; price = math.nan
+                    if not math.isnan(up) and not math.isnan(down):
+                        if abs(d_upper[oco_row] - o[i]) < abs(o[i] - d_lower[oco_row]):
+                            side = 1; price = up
+                        else:
+                            side = -1; price = down
+                    elif not math.isnan(up):
+                        side = 1; price = up
+                    elif not math.isnan(down):
+                        side = -1; price = down
+                    if side == 0:
+                        oco_rows[kept] = oco_rows[q]; oco_exp[kept] = oco_exp[q]; kept += 1
+                    elif _valid(e[i]):
+                        _adaptive_open(i, side, price, oco_row, e[i], t_ns, c, pnl, ist, fst, leg_units, leg_price,
+                                       leg_tidx, leg_dec, no_hold, no_bps, d_component, d_k, d_up, d_lo, ast,
+                                       fee_per_side)
+                        kept = 0
+                        break
+                    # ponytail: a touched OCO without E is dropped (NO_ENTRY_E), never re-filled later
+                n_oco = kept
+            if ist[OPEN] == 1:
+                side = ist[SIDE]
+                hard = leg_price[0] * math.exp(-side * ast[AR] / 1e4)
+                if (side == 1 and l[i] <= hard) or (side == -1 and h[i] >= hard):
+                    _book_exit(i, 1.0, hard * (1 - side * stop_slip / 1e4), 0, o, c, pnl, ist, leg_units, leg_price,
+                               leg_tidx, leg_dec, out_int, out_float, fee_per_side)
+        elif ist[OPEN] == 1:
+            side = ist[SIDE]
+            level, reason = _adaptive_stop(side, leg_price[0], ast)
+            if (side == 1 and l[i] <= level) or (side == -1 and h[i] >= level):
+                _book_exit(i, 1.0, level * (1 - side * stop_slip / 1e4), reason, o, c, pnl, ist, leg_units, leg_price,
+                           leg_tidx, leg_dec, out_int, out_float, fee_per_side)
+        if ist[OPEN] == 1:
+            side = ist[SIDE]
+            if leg_tidx[0] < i:
+                pnl[i] += side * math.log(c[i] / o[i]) * 1e4 * 1.0
+            ast[ABEST] = max(ast[ABEST], h[i]) if side == 1 else min(ast[ABEST], l[i])
+            if ast[AARMED] == 1.0 or side * math.log(ast[ABEST] / leg_price[0]) * 1e4 >= ast[AR0]:
+                ast[AARMED] = 1.0
+    m = ist[NTRADE]
+    n_legs = ist[NLEG]
+    return pnl, out_int[:m], out_float[:m], ist, leg_units[:n_legs].copy(), leg_price[:n_legs].copy(), \
+        leg_tidx[:n_legs].copy(), leg_dec[:n_legs].copy(), ast
+
+
 def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp,
-             config: SimConfig) -> SimResult:
+             config: SimConfig, e_bps: np.ndarray | None = None) -> SimResult:
+    """e_bps: R2_52A per-minute E series, same contract as reference.simulate."""
     if config.reentry not in ("strict", "stop_and_reverse") or config.exit_style not in ("NATIVE", "DETEXIT"):
         raise ValueError("bad config")
+    adaptive = check_policy(config)
     t_index = pd.DatetimeIndex(minutes.open_time)
     t_ns = t_index.as_unit("ns").asi8
     decisions = pd.DatetimeIndex(signals.decision_time)
@@ -334,7 +471,23 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
         exec_start[minute[first]] = rows[first]
         exec_end[minute[last]] = rows[last] + 1
     o, h, l, c = (minutes[k].to_numpy(np.float64) for k in ("open", "high", "low", "close"))
-    if config.action_mode:
+    ast = None
+    if adaptive:
+        e = np.full(len(t_ns), np.nan) if e_bps is None else np.asarray(e_bps, np.float64)
+        if len(e) != len(t_ns):
+            raise ValueError("e_bps must have one value per minute")
+        col = lambda name: (signals[name] if name in signals else pd.Series(np.nan, index=signals.index)).to_numpy(
+            np.float64)
+        *loop, ast = _adaptive_loop(
+            t_ns, o, h, l, c, exec_start, exec_end, signals.side.to_numpy(np.int64),
+            (signals.entry == "oco").to_numpy(), signals.upper.to_numpy(np.float64),
+            signals.lower.to_numpy(np.float64), signals.expiry_min.to_numpy(np.int64),
+            (signals.component if "component" in signals else pd.Series(0, index=signals.index)).to_numpy(np.int64),
+            signals.exit_long.to_numpy(bool), signals.exit_short.to_numpy(bool), signals.allow_entry.to_numpy(bool),
+            signals.e0_bps.to_numpy(np.float64), signals.k.to_numpy(np.float64), col("anchor_upper"),
+            col("anchor_lower"), col("anchor_price"), e, float(config.fee_per_side), float(config.stop_slippage_bps),
+            float(config.market_slippage_bps))
+    elif config.action_mode:
         side = action_rows(signals, config).side.to_numpy(np.int64)
         fund = costs._settlement_arrays() if config.include_funding else (np.zeros(0, np.int64), np.zeros(0))
         loop = _action_loop(t_ns, o, h, l, c, exec_start, exec_end, side, fund[0], fund[1],
@@ -365,4 +518,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
     if result.open_position is not None:
         result.open_position.update(component=int(ist[COMPONENT]), max_hold_end=(
             None if ist[MAX_HOLD_END] == NO_END else pd.Timestamp(int(ist[MAX_HOLD_END]), tz="UTC")))
+        if adaptive:
+            result.open_position.update(adaptive_state(ist[COMPONENT], ast[AK], ast[AE0], ast[AR0], ast[AR],
+                                                       ast[ABEST], ast[AARMED] == 1.0, ast[AUP], ast[ALO]))
     return result
