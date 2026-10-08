@@ -11,7 +11,7 @@ START, END = pd.Timestamp("2022-10-01", tz="UTC"), pd.Timestamp("2023-02-01", tz
 CUT = pd.Timestamp("2023-01-20 00:07", tz="UTC")
 BASELINE = json.loads((Path(__file__).parent / "fixtures" / "r2_52a_b_baseline.json").read_text())
 IDS = list(BASELINE)
-STATE = ["ax_exit_long", "ax_exit_short", "anchor_upper", "anchor_lower", "anchor_price"]
+STATE = ["ax_exit_long", "ax_exit_short", "anchor_upper", "anchor_lower", "anchor_price", "anchor_once"]
 
 
 @pytest.fixture(scope="module")
@@ -37,11 +37,13 @@ def test_included_ids_frozen():
 
 @pytest.mark.parametrize("spec_id", IDS)
 def test_base_tables_unchanged(ctx, spec_id):
+    """Default build_variant output is the cfc71e3 table exactly (same columns, rows and values); spec.build gains
+    state columns, so only its pre-existing column projection is compared. Same tables -> same BASE results."""
     base = BASELINE[spec_id]
     table, config = build_variant(ctx, spec_id, gated=False, style="NATIVE")
     raw = CATALOG[spec_id].build(ctx)
     assert len(table) == base["rows"] and repr(config) == base["config"]
-    assert digest(table[base["variant_columns"]]) == base["variant"]
+    assert list(table.columns) == base["variant_columns"] and digest(table) == base["variant"]
     assert digest(raw[base["build_columns"]]) == base["build"]
     # ax=True keeps every pre-existing row and column; extra rows (K01, K14) are inert side-0 rows
     full = ax(ctx, spec_id)
@@ -96,6 +98,7 @@ def test_k01_f3_median_and_e1_anchor(ctx):
     assert f3[STATE[2:]].isna().all().all()
     same(e1.anchor_price, h.close); same(e1.anchor_upper, h.high.rolling(20, min_periods=20).max().shift())
     assert not (e1.ax_exit_long | e1.ax_exit_short).any() and e1.anchor_lower.isna().all()
+    assert (e1.anchor_once == 1).all() and f3.anchor_once.isna().all()     # "the next completed hourly close" only
     assert (g >= q50).any() and (g <= q50).any()
 
 
@@ -131,7 +134,9 @@ def test_k04_strict_breakout_flag(ctx):
     t = ax(ctx, "K04").set_index("decision_time")
     level = b.high.rolling(20, min_periods=20).max().shift()
     same(t.ax_exit_long.reindex(b.decision_time), b.high < level)       # strict '<'; NaN level -> no exit
-    assert not t.ax_exit_short.any()                                     # E1 is long only
+    low_level = b.low.rolling(20, min_periods=20).min().shift()
+    same(t.ax_exit_short.reindex(b.decision_time), b.low > low_level)   # mirrored strict '>'
+    assert (b.low == low_level).any() and t.ax_exit_short.any()
 
 
 @pytest.mark.parametrize("spec_id,minutes", [("K11_15m", 15), ("K11_1h", 60)])
@@ -230,6 +235,20 @@ def test_engine_ax_flag(mod, side):
     cfg = reference.SimConfig(include_funding=False)
     base = mod.simulate(s, m, m.open_time.iloc[0], m.open_time.iloc[-1] + pd.Timedelta(minutes=1), cfg).trades
     assert base.iloc[0].exit_reason == "max_hold"
+
+
+@MODS
+def test_k01_e1_one_shot_next_close(mod):
+    """E1 long at hour 0: the first completed hourly close (75) stays above the stored level, the second (135) is
+    below it -> no E1 state exit (one-shot)."""
+    m = flat(n=300)
+    rows = [{"at": 15, "side": 1, "component": legacy.E1, "anchor_upper": 100.0, "anchor_once": 1.0},
+            {"at": 75, "side": 0, "component": legacy.E1, "anchor_price": 100.2, "anchor_once": 1.0},
+            {"at": 135, "side": 0, "component": legacy.E1, "anchor_price": 99.8, "anchor_once": 1.0}]
+    assert run(mod, sig(rows), m).trades.empty
+    rows[1]["anchor_price"] = 99.9                                      # first close below: exits there
+    t = run(mod, sig(rows), m).trades
+    assert t.exit_time.iloc[0] == at(76) and t.exit_reason.iloc[0] == "state"
 
 
 @pytest.mark.parametrize("spec_id", ["K01", "K14"])

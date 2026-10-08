@@ -34,12 +34,14 @@ def _side(current, lo, hi) -> np.ndarray:
 
 def _k01_state(component, h: pd.DataFrame, levels: pd.DataFrame, prior_high: pd.Series) -> dict:
     """R2-52A: F3 rows exit long when global_ls >= q50 (short <=); E1 rows carry the prior-20 h high as the anchor
-    stored at fill and the completed hourly close as the value compared with it (long exits when close <= level)."""
+    stored at fill and the completed hourly close as the value compared with it, one-shot (anchor_once): only the
+    next completed hourly close after entry is checked (long exits when close <= level)."""
     f3 = np.asarray(component) == F3
     with np.errstate(invalid="ignore"):
         return {"ax_exit_long": f3 & (levels.g >= levels.f3_mid).to_numpy(),
                 "ax_exit_short": f3 & (levels.g <= levels.f3_mid).to_numpy(),
-                "anchor_upper": np.where(f3, np.nan, prior_high), "anchor_price": np.where(f3, np.nan, h.close)}
+                "anchor_upper": np.where(f3, np.nan, prior_high), "anchor_price": np.where(f3, np.nan, h.close),
+                "anchor_once": np.where(f3, np.nan, 1.0)}
 
 
 def k01_c1x(ctx: Context) -> pd.DataFrame:
@@ -72,6 +74,7 @@ def fast_signals(ctx: Context) -> pd.DataFrame:
     e1_z, e1_high = (b15.volume - vm) / vs, b15.high.rolling(20).max().shift()
     e1 = ((e1_z > 3) & (b15.close > e1_high)).astype(int)
     e1_ax_long = (b15.high < e1_high).to_numpy()        # R2-52A K04 state: completed bar fails the breakout level
+    e1_ax_short = (b15.low > b15.low.rolling(20).min().shift()).to_numpy()   # mirrored (E1 itself never shorts)
     a2_high, a2_low = b30.high.rolling(55).max().shift(), b30.low.rolling(55).min().shift()
     a2 = np.select([b30.close > a2_high, b30.close < a2_low], [1, -1], 0)
     a2_exit_long = (b30.close < b30.low.rolling(10).min().shift()).fillna(False)
@@ -95,13 +98,13 @@ def fast_signals(ctx: Context) -> pd.DataFrame:
                         "ind_F3W_q20": fixed.f3w_lo.to_numpy(), "ind_F3W_q80": fixed.f3w_hi.to_numpy()})
     grid = pd.DataFrame({"decision_time": pd.date_range(b15.decision_time.min(), b15.decision_time.max(),
                                                         freq="15min", tz="UTC")})
-    out = grid.merge(pd.DataFrame({"decision_time": b15.decision_time, "E1-15": e1, "E1_ax_long": e1_ax_long,
+    out = grid.merge(pd.DataFrame({"decision_time": b15.decision_time, "E1-15": e1, "E1_ax_long": e1_ax_long, "E1_ax_short": e1_ax_short,
                                    "ind_E1_volume_z": e1_z.to_numpy(),
                                    "ind_E1_close": b15.close.to_numpy(), "ind_E1_high20": e1_high.to_numpy()}),
                      how="left").merge(s30, how="left")
     for name in ("E1-15", "A2-30", "F3-30", "F3W-30"):
         out[name] = out[name].fillna(0).astype(int)
-    for name in ("a2_exit_long", "a2_exit_short", "E1_ax_long", "F3_ax_long", "F3_ax_short", "F3W_ax_long",
+    for name in ("a2_exit_long", "a2_exit_short", "E1_ax_long", "E1_ax_short", "F3_ax_long", "F3_ax_short", "F3W_ax_long",
                  "F3W_ax_short"):
         out[name] = out[name].astype("boolean").fillna(False).astype(bool)
     return out
@@ -125,8 +128,8 @@ def _component_rows(fast: pd.DataFrame, name: str, cadence: int | None = None) -
         flags = {"ind_" + c[len(prefix):]: rows[c].to_numpy() for c in rows if c.startswith(prefix)}
     if name == "A2-30":
         flags.update({"exit_long": rows.a2_exit_long.to_numpy(), "exit_short": rows.a2_exit_short.to_numpy()})
-    # R2-52A state: A2 keeps its native flags; E1 is long only (no short state); F3/F3W exit at the q50
-    long, short = {"E1-15": ("E1_ax_long", None), "F3-30": ("F3_ax_long", "F3_ax_short"),
+    # R2-52A state: A2 keeps its native flags; E1 breakout level (short mirrored); F3/F3W exit at the q50
+    long, short = {"E1-15": ("E1_ax_long", "E1_ax_short"), "F3-30": ("F3_ax_long", "F3_ax_short"),
                    "F3W-30": ("F3W_ax_long", "F3W_ax_short")}.get(name, (None, None))
     flags["ax_exit_long"] = rows[long].to_numpy() if long else False
     flags["ax_exit_short"] = rows[short].to_numpy() if short else False

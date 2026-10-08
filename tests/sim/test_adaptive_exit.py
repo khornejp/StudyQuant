@@ -19,7 +19,8 @@ def flat(n=200, price=100.0, start=T0):
 def sig(rows, t0=T0):
     base = {"entry": "market", "upper": np.nan, "lower": np.nan, "expiry_min": 0, "max_hold_min": 30,
             "stop_bps": np.nan, "take_bps": np.nan, "exit_long": False, "exit_short": False, "allow_entry": True,
-            "e0_bps": 100.0, "k": 1.0, "anchor_upper": np.nan, "anchor_lower": np.nan, "anchor_price": np.nan}
+            "e0_bps": 100.0, "k": 1.0, "anchor_upper": np.nan, "anchor_lower": np.nan, "anchor_price": np.nan,
+            "anchor_once": np.nan, "ax_exit_long": False, "ax_exit_short": False}
     return schema.validate(pd.DataFrame([{**base, **r, "decision_time": t0 + pd.Timedelta(minutes=r["at"])}
                                          for r in rows]).drop(columns="at"))
 
@@ -243,7 +244,9 @@ def random_case(seed):
         "allow_entry": rng.random(len(d)) > .05, "component": rng.choice([0, 1], len(d)),
         "e0_bps": np.where(rng.random(len(d)) < .1, np.nan, e[idx]), "k": rng.choice([0.5, 1.0, 2.0], len(d)),
         "anchor_upper": mid * 0.997, "anchor_lower": mid * 1.003,
-        "anchor_price": np.where(rng.random(len(d)) < .3, mid, np.nan)}))
+        "anchor_price": np.where(rng.random(len(d)) < .3, mid, np.nan),
+        "ax_exit_long": rng.random(len(d)) < .03, "ax_exit_short": rng.random(len(d)) < .03,
+        "anchor_once": np.where(rng.random(len(d)) < .5, 1.0, np.nan)}))
     return s, m, e, e_min
 
 
@@ -316,6 +319,26 @@ def test_missing_adaptive_columns_rejected():
     m = flat(); s = sig([{"at": 15, "side": 1}]).drop(columns="k")
     for mod in (reference, core):
         with pytest.raises(ValueError, match="e0_bps and k"):
+            run(mod, s, m)
+
+
+@MODS
+def test_anchor_once_checks_only_the_first_value(mod):
+    m = flat()
+    rows = [{"at": 15, "side": 1, "anchor_upper": 100.5, "anchor_once": 1.0},
+            {"at": 18, "side": 0, "anchor_price": np.nan},              # NaN is not a check: nothing consumed
+            {"at": 20, "side": 0, "anchor_price": 100.6},               # first check: no exit, anchor dropped
+            {"at": 30, "side": 0, "anchor_price": 100.4}]               # would exit a persistent anchor
+    assert run(mod, sig(rows), m).trades.empty
+    rows[2]["anchor_price"] = 100.5                                     # first check exits (<=)
+    t = run(mod, sig(rows), m).trades
+    assert len(t) == 1 and t.exit_time.iloc[0] == at(21) and t.exit_reason.iloc[0] == "state"
+
+
+def test_r2_52a_requires_ax_state_columns():
+    m = flat(); s = sig([{"at": 15, "side": 1}]).drop(columns=["ax_exit_long", "ax_exit_short"])
+    for mod in (reference, core):
+        with pytest.raises(ValueError, match="ax=True"):
             run(mod, s, m)
 
 

@@ -9,8 +9,9 @@ OPTIONAL_COLUMNS = {"component": 0}
 # R2-52A (SimConfig.exit_policy="R2_52A") float columns, passed through only when present (BASE tables unchanged):
 # e0_bps = E known at the decision (market entries; NaN = NO_ENTRY_E), k = risk multiple (R0 = min(k*E0, 300)),
 # anchor_upper / anchor_lower = levels stored in the position at fill, anchor_price = completed-cadence value on a
-# held-component row: long exits when anchor_price <= stored anchor_upper, short when >= stored anchor_lower.
-ADAPTIVE_COLUMNS = ("e0_bps", "k", "anchor_upper", "anchor_lower", "anchor_price")
+# held-component row: long exits when anchor_price <= stored anchor_upper, short when >= stored anchor_lower;
+# anchor_once > 0 at fill = only the first finite anchor_price after entry is checked (K01 E1 "next close").
+ADAPTIVE_COLUMNS = ("e0_bps", "k", "anchor_upper", "anchor_lower", "anchor_price", "anchor_once")
 # R2-52A family state flags (bool, passed through when present): R2_52A exits on exit_long | ax_exit_long (short
 # alike); BASE ignores them.
 ADAPTIVE_FLAGS = ("ax_exit_long", "ax_exit_short")

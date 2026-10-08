@@ -85,10 +85,12 @@ def adaptive_state(component, k, e0, r0, r, best, armed, anchor_upper, anchor_lo
             "anchor_upper": float(anchor_upper), "anchor_lower": float(anchor_lower)}
 
 def adaptive_exits(signals: pd.DataFrame) -> pd.DataFrame:
-    """R2_52A exits on the native flag or the family state flag of the same row (schema.ADAPTIVE_FLAGS)."""
-    flags = {f"exit_{s}": signals[f"exit_{s}"] | signals[f"ax_exit_{s}"] for s in ("long", "short")
-             if f"ax_exit_{s}" in signals}
-    return signals.assign(**flags)
+    """R2_52A exits on the native flag or the family state flag of the same row (schema.ADAPTIVE_FLAGS). The state
+    columns come only from strategies.build_variant(..., ax=True); their absence means the default table was used."""
+    if "ax_exit_long" not in signals or "ax_exit_short" not in signals:
+        raise ValueError("R2_52A needs the state columns of build_variant(..., ax=True)")
+    return signals.assign(exit_long=signals.exit_long | signals.ax_exit_long,
+                          exit_short=signals.exit_short | signals.ax_exit_short)
 
 def adaptive_inputs(signals: pd.DataFrame, n: int, e_bps, e_min_bps) -> tuple[np.ndarray, np.ndarray]:
     """R2_52A inputs, one value per minute row (availability, finite >0 and age <=24h applied by the caller):
@@ -110,8 +112,8 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
     if config.reentry not in ("strict", "stop_and_reverse") or config.exit_style not in ("NATIVE", "DETEXIT"):
         raise ValueError("bad config")
     if check_policy(config):
-        return _simulate_r2_52a(adaptive_exits(signals), minutes, start, end, config, *adaptive_inputs(signals, len(minutes), e_bps,
-                                                                                       e_min_bps))
+        e, e_min = adaptive_inputs(signals, len(minutes), e_bps, e_min_bps)
+        return _simulate_r2_52a(adaptive_exits(signals), minutes, start, end, config, e, e_min)
     if config.action_mode:
         signals = action_rows(signals, config)
     s_bps = config.market_slippage_bps
@@ -247,7 +249,7 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min) -> SimResul
     s_bps, stop_slip, fee = config.market_slippage_bps, config.stop_slippage_bps, config.fee_per_side
     t_index = pd.DatetimeIndex(minutes.open_time)
     o, h, l, c = (minutes[k].to_numpy(float) for k in ("open", "high", "low", "close"))
-    signals = signals.assign(**{name: np.nan for name in ("anchor_upper", "anchor_lower", "anchor_price")
+    signals = signals.assign(**{name: np.nan for name in ("anchor_upper", "anchor_lower", "anchor_price", "anchor_once")
                                 if name not in signals})
     by_exec = {}
     for row in signals.itertuples(index=False):
@@ -278,6 +280,7 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min) -> SimResul
         pos = {"side": side, "price": price, "i": i, "decision": pd.Timestamp(row.decision_time),
                "component": int(row.component), "k": float(row.k), "e0": e0, "r0": r0, "r": r0, "best": price,
                "armed": False, "anchor_upper": float(row.anchor_upper), "anchor_lower": float(row.anchor_lower),
+               "once": row.anchor_once > 0,
                "position_id": opened}
         pnl[i] += -costs.fee_bps(1.0, fee)
         pnl[i] += side * math.log(c[i] / price) * 1e4 * 1.0
@@ -318,6 +321,8 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min) -> SimResul
                     if reverse or flag or state:
                         book_exit(i, slip(o[i], -side, s_bps), "reverse" if reverse else "flag" if flag else "state")
                         break
+                    if pos["once"] and not math.isnan(row.anchor_price):     # one-shot anchor: checked, now gone
+                        pos["anchor_upper"] = pos["anchor_lower"] = math.nan
         if not held_at_open:          # no same-minute reentry; rows seen while held are never reused
             for row in rows:
                 if pos is not None:
