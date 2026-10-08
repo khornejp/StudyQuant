@@ -22,7 +22,7 @@ import numpy as np, pandas as pd  # noqa: E402
 from btcusdt_quant.paper import book, catalog, leverage  # noqa: E402
 from btcusdt_quant.paper.collector import PublicBinanceClient, parse_kline  # noqa: E402
 from btcusdt_quant.paper.config import PaperConfig, load_config  # noqa: E402
-from btcusdt_quant.paper.store import PaperStore, exclusive_lock, utc_text  # noqa: E402
+from btcusdt_quant.paper.store import SCHEMA_VERSION, PaperStore, exclusive_lock, utc_text  # noqa: E402
 
 MANIFEST = ROOT / "out/k45_rl_r2_48_20261007/r2_52a/paper_switch_manifest.json"
 FREEZE = ROOT / "out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json"
@@ -237,6 +237,9 @@ def _validate(old: PaperConfig, out_config: Path, manifest_path: Path, ro: sqlit
     missing = sorted({catalog.BOOKS[n][0] for n in catalog.AX_BOOKS} - set(picks))
     if missing:
         raise SystemExit(f"no paper k for {missing}")
+    version = _meta(ro, "schema_version")
+    if version is None or int(version) != SCHEMA_VERSION:
+        raise SystemExit(f"unsupported schema version {version} (expected {SCHEMA_VERSION})")
     last = _meta(ro, "last_processed_minute")
     if last is None:
         raise SystemExit("no processed minute")
@@ -277,16 +280,25 @@ def _validate(old: PaperConfig, out_config: Path, manifest_path: Path, ro: sqlit
 
 def _backup(ro: sqlite3.Connection, db: Path) -> Path:
     target = backup_path(db)
-    out = sqlite3.connect(target)          # sqlite3's context manager does not close; close explicitly
+    out = None
     try:
+        out = sqlite3.connect(target)      # sqlite3's context manager does not close; close explicitly
         ro.backup(out)
-        check = out.execute("PRAGMA integrity_check").fetchone()[0]
-    finally:
-        out.close()
+        check = _integrity(out)
+    except Exception as error:             # any failure: no partial backup survives, no DB write follows
+        if out is not None:
+            out.close()
+        target.unlink(missing_ok=True)
+        raise SystemExit(f"backup failed: {type(error).__name__}: {error}")
+    out.close()
     if check != "ok":
         target.unlink(missing_ok=True)
         raise SystemExit(f"backup integrity_check failed: {check}")
     return target
+
+
+def _integrity(connection: sqlite3.Connection) -> str:
+    return connection.execute("PRAGMA integrity_check").fetchone()[0]
 
 
 def _finalize(store: PaperStore, out_config: Path, manifest_path: Path, pending: dict, fail_at=None) -> dict:
@@ -335,7 +347,7 @@ def switch(old: PaperConfig, out_config: Path, manifest_path: Path = MANIFEST, p
                 _fail(fail_at, "backed_up")
         finally:
             ro.close()
-        with PaperStore(db) as store:            # first write to the DB happens only from here
+        with PaperStore(db, init_schema=False) as store:      # no write at open; the first write is the transaction
             if phase == "committed":
                 return _finalize(store, out_config, manifest_path, json.loads(store.get_meta("r2_52a_switch_pending")),
                                  fail_at)
@@ -351,6 +363,7 @@ def switch(old: PaperConfig, out_config: Path, manifest_path: Path = MANIFEST, p
             _staged(out_config).write_text(text, encoding="utf-8")
             _fail(fail_at, "staged")
             with store.transaction() as connection:
+                PaperStore.create_schema(connection)     # e.g. notifications_dead on a DB from older code
                 for position in plan["positions"].itertuples(index=False):
                     _close_1x(store, connection, position, at, price, plan["funding"], plan["closes"])
                 for position in plan["x3"].itertuples(index=False):

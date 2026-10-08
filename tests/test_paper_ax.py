@@ -905,3 +905,112 @@ def test_telegram_dead_letters_a_permanently_failing_head_and_continues(tmp_path
     assert dead.event_key.tolist() == ["alert:0"] and dead.attempts.tolist() == [notify.MAX_ATTEMPTS]
     assert dead.last_error.tolist() == ["HTTP_500"] and dead.payload.iloc[0].endswith("\n0")
     assert "dead-letter" in caplog.text
+
+
+# ---------------------------------------------------------------- fix round 3 (Codex re-review of eea78a5)
+def _sha(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+@needs_out
+def test_backup_exception_removes_the_partial_backup_and_writes_nothing(tmp_path, monkeypatch) -> None:
+    s = _switch_module()
+    path, switch, old = _switch_db(tmp_path)
+    before = _sha(path)
+    real = s.read_only
+
+    class Broken:
+        def __init__(self, db):
+            self._c = real(db)
+
+        def backup(self, target):
+            Path(s.backup_path(path)).write_bytes(b"partial")      # a half-written file must not survive
+            raise sqlite3_error("disk I/O error")
+
+        def __getattr__(self, name):
+            return getattr(self._c, name)
+    import sqlite3
+    sqlite3_error = sqlite3.OperationalError
+    monkeypatch.setattr(s, "read_only", Broken)
+    with pytest.raises(SystemExit, match="backup failed"):
+        s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=lambda t: 102.0)
+    assert not s.backup_path(path).exists() and _sha(path) == before
+    _untouched(path, tmp_path)
+
+
+@needs_out
+def test_backup_integrity_failure_removes_the_backup_and_aborts(tmp_path, monkeypatch) -> None:
+    s = _switch_module()
+    path, switch, old = _switch_db(tmp_path)
+    before = _sha(path)
+    monkeypatch.setattr(s, "_integrity", lambda connection: "*** in database main *** page 3 corrupt")
+    with pytest.raises(SystemExit, match="integrity_check"):
+        s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=lambda t: 102.0)
+    assert not s.backup_path(path).exists() and _sha(path) == before
+    _untouched(path, tmp_path)
+
+
+@needs_out
+@pytest.mark.parametrize("phase", ["backed_up", "staged", "in_transaction"])
+def test_db_bytes_are_unchanged_after_a_pre_commit_failure(tmp_path, phase) -> None:
+    s = _switch_module()
+    path, switch, old = _switch_db(tmp_path)
+    before, dump = _sha(path), _dump(path)
+    with pytest.raises(RuntimeError, match="injected"):
+        s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=lambda t: 102.0, fail_at=phase)
+    assert not Path(str(path) + "-wal").exists() or Path(str(path) + "-wal").stat().st_size == 0
+    assert _sha(path) == before and _dump(path) == dump
+
+
+def test_paper_store_open_does_not_write_a_current_schema(tmp_path) -> None:
+    path = tmp_path / "live.sqlite"
+    with PaperStore(path):
+        pass
+    before = (_sha(path), path.stat().st_mtime_ns)
+    with PaperStore(path):
+        pass
+    assert (_sha(path), path.stat().st_mtime_ns) == before
+
+
+def test_telegram_dead_letter_is_atomic_and_never_resends(tmp_path, monkeypatch) -> None:
+    from btcusdt_quant.paper import notify
+    path = tmp_path / "live.sqlite"
+    with PaperStore(path):
+        pass
+    notifier = TelegramNotifier(path, env_path=_secrets(tmp_path))
+    notifier._sleep = lambda s: None
+    for k in range(2):
+        notifier.enqueue(f"alert:{k}", "alert", {"kind": "x", "detail": str(k)})
+    sent = []
+
+    class Response:
+        def __init__(self, code):
+            self.status_code = code
+
+        def json(self):
+            return {"ok": self.status_code == 200}
+
+    def post(*a, **k):
+        sent.append(k["data"]["text"])
+        return Response(500 if k["data"]["text"].endswith("\n0") else 200)
+    monkeypatch.setattr("btcusdt_quant.paper.notify.requests.post", post)
+
+    def boom():
+        raise RuntimeError("crash between dead-letter statements")
+    notifier._dead_letter_hook = boom
+    now = pd.Timestamp.now(tz="UTC") + pd.Timedelta(minutes=1)
+    for attempt in range(notify.MAX_ATTEMPTS):
+        notifier.deliver_pending(now + pd.Timedelta(days=attempt))
+    assert len(sent) == notify.MAX_ATTEMPTS
+    with PaperStore(path) as store:
+        rows = store.frame("notifications").sort_values("id")
+        dead = pd.read_sql_query("SELECT * FROM notifications_dead", store.connection)
+    assert dead.empty and rows.status.tolist() == ["failed", "pending"]
+    assert rows.attempts.tolist()[0] == notify.MAX_ATTEMPTS
+    notifier._dead_letter_hook = lambda: None
+    assert notifier.deliver_pending(now + pd.Timedelta(days=30)) == 1
+    assert len(sent) == notify.MAX_ATTEMPTS + 1 and not sent[-1].endswith("\n0")    # no 11th send of the head
+    with PaperStore(path) as store:
+        rows = store.frame("notifications").sort_values("id")
+        dead = pd.read_sql_query("SELECT * FROM notifications_dead", store.connection)
+    assert rows.status.tolist() == ["dead", "sent"] and dead.attempts.tolist() == [notify.MAX_ATTEMPTS]

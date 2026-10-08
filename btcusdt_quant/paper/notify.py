@@ -43,6 +43,7 @@ class TelegramNotifier:
         self._thread: threading.Thread | None = None
         self._clock, self._sleep = time.monotonic, time.sleep     # injectable for tests
         self._next_send = 0.0
+        self._dead_letter_hook = lambda: None      # test hook between the dead-letter statements
 
     def _enabled(self, event_type: str) -> bool:
         setting = {
@@ -94,6 +95,10 @@ class TelegramNotifier:
             if throttled is not None:          # FIFO: nothing newer goes out before a backing-off message
                 rows = [row for row in rows if int(row["id"]) < int(throttled)]
             for row in rows:
+                if int(row["attempts"]) >= MAX_ATTEMPTS:      # exhausted earlier: dead-letter, never send again
+                    if not self._dead_letter(store, row["id"], stamp):
+                        break
+                    continue
                 attempts = int(row["attempts"]) + 1
                 wait = self._next_send - self._clock()
                 if wait > 0:          # FIFO pacing on the outbox worker thread, never the paper loop
@@ -132,13 +137,9 @@ class TelegramNotifier:
                     if attempts < MAX_ATTEMPTS:
                         store.connection.commit()     # FIFO: any head failure (429, 5xx, timeout) ends the cycle
                         break
-                    store.connection.execute(         # durable dead letter; the next message may go out
-                        "INSERT OR REPLACE INTO notifications_dead(id,event_key,event_type,payload,attempts,"
-                        "last_error,created_at,dead_at) SELECT id,event_key,event_type,payload,?,?,created_at,? "
-                        "FROM notifications WHERE id=?", (attempts, safe_error, stamp.isoformat(), row["id"]))
-                    store.connection.execute("UPDATE notifications SET status='dead' WHERE id=?", (row["id"],))
-                    LOG.error("telegram dead-letter after %d attempts: id=%s %s", attempts, row["id"], safe_error)
                     store.connection.commit()
+                    if not self._dead_letter(store, row["id"], stamp):
+                        break
                     continue
                 else:
                     store.connection.execute(
@@ -148,6 +149,27 @@ class TelegramNotifier:
                     sent += 1
                 store.connection.commit()
         return sent
+
+    def _dead_letter(self, store: PaperStore, row_id: int, stamp: pd.Timestamp) -> bool:
+        """Move an exhausted message to notifications_dead in ONE transaction (copy + status). On failure nothing
+        changes; the row keeps attempts >= MAX_ATTEMPTS, so a later cycle retries the move, never the send."""
+        connection = store.connection
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT OR REPLACE INTO notifications_dead(id,event_key,event_type,payload,attempts,last_error,"
+                "created_at,dead_at) SELECT id,event_key,event_type,payload,attempts,last_error,created_at,? "
+                "FROM notifications WHERE id=?", (stamp.isoformat(), row_id))
+            self._dead_letter_hook()
+            connection.execute("UPDATE notifications SET status='dead' WHERE id=?", (row_id,))
+            connection.execute("COMMIT")
+        except Exception:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            LOG.exception("telegram dead-letter move failed: id=%s", row_id)
+            return False
+        LOG.error("telegram dead-letter after %d attempts: id=%s", MAX_ATTEMPTS, row_id)
+        return True
 
     def start(self) -> None:
         if not self.configured or self._thread is not None:

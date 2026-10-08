@@ -174,7 +174,9 @@ def utc_text(value: object) -> str:
 class PaperStore:
     """Small synchronous store; one writer and concurrent WAL readers."""
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, init_schema: bool = True):
+        """init_schema=False (R2-52A switch): no schema/meta write at open; the caller creates missing schema
+        objects inside its own transaction (create_schema)."""
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
@@ -182,12 +184,21 @@ class PaperStore:
         self.connection.execute("PRAGMA journal_mode=WAL")
         self.connection.execute("PRAGMA foreign_keys=ON")
         self.connection.execute("PRAGMA synchronous=FULL")
-        self.connection.executescript(SCHEMA)
+        if init_schema:
+            self.connection.executescript(SCHEMA)
         current = self.get_meta("schema_version")
         if current is not None and int(current) != SCHEMA_VERSION:
             self.connection.close()
             raise RuntimeError(f"unsupported schema version: {current}")
-        self.set_meta("schema_version", str(SCHEMA_VERSION))
+        if init_schema and current is None:
+            self.set_meta("schema_version", str(SCHEMA_VERSION))
+
+    @staticmethod
+    def create_schema(connection: sqlite3.Connection) -> None:
+        """Every SCHEMA statement inside the caller's open transaction (CREATE ... IF NOT EXISTS)."""
+        for statement in SCHEMA.split(";"):
+            if statement.strip():
+                connection.execute(statement)
 
     def close(self) -> None:
         self.connection.close()
