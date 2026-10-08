@@ -296,8 +296,10 @@ def main() -> None:
             if args.once:
                 break
             count += 1
-            # run at :15 of each minute: bars of the new 15 m origin are stored by :10 (paper_run REST at :10)
-            time.sleep((15 - pd.Timestamp.now(tz="UTC").second) % 60 or 60)   # next :15, never skip one
+            # start as soon as paper_run finishes the next minute (a fixed :15 ran on the previous minute when paper_run was late)
+            last = store.get_meta("last_processed_minute")
+            while store.get_meta("last_processed_minute") == last:
+                time.sleep(1)
 
 
 if __name__ == "__main__":
