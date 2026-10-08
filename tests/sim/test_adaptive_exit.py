@@ -27,7 +27,7 @@ def sig(rows, t0=T0):
 def run(mod, s, m, e=None, e_min=None, **kw):
     cfg = reference.SimConfig(**{"include_funding": False, "exit_policy": "R2_52A", **kw})
     return mod.simulate(s, m, m.open_time.iloc[0], m.open_time.iloc[-1] + pd.Timedelta(minutes=1), cfg, e_bps=e,
-                        e_min_bps=e_min)
+                        e_min_bps=e if e is not None and e_min is None else e_min)   # one E per minute here
 
 
 def at(k, t0=T0):
@@ -317,3 +317,15 @@ def test_missing_adaptive_columns_rejected():
     for mod in (reference, core):
         with pytest.raises(ValueError, match="e0_bps and k"):
             run(mod, s, m)
+
+
+def test_e_series_requires_e_min():
+    m = flat(); s = sig([{"at": 15, "side": 1}]); e = np.full(len(m), 100.0)
+    cfg = reference.SimConfig(include_funding=False, exit_policy="R2_52A")
+    for mod in (reference, core):
+        with pytest.raises(ValueError, match="e_min_bps"):
+            mod.simulate(s, m, T0, T0 + pd.Timedelta(days=1), cfg, e_bps=e)
+        with pytest.raises(ValueError, match="e_min_bps"):
+            mod.simulate(s, m, T0, T0 + pd.Timedelta(days=1), cfg, e_bps=e, e_min_bps=e[:-1])
+        with pytest.raises(ValueError, match="e_min_bps"):
+            mod.simulate(s, m, T0, T0 + pd.Timedelta(days=1), cfg, e_min_bps=e)

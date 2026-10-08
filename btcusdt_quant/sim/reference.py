@@ -87,11 +87,13 @@ def adaptive_state(component, k, e0, r0, r, best, armed, anchor_upper, anchor_lo
 def adaptive_inputs(signals: pd.DataFrame, n: int, e_bps, e_min_bps) -> tuple[np.ndarray, np.ndarray]:
     """R2_52A inputs, one value per minute row (availability, finite >0 and age <=24h applied by the caller):
     e_bps = latest valid E as of open(m), NaN when none (OCO E0); e_min_bps = minimum of every valid E that became
-    available in (open(m-1), open(m)], NaN when none (R_t update). e_min_bps defaults to e_bps (one E per minute)."""
+    available in (open(m-1), open(m)], NaN when none (R_t update). Pass both or neither."""
     if "e0_bps" not in signals or "k" not in signals:
         raise ValueError("R2_52A needs signal columns e0_bps and k")
+    if (e_bps is None) != (e_min_bps is None):      # no silent fallback: same-minute E arrivals need e_min_bps
+        raise ValueError("R2_52A needs both e_bps and e_min_bps (or neither)")
     e = np.full(n, np.nan) if e_bps is None else np.asarray(e_bps, np.float64)
-    e_min = e if e_min_bps is None else np.asarray(e_min_bps, np.float64)
+    e_min = np.full(n, np.nan) if e_min_bps is None else np.asarray(e_min_bps, np.float64)
     if len(e) != n or len(e_min) != n:
         raise ValueError("e_bps / e_min_bps must have one value per minute")
     return e, e_min
