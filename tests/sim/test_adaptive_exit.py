@@ -352,3 +352,81 @@ def test_e_series_requires_e_min():
             mod.simulate(s, m, T0, T0 + pd.Timedelta(days=1), cfg, e_bps=e, e_min_bps=e[:-1])
         with pytest.raises(ValueError, match="e_min_bps"):
             mod.simulate(s, m, T0, T0 + pd.Timedelta(days=1), cfg, e_min_bps=e)
+
+
+# --- R2-52A Task C fix round 1: per-component E head, fill-minute k schedule, V3 ablation ---
+def run2(mod, s, m, e, e_min, k_minute=None, v3_m=None, **kw):
+    cfg = reference.SimConfig(**{"include_funding": False, "exit_policy": "R2_52A", **kw})
+    return mod.simulate(s, m, m.open_time.iloc[0], m.open_time.iloc[-1] + pd.Timedelta(minutes=1), cfg, e_bps=e,
+                        e_min_bps=e_min, k_minute=k_minute, v3_m=v3_m)
+
+
+@MODS
+def test_entering_component_head_is_locked(mod):
+    m = flat(); m.loc[30, "low"] = 100 * math.exp(-.015)              # 150 bps adverse
+    e = np.full((len(m), 2), 100.0); e[:, 1] = 200.0                     # col 0 = 4h, col 1 = 12h
+    e_min = np.full((len(m), 2), np.nan); e_min[20, 0] = 50.0            # only the 4h head tightens
+    s = sig([{"at": 15, "side": 1, "e0_bps": 200.0, "e_col": 1.0}])
+    r = run2(mod, s, m, e, e_min, close_at_end=True)
+    assert r.trades.exit_reason.tolist() == ["data_end"]                 # 12h R stays 200 > 150
+    e_min[20, 1] = 100.0
+    t = run2(mod, s, m, e, e_min).trades.iloc[0]
+    assert t.exit_time == at(30) and np.isclose(t.exit_price, 100 * math.exp(-.01))
+    m = flat(); m.loc[20, "high"] = 102.0; m.loc[30, "low"] = 101 * math.exp(-.015)
+    oco = sig([{"at": 15, "side": 0, "entry": "oco", "upper": 101.0, "lower": 99.0, "expiry_min": 60, "e_col": 1.0}])
+    r = run2(mod, oco, m, e, np.full((len(m), 2), np.nan), close_at_end=True)
+    assert r.trades.exit_reason.tolist() == ["data_end"]                 # OCO E0 from the 12h column (200)
+    with pytest.raises(ValueError, match="e_col"):
+        run2(mod, sig([{"at": 15, "side": 1, "e_col": 2.0}]), m, e, e_min)
+
+
+@MODS
+def test_k_schedule_decided_at_fill_minute(mod):
+    m = flat(); m.loc[120, "high"] = 102.0; m.loc[150, "low"] = 101 * math.exp(-.015)
+    k = np.where(np.arange(len(m)) < 100, 1.0, 2.0)                      # boundary at minute 100
+    oco = sig([{"at": 15, "side": 0, "entry": "oco", "upper": 101.0, "lower": 99.0, "expiry_min": 200, "k": 1.0}])
+    e = np.full(len(m), 100.0); e_min = np.full(len(m), np.nan)
+    r = run2(mod, oco, m, e, e_min, k_minute=k, close_at_end=True)
+    assert r.trades.entry_time.iloc[0] == at(120) and r.trades.exit_reason.tolist() == ["data_end"]   # k = 2
+    m = flat(); m.loc[150, "low"] = 100 * math.exp(-.015)
+    s = sig([{"at": 98, "side": 1, "k": 2.0}])                             # fills at 99: old window k = 1
+    t = run2(mod, s, m, e, e_min, k_minute=k).trades.iloc[0]
+    assert t.exit_time == at(150) and t.exit_reason == "stop"
+    assert run2(mod, s, m, e, e_min, k_minute=k).trades.shape[0] == 1
+    with pytest.raises(ValueError, match="k_minute"):
+        run2(mod, s, m, e, e_min, k_minute=np.where(np.arange(len(m)) < 5, np.nan, 1.0))
+
+
+@MODS
+def test_v3_exit_in_loss_at_open(mod):
+    m = flat(); m.loc[24, "close"] = 99.9; m.loc[25, "open"] = 99.95
+    e = np.full(len(m), 100.0); e_min = np.full(len(m), np.nan)
+    v3 = np.full(len(m), np.nan); v3[25] = 0.95
+    s = sig([{"at": 15, "side": 1}])
+    t = run2(mod, s, m, e, e_min, v3_m=v3).trades.iloc[0]
+    assert t.exit_time == at(25) and t.exit_reason == "v3" and t.exit_price == 99.95
+    v3[25] = 0.85
+    assert run2(mod, s, m, e, e_min, v3_m=v3).trades.empty               # M below 0.9
+    v3[25] = 0.95; m.loc[24, "close"] = 100.1
+    assert run2(mod, s, m, e, e_min, v3_m=v3).trades.empty               # not in loss at close(m-1)
+    s = sig([{"at": 15, "side": -1}])
+    t = run2(mod, s, m, e, e_min, v3_m=v3).trades.iloc[0]                # short loses when close rises
+    assert t.exit_time == at(25) and t.exit_reason == "v3"
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_core_matches_reference_two_heads_k_schedule_v3(seed):
+    s, m, e, e_min = random_case(seed)
+    rng = np.random.default_rng(100 + seed)
+    e2 = np.column_stack([e, e * 1.7]); e_min2 = np.column_stack([e_min, e_min * 1.7])
+    s = s.assign(e_col=s.component.astype(float))                        # 0 = 4h component, 1 = 12h component
+    k = np.where(np.arange(len(m)) < len(m) // 2, 1.0, 2.0)
+    v3 = np.where(rng.random(len(m)) < .05, rng.uniform(.8, 1.0, len(m)), np.nan)
+    kw = {"include_funding": seed % 2 == 0, "close_at_end": seed % 3 == 0, "stop_slippage_bps": 1.0 * (seed % 3),
+          "market_slippage_bps": 0.5 * (seed % 2)}
+    a = run2(reference, s, m, e2, e_min2, k_minute=k, v3_m=v3, **kw)
+    b = run2(core, s, m, e2, e_min2, k_minute=k, v3_m=v3, **kw)
+    assert len(a.trades) >= 10 and "v3" in set(a.trades.exit_reason)
+    pd.testing.assert_frame_equal(a.trades, b.trades, atol=1e-9, rtol=0)
+    assert np.allclose(a.minute_pnl.to_numpy(), b.minute_pnl.to_numpy(), atol=1e-9, rtol=0)
+    assert same_state(a.open_position, b.open_position)

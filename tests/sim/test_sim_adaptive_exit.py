@@ -36,7 +36,7 @@ def test_select_k_best_validation_pnl_and_ties_go_to_2():
 
 def test_trial_count_and_scope_from_freeze():
     assert len(ax.INCLUDED) == 29 and "K10" not in ax.INCLUDED and ax.INCLUDED[3] == "K01"
-    assert ax.N_TRIALS == 87 and ax.K_VALUES == (1.0, 1.5, 2.0)
+    assert ax.N_TRIALS == 87 and ax.N_TRIALS_V3 == 29 and ax.K_VALUES == (1.0, 1.5, 2.0)
     assert len(ax.ATOMIC) == 26 and not any(i.startswith("B") for i in ax.ATOMIC)
 
 
@@ -54,14 +54,27 @@ def test_e_series_causal_latest_valid_and_same_minute_min():
     assert np.isnan(ax.e_series(frame, late, "4h")[0]).all()          # older than 24 h -> no E
 
 
-def test_row_e0_uses_component_head_for_composites():
+def test_e_series_uses_available_at_when_present():
+    frame = pd.DataFrame({"timestamp": pd.DatetimeIndex([at(0)]), "available_at": pd.DatetimeIndex([at(3)]),
+                          "prediction_exc_4h": [100.0]})
+    e, e_min = ax.e_series(frame, pd.date_range(T0, periods=5, freq="1min", tz="UTC"), "4h")
+    assert np.isnan(e[:3]).all() and e[3] == 100.0 and e_min[3] == 100.0 and np.isnan(e_min[0])
+
+
+def test_composite_heads_e0_and_columns():
     regime_frame = pd.DataFrame({"timestamp": pd.DatetimeIndex([at(0)]), "prediction_exc_4h": [100.0],
                                  "prediction_exc_12h": [200.0]})
-    t = table([{"decision_time": at(5), "side": 1, "component": c} for c in sorted(ax.legacy_heads())])
+    comps = ax.legacy_heads()
+    t = table([{"decision_time": at(5), "side": 1, "component": c} for c in sorted(comps)])
+    heads = ax.heads("B1")
+    assert sorted(heads) == ["12h", "4h"] and ax.heads("K02") == ["4h"] and ax.heads("K01") == ["24h"]
+    cols = ax.e_cols(t, "B1")
+    assert [heads[c] for c in cols] == [comps[c] for c in t.component]                 # each row -> its own head
     e0 = ax.row_e0(t, regime_frame, "B1")
-    heads = ax.legacy_heads()
-    assert [e0[i] for i in range(len(t))] == [200.0 if heads[c] == "12h" else 100.0 for c in t.component]
-    assert (ax.row_e0(t, regime_frame, "K02") == 100.0).all()          # single techniques: Spec.e_head
+    assert e0.tolist() == [200.0 if comps[c] == "12h" else 100.0 for c in t.component]
+    assert (ax.row_e0(t, regime_frame, "K02") == 100.0).all() and (ax.e_cols(t, "K02") == 0).all()
+    e, e_min = ax.e_matrix(regime_frame, pd.date_range(T0, periods=3, freq="1min", tz="UTC"), heads)
+    assert e.shape == (3, 2) and e[1, heads.index("12h")] == 200.0 and e[1, heads.index("4h")] == 100.0
 
 
 def windows(n=3):
@@ -70,35 +83,57 @@ def windows(n=3):
                            at(100 * q + 100)) for q in range(n)]
 
 
-def test_assign_k_by_execution_minute():
-    t = table([{"decision_time": at(m), "side": 1, "component": 0} for m in (10, 98, 99, 150, 250)])
-    k = ax.assign_k(t, {"W01": 1.0, "W02": 1.5, "W03": 2.0}, windows(), delay_min=1).k.tolist()
-    assert k == [1.0, 1.0, 1.5, 1.5, 2.0]                 # decision 99 executes at 100 = W02
+def test_k_schedule_by_minute():
+    times = pd.date_range(T0, periods=300, freq="1min", tz="UTC")
+    k = ax.k_schedule(times, {"W01": 1.0, "W02": 1.5, "W03": 2.0}, windows())
+    assert k[99] == 1.0 and k[100] == 1.5 and k[199] == 1.5 and k[200] == 2.0 and not np.isnan(k).any()
 
 
 def config():
     return SimConfig(include_funding=False, exit_policy="R2_52A")
 
 
-def test_stitched_position_keeps_its_k_across_boundary():
+def test_stitched_position_keeps_its_k_and_oco_takes_fill_minute_k():
     m = flat(300)
     m.loc[150, "low"] = 100 * math.exp(-0.015)             # 150 bps adverse: stops k=1 (100 bps), not k=2 (200)
-    t = ax.assign_k(table([{"decision_time": at(50), "side": 1}]), {"W01": 1.0, "W02": 2.0, "W03": 2.0}, windows())
-    t = t.assign(e0_bps=100.0)
+    k = ax.k_schedule(m.open_time, {"W01": 1.0, "W02": 2.0, "W03": 2.0}, windows())
+    t = table([{"decision_time": at(50), "side": 1}]).assign(e0_bps=100.0)
     e = np.full(len(m), 100.0); e_min = np.full(len(m), np.nan)
-    r = ax.run_ax(t, m, e, e_min, at(0), at(300), config())
+    r = ax.run_ax(t, m, e, e_min, at(0), at(300), config(), k)
     tr = r.trades.iloc[0]
     assert tr.exit_reason == "stop" and tr.exit_time == at(150) and np.isclose(tr.exit_price, 100 * math.exp(-0.01))
     carried = ax.carried(r.trades, windows())
     assert [c["boundary"] for c in carried] == [at(100)] and carried[0]["position_id"] == tr.position_id
+    m = flat(300); m.loc[120, "high"] = 102.0; m.loc[150, "low"] = 101 * math.exp(-0.015)
+    oco = table([{"decision_time": at(50), "side": 0, "entry": "oco", "upper": 101.0, "lower": 99.0,
+                  "expiry_min": 200}]).assign(e0_bps=np.nan)
+    r = ax.run_ax(oco, m, e, e_min, at(0), at(300), SimConfig(include_funding=False, exit_policy="R2_52A",
+                                                                close_at_end=True), k)
+    assert r.trades.entry_time.iloc[0] == at(120) and r.trades.exit_reason.tolist() == ["data_end"]   # k=2 at fill
 
 
 def test_validation_marks_open_position_without_exit_fee():
     m = flat(100); m.loc[60:, ["open", "high", "low", "close"]] = 100 * math.exp(0.005)
-    t = table([{"decision_time": at(10), "side": 1}]).assign(e0_bps=100.0, k=1.0)
+    t = table([{"decision_time": at(10), "side": 1}]).assign(e0_bps=100.0)
     e = np.full(len(m), 100.0)
-    pnl = ax.validation_pnl(t, m, e, np.full(len(m), np.nan), at(0), at(100), config())
+    pnl = ax.validation_pnl(t, m, e, np.full(len(m), np.nan), at(0), at(100), config(), 1.0)
     assert np.isclose(pnl, 50.0 - 2.0)                     # +50 bps mark, entry fee only
+
+
+def test_v3_series_causal_14_minutes():
+    frame = pd.DataFrame({"timestamp": pd.DatetimeIndex([at(0), at(15)]), "M": [0.95, 0.5]})
+    m = ax.v3_series(frame, pd.date_range(T0, periods=31, freq="1min", tz="UTC"))
+    assert m[0] == 0.95 and m[14] == 0.95 and m[15] == 0.5 and m[29] == 0.5 and np.isnan(m[30])
+
+
+def test_catalog_gate_only_after_k01_passes():
+    days = pd.date_range(T0, periods=4, freq="D", tz="UTC")
+    deltas = pd.DataFrame({"A": [1.0, 2.0, 1.5, 2.5], "B": [1.0, 1.0, 1.0, 1.0]}, index=days)
+    results = {"A": {"delta_4bps": 7.0}, "B": {"delta_4bps": 4.0}}
+    off = ax.catalog_gate(False, deltas, ["A", "B"], results, True)
+    assert off == {"evaluated": False, "pass": None, "reason": "K01 primary did not pass (pass_criteria.hierarchy)"}
+    on = ax.catalog_gate(True, deltas, ["A", "B"], results, True)
+    assert on["evaluated"] and on["improved_ids"] == 2 and on["pass"] is False          # 2 < 15 improved ids
 
 
 def test_daily_zero_fill_and_paired_delta():

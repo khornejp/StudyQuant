@@ -1,6 +1,7 @@
 """R2-52A research run (frozen spec out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json): adaptive exits
 (SimConfig.exit_policy="R2_52A") on the NONE/NATIVE signal table of each included id, k in {1.0, 1.5, 2.0} selected on
-each rolling validation window (tie -> 2.0), one continuous stitched test, paired daily PW versus BASE NONE/NATIVE.
+each rolling validation window (tie -> 2.0), one continuous stitched test, paired daily PW versus BASE NONE/NATIVE,
+plus the pre-registered V3 ablation on the selected k (ablation_V3).
 Usage: python scripts/sim_adaptive_exit.py [--ids K01 ...] [--windows W01 ...] [--workers 8] [--out DIR] [--no-register]
 """
 from __future__ import annotations
@@ -24,10 +25,13 @@ FREEZE = json.loads(FREEZE_PATH.read_text(encoding="utf-8"))
 INCLUDED = tuple(FREEZE["scope"]["included_ids"])
 ATOMIC = tuple(i for i in INCLUDED if i not in ("B1", "B2", "B3"))          # scope.atomic_only_diagnostic
 K_VALUES = (1.0, 1.5, 2.0)
-N_TRIALS = len(INCLUDED) * len(K_VALUES)       # freeze trials: 29 x 3 = 87 (V3 ablation, +29, is a separate run)
+N_TRIALS = len(INCLUDED) * len(K_VALUES)       # freeze trials: 29 x 3 = 87 candidate return series
+N_TRIALS_V3 = len(INCLUDED)                     # + 29: the selected-k V3 ablation
+V3_MAX_AGE = pd.Timedelta(minutes=14)
 OUT = O / "r2_52a"
 REGISTRY = ROOT / "out/sim_registry.jsonl"
 CONFIG = SimConfig(exit_policy="R2_52A")       # strict, NATIVE rows, 4 bps round trip, PESS funding, delay 1
+PW_LABEL = "unadjusted diagnostic (no multiplicity correction; no per-id significance claim)"
 _CTX: Context | None = None
 
 
@@ -39,69 +43,93 @@ def select_k(scores: dict[float, float]) -> float:
 def _valid_e(frame: pd.DataFrame, head: str) -> pd.DataFrame:
     column = f"prediction_exc_{head}"
     v = frame[column].to_numpy(float)
-    return frame.loc[np.isfinite(v) & (v > 0), ["timestamp", column]]
+    keep = ["timestamp", column] + (["available_at"] if "available_at" in frame else [])
+    return frame.loc[np.isfinite(v) & (v > 0), keep]
 
 
 def e_at(frame: pd.DataFrame, times: pd.DatetimeIndex, head: str) -> np.ndarray:
-    """Latest finite >0 E with available_at (= timestamp, research convention) <= t and age <= 24 h."""
+    """Latest finite >0 E with timestamp and available_at (research: = timestamp) <= t and age <= 24 h."""
     return regime._asof(_valid_e(frame, head), times, f"prediction_exc_{head}", regime.E_MAX_AGE)
 
 
 def e_series(frame: pd.DataFrame, minute_times: pd.DatetimeIndex, head: str) -> tuple[np.ndarray, np.ndarray]:
-    """core.simulate e_bps / e_min_bps: e = latest valid E as of open(m); e_min = min of the valid E that became
-    available in (open(m-1), open(m)] (each E goes to the first minute whose open >= its timestamp)."""
+    """core.simulate e_bps / e_min_bps for one head: e = latest valid E as of open(m); e_min = min of the valid E
+    that became available in (open(m-1), open(m)] (each E goes to the first minute whose open >= its availability)."""
     valid = _valid_e(frame, head)
     t = pd.DatetimeIndex(minute_times).as_unit("ns").asi8
-    e_t = pd.DatetimeIndex(valid.timestamp).as_unit("ns").asi8
+    stamp = pd.DatetimeIndex(valid.timestamp).as_unit("ns").asi8
+    avail = (np.maximum(pd.DatetimeIndex(valid.available_at).as_unit("ns").asi8, stamp) if "available_at" in valid
+             else stamp)
     values = valid[f"prediction_exc_{head}"].to_numpy(float)
-    idx = np.searchsorted(t, e_t, side="left")
+    idx = np.searchsorted(t, avail, side="left")
     keep = idx < len(t)
-    keep[keep] = t[idx[keep]] - e_t[keep] <= regime.E_MAX_AGE.value      # a data gap must not revive old E
+    keep[keep] = t[idx[keep]] - stamp[keep] <= regime.E_MAX_AGE.value      # a data gap must not revive old E
     e_min = np.full(len(t), np.nan)
     np.fmin.at(e_min, idx[keep], values[keep])
     return e_at(frame, minute_times, head), e_min
 
 
 def legacy_heads() -> dict[int, str]:
-    """Composite component -> its E head (R2-46 E_COLUMN); only the opening component supplies E0."""
+    """Composite component -> its E head (R2-46 E_COLUMN); only the opening component supplies E metadata."""
     return {legacy.FAST[name][0]: legacy.E_HEAD[name] for name in legacy.FAST}
 
 
-def row_e0(table: pd.DataFrame, regime_frame: pd.DataFrame, spec_id: str) -> np.ndarray:
-    """E0 for market entries: E known at the decision time T of each row."""
+def heads(spec_id: str) -> list[str]:
     spec = CATALOG[spec_id]
+    return sorted(set(legacy_heads().values())) if spec.family == "composite" else [spec.e_head]
+
+
+def e_cols(table: pd.DataFrame, spec_id: str) -> np.ndarray:
+    """Row -> column of e_matrix: the component's head (composites), else 0. Core locks it at the fill."""
+    if CATALOG[spec_id].family != "composite":
+        return np.zeros(len(table), np.int64)
+    names = heads(spec_id)
+    return table.component.map(legacy_heads()).map(names.index).to_numpy(np.int64)
+
+
+def e_matrix(frame: pd.DataFrame, minute_times: pd.DatetimeIndex, names: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    pairs = [e_series(frame, minute_times, head) for head in names]
+    return np.column_stack([p[0] for p in pairs]), np.column_stack([p[1] for p in pairs])
+
+
+def row_e0(table: pd.DataFrame, regime_frame: pd.DataFrame, spec_id: str) -> np.ndarray:
+    """E0 for market entries: E known at the decision time T of each row, from the row's own head."""
     times = pd.DatetimeIndex(table.decision_time)
-    if spec.family != "composite":
-        return e_at(regime_frame, times, spec.e_head)
-    heads = table.component.map(legacy_heads())
+    names, cols = heads(spec_id), e_cols(table, spec_id)
     out = np.full(len(table), np.nan)
-    for head in heads.dropna().unique():
-        rows = (heads == head).to_numpy()
+    for c, head in enumerate(names):
+        rows = cols == c
         out[rows] = e_at(regime_frame, times[rows], head)
     return out
 
 
-def assign_k(table: pd.DataFrame, picks: dict[str, float], windows, delay_min: int = CONFIG.delay_min) -> pd.DataFrame:
-    """Each row takes the k selected for the test window its execution minute falls in; a position keeps the k of
-    the row that opened it (core reads k at the fill), so a boundary never changes an open position."""
-    executes = pd.DatetimeIndex(table.decision_time) + pd.Timedelta(minutes=delay_min)
-    k = np.full(len(table), np.nan)
+def k_schedule(minute_times, picks: dict[str, float], windows) -> np.ndarray:
+    """k per minute = the pick of the test window containing that minute; core reads it at the fill minute (market
+    or OCO) and locks it on the position, so a boundary never changes an open position."""
+    t = pd.DatetimeIndex(minute_times)
+    k = np.full(len(t), np.nan)
     for w in windows:
-        k[(executes >= w.test_start) & (executes < w.test_end)] = picks[w.name]
-    return table.assign(k=k)
+        k[(t >= w.test_start) & (t < w.test_end)] = picks[w.name]
+    return k
 
 
-def run_ax(table, minutes, e, e_min, a, b, config):
+def v3_series(frame: pd.DataFrame, minute_times) -> np.ndarray:
+    """ablation_V3 M per minute: latest M with timestamp and available_at <= open(m) and age <= 14 min, else NaN."""
+    return regime._asof(frame, pd.DatetimeIndex(minute_times), "M", V3_MAX_AGE)
+
+
+def run_ax(table, minutes, e, e_min, a, b, config, k_minute, v3=None):
     """R2_52A from a flat position at a (earlier rows are only indicator warm-up already inside the table)."""
     inside = ((minutes.open_time >= a) & (minutes.open_time < b)).to_numpy()
-    return core.simulate(table, minutes.loc[inside].reset_index(drop=True), a, b, config,
-                         e_bps=e[inside], e_min_bps=e_min[inside])
+    return core.simulate(table, minutes.loc[inside].reset_index(drop=True), a, b, config, e_bps=e[inside],
+                         e_min_bps=e_min[inside], k_minute=np.asarray(k_minute, float)[inside],
+                         v3_m=None if v3 is None else v3[inside])
 
 
-def validation_pnl(table, minutes, e, e_min, a, b, config) -> float:
-    """Minute-ledger P&L on [a, b); an open position is marked to the last close without an exit fee and pays the
-    settlements it held through."""
-    result = run_ax(table, minutes, e, e_min, a, b, replace(config, close_at_end=False))
+def validation_pnl(table, minutes, e, e_min, a, b, config, k: float) -> float:
+    """Minute-ledger P&L on [a, b) with a constant k; an open position is marked to the last close without an exit
+    fee and pays the settlements it held through."""
+    result = run_ax(table, minutes, e, e_min, a, b, replace(config, close_at_end=False), np.full(len(minutes), k))
     pnl = float(result.minute_pnl.sum())
     held = result.open_position
     if held is not None and config.include_funding:
@@ -136,6 +164,21 @@ def _worst(trades: pd.DataFrame) -> float | None:
     return float(pos.net_bps.min()) if len(pos) else None
 
 
+def compare(p4, p8, n4, n8, days) -> dict:
+    """Policy vs NATIVE on the same calendar: every UTC day, zero-filled, before differencing."""
+    d4 = daily(p4.minute_pnl, days) - daily(n4.minute_pnl, days)
+    trade_n = int(plan2.positions(p4.trades).shape[0])
+    return {"trade_n": trade_n, "zero_reason": None if trade_n else "no positions in the stitched test",
+            "exit_reasons": p4.trades.exit_reason.value_counts().to_dict(),
+            "data_end_closes": int((p4.trades.exit_reason == "data_end").sum()),
+            "net_4bps": float(p4.minute_pnl.sum()), "delta_4bps": float(d4.sum()),
+            "delta_8bps": float((daily(p8.minute_pnl, days) - daily(n8.minute_pnl, days)).sum()),
+            "pw_delta": analytics.pw_mean_ci(d4.to_numpy()), "pw_label": PW_LABEL,
+            "worst_position_bps": _worst(p4.trades), "native_worst_position_bps": _worst(n4.trades),
+            "max_drawdown_bps": _drawdown(daily(p4.minute_pnl, days)),
+            "native_max_drawdown_bps": _drawdown(daily(n4.minute_pnl, days))}
+
+
 def _init(end: str) -> None:
     global _CTX
     _CTX = Context.load(end=pd.Timestamp(end))
@@ -143,52 +186,50 @@ def _init(end: str) -> None:
 
 def run_id(spec_id: str, names: list[str], out_dir: str) -> dict:
     try:
-        ctx, spec = _CTX, CATALOG[spec_id]
+        ctx = _CTX
         windows = [w for w in rolling.WINDOWS if w.name in names]
         table, _ = build_variant(ctx, spec_id, False, "NATIVE", ax=True)
-        table = table.assign(e0_bps=row_e0(table, ctx.regime, spec_id))
+        table = table.assign(e0_bps=row_e0(table, ctx.regime, spec_id), e_col=e_cols(table, spec_id).astype(float))
         minutes = ctx.minutes
-        e, e_min = e_series(ctx.regime, pd.DatetimeIndex(minutes.open_time), spec.e_head)
+        times = pd.DatetimeIndex(minutes.open_time)
+        e, e_min = e_matrix(ctx.regime, times, heads(spec_id))
         picks, selection = {}, []
         for w in windows:
-            scores = {k: validation_pnl(table.assign(k=k), minutes, e, e_min, w.val_start, w.val_end, CONFIG)
-                      for k in K_VALUES}
+            scores = {k: validation_pnl(table, minutes, e, e_min, w.val_start, w.val_end, CONFIG, k) for k in K_VALUES}
             picks[w.name] = select_k(scores)
             selection.append({"id": spec_id, "window": w.name, "val_start": w.val_start, "val_end": w.val_end,
                               **{f"val_net_4bps_k{k}": v for k, v in scores.items()}, "k": picks[w.name]})
         a, b = windows[0].test_start, windows[-1].test_end
-        stitched = assign_k(table, picks, windows)
+        k_minute = k_schedule(times, picks, windows)
         final = replace(CONFIG, close_at_end=True)       # data end: administrative close, flagged data_end
-        ax4 = run_ax(stitched, minutes, e, e_min, a, b, final)
-        ax8 = run_ax(stitched, minutes, e, e_min, a, b, replace(final, fee_per_side=4.0))   # same k, no reselection
+        fee8 = replace(final, fee_per_side=4.0)          # same k sequence, no reselection
+        ax4 = run_ax(table, minutes, e, e_min, a, b, final, k_minute)
+        ax8 = run_ax(table, minutes, e, e_min, a, b, fee8, k_minute)
+        fixed_r, m = np.full_like(e_min, np.nan), v3_series(ctx.regime, times)   # V3: R_t = R0, causal M exit
+        v34 = run_ax(table, minutes, e, fixed_r, a, b, final, k_minute, m)
+        v38 = run_ax(table, minutes, e, fixed_r, a, b, fee8, k_minute, m)
         native, native_config = build_variant(ctx, spec_id, False, "NATIVE")
         inside = ((minutes.open_time >= a) & (minutes.open_time < b)).to_numpy()
         test_minutes = minutes.loc[inside].reset_index(drop=True)
         nat4 = core.simulate(native, test_minutes, a, b, replace(native_config, close_at_end=True))
         nat8 = core.simulate(native, test_minutes, a, b, replace(native_config, close_at_end=True, fee_per_side=4.0))
         days = pd.date_range(a, b, freq="D", inclusive="left")
-        frame = pd.DataFrame({"ax_4bps": daily(ax4.minute_pnl, days), "native_4bps": daily(nat4.minute_pnl, days),
-                              "ax_8bps": daily(ax8.minute_pnl, days), "native_8bps": daily(nat8.minute_pnl, days)})
-        for name, value in (("daily", frame), ("trades_ax", ax4.trades), ("trades_native", nat4.trades)):
+        frame = pd.DataFrame({f"{n}_{c}": daily(r.minute_pnl, days) for n, c, r in (
+            ("ax", "4bps", ax4), ("ax", "8bps", ax8), ("v3", "4bps", v34), ("v3", "8bps", v38),
+            ("native", "4bps", nat4), ("native", "8bps", nat8))})
+        for name, value in (("daily", frame), ("trades_ax", ax4.trades), ("trades_v3", v34.trades),
+                            ("trades_native", nat4.trades)):
             Path(out_dir, name).mkdir(parents=True, exist_ok=True)
             value.to_parquet(Path(out_dir, name, f"{spec_id}.parquet"))
         executes = pd.DatetimeIndex(table.decision_time) + pd.Timedelta(minutes=CONFIG.delay_min)
         wants = ((table.side != 0) & table.allow_entry & (table.entry == "market") & (executes >= a)
                  & (executes < b)).to_numpy()
-        d4 = frame.ax_4bps - frame.native_4bps
-        trade_n = int(plan2.positions(ax4.trades).shape[0])
+        e0 = table.e0_bps.to_numpy()
         return {"id": spec_id, "status": "ok", "selection": selection, "carried": carried(ax4.trades, windows),
-                "trade_n": trade_n, "native_trade_n": int(plan2.positions(nat4.trades).shape[0]),
-                "zero_reason": None if trade_n else "no R2-52A positions in the stitched test",
-                "data_end_closes": int((ax4.trades.exit_reason == "data_end").sum()),
-                "exit_reasons": ax4.trades.exit_reason.value_counts().to_dict(),
-                "no_entry_e_market_rows": int((wants & ~(np.isfinite(table.e0_bps.to_numpy()) &
-                                                         (table.e0_bps.to_numpy() > 0))).sum()),
-                "ax_net_4bps": float(frame.ax_4bps.sum()), "native_net_4bps": float(frame.native_4bps.sum()),
-                "delta_4bps": float(d4.sum()), "delta_8bps": float((frame.ax_8bps - frame.native_8bps).sum()),
-                "pw_delta": analytics.pw_mean_ci(d4.to_numpy()),
-                "worst_position_bps": _worst(ax4.trades), "native_worst_position_bps": _worst(nat4.trades),
-                "max_drawdown_bps": _drawdown(frame.ax_4bps), "native_max_drawdown_bps": _drawdown(frame.native_4bps)}
+                **compare(ax4, ax8, nat4, nat8, days), "native_trade_n": int(plan2.positions(nat4.trades).shape[0]),
+                "native_net_4bps": float(nat4.minute_pnl.sum()),
+                "no_entry_e_market_rows": int((wants & ~(np.isfinite(e0) & (e0 > 0))).sum()),
+                "v3": compare(v34, v38, nat4, nat8, days)}
     except Exception as error:      # a failed id invalidates the run (pass_criteria.catalog); never dropped
         return {"id": spec_id, "status": "error", "error": f"{type(error).__name__}: {error}",
                 "traceback": traceback.format_exc(limit=5)}
@@ -199,14 +240,36 @@ def k01_gates(r: dict) -> dict:
     gates = {"pw_lower_gt_0": r["pw_delta"]["lower"] > 0, "delta_8bps_ge_0": r["delta_8bps"] >= 0,
              "worst_position_ge_native": worst is not None and native_worst is not None and worst >= native_worst,
              "max_drawdown_le_native": r["max_drawdown_bps"] <= r["native_max_drawdown_bps"]}
-    return {**gates, "pass": all(gates.values())}
+    return {**gates, "pass": all(gates.values()), "delta_4bps": r["delta_4bps"], "delta_8bps": r["delta_8bps"],
+            "pw_delta": r["pw_delta"]}
 
 
 def aggregate(deltas: pd.DataFrame, ids, results: dict) -> dict:
-    """Equal-weight (1/len(ids)) mean of each id's zero-filled daily adaptive-minus-NATIVE delta."""
+    """Equal-weight (1/len(ids)) mean of each id's zero-filled daily policy-minus-NATIVE delta."""
     mean = deltas[list(ids)].mean(axis=1)
     return {"n_ids": len(ids), "improved_ids": int(sum(results[i]["delta_4bps"] > 0 for i in ids)),
             "pw_mean_delta": analytics.pw_mean_ci(mean.to_numpy()), "cum_mean_delta_4bps": float(mean.sum())}
+
+
+def catalog_gate(k01_pass: bool, deltas: pd.DataFrame, ids, results: dict, full_scope: bool) -> dict:
+    """Second research gate, evaluated only after K01 passes (pass_criteria.hierarchy)."""
+    if not k01_pass:
+        return {"evaluated": False, "pass": None, "reason": "K01 primary did not pass (pass_criteria.hierarchy)"}
+    out = aggregate(deltas, ids, results)
+    return {"evaluated": True, **out,
+            "pass": bool(full_scope and out["improved_ids"] >= 15 and out["pw_mean_delta"]["lower"] > 0)}
+
+
+def evaluate(results: dict, ok: list[str], deltas: pd.DataFrame, full_scope: bool) -> dict:
+    """K01 primary, then catalog, then the atomic-only diagnostic, for one policy (base or V3)."""
+    out = {}
+    if "K01" in ok:
+        out["K01_primary"] = k01_gates(results["K01"])
+    out["catalog_secondary"] = catalog_gate(out.get("K01_primary", {}).get("pass", False), deltas, ok, results,
+                                            full_scope)
+    atomic = [i for i in ATOMIC if i in ok]
+    out["atomic_only_diagnostic"] = {**aggregate(deltas, atomic, results), "gate": False} if atomic else None
+    return out
 
 
 def main() -> None:
@@ -240,13 +303,14 @@ def main() -> None:
     manifest = {"created_utc": datetime.now(timezone.utc).isoformat(), "source": "scripts/sim_adaptive_exit.py",
                 "freeze": str(FREEZE_PATH.relative_to(ROOT)), "freeze_sha256": provenance.file_sha256(FREEZE_PATH),
                 "experiment": FREEZE["experiment"], "frozen_hypothesis": FREEZE["pass_criteria"],
-                "data_cutoff": FREEZE["data_cutoff"], "full_scope": full_scope,
+                "ablation_V3": FREEZE["ablation_V3"], "data_cutoff": FREEZE["data_cutoff"], "full_scope": full_scope,
                 "simulation": {"exit_policy": "R2_52A", "k_values": list(K_VALUES), "costs": FREEZE["costs"],
                                "test_start": windows[0].test_start, "test_end": end,
                                "selection": FREEZE["selection"], "comparator": "BASE NONE/NATIVE, same test calendar"},
                 "included_ids": list(INCLUDED), "ids_run": args.ids, "windows": [w.name for w in windows],
                 "input_sha256": plan2.input_hashes(end), "prediction_coverage": coverage,
-                "n_trials": N_TRIALS, "prior_trials_registry": prior, "cumulative_trials": prior + N_TRIALS,
+                "n_trials": N_TRIALS + N_TRIALS_V3, "n_trials_split": {"r2_52a": N_TRIALS, "v3_ablation": N_TRIALS_V3},
+                "prior_trials_registry": prior, "cumulative_trials": prior + N_TRIALS + N_TRIALS_V3,
                 "n_trials_rule": FREEZE["trials"],
                 "paper_records": "effective_switch_time, retired_books snapshot, AX config hash and retired-table hashes "
                                  "are recorded by the paper rollout (Task D); this research run touches no paper table"}
@@ -256,23 +320,21 @@ def main() -> None:
     results = {r["id"]: r for r in rows}
     failed = [r for r in rows if r["status"] != "ok"]
     ok = [i for i in args.ids if results[i]["status"] == "ok"]
-    selection = pd.DataFrame([s for i in ok for s in results[i]["selection"]])
-    selection.to_csv(out / "selected_k.csv", index=False)
-    deltas = pd.DataFrame({i: (lambda f: f.ax_4bps - f.native_4bps)(pd.read_parquet(out / "daily" / f"{i}.parquet"))
-                           for i in ok})
+    pd.DataFrame([s for i in ok for s in results[i]["selection"]]).to_csv(out / "selected_k.csv", index=False)
+    frames = {i: pd.read_parquet(out / "daily" / f"{i}.parquet") for i in ok}
+    deltas = pd.DataFrame({i: f.ax_4bps - f.native_4bps for i, f in frames.items()})
+    deltas_v3 = pd.DataFrame({i: f.v3_4bps - f.native_4bps for i, f in frames.items()})
     report = {"valid_run": full_scope and not failed, "failed_ids": [{k: r[k] for k in ("id", "error")} for r in failed],
+              "pw_label": f"per-id pw_delta: {PW_LABEL}; Holm not computed (no p-value helper in analytics)",
               "diagnostics": {"runtime_seconds": {"value": round(time.time() - started, 1)}},
-              "strategies": [{k: v for k, v in results[i].items() if k not in ("selection", "carried")} for i in ok]}
-    if "K01" in ok:
-        report["K01_primary"] = {**k01_gates(results["K01"]), "delta_4bps": results["K01"]["delta_4bps"],
-                                 "delta_8bps": results["K01"]["delta_8bps"], "pw_delta": results["K01"]["pw_delta"]}
+              "strategies": [{k: v for k, v in results[i].items() if k not in ("selection", "carried", "v3")}
+                             for i in ok]}
     if not failed and ok:
-        catalog = aggregate(deltas, ok, results)
-        catalog["pass"] = (full_scope and catalog["improved_ids"] >= 15 and catalog["pw_mean_delta"]["lower"] > 0)
-        catalog["evaluated"] = "only after K01 passes (pass_criteria.hierarchy)"
-        report["catalog_secondary"] = catalog
-        atomic = [i for i in ATOMIC if i in ok]
-        report["atomic_only_diagnostic"] = {**aggregate(deltas, atomic, results), "gate": False} if atomic else None
+        report.update(evaluate(results, ok, deltas, full_scope))
+        v3 = {i: results[i]["v3"] for i in ok}
+        report["v3_ablation"] = {"scope": "separate pre-registered ablation; does not gate the base R2-52A switch",
+                                 **evaluate(v3, ok, deltas_v3, full_scope),
+                                 "per_id": [{"id": i, **v3[i]} for i in ok]}
     guard.check(report)
     (out / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     manifest.update({"selected_k": {i: {s["window"]: s["k"] for s in results[i]["selection"]} for i in ok},
@@ -280,15 +342,22 @@ def main() -> None:
                      "failed_ids": report["failed_ids"], "valid_run": report["valid_run"]})
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     if not args.no_register:
-        registry.record(REGISTRY, {"experiment": args.experiment, "n_trials": N_TRIALS,
-                                   "config": {k: str(v) for k, v in manifest["simulation"].items()},
+        config = {k: str(v) for k, v in manifest["simulation"].items()}
+        registry.record(REGISTRY, {"experiment": args.experiment, "n_trials": N_TRIALS, "config": config,
                                    "input_hashes": manifest["input_sha256"],
                                    "result_summary": {"valid_run": report["valid_run"],
                                                       "K01_pass": report.get("K01_primary", {}).get("pass"),
-                                                      "catalog_pass": report.get("catalog_secondary", {}).get("pass"),
-                                                      "v3_ablation": "not run (+29 trials when run)"}})
+                                                      "catalog_pass": report.get("catalog_secondary", {}).get("pass")}})
+        v3 = report.get("v3_ablation", {})
+        registry.record(REGISTRY, {"experiment": f"{args.experiment} V3 ablation", "n_trials": N_TRIALS_V3,
+                                   "config": {**config, "ablation_V3": FREEZE["ablation_V3"]},
+                                   "input_hashes": manifest["input_sha256"],
+                                   "result_summary": {"valid_run": report["valid_run"],
+                                                      "K01_pass": v3.get("K01_primary", {}).get("pass"),
+                                                      "catalog_pass": v3.get("catalog_secondary", {}).get("pass")}})
     print(json.dumps({"valid_run": report["valid_run"], "failed": [r["id"] for r in failed],
                       "K01_primary": report.get("K01_primary"), "catalog": report.get("catalog_secondary"),
+                      "v3_K01": report.get("v3_ablation", {}).get("K01_primary"),
                       "runtime_seconds": report["diagnostics"]["runtime_seconds"]["value"]}, indent=1, default=str))
 
 

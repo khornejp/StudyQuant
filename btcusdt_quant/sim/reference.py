@@ -92,28 +92,47 @@ def adaptive_exits(signals: pd.DataFrame) -> pd.DataFrame:
     return signals.assign(exit_long=signals.exit_long | signals.ax_exit_long,
                           exit_short=signals.exit_short | signals.ax_exit_short)
 
-def adaptive_inputs(signals: pd.DataFrame, n: int, e_bps, e_min_bps) -> tuple[np.ndarray, np.ndarray]:
+V3_M = 0.9          # r2_52a_exit_freeze.json ablation_V3: exit at the open when in loss at close(m-1) and M >= 0.9
+
+
+def adaptive_inputs(signals: pd.DataFrame, n: int, e_bps, e_min_bps, k_minute=None, v3_m=None):
     """R2_52A inputs, one value per minute row (availability, finite >0 and age <=24h applied by the caller):
     e_bps = latest valid E as of open(m), NaN when none (OCO E0); e_min_bps = minimum of every valid E that became
-    available in (open(m-1), open(m)], NaN when none (R_t update). Pass both or neither."""
-    if "e0_bps" not in signals or "k" not in signals:
+    available in (open(m-1), open(m)], NaN when none (R_t update). Pass both or neither. Either may be 2-D
+    (minute x head): the optional row column e_col picks the head of the entering row, locked for the position.
+    k_minute: optional k per minute, read at the fill minute (overrides row k). v3_m: optional causal M per minute
+    (NaN = none) for the V3 ablation. Returns (e, e_min, e_col, k_minute or None, v3_m)."""
+    if "e0_bps" not in signals or ("k" not in signals and k_minute is None):
         raise ValueError("R2_52A needs signal columns e0_bps and k")
     if (e_bps is None) != (e_min_bps is None):      # no silent fallback: same-minute E arrivals need e_min_bps
         raise ValueError("R2_52A needs both e_bps and e_min_bps (or neither)")
     e = np.full(n, np.nan) if e_bps is None else np.asarray(e_bps, np.float64)
     e_min = np.full(n, np.nan) if e_min_bps is None else np.asarray(e_min_bps, np.float64)
-    if len(e) != n or len(e_min) != n:
+    e, e_min = (x.reshape(len(x), 1) if x.ndim == 1 else x for x in (e, e_min))
+    if len(e) != n or len(e_min) != n or e.shape != e_min.shape:
         raise ValueError("e_bps / e_min_bps must have one value per minute")
-    return e, e_min
+    e_col = (np.nan_to_num(signals.e_col.to_numpy(np.float64), nan=0.0).astype(np.int64) if "e_col" in signals
+             else np.zeros(len(signals), np.int64))
+    if len(e_col) and (e_col.min() < 0 or e_col.max() >= e.shape[1]):
+        raise ValueError("e_col outside the e_bps head columns")
+    if k_minute is not None:
+        k_minute = np.asarray(k_minute, np.float64)
+        if len(k_minute) != n or not (np.isfinite(k_minute) & (k_minute > 0)).all():
+            raise ValueError("k_minute must be finite >0 for every minute")
+    v3 = np.full(n, np.nan) if v3_m is None else np.asarray(v3_m, np.float64)
+    if len(v3) != n:
+        raise ValueError("v3_m must have one value per minute")
+    return np.ascontiguousarray(e), np.ascontiguousarray(e_min), e_col, k_minute, v3
 
 def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp,
-             config: SimConfig, e_bps: np.ndarray | None = None, e_min_bps: np.ndarray | None = None) -> SimResult:
-    """e_bps / e_min_bps: R2_52A only, see adaptive_inputs."""
+             config: SimConfig, e_bps: np.ndarray | None = None, e_min_bps: np.ndarray | None = None,
+             k_minute: np.ndarray | None = None, v3_m: np.ndarray | None = None) -> SimResult:
+    """e_bps / e_min_bps / k_minute / v3_m: R2_52A only, see adaptive_inputs."""
     if config.reentry not in ("strict", "stop_and_reverse") or config.exit_style not in ("NATIVE", "DETEXIT"):
         raise ValueError("bad config")
     if check_policy(config):
-        e, e_min = adaptive_inputs(signals, len(minutes), e_bps, e_min_bps)
-        return _simulate_r2_52a(adaptive_exits(signals), minutes, start, end, config, e, e_min)
+        inputs = adaptive_inputs(signals, len(minutes), e_bps, e_min_bps, k_minute, v3_m)
+        return _simulate_r2_52a(adaptive_exits(signals), minutes, start, end, config, *inputs)
     if config.action_mode:
         signals = action_rows(signals, config)
     s_bps = config.market_slippage_bps
@@ -241,7 +260,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
     return finish(trades, pnl, t_index, c, config, open_legs, start, end)
 
 
-def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min) -> SimResult:
+def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min, e_col, k_minute, v3) -> SimResult:
     """R2-52A frozen minute order: E update -> stop at the open -> known state/native exit at the open -> (flat at
     the open only) market entries / OCO placement -> OCO fills -> entry bar vs hard stop -> carried stop touch ->
     best price / MFE for the next minute. One unit; hard stop entry*exp(-side*R_t), trail best*exp(-side*0.5*R_t)
@@ -252,8 +271,9 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min) -> SimResul
     signals = signals.assign(**{name: np.nan for name in ("anchor_upper", "anchor_lower", "anchor_price", "anchor_once")
                                 if name not in signals})
     by_exec = {}
-    for row in signals.itertuples(index=False):
-        by_exec.setdefault(pd.Timestamp(row.decision_time) + pd.Timedelta(minutes=config.delay_min), []).append(row)
+    for j, row in enumerate(signals.itertuples(index=False)):
+        by_exec.setdefault(pd.Timestamp(row.decision_time) + pd.Timedelta(minutes=config.delay_min), []).append(
+            (j, row))
     pnl = np.zeros(len(minutes))
     trades: list[dict] = []
     pos: dict | None = None
@@ -273,12 +293,13 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min) -> SimResul
         pnl[i] += pos["side"] * math.log(price / base) * 1e4 * 1.0
         pos = None
 
-    def open_pos(i, side, price, row, e0):
+    def open_pos(i, side, price, j, row, e0):
         nonlocal pos, opened
         opened += 1
-        r0 = min(row.k * e0, 300.0)
+        k = float(row.k) if k_minute is None else float(k_minute[i])     # schedule: k of the fill minute
+        r0 = min(k * e0, 300.0)
         pos = {"side": side, "price": price, "i": i, "decision": pd.Timestamp(row.decision_time),
-               "component": int(row.component), "k": float(row.k), "e0": e0, "r0": r0, "r": r0, "best": price,
+               "component": int(row.component), "k": k, "e0": e0, "r0": r0, "r": r0, "best": price, "col": e_col[j],
                "armed": False, "anchor_upper": float(row.anchor_upper), "anchor_lower": float(row.anchor_lower),
                "once": row.anchor_once > 0,
                "position_id": opened}
@@ -305,13 +326,13 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min) -> SimResul
             side = pos["side"]
             if i > 0:
                 pnl[i] += side * math.log(o[i] / c[i - 1]) * 1e4 * 1.0
-            if i > pos["i"] and valid(e_min[i]):
-                pos["r"] = min(pos["r"], pos["k"] * e_min[i], 300.0)
+            if i > pos["i"] and valid(e_min[i, pos["col"]]):
+                pos["r"] = min(pos["r"], pos["k"] * e_min[i, pos["col"]], 300.0)
             level, reason = active_stop()
             if (side == 1 and o[i] <= level) or (side == -1 and o[i] >= level):
                 book_exit(i, o[i] * (1 - side * stop_slip / 1e4), reason)
             else:
-                for row in rows:          # a row acts on the held position only through its own component
+                for _, row in rows:       # a row acts on the held position only through its own component
                     if row.component != pos["component"]:
                         continue
                     reverse = row.side == -side
@@ -323,25 +344,27 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min) -> SimResul
                         break
                     if pos["once"] and not math.isnan(row.anchor_price):     # one-shot anchor: checked, now gone
                         pos["anchor_upper"] = pos["anchor_lower"] = math.nan
+                if pos is not None and v3[i] >= V3_M and side * math.log(c[i - 1] / pos["price"]) < 0:
+                    book_exit(i, slip(o[i], -side, s_bps), "v3")       # V3 ablation: in loss at close(m-1)
         if not held_at_open:          # no same-minute reentry; rows seen while held are never reused
-            for row in rows:
+            for j, row in rows:
                 if pos is not None:
                     break
                 if row.allow_entry and row.side != 0 and row.entry == "market":
                     if valid(row.e0_bps):                     # else NO_ENTRY_E
-                        open_pos(i, int(row.side), slip(o[i], int(row.side), s_bps), row, float(row.e0_bps))
+                        open_pos(i, int(row.side), slip(o[i], int(row.side), s_bps), j, row, float(row.e0_bps))
                 elif row.allow_entry and row.entry == "oco":
-                    pending.append((row, now + pd.Timedelta(minutes=int(row.expiry_min))))
-            pending = [(row, expiry) for row, expiry in pending if now < expiry]
+                    pending.append((j, row, now + pd.Timedelta(minutes=int(row.expiry_min))))
+            pending = [(j, row, expiry) for j, row, expiry in pending if now < expiry]
             if pos is None:
                 keep = []
-                for row, expiry in pending:
+                for j, row, expiry in pending:
                     hit = orders.fill_oco(float(row.upper), float(row.lower), o[i], h[i], l[i])
-                    if hit is not None and valid(e[i]):
-                        open_pos(i, hit[0], hit[1], row, float(e[i]))
+                    if hit is not None and valid(e[i, e_col[j]]):
+                        open_pos(i, hit[0], hit[1], j, row, float(e[i, e_col[j]]))
                         keep = []
                         break
-                    keep.append((row, expiry))        # untouched, or touched in a NO_ENTRY_E minute: stays live
+                    keep.append((j, row, expiry))     # untouched, or touched in a NO_ENTRY_E minute: stays live
                 pending = keep
             if pos is not None:       # entry bar: full high/low against the new hard stop
                 side = pos["side"]

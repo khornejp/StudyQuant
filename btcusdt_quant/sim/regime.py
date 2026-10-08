@@ -69,6 +69,13 @@ def _asof(frame: pd.DataFrame, decisions: pd.DatetimeIndex, column: str, max_age
     out = np.full(len(d), np.nan)
     if not len(times):                  # no predictions at all (e.g. live paper books)
         return out
+    if "available_at" in frame:         # paper rows: latest timestamp among rows with timestamp <= T and available_at <= T
+        avail = np.maximum(pd.DatetimeIndex(frame.available_at).as_unit("ns").asi8, times)   # usable at max of both
+        order = np.argsort(avail, kind="stable")
+        ts = times[order]
+        best = np.maximum.accumulate(np.where(ts == np.maximum.accumulate(ts), np.arange(len(ts)), 0))
+        k = np.searchsorted(avail[order], d, side="right") - 1
+        position = np.where(k >= 0, order[best[np.maximum(k, 0)]], -1)
     ok = position >= 0
     out[ok] = frame[column].to_numpy(float)[position[ok]]
     if max_age is not None:

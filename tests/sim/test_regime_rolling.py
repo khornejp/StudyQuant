@@ -64,3 +64,16 @@ def test_rank_against_uses_prior_grid_distribution():
     assert 0.49 < out.M.iloc[0] < 0.51 and np.isclose(out.M.iloc[0], out.L.iloc[0])
     early = rows.assign(timestamp=[t[100]])                     # fewer than 7 days of reference -> NaN
     assert np.isnan(regime.rank_against(ref, early).M.iloc[0])
+
+
+def test_asof_requires_available_at_when_present():
+    t = pd.DatetimeIndex(pd.to_datetime(["2024-01-01 00:00", "2024-01-01 00:15"], utc=True))
+    late = pd.DataFrame({"timestamp": t, "available_at": t + pd.Timedelta(minutes=10), "prediction_exc_4h": [100.0, 200.0]})
+    d = pd.DatetimeIndex(pd.to_datetime(["2024-01-01 00:05", "2024-01-01 00:10", "2024-01-01 00:20",
+                                         "2024-01-01 00:25"], utc=True))
+    out = regime.e_bps(late, d, "4h")
+    assert np.isnan(out[0]) and out[1] == 100.0 and out[2] == 100.0 and out[3] == 200.0
+    same = late.assign(available_at=late.timestamp)       # research convention: identical to no column
+    assert np.array_equal(regime.e_bps(same, d, "4h"), regime.e_bps(same.drop(columns="available_at"), d, "4h"))
+    early = late.assign(available_at=late.timestamp - pd.Timedelta(minutes=10))   # never before its own timestamp
+    assert regime.e_bps(early, d, "4h").tolist() == [100.0, 100.0, 200.0, 200.0]

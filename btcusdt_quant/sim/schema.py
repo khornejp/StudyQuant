@@ -11,7 +11,8 @@ OPTIONAL_COLUMNS = {"component": 0}
 # anchor_upper / anchor_lower = levels stored in the position at fill, anchor_price = completed-cadence value on a
 # held-component row: long exits when anchor_price <= stored anchor_upper, short when >= stored anchor_lower;
 # anchor_once > 0 at fill = only the first finite anchor_price after entry is checked (K01 E1 "next close").
-ADAPTIVE_COLUMNS = ("e0_bps", "k", "anchor_upper", "anchor_lower", "anchor_price", "anchor_once")
+# e_col = column of a 2-D e_bps / e_min_bps (minute x E head) the entering row's position uses for its lifetime.
+ADAPTIVE_COLUMNS = ("e0_bps", "k", "anchor_upper", "anchor_lower", "anchor_price", "anchor_once", "e_col")
 # R2-52A family state flags (bool, passed through when present): R2_52A exits on exit_long | ax_exit_long (short
 # alike); BASE ignores them.
 ADAPTIVE_FLAGS = ("ax_exit_long", "ax_exit_short")
