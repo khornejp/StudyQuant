@@ -256,6 +256,8 @@ class TelegramNotifier:
         for row in daily.itertuples(index=False):
             from . import catalog
             mine = trades.loc[trades.book.eq(row.book)] if not trades.empty else trades
+            if not len(mine):          # user 2026-10-08: only books that closed a trade that day
+                continue
             rows.append({"book": row.book, "catalog": row.book in catalog.BOOKS, "day_net_bps": row.net_bps,
                          "total_net_bps": all_daily.loc[all_daily.book.eq(row.book), "net_bps"].sum(),
                          "trades": len(mine), "wins": int(mine.net_bps.gt(0).sum()) if len(mine) else 0,
