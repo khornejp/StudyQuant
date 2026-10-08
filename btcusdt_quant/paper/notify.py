@@ -19,6 +19,7 @@ from .config import PaperConfig, load_env_slots
 from .store import PaperStore
 
 LOG = logging.getLogger(__name__)
+MAX_ATTEMPTS = 10                 # then the message moves to notifications_dead and FIFO continues
 SEND_INTERVAL_SECONDS = 1.0       # r2_52a_exit_freeze.json paper_rollout.telegram_daily: at most 1 request per second
 
 
@@ -128,8 +129,17 @@ class TelegramNotifier:
                         "last_error=? WHERE id=?",
                         (attempts, next_attempt.isoformat(), safe_error, row["id"]))
                     LOG.warning("telegram delivery failed: %s", safe_error)
-                    store.connection.commit()         # FIFO: any head failure (429, 5xx, timeout) ends the cycle
-                    break
+                    if attempts < MAX_ATTEMPTS:
+                        store.connection.commit()     # FIFO: any head failure (429, 5xx, timeout) ends the cycle
+                        break
+                    store.connection.execute(         # durable dead letter; the next message may go out
+                        "INSERT OR REPLACE INTO notifications_dead(id,event_key,event_type,payload,attempts,"
+                        "last_error,created_at,dead_at) SELECT id,event_key,event_type,payload,?,?,created_at,? "
+                        "FROM notifications WHERE id=?", (attempts, safe_error, stamp.isoformat(), row["id"]))
+                    store.connection.execute("UPDATE notifications SET status='dead' WHERE id=?", (row["id"],))
+                    LOG.error("telegram dead-letter after %d attempts: id=%s %s", attempts, row["id"], safe_error)
+                    store.connection.commit()
+                    continue
                 else:
                     store.connection.execute(
                         "UPDATE notifications SET status='sent',attempts=?,sent_at=?,"

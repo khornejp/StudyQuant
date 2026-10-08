@@ -769,3 +769,139 @@ def test_telegram_fifo_head_failure_stops_the_cycle(tmp_path, monkeypatch, failu
     assert notifier.deliver_pending(now + pd.Timedelta(seconds=1)) == 0 and len(calls) == 1   # head still backing off
     with PaperStore(path) as store:
         assert store.frame("notifications").sort_values("id").status.tolist() == ["failed", "pending", "pending"]
+
+
+# ---------------------------------------------------------------- fix round 2 (Codex re-review)
+def _dump(path) -> list[str]:
+    import sqlite3
+    from contextlib import closing
+    with closing(sqlite3.connect(path)) as connection:
+        return sorted(line for line in connection.iterdump())
+
+
+def _files(path):
+    return {p.name: (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)    # bytes and no write
+            for p in path.parent.glob(path.name + "*")}
+
+
+@needs_out
+def test_failed_validation_leaves_the_db_byte_identical(tmp_path, monkeypatch) -> None:
+    s = _switch_module()
+    path, switch, old = _switch_db(tmp_path)
+    before = _files(path)
+    assert set(before) == {"live.sqlite"}
+    monkeypatch.setattr(s, "SELECTED_K", tmp_path / "missing.csv")
+
+    def no_store(*a, **k):
+        raise AssertionError("a writable PaperStore was opened during validation")
+    monkeypatch.setattr(s, "PaperStore", no_store)
+    with pytest.raises(SystemExit):
+        s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=lambda t: 102.0)
+    assert _files(path) == before and not s.backup_path(path).exists()
+
+
+@needs_out
+def test_switch_refuses_without_twice_the_db_size_free(tmp_path, monkeypatch) -> None:
+    s = _switch_module()
+    path, switch, old = _switch_db(tmp_path)
+    before = _files(path)
+    monkeypatch.setattr(s.shutil, "disk_usage", lambda p: SimpleNamespace(total=10, used=9, free=1))
+    with pytest.raises(SystemExit, match="free disk"):
+        s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=lambda t: 102.0)
+    assert _files(path) == before and not s.backup_path(path).exists()
+
+
+@needs_out
+def test_failure_inside_the_transaction_rolls_back(tmp_path) -> None:
+    s = _switch_module()
+    path, switch, old = _switch_db(tmp_path)
+    with pytest.raises(RuntimeError, match="injected"):
+        s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=lambda t: 102.0,
+                 fail_at="in_transaction")
+    _untouched(path, tmp_path)
+    with PaperStore(path) as store:
+        assert store.get_meta("r2_52a_effective_switch_time") is None
+    s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=lambda t: 102.0)
+    with PaperStore(path) as store:
+        assert len(store.frame("trades")) == 4 and store.get_meta("r2_52a_switch_phase") == "done"
+
+
+@needs_out
+@pytest.mark.parametrize("phase", ["config_replaced", "manifest_replaced"])
+def test_failure_during_finalize_resumes(tmp_path, phase) -> None:
+    s = _switch_module()
+    path, switch, old = _switch_db(tmp_path)
+    out, manifest_path = tmp_path / "paper_ax.toml", tmp_path / "manifest.json"
+    out.write_text("# old config\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="injected"):
+        s.switch(old, out, manifest_path, price=lambda t: 102.0, fail_at=phase)
+    assert load_config(out).books == NEW_BOOKS and manifest_path.exists() == (phase == "manifest_replaced")
+    with PaperStore(path) as store:
+        assert store.get_meta("r2_52a_switch_phase") == "committed"
+    manifest = s.switch(old, out, manifest_path, price=lambda t: 999.0)
+    assert manifest["switch_open_price"] == 102.0
+    assert (tmp_path / "paper_ax.pre_r2_52a.toml").read_text(encoding="utf-8") == "# old config\n"
+    with PaperStore(path) as store:
+        assert len(store.frame("trades")) == 4 and store.get_meta("r2_52a_switch_phase") == "done"
+
+
+@needs_out
+def test_restore_from_the_backup_returns_the_pre_switch_state(tmp_path) -> None:
+    import shutil as sh
+    s = _switch_module()
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import paper_catalog
+    path, switch, old = _switch_db(tmp_path)
+    pre = _dump(path)
+    with pytest.raises(RuntimeError, match="injected"):
+        s.switch(old, tmp_path / "paper_ax.toml", tmp_path / "manifest.json", price=lambda t: 102.0,
+                 fail_at="committed")
+    backup = s.backup_path(path)
+    import sqlite3
+    from contextlib import closing
+    with closing(sqlite3.connect(backup)) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    for suffix in ("-wal", "-shm"):                      # documented restore: stop, drop -wal/-shm, copy backup
+        Path(str(path) + suffix).unlink(missing_ok=True)
+    sh.copy2(backup, path)
+    assert _dump(path) == pre
+    with PaperStore(path) as store:
+        paper_catalog.refuse_pending_switch(store)          # processes may start again
+        assert store.get_meta("r2_52a_switch_phase") is None
+
+
+def test_telegram_dead_letters_a_permanently_failing_head_and_continues(tmp_path, monkeypatch, caplog) -> None:
+    import logging
+    from btcusdt_quant.paper import notify
+    path = tmp_path / "live.sqlite"
+    with PaperStore(path):
+        pass
+    notifier = TelegramNotifier(path, env_path=_secrets(tmp_path))
+    notifier._sleep = lambda s: None
+    for k in range(2):
+        notifier.enqueue(f"alert:{k}", "alert", {"kind": "x", "detail": str(k)})
+    sent = []
+
+    class Response:
+        def __init__(self, code):
+            self.status_code = code
+
+        def json(self):
+            return {"ok": self.status_code == 200}
+
+    def post(*a, **k):
+        sent.append(k["data"]["text"])
+        return Response(500 if k["data"]["text"].endswith("\n0") else 200)
+    monkeypatch.setattr("btcusdt_quant.paper.notify.requests.post", post)
+    now = pd.Timestamp.now(tz="UTC") + pd.Timedelta(minutes=1)
+    with caplog.at_level(logging.ERROR):
+        for attempt in range(notify.MAX_ATTEMPTS):
+            delivered = notifier.deliver_pending(now + pd.Timedelta(days=attempt))
+    assert delivered == 1 and len(sent) == notify.MAX_ATTEMPTS + 1         # the next message goes out after it
+    with PaperStore(path) as store:
+        rows = store.frame("notifications").sort_values("id")
+        dead = pd.read_sql_query("SELECT * FROM notifications_dead", store.connection)
+    assert rows.status.tolist() == ["dead", "sent"]
+    assert dead.event_key.tolist() == ["alert:0"] and dead.attempts.tolist() == [notify.MAX_ATTEMPTS]
+    assert dead.last_error.tolist() == ["HTTP_500"] and dead.payload.iloc[0].endswith("\n0")
+    assert "dead-letter" in caplog.text

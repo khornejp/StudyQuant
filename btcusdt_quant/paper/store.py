@@ -114,6 +114,11 @@ CREATE TABLE IF NOT EXISTS notifications (
     attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT,
     sent_at TEXT, last_error TEXT, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS notifications_dead (
+    id INTEGER PRIMARY KEY, event_key TEXT NOT NULL UNIQUE, event_type TEXT NOT NULL,
+    payload TEXT NOT NULL, attempts INTEGER NOT NULL, last_error TEXT, created_at TEXT NOT NULL,
+    dead_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS revisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT, dataset TEXT NOT NULL,
     event_time TEXT NOT NULL, column_name TEXT NOT NULL, live_value TEXT,
