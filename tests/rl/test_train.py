@@ -60,3 +60,12 @@ def test_net_reward_manifest(tmp_path):
     man = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert (man["reward"], man["loss_coef"], man["dd_coef"]) == ("net", 0.0, 0.0)
     assert man["reward_freeze_file"].endswith("r2_51_net_reward_freeze.json")
+
+
+def test_shuffle_seed_applies_c16_and_is_recorded(tmp_path, monkeypatch):
+    from btcusdt_quant.rl import baselines
+    calls, real = [], baselines.shuffled_store
+    monkeypatch.setattr(baselines, "shuffled_store", lambda s, end, seed: calls.append((end, seed)) or real(s, end, seed))
+    T.run_config(WINDOWS[0], "S1", "conv", 3e-4, 0, tmp_path, smoke=True, reward="net", shuffle_seed=7)
+    man = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert calls == [(WINDOWS[0].train_end, 7)] and man["shuffle_seed"] == 7

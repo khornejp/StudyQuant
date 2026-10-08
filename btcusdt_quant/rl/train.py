@@ -53,7 +53,8 @@ def make_val_fn(store, minutes, funding, start, end, device):
 
 
 def run_config(window: Window, variant: str, encoder: str, lr: float, seed: int, out: Path, smoke: bool = False,
-               reward: str = "frozen") -> dict:
+               reward: str = "frozen", shuffle_seed: int | None = None) -> dict:
+    """shuffle_seed: C16 shuffled control (day blocks of the train-range state permuted; prices real)."""
     loss_coef, dd_coef, freeze_file = REWARDS[reward]
     t_start, out = time.time(), Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -68,6 +69,9 @@ def run_config(window: Window, variant: str, encoder: str, lr: float, seed: int,
         ctx = Context.load(end=END)
         full = state.cached_state_store(ctx, TRAIN_START, END, variant)    # prefix-invariant: slice per window
         env_n, steps, max_tr, ev = 256, 1344, 5_000_000, 10
+    if shuffle_seed is not None:
+        from .baselines import shuffled_store
+        full = shuffled_store(full, window.train_end, shuffle_seed)     # normalizer stats unchanged (whole days)
     store = state.fit_normalizer(full, window.train_end).apply(full)       # C9: train rows only
     minutes, funding = ctx.minutes, costs._settlement_arrays()
     check_minutes(minutes)
@@ -82,7 +86,7 @@ def run_config(window: Window, variant: str, encoder: str, lr: float, seed: int,
     trace = [{"update": r["update"], "transitions": r["transitions"], "val_net_bps": r["val"]}
              for r in res.history if "val" in r]
     summary = {"window": window.name, "variant": variant, "encoder": encoder, "lr": lr, "seed": seed, "smoke": smoke,
-               "reward": reward, "loss_coef": loss_coef, "dd_coef": dd_coef, "reward_freeze_file": freeze_file,
+               "reward": reward, "shuffle_seed": shuffle_seed, "loss_coef": loss_coef, "dd_coef": dd_coef, "reward_freeze_file": freeze_file,
                "val_net_bps": res.best_val, "best_step": res.best_step, "transitions": res.history[-1]["transitions"],
                "wall_seconds": time.time() - t_start,
                "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
