@@ -141,23 +141,35 @@ class PublicBinanceClient:
     """Small public-only HTTP client with bounded rate-limit backoff."""
 
     def __init__(self, base_url: str = BASE_URL,
-                 opener: Callable[[urllib.request.Request], object] | None = None):
+                 opener: Callable[[urllib.request.Request], object] | None = None,
+                 sleep: Callable[[float], None] = time.sleep):
         self.base_url = base_url.rstrip("/")
         self.opener = opener or (lambda request: urllib.request.urlopen(request, timeout=15))
+        self.sleep = sleep
 
-    def get_raw(self, path: str, parameters: Mapping[str, object]) -> tuple[int, str]:
-        """(HTTP status, body text). Unauthenticated: no API key header is ever sent."""
+    def get_raw(self, path: str, parameters: Mapping[str, object],
+                on_attempt: Callable[[int, str, pd.Timestamp], None] | None = None) -> tuple[int, str]:
+        """(HTTP status, body text). Unauthenticated: no API key header is ever sent. on_attempt sees every HTTP
+        attempt (including retried 418/429) with its status, body and request time."""
         query = urllib.parse.urlencode(parameters)
         request = urllib.request.Request(f"{self.base_url}{path}?{query}",
                                          headers={"User-Agent": "StudyQuant-paper/1"})
         for attempt in range(3):
+            started = pd.Timestamp.now(tz="UTC")
             try:
                 with self.opener(request) as response:
-                    return int(getattr(response, "status", 200)), response.read().decode("utf-8")
+                    status, text = int(getattr(response, "status", 200)), response.read().decode("utf-8")
             except urllib.error.HTTPError as error:
+                if on_attempt is not None:
+                    body = error.read() if error.fp is not None else b""
+                    on_attempt(error.code, (body or b"").decode("utf-8", "replace"), started)
                 if error.code not in {418, 429} or attempt == 2:
                     raise
-                time.sleep(min(60.0, float(error.headers.get("Retry-After", 1))))
+                self.sleep(min(60.0, float(error.headers.get("Retry-After", 1))))
+                continue
+            if on_attempt is not None:
+                on_attempt(status, text, started)
+            return status, text
         raise RuntimeError("unreachable")
 
     def get(self, path: str, parameters: Mapping[str, object]) -> object:
@@ -245,24 +257,30 @@ class Collector:
 
     def _fetch(self, path: str, parameters: Mapping[str, object]) -> tuple[int | None, object]:
         """Public GET; the raw response is persisted before any parsing. Returns (status, parsed | None)."""
+        def record(status: int | None, text: str, request_utc: pd.Timestamp) -> None:
+            self.last_response_utc = pd.Timestamp.now(tz="UTC")
+            self.engine.store.connection.execute(
+                "INSERT INTO futures_raw_audit(endpoint,params,request_utc,response_utc,status,sha256,payload) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (path, json.dumps(dict(parameters), sort_keys=True), request_utc.isoformat(),
+                 self.last_response_utc.isoformat(), status, hashlib.sha256(text.encode()).hexdigest(), text))
+
         request_utc = pd.Timestamp.now(tz="UTC")
         get_raw = getattr(self.client, "get_raw", None)
         try:
-            if get_raw is not None:
-                status, text = get_raw(path, parameters)
-            else:                                     # offline/test clients that only expose get()
+            if get_raw is not None:               # every HTTP attempt is recorded by the client callback
+                status, text = get_raw(path, parameters, on_attempt=record)
+            else:                                 # offline/test clients that only expose get()
                 status, text = 200, json.dumps(self.client.get(path, parameters), separators=(",", ":"))
+                record(status, text, request_utc)
         except urllib.error.HTTPError as error:
-            body = error.read() if error.fp is not None else b""
-            status, text = error.code, (body or b"").decode("utf-8", "replace")
-        except Exception as error:
+            status = error.code
+            if get_raw is None:
+                body = error.read() if error.fp is not None else b""
+                record(status, (body or b"").decode("utf-8", "replace"), request_utc)
+        except Exception as error:                # transport error: audited with status NULL
             status, text = None, self._safe_error(error)
-        self.last_response_utc = pd.Timestamp.now(tz="UTC")
-        self.engine.store.connection.execute(
-            "INSERT INTO futures_raw_audit(endpoint,params,request_utc,response_utc,status,sha256,payload) "
-            "VALUES(?,?,?,?,?,?,?)",
-            (path, json.dumps(dict(parameters), sort_keys=True), request_utc.isoformat(),
-             self.last_response_utc.isoformat(), status, hashlib.sha256(text.encode()).hexdigest(), text))
+            record(status, text, request_utc)
         if status != 200:
             return status, None
         try:
@@ -326,27 +344,33 @@ class Collector:
                 try:
                     for payload, page_received in payloads:
                         rows.extend(fm.normalize_rest(endpoint, payload, page_received)[1])
-                except fm.SchemaDrift:
+                except Exception:                 # any parse error is drift for this endpoint only
                     status, rows = "SCHEMA_DRIFT", []
             if status == "OK":
-                # the API rounds startTime down to the period, so the cursor row comes back: count new rows only
+                # coverage first: the newest finalized period must be present (stored cursor or this page)
+                stamps = [pd.Timestamp(r["source_timestamp"]) for r in rows]
+                cursor_stamp = pd.Timestamp(cursor) if cursor else None
+                latest = max([*stamps, *([cursor_stamp] if cursor_stamp is not None else [])], default=None)
+                newest_final = received.floor("5min") - fm.PERIOD + shift    # REST stamp of the last closed period
+                if latest is None or latest < newest_final - 2 * fm.PERIOD:
+                    status = "EMPTY"                  # stale/no finalized coverage: store nothing (audit kept)
+            if status == "OK":
+                # rows, cursor and the legacy mirror commit together. The API rounds startTime down to the
+                # period, so the cursor row comes back: only new rows count and are mirrored.
                 with store.transaction() as connection:
                     new = [row for row in rows if store.put_versioned(table, row, connection) == "inserted"]
+                    if stamps:
+                        store.set_meta(cursor_key, max(stamps).isoformat())
+                    if legacy:
+                        for row in new:
+                            # legacy ls_ratio keeps the REST end label (catalog/detector until Task 2/3)
+                            store.upsert("ls_ratio", {
+                                "timestamp": row["source_timestamp"], "global_ls_account": row["long_short_ratio"],
+                                "long_account": row["long_account"], "short_account": row["short_account"],
+                                "source": "rest", "received_at": row["received_at"]}, connection)
                 counts[table] = len(new)
-                if rows:
-                    store.set_meta(cursor_key, max(pd.Timestamp(r["source_timestamp"]) for r in rows).isoformat())
                 if legacy:
-                    for row in new:
-                        # legacy ls_ratio keeps the REST end/availability label (catalog/detector until Task 2/3)
-                        store.upsert("ls_ratio", {
-                            "timestamp": row["source_timestamp"], "global_ls_account": row["long_short_ratio"],
-                            "long_account": row["long_account"], "short_account": row["short_account"],
-                            "source": "rest", "received_at": row["received_at"]})
                     counts["ls_ratio"] = len(new)
-                latest = store.get_meta(cursor_key)
-                newest_final = received.floor("5min") - fm.PERIOD + shift    # REST stamp of the last closed period
-                if latest is None or pd.Timestamp(latest) < newest_final - 2 * fm.PERIOD:
-                    status = "EMPTY"            # no finalized coverage for the latest periods
             capability[endpoint] = {"status": status, "checked_at": received.isoformat(), "rows": counts[table]}
             if status != "OK":
                 LOG.warning("futures metrics %s fail closed: %s", endpoint, status)

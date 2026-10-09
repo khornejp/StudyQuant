@@ -15,7 +15,8 @@ sys.path.insert(0, str(ROOT))
 import numpy as np, pandas as pd, torch  # noqa: E402
 from btcusdt_quant.paper import catalog, detector, leverage  # noqa: E402
 from btcusdt_quant.paper.config import load_config  # noqa: E402
-from btcusdt_quant.paper.store import PaperStore, exclusive_lock, refuse_pending_switch, utc_text  # noqa: E402,F401
+from btcusdt_quant.paper.store import (PaperStore, exclusive_lock, refuse_missing_funding_backfill,  # noqa: E402,F401
+                                       refuse_pending_switch, utc_text)
 
 CYCLE_SECONDS = 60            # predictions and live decisions every minute
 SIGNAL_EVERY = 5              # dashboard condition history is heavier; refresh every 5 cycles
@@ -362,6 +363,7 @@ def main() -> None:
         sys.exit(f"paper_catalog already running (or a switch is in progress) for {config.sqlite_path}")
     with PaperStore(config.sqlite_path) as store:
         refuse_pending_switch(store)
+        refuse_missing_funding_backfill(store)
         count = 0
         while True:
             try:

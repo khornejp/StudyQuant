@@ -349,3 +349,133 @@ def test_schema_migration_is_additive(tmp_path) -> None:
 def test_paper_backfill_no_longer_copies_features_parquet() -> None:
     source = (Path(__file__).resolve().parents[1] / "scripts" / "paper_backfill.py").read_text(encoding="utf-8")
     assert "features_2026q3" not in source and "backfill_metrics" in source
+
+
+# ---------- fix round 1 ----------
+
+def test_bad_timestamp_is_schema_drift_not_a_crash(tmp_path) -> None:
+    bad = [dict(REST["/futures/data/openInterestHist"][0], timestamp="not-a-number")]
+    with pytest.raises(fm.SchemaDrift):
+        fm.normalize_rest("/futures/data/openInterestHist", bad, T0)
+    with pytest.raises(fm.SchemaDrift):
+        fm.normalize_rest("/futures/data/openInterestHist", [dict(bad[0], timestamp=None)], T0)
+    received = pd.Timestamp("2026-09-30T02:30:05Z")
+    with PaperStore(tmp_path / "live.sqlite") as store:
+        collector = Collector(PaperEngine(store), tmp_path / "raw",
+                              _Client(extra={"/futures/data/openInterestHist": bad}),
+                              futures_lookback=pd.Timedelta(hours=1))
+        collector.collect_once(received)                      # must not raise
+        capability = json.loads(store.get_meta("futures_capability"))
+        assert capability["/futures/data/openInterestHist"]["status"] == "SCHEMA_DRIFT"
+        assert store.frame("futures_oi_5m").empty and len(store.frame("futures_top_ls_5m")) == 2
+
+
+def test_stale_coverage_stores_nothing_but_keeps_audit(tmp_path) -> None:
+    received = pd.Timestamp("2026-09-30T03:30:05Z")           # fixtures end at 02:25: rows exist but are stale
+    with PaperStore(tmp_path / "live.sqlite") as store:
+        Collector(PaperEngine(store), tmp_path / "raw", _Client(),
+                  futures_lookback=pd.Timedelta(hours=2)).collect_once(received)
+        capability = json.loads(store.get_meta("futures_capability"))
+        for endpoint, (table, _, _) in fm.REST_SPECS.items():
+            assert capability[endpoint]["status"] == "EMPTY"
+            assert store.frame(table).empty
+        assert store.frame("ls_ratio").empty
+        assert store.get_meta("last_ls_timestamp") is None and store.get_meta("last_futures_oi_5m_timestamp") is None
+        assert set(fm.REST_SPECS) <= set(store.frame("futures_raw_audit").endpoint)
+
+
+def test_every_retried_http_attempt_is_audited(tmp_path) -> None:
+    attempts = []
+
+    class Response(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    def opener(request):
+        attempts.append(request.full_url)
+        if len(attempts) == 1:
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many", {"Retry-After": "0"},
+                                         io.BytesIO(b'{"code":-1003}'))
+        return Response(b"[]")
+
+    client = PublicBinanceClient(opener=opener, sleep=lambda _: None)
+    with PaperStore(tmp_path / "live.sqlite") as store:
+        collector = Collector(PaperEngine(store), tmp_path / "raw", client)
+        status, payload = collector._fetch("/futures/data/takerlongshortRatio", {"symbol": "BTCUSDT"})
+        assert (status, payload) == (200, [])
+        audit = store.frame("futures_raw_audit").sort_values("id")
+        assert audit.status.tolist() == [429, 200]
+        assert json.loads(audit.payload.iloc[0]) == {"code": -1003}
+
+
+def test_catalog_refuses_without_funding_backfill(tmp_path) -> None:
+    from btcusdt_quant.paper.store import refuse_missing_funding_backfill
+
+    with PaperStore(tmp_path / "live.sqlite") as store:
+        with pytest.raises(SystemExit, match="funding"):
+            refuse_missing_funding_backfill(store)
+        engine = PaperEngine(store)
+        fm.backfill_funding(engine, "2026-07-01", "2026-07-02", [tmp_path / "none"])   # no zips -> no events
+        with pytest.raises(SystemExit, match="funding"):
+            refuse_missing_funding_backfill(store)
+        zip_dir = tmp_path / "funding"
+        zip_dir.mkdir()
+        (zip_dir / "BTCUSDT-fundingRate-2026-07.zip").write_bytes(_zip(
+            "calc_time,funding_interval_hours,last_funding_rate\n1782864000005,8,0.0001\n"))
+        fm.backfill_funding(engine, "2026-07-01", "2026-07-02", [zip_dir])
+        refuse_missing_funding_backfill(store)
+        event = store.frame("funding_events").iloc[0]
+        assert event.funding_time == "2026-07-01T00:00:00.005000+00:00" and event.interval_hours == 8
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "paper_catalog.py").read_text(encoding="utf-8")
+    assert "refuse_missing_funding_backfill(store)" in source
+
+
+def _migration_module():
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / "scripts" / "paper_funding_time_migrate.py"
+    spec = importlib.util.spec_from_file_location("paper_funding_time_migrate", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_funding_time_migration_backup_collisions_and_diff(tmp_path) -> None:
+    migrate = _migration_module()
+    db = tmp_path / "live.sqlite"
+    with PaperStore(db) as store:
+        for time, raw, rate in (("2026-07-01T08:00:00+00:00", "2026-07-01T08:00:00.007000+00:00", .0001),
+                                ("2026-07-01T16:00:00+00:00", "2026-07-01T16:00:00+00:00", .0002)):
+            store.upsert("funding", {"time": time, "rate": rate, "raw_calc_time": raw, "source": "archive",
+                                     "received_at": raw})
+        # short entered exactly at the rounded 08:00 event: PESS edge rule flips once the event moves inside
+        store.insert("trades", {"book": "C1_AX", "boundary": "PESS", "candidate": "c", "side": -1,
+                                "entry_time": "2026-07-01T08:00:00+00:00", "exit_time": "2026-07-01T09:00:00+00:00",
+                                "entry_price": 100.0, "exit_price": 100.0, "gross_bps": 0.0, "cost_bps": 4.0,
+                                "funding_bps": 0.0, "net_bps": -4.0, "hold_minutes": 60.0, "exit_reason": "t"})
+    dry = migrate.run(db, tmp_path / "backup.sqlite", apply=False)
+    assert dry["affected"] == 1 and dry["collisions"] == [] and not (tmp_path / "backup.sqlite").exists()
+    assert dry["ledger_diff"]["changed"] == 1
+    change = dry["ledger_diff"]["rows"][0]
+    assert change["book"] == "C1_AX" and change["before_funding_bps"] == 0.0
+    assert change["after_funding_bps"] == pytest.approx(1.0)
+    result = migrate.run(db, tmp_path / "backup.sqlite", apply=True)
+    assert result["applied"] and result["backup_integrity"] == "ok" and result["db_integrity"] == "ok"
+    with sqlite3.connect(db) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM funding WHERE time<>raw_calc_time").fetchone()[0] == 0
+    with sqlite3.connect(tmp_path / "backup.sqlite") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM funding WHERE time<>raw_calc_time").fetchone()[0] == 1
+    # a raw time already used as another row's key is a collision: refuse to apply
+    with PaperStore(db) as store:
+        store.upsert("funding", {"time": "2026-07-02T00:00:00+00:00", "rate": .1,
+                                 "raw_calc_time": "2026-07-02T00:00:00.001000+00:00", "source": "rest",
+                                 "received_at": "2026-07-02T00:00:00+00:00"})
+        store.upsert("funding", {"time": "2026-07-02T00:00:00.001000+00:00", "rate": .1,
+                                 "raw_calc_time": "2026-07-02T00:00:00.001000+00:00", "source": "rest",
+                                 "received_at": "2026-07-02T00:00:00+00:00"})
+    with pytest.raises(SystemExit, match="collision"):
+        migrate.run(db, tmp_path / "backup2.sqlite", apply=True)

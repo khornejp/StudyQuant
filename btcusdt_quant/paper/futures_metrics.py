@@ -73,7 +73,10 @@ def normalize_rest(endpoint: str, payload: object, received: object) -> tuple[st
         if (not isinstance(item, Mapping) or "timestamp" not in item or not set(fields.values()) <= set(item)
                 or item.get("symbol", SYMBOL) != SYMBOL):
             raise SchemaDrift(f"{endpoint}: unexpected row {item!r}"[:200])
-        stamp = pd.to_datetime(int(item["timestamp"]), unit="ms", utc=True)
+        try:
+            stamp = pd.to_datetime(int(item["timestamp"]), unit="ms", utc=True)
+        except (TypeError, ValueError, OverflowError, pd.errors.OutOfBoundsDatetime) as error:
+            raise SchemaDrift(f"{endpoint}: bad timestamp {item['timestamp']!r}") from error
         create = stamp - shift
         if create != create.floor("5min"):
             raise SchemaDrift(f"{endpoint}: off-grid timestamp {stamp}")

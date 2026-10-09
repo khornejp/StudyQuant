@@ -222,6 +222,15 @@ def refuse_pending_switch(store: "PaperStore") -> None:
         raise SystemExit("R2-52A switch pending: rerun scripts/paper_ax_switch.py (resume) or roll back first")
 
 
+def refuse_missing_funding_backfill(store: "PaperStore") -> None:
+    """paper_catalog must not write detector predictions / decisions before the R2-54 funding_events backfill:
+    predictions are INSERT OR IGNORE, so interval-less (masked) funding features would be frozen into them."""
+    meta = store.get_meta("funding_backfill")
+    if meta is None or not json.loads(meta).get("events"):
+        raise SystemExit("R2-54 funding_events backfill missing: stop services, run scripts/paper_backfill.py "
+                         "--futures-only, verify, then start")
+
+
 def utc_text(value: object) -> str:
     stamp = pd.Timestamp(value)
     if stamp.tzinfo is None:
@@ -407,4 +416,4 @@ class PaperStore:
         return outputs
 
 
-__all__ = ["PaperStore", "SCHEMA_VERSION", "utc_text"]
+__all__ = ["PaperStore", "SCHEMA_VERSION", "refuse_missing_funding_backfill", "utc_text"]
