@@ -182,18 +182,33 @@ def recent_data(connection, now: pd.Timestamp, every_minute: bool = False):
 
 
 def ensure_table(connection) -> None:
-    """Predictions are immutable: one row per origin; available_at = commit time (live) or write time (backfill)."""
+    """One immutable row per origin (timestamp = prediction_ts; one model_id per origin, so also per
+    (model_id, prediction_ts)). R2-54 availability split, additive:
+    logical_available_at = causal availability (the origin: its data cutoff, served by a checkpoint retrained <= it);
+    written_at = physical write time; available_at = the live-usable time max(logical, written) = written_at, kept
+    with its pre-R2-54 meaning for running readers. Research replay reads logical_available_at only."""
     columns = ", ".join(f"prediction_{t} REAL" for t in target_names())
     for table in (TABLE, MINUTE_TABLE):
         connection.execute(f"CREATE TABLE IF NOT EXISTS {table} (timestamp TEXT PRIMARY KEY, retrain_time TEXT, "
                            f"{columns}, created_at TEXT)")
         have = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
-        for name in ("available_at", "model_id", "source"):
+        for name in ("available_at", "model_id", "source", "logical_available_at", "written_at"):
             if name not in have:
                 connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} TEXT")
     # rows written before these columns existed were the 2026-07-01.. backfill
     connection.execute(f"UPDATE {TABLE} SET available_at=created_at, model_id=retrain_time, source='backfill' "
                        "WHERE available_at IS NULL")
+    for table in (TABLE, MINUTE_TABLE):     # rows of pre-split writers: created_at was their write time
+        connection.execute(f"UPDATE {table} SET logical_available_at=timestamp, written_at=created_at "
+                           "WHERE written_at IS NULL")
+    # grid rows: no DELETE, and a stored (non-NULL) value never changes; corrections = new model_id/version elsewhere
+    stored = " OR ".join(f"(OLD.{c} IS NOT NULL AND OLD.{c} IS NOT NEW.{c})" for c in
+                         ("timestamp", "retrain_time", *(f"prediction_{t}" for t in target_names()), "created_at",
+                          "available_at", "model_id", "source", "logical_available_at", "written_at"))
+    connection.execute(f"CREATE TRIGGER IF NOT EXISTS {TABLE}_no_update BEFORE UPDATE ON {TABLE} WHEN {stored} "
+                       "BEGIN SELECT RAISE(ABORT, 'detector predictions are immutable'); END")
+    connection.execute(f"CREATE TRIGGER IF NOT EXISTS {TABLE}_no_delete BEFORE DELETE ON {TABLE} "
+                       "BEGIN SELECT RAISE(ABORT, 'detector predictions are immutable'); END")
 
 
 def write_predictions(connection, origins: pd.DatetimeIndex, retrain: pd.Timestamp, values: np.ndarray,
@@ -202,9 +217,10 @@ def write_predictions(connection, origins: pd.DatetimeIndex, retrain: pd.Timesta
     ensure_table(connection)
     names = [f"prediction_{t}" for t in target_names()]
     now = pd.Timestamp.now(tz="UTC").isoformat()
-    columns = ["timestamp", "retrain_time", *names, "created_at", "available_at", "model_id", "source"]
-    rows = [(o.isoformat(), retrain.isoformat(), *map(float, v), now, now, f"w730_raw_{retrain:%Y%m%d}", source)
-            for o, v in zip(origins, values)]
+    columns = ["timestamp", "retrain_time", *names, "created_at", "available_at", "model_id", "source",
+               "logical_available_at", "written_at"]
+    rows = [(o.isoformat(), retrain.isoformat(), *map(float, v), now, now, f"w730_raw_{retrain:%Y%m%d}", source,
+             o.isoformat(), now) for o, v in zip(origins, values)]
     before = connection.total_changes
     connection.executemany(f"INSERT OR IGNORE INTO {table} ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
                            rows)
@@ -222,7 +238,7 @@ def mix_minute(values: np.ndarray, held: np.ndarray) -> np.ndarray:
 def read_predictions(connection, table: str = TABLE) -> pd.DataFrame:
     ensure_table(connection)
     frame = pd.read_sql_query(f"SELECT * FROM {table} ORDER BY timestamp", connection)
-    for c in ("timestamp", "retrain_time", "available_at"):
+    for c in ("timestamp", "retrain_time", "available_at", "logical_available_at", "written_at"):
         frame[c] = pd.to_datetime(frame[c], utc=True, format="mixed")
     return frame.drop(columns="created_at")
 

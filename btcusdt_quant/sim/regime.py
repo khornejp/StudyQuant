@@ -62,6 +62,22 @@ def rank_against(reference: pd.DataFrame, rows: pd.DataFrame, days: int = 30, mi
     return out
 
 
+AVAILABILITY = ("available_at", "logical_available_at")
+
+
+def available_ns(frame: pd.DataFrame) -> np.ndarray | None:
+    """Usable time of each row: max(timestamp, available_at, logical_available_at) over the columns present.
+    Live paper rows carry available_at (= written_at, the live rule); research rows carry logical_available_at
+    only. written_at alone is never used (it records physical persistence, not causal availability)."""
+    present = [c for c in AVAILABILITY if c in frame]
+    if not present:
+        return None
+    out = pd.DatetimeIndex(frame.timestamp).as_unit("ns").asi8
+    for c in present:
+        out = np.maximum(out, pd.DatetimeIndex(frame[c]).as_unit("ns").asi8)
+    return out
+
+
 def _asof(frame: pd.DataFrame, decisions: pd.DatetimeIndex, column: str, max_age: pd.Timedelta | None) -> np.ndarray:
     times = pd.DatetimeIndex(frame.timestamp).as_unit("ns").asi8
     d = pd.DatetimeIndex(decisions).as_unit("ns").asi8
@@ -69,8 +85,8 @@ def _asof(frame: pd.DataFrame, decisions: pd.DatetimeIndex, column: str, max_age
     out = np.full(len(d), np.nan)
     if not len(times):                  # no predictions at all (e.g. live paper books)
         return out
-    if "available_at" in frame:         # paper rows: latest timestamp among rows with timestamp <= T and available_at <= T
-        avail = np.maximum(pd.DatetimeIndex(frame.available_at).as_unit("ns").asi8, times)   # usable at max of both
+    avail = available_ns(frame)
+    if avail is not None:               # latest timestamp among rows with timestamp <= T and availability <= T
         order = np.argsort(avail, kind="stable")
         ts = times[order]
         best = np.maximum.accumulate(np.where(ts == np.maximum.accumulate(ts), np.arange(len(ts)), 0))

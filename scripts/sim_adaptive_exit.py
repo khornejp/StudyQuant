@@ -43,12 +43,13 @@ def select_k(scores: dict[float, float]) -> float:
 def _valid_e(frame: pd.DataFrame, head: str) -> pd.DataFrame:
     column = f"prediction_exc_{head}"
     v = frame[column].to_numpy(float)
-    keep = ["timestamp", column] + (["available_at"] if "available_at" in frame else [])
+    keep = ["timestamp", column] + [c for c in regime.AVAILABILITY if c in frame]
     return frame.loc[np.isfinite(v) & (v > 0), keep]
 
 
 def e_at(frame: pd.DataFrame, times: pd.DatetimeIndex, head: str) -> np.ndarray:
-    """Latest finite >0 E with timestamp and available_at (research: = timestamp) <= t and age <= 24 h."""
+    """Latest finite >0 E with timestamp and availability (regime.available_ns; research: logical_available_at or
+    timestamp) <= t and age <= 24 h."""
     return regime._asof(_valid_e(frame, head), times, f"prediction_exc_{head}", regime.E_MAX_AGE)
 
 
@@ -58,8 +59,8 @@ def e_series(frame: pd.DataFrame, minute_times: pd.DatetimeIndex, head: str) -> 
     valid = _valid_e(frame, head)
     t = pd.DatetimeIndex(minute_times).as_unit("ns").asi8
     stamp = pd.DatetimeIndex(valid.timestamp).as_unit("ns").asi8
-    avail = (np.maximum(pd.DatetimeIndex(valid.available_at).as_unit("ns").asi8, stamp) if "available_at" in valid
-             else stamp)
+    avail = regime.available_ns(valid)
+    avail = stamp if avail is None else avail
     values = valid[f"prediction_exc_{head}"].to_numpy(float)
     idx = np.searchsorted(t, avail, side="left")
     keep = idx < len(t)
