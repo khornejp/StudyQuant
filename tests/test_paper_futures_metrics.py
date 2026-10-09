@@ -239,7 +239,8 @@ def test_archive_backfill_local_first_coverage_and_duplicates(tmp_path) -> None:
     with PaperStore(tmp_path / "live.sqlite") as store:
         coverage = fm.backfill_metrics(store, "2026-09-30", "2026-10-02", [local], download, downloader,
                                        received=pd.Timestamp("2026-10-09T00:00:00Z"))
-        assert [u.rsplit("/", 1)[1] for u in requested] == ["BTCUSDT-metrics-2026-10-01.zip",
+        assert [u.rsplit("/", 1)[1] for u in requested] == ["BTCUSDT-metrics-2026-09-29.zip",   # previous day
+                                                            "BTCUSDT-metrics-2026-10-01.zip",
                                                             "BTCUSDT-metrics-2026-10-02.zip"]
         assert coverage["requested_days"] == 3 and coverage["fetched_days"] == 2
         assert coverage["missing_days"] == ["2026-10-02"] and coverage["duplicates_dropped"] == 1
@@ -486,8 +487,19 @@ def test_funding_time_migration_backup_collisions_and_diff(tmp_path) -> None:
     change = dry["ledger_diff"]["rows"][0]
     assert change["book"] == "C1_AX" and change["before_funding_bps"] == 0.0
     assert change["after_funding_bps"] == pytest.approx(1.0)
-    result = migrate.run(db, tmp_path / "backup.sqlite", apply=True)
+    assert migrate.MANIFEST_DIR == Path(__file__).resolve().parents[1] / "out/k45_rl_r2_48_20261007/r2_52a"
+    result = migrate.run(db, tmp_path / "backup.sqlite", apply=True, record_dir=tmp_path / "record")
     assert result["applied"] and result["backup_integrity"] == "ok" and result["db_integrity"] == "ok"
+    record = json.loads((tmp_path / "record" / migrate.RECORD_NAME).read_text(encoding="utf-8"))
+    assert record["dry_run"]["rows"] == dry["rows"] and record["ledger_diff"] == dry["ledger_diff"]
+    assert record["backup"] == str(tmp_path / "backup.sqlite") and record["backup_integrity"] == "ok"
+    assert record["db_integrity"] == "ok" and record["updated"] == 1
+    with PaperStore(db) as store:
+        meta = json.loads(store.get_meta("r2_54_funding_time_migration"))
+        assert meta["updated"] == 1 and meta["record"] == str(tmp_path / "record" / migrate.RECORD_NAME)
+        assert meta["ledger_changed"] == 1
+    with pytest.raises(SystemExit, match="record exists"):     # never overwrite a migration record
+        migrate.run(db, tmp_path / "backup3.sqlite", apply=True, record_dir=tmp_path / "record")
     with sqlite3.connect(db) as connection:
         assert connection.execute("SELECT COUNT(*) FROM funding WHERE time<>raw_calc_time").fetchone()[0] == 0
     with sqlite3.connect(tmp_path / "backup.sqlite") as connection:
@@ -501,4 +513,27 @@ def test_funding_time_migration_backup_collisions_and_diff(tmp_path) -> None:
                                  "raw_calc_time": "2026-07-02T00:00:00.001000+00:00", "source": "rest",
                                  "received_at": "2026-07-02T00:00:00+00:00"})
     with pytest.raises(SystemExit, match="collision"):
-        migrate.run(db, tmp_path / "backup2.sqlite", apply=True)
+        migrate.run(db, tmp_path / "backup2.sqlite", apply=True, record_dir=tmp_path / "record2")
+
+
+def test_backfill_reads_previous_day_file_for_first_midnight_row(tmp_path) -> None:
+    header = ARCHIVE_CSV.splitlines()[0]
+    local = tmp_path / "local"
+    local.mkdir()
+    # a daily file covers 00:05 .. next day 00:00: the requested first 00:00 row is in the previous day's file
+    (local / "BTCUSDT-metrics-2025-12-31.zip").write_bytes(_zip(
+        f"{header}\n2025-12-31 23:55:00,BTCUSDT,1,1,1,1,1,1\n2026-01-01 00:00:00,BTCUSDT,2,2,2,2,2,2\n"))
+    (local / "BTCUSDT-metrics-2026-01-01.zip").write_bytes(_zip(
+        f"{header}\n2026-01-01 00:05:00,BTCUSDT,3,3,3,3,3,3\n2026-01-02 00:00:00,BTCUSDT,4,4,4,4,4,4\n"))
+
+    def urlopen(request, timeout):
+        raise AssertionError("no download expected")
+
+    downloader = BinanceMetricsDownloader(urlopen=urlopen, sleep=lambda _: None, request_interval_seconds=0)
+    with PaperStore(tmp_path / "live.sqlite") as store:
+        coverage = fm.backfill_metrics(store, "2026-01-01", "2026-01-01", [local], tmp_path / "dl", downloader)
+        stored = store.frame("futures_oi_5m").sort_values("create_time")
+        assert stored.create_time.tolist() == ["2026-01-01T00:00:00+00:00", "2026-01-01T00:05:00+00:00"]
+        assert coverage["requested_days"] == 1 and coverage["fetched_days"] == 1 and coverage["missing_days"] == []
+        assert coverage["previous_day_file"]["name"] == "BTCUSDT-metrics-2025-12-31.zip"
+        assert "BTCUSDT-metrics-2025-12-31.zip" not in coverage["files"]

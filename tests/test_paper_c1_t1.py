@@ -25,8 +25,17 @@ def _core(frame: pd.DataFrame, candidate: str = "candidate") -> pd.DataFrame:
     return frame[columns].rename(columns={candidate: "candidate"}).reset_index(drop=True)
 
 
-def test_config_dashboard_and_notifications_expose_comparison_book() -> None:
+def test_live_config_retired_c1_t1_with_the_r2_52a_switch() -> None:
     config = load_config("config/paper.toml")
+    assert "C1_T1" not in config.books and "C1_T1" not in config.comparison_books
+    assert "C1_T1" not in config.leverage_books and "C1_T1" not in config.book_start_times
+    assert len(config.books) == 27 and all(name.endswith("_AX") for name in config.books)
+    assert BOOKS["C1_T1"] == (rules.F3, rules.E1)            # the engine still knows the retired book
+
+
+def test_config_dashboard_and_notifications_expose_comparison_book() -> None:
+    # pre-switch C1_T1 comparison-book behaviour on the recorded pre-R2-52A config
+    config = load_config("config/paper.pre_r2_52a.toml")
     assert "C1_T1" in config.books
     assert config.book_start_times["C1_T1"] == "2026-10-06T05:00:00Z"
     assert "C1_T1" in config.comparison_books

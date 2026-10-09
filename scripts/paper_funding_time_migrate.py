@@ -2,7 +2,8 @@
 
 Run with paper_run.py and paper_catalog.py stopped (both locks are taken). --apply backs the DB up with the sqlite
 backup API, checks the backup with PRAGMA integrity_check, refuses on primary-key collisions, then updates in one
-transaction. The JSON report lists the affected rows and a funding ledger diff: every stored trade (trades: its own
+transaction (with meta r2_54_funding_time_migration) and writes a migration record JSON next to the R2-52A switch
+manifest. The JSON report lists the affected rows and a funding ledger diff: every stored trade (trades: its own
 PESS/OPT boundary; leverage_trades: PESS) repriced with book.reprice on the funding events before vs after.
 """
 from __future__ import annotations
@@ -20,6 +21,10 @@ import pandas as pd  # noqa: E402
 
 from btcusdt_quant.paper import book  # noqa: E402
 from btcusdt_quant.paper.store import exclusive_lock  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+MANIFEST_DIR = ROOT / "out/k45_rl_r2_48_20261007/r2_52a"      # next to paper_switch_manifest.json
+RECORD_NAME = "r2_54_funding_time_migration.json"
 
 
 def _funding(connection: sqlite3.Connection, column: str) -> pd.DataFrame:
@@ -54,8 +59,9 @@ def ledger_diff(connection: sqlite3.Connection) -> dict[str, object]:
             "method": "book.reprice funding_bps/event count, cost 0, stored legs; not a full strategy replay"}
 
 
-def run(db: str | Path, backup: str | Path, apply: bool = False) -> dict[str, object]:
-    db, backup = Path(db), Path(backup)
+def run(db: str | Path, backup: str | Path, apply: bool = False,
+        record_dir: str | Path = MANIFEST_DIR) -> dict[str, object]:
+    db, backup, record = Path(db), Path(backup), Path(record_dir) / RECORD_NAME
     with ExitStack() as locks:
         for suffix in (".run.lock", ".catalog.lock"):           # services must be stopped
             locks.enter_context(exclusive_lock(db.with_suffix(suffix)))
@@ -73,6 +79,8 @@ def run(db: str | Path, backup: str | Path, apply: bool = False) -> dict[str, ob
                 return report
             if collisions:
                 raise SystemExit(f"funding time collision, not applied: {collisions[:5]}")
+            if record.exists():
+                raise SystemExit(f"migration record exists, refusing to overwrite: {record}")
             if backup.exists():
                 raise SystemExit(f"backup exists, refusing to overwrite: {backup}")
             with sqlite3.connect(backup) as target:
@@ -85,12 +93,29 @@ def run(db: str | Path, backup: str | Path, apply: bool = False) -> dict[str, ob
                 changed = connection.execute("UPDATE funding SET time=raw_calc_time WHERE time<>raw_calc_time").rowcount
                 if changed != len(affected):
                     raise RuntimeError(f"updated {changed} rows, expected {len(affected)}")
+                connection.execute(
+                    "INSERT INTO meta(key,value) VALUES('r2_54_funding_time_migration',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (json.dumps({"at": pd.Timestamp.now(tz="UTC").isoformat(), "updated": changed,
+                                 "backup": str(backup), "backup_integrity": report["backup_integrity"],
+                                 "record": str(record), "ledger_changed": report["ledger_diff"]["changed"]}),))
                 connection.execute("COMMIT")
             except BaseException:
                 connection.execute("ROLLBACK")
                 raise
             report.update(applied=True, backup=str(backup), updated=changed,
                           db_integrity=connection.execute("PRAGMA integrity_check").fetchone()[0])
+            # migration record: the dry-run rows and the per-trade ledger diff as applied, plus backup/integrity
+            payload = {"created_utc": pd.Timestamp.now(tz="UTC").isoformat(), "db": str(db),
+                       "dry_run": {"affected": len(affected), "rows": affected, "collisions": collisions},
+                       "ledger_diff": report["ledger_diff"], "backup": str(backup),
+                       "backup_integrity": report["backup_integrity"], "db_integrity": report["db_integrity"],
+                       "updated": changed}
+            record.parent.mkdir(parents=True, exist_ok=True)
+            staged = record.with_suffix(".json.tmp")
+            staged.write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
+            staged.replace(record)
+            report["record"] = str(record)
             return report
         finally:
             connection.close()
@@ -102,9 +127,11 @@ def main() -> None:
     parser.add_argument("--backup", help="default: <db>.pre_r2_54_funding.sqlite")
     parser.add_argument("--apply", action="store_true", help="write (default: dry run)")
     parser.add_argument("--report", help="write the JSON report here")
+    parser.add_argument("--record-dir", default=str(MANIFEST_DIR),
+                        help="where --apply writes the migration record (default: next to the switch manifest)")
     args = parser.parse_args()
     db = Path(args.db)
-    report = run(db, args.backup or db.with_suffix(".pre_r2_54_funding.sqlite"), args.apply)
+    report = run(db, args.backup or db.with_suffix(".pre_r2_54_funding.sqlite"), args.apply, args.record_dir)
     text = json.dumps(report, indent=1, default=str)
     if args.report:
         Path(args.report).write_text(text, encoding="utf-8")

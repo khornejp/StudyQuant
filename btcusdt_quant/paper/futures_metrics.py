@@ -120,7 +120,9 @@ def backfill_metrics(store: PaperStore, start: object, end: object, search_dirs:
                      download_dir: str | Path, downloader: metrics_source.BinanceMetricsDownloader | None = None,
                      received: object | None = None) -> dict[str, object]:
     """Daily metrics zips for [start, end] (inclusive days): local zips first, only missing days downloaded
-    (metrics_source.download_range), normalized into the four tables with source='archive'."""
+    (metrics_source.download_range), normalized into the four tables with source='archive'. A daily file covers
+    00:05 .. next-day 00:00, so the previous day's file is read too for the first 00:00 row; only rows with
+    create_time in [start 00:00, end+1 00:00) are stored."""
     downloader = downloader or metrics_source.BinanceMetricsDownloader()
     received = pd.Timestamp(received or pd.Timestamp.now(tz="UTC"))
     first, last = pd.Timestamp(start).date(), pd.Timestamp(end).date()       # end day inclusive
@@ -129,20 +131,30 @@ def backfill_metrics(store: PaperStore, start: object, end: object, search_dirs:
     files: dict[str, dict[str, object]] = {}
     missing: list[str] = []
     raw_rows = 0
-    day = first
+    previous: dict[str, object] = {}
+    day = first - timedelta(days=1)
     while day <= last:
         name = f"{downloader.symbol}-metrics-{day.isoformat()}.zip"
         folder = next((path for path in dirs if (path / name).exists()), Path(download_dir))
         local = (folder / name).exists()
         day_rows = downloader.download_range(day, day, folder)
+        context = day < first
         if downloader.last_coverage.fetched:
             payload = (folder / name).read_bytes()
             raw = metrics_source.parse_metrics_csv_text(metrics_source._metrics_csv_text_from_zip(payload))
-            raw_rows += len(raw)
             rows.extend(raw)
+            info = {"path": str(folder / name), "sha256": hashlib.sha256(payload).hexdigest(),
+                    "bytes": len(payload), "rows": len(raw), "local": local}
+            if context:
+                previous = {"name": name, **info}
+                day += timedelta(days=1)
+                continue
+            raw_rows += len(raw)
             files[name] = {"path": str(folder / name), "sha256": hashlib.sha256(payload).hexdigest(),
                            "bytes": len(payload), "rows": len(raw), "local": local,
                            "deduped_rows": len(day_rows)}
+        elif context:
+            previous = {"name": name, "missing": True}
         else:
             missing.append(day.isoformat())
         day += timedelta(days=1)
@@ -154,7 +166,7 @@ def backfill_metrics(store: PaperStore, start: object, end: object, search_dirs:
     coverage = {"requested_days": (last - first).days + 1, "fetched_days": len(files), "missing_days": missing,
                 "raw_rows": raw_rows, "duplicates_dropped": in_range_raw - len(deduped),
                 "duplicate_rule": "last occurrence per create_time (metrics_source.dedup_metrics_rows)",
-                "files": files, "tables": tables, "received_at": utc_text(received),
+                "files": files, "previous_day_file": previous, "tables": tables, "received_at": utc_text(received),
                 "range": [str(first), str(last)]}
     store.set_meta("futures_metrics_backfill", json.dumps(coverage))
     return coverage

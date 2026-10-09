@@ -8,6 +8,11 @@ from btcusdt_quant.paper.engine import BOOKS, PaperEngine
 from btcusdt_quant.paper.store import PaperStore
 
 
+AX_BOOKS = ("C1_AX", "B1_AX", "B2_AX", "B3_AX", "K02_AX", "K03_AX", "K04_AX", "K05_AX", "K06_k0.5_AX",
+            "K06_k1.0_AX", "K07_k0.5_AX", "K07_k1.0_AX", "K08_AX", "K09_AX", "K11_15m_AX", "K11_1h_AX", "K12_30m_AX",
+            "K12_1h_AX", "K13_AX", "K14_AX", "K15_AX", "K19_AX", "K21_A_AX", "K21_B_AX", "K26_AX", "K29_AX", "K30_AX")
+
+
 def _combo(market: pd.DataFrame, features: pd.DataFrame,
            decision_start: object | None = None) -> pd.DataFrame:
     parts = []
@@ -33,8 +38,19 @@ def _core(frame: pd.DataFrame) -> pd.DataFrame:
     return frame[columns].reset_index(drop=True)
 
 
-def test_config_enables_comparison_book_without_overlay() -> None:
+def test_live_config_is_the_committed_r2_52a_ax_switch() -> None:
+    # config/paper.toml is the R2-52A switched live config (1ca5dd2): 27 AX books with x3 overlays
     config = load_config("config/paper.toml")
+    assert config.books == AX_BOOKS
+    assert config.leverage_books == AX_BOOKS and config.comparison_books == AX_BOOKS[1:]
+    assert set(config.book_start_times) == set(AX_BOOKS)
+    assert set(config.book_start_times.values()) == {"2026-10-09T01:24:00Z"}
+    assert not {"C1", "C1_5m", "C1_T1"} & set(config.books)
+
+
+def test_config_enables_comparison_book_without_overlay() -> None:
+    # pre-switch behaviour (C1_5m comparison book without x3 overlay), kept on the recorded pre-R2-52A config
+    config = load_config("config/paper.pre_r2_52a.toml")
     assert config.books[:8] == (
         "C1", "C1_FLIP", "C1_SL200", "C1_5m", "C1_T1", "F3", "E1", "C4")
     assert config.book_start_times.items() >= {
