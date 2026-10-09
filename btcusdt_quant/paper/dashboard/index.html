@@ -88,7 +88,7 @@ function syncConditionCharts(){
   // Main chart is the master. A condition pane drives the others only while the user is
   // touching it; programmatic range events (new panes, timeframe switch) never flow back.
   const charts=state.conditionCharts;
-  const follow=skip=>{const range=chart.timeScale().getVisibleRange();if(range)for(const target of charts)if(target!==skip)target.timeScale().setVisibleRange(range)};
+  const follow=skip=>{const range=chart.timeScale().getVisibleRange();if(range)for(const target of charts)if(target!==skip)try{target.timeScale().setVisibleRange(range)}catch{/* pane with no rows yet */}};
   follow();requestAnimationFrame(()=>{if(state.conditionCharts===charts)follow()});
   const mainHandler=()=>follow(state.activePane);chart.timeScale().subscribeVisibleTimeRangeChange(mainHandler);state.rangeHandlers.push([chart,mainHandler]);
   for(const c of charts){const handler=range=>{if(range&&state.activePane===c)chart.timeScale().setVisibleRange(range)};c.timeScale().subscribeVisibleTimeRangeChange(handler);state.rangeHandlers.push([c,handler]);
