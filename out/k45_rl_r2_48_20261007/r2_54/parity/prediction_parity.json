@@ -1,0 +1,922 @@
+{
+  "kind": "R2-54 offline vs live feature/prediction parity",
+  "freeze": {
+    "path": "out\\k45_rl_r2_48_20261007\\r2_54_stageb_freeze.json",
+    "bytes": 28978,
+    "sha256": "ca7ffd5e8c1a92189150b2a7d72fa376e3a72c68a2340090b82ee1695c46a5df"
+  },
+  "rule": "data_plan.parity.prediction_check: exact timestamps and masks, numeric rtol=1e-6, atol=0",
+  "offline_path": "detector.build_data(snapshot frames) (= Stage-A generator inputs) + detector.predict",
+  "live_path": "in-memory paper tables from the same snapshot rows known at now -> detector.recent_data (paper_catalog.update_predictions path) + detector.predict",
+  "device": "cuda:0",
+  "snapshot": {
+    "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stage_a_2026_inputs\\manifest.json",
+    "bytes": 7062,
+    "sha256": "a9f67f944a6952e71228536d18775a51803aad083af61dc0b69b5ea0befe2332"
+  },
+  "stage_a": {
+    "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stage_a_2026\\stage_a_2026.parquet",
+    "bytes": 3623617,
+    "sha256": "974feb8ff7b9a108df73bd673213a31c367321613433a927af6846c18eb7658b"
+  },
+  "inputs": {
+    "snapshot_manifest_sha256": "a9f67f944a6952e71228536d18775a51803aad083af61dc0b69b5ea0befe2332",
+    "funding_gaps_accepted": true,
+    "data_end_exclusive": "2026-10-08 00:00:00+00:00",
+    "frames": {
+      "market": {
+        "rows": 3559680,
+        "sha256": "9f3a6020e8546a4d9438af47d7b531738ffc88ddef812cb6e4df508e6563ac4d",
+        "min": "2020-01-01 00:00:00+00:00",
+        "max": "2026-10-07 23:59:00+00:00"
+      },
+      "metrics": {
+        "rows": 635231,
+        "sha256": "094f1814ce5f5b1f778eac5d2db26b9d22002fb096721c2fc0c8ccdc99edd7db",
+        "min": "2020-09-01 00:00:00+00:00",
+        "max": "2026-10-07 23:55:00+00:00"
+      },
+      "premium": {
+        "rows": 3559235,
+        "sha256": "991987207bc2caa4c47b17d9de0599a59a6dea42b796379e19e5fcf53f7acdda",
+        "min": "2020-01-01 00:00:00+00:00",
+        "max": "2026-10-07 23:59:00+00:00"
+      },
+      "funding": {
+        "rows": 7416,
+        "sha256": "2914c9c2a2126c0a41b8612c49245747ea7531c9d9848e5a263c8a9dce0dc1b8",
+        "min": "2020-01-01 00:00:00+00:00",
+        "max": "2026-10-07 16:00:00+00:00"
+      }
+    },
+    "funding_interval_missing_events": 21
+  },
+  "days": {
+    "2026-01-01": {
+      "now": "2026-01-02 00:00:00+00:00",
+      "retrain_time": "2026-01-01 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 19,
+          "max_abs": 0.0003204345703125,
+          "max_rel": 1.4880520580131976e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-02-15": {
+      "now": "2026-02-16 00:00:00+00:00",
+      "retrain_time": "2026-02-12 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 33,
+          "max_abs": 0.00048828125,
+          "max_rel": 1.981718926010259e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-03-15": {
+      "now": "2026-03-16 00:00:00+00:00",
+      "retrain_time": "2026-03-12 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 31,
+          "max_abs": 0.0006103515625,
+          "max_rel": 1.4519862041950786e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-04-15": {
+      "now": "2026-04-16 00:00:00+00:00",
+      "retrain_time": "2026-04-09 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0
+        }
+      },
+      "passed": true
+    },
+    "2026-05-15": {
+      "now": "2026-05-16 00:00:00+00:00",
+      "retrain_time": "2026-05-14 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 26,
+          "max_abs": 0.0003509521484375,
+          "max_rel": 1.9395249650804695e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-06-15": {
+      "now": "2026-06-16 00:00:00+00:00",
+      "retrain_time": "2026-06-11 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 26,
+          "max_abs": 0.00054931640625,
+          "max_rel": 1.4830183278820052e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-07-15": {
+      "now": "2026-07-16 00:00:00+00:00",
+      "retrain_time": "2026-07-09 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0
+        }
+      },
+      "passed": true
+    },
+    "2026-08-15": {
+      "now": "2026-08-16 00:00:00+00:00",
+      "retrain_time": "2026-08-13 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 5,
+          "max_abs": 0.000152587890625,
+          "max_rel": 1.4240618316254798e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-09-15": {
+      "now": "2026-09-16 00:00:00+00:00",
+      "retrain_time": "2026-09-10 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 11,
+          "max_abs": 0.00030517578125,
+          "max_rel": 1.4428062181396479e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-10-01": {
+      "now": "2026-10-02 00:00:00+00:00",
+      "retrain_time": "2026-10-01 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 34,
+          "max_abs": 0.00054931640625,
+          "max_rel": 1.5065455638384873e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-10-02": {
+      "now": "2026-10-03 00:00:00+00:00",
+      "retrain_time": "2026-10-01 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 26,
+          "max_abs": 0.0002593994140625,
+          "max_rel": 1.4649560026624528e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-10-03": {
+      "now": "2026-10-04 00:00:00+00:00",
+      "retrain_time": "2026-10-01 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 16,
+          "max_abs": 0.000152587890625,
+          "max_rel": 1.4533520390920396e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-10-04": {
+      "now": "2026-10-05 00:00:00+00:00",
+      "retrain_time": "2026-10-01 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 22,
+          "max_abs": 0.00030517578125,
+          "max_rel": 1.4614744377159786e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-10-05": {
+      "now": "2026-10-06 00:00:00+00:00",
+      "retrain_time": "2026-10-01 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 26,
+          "max_abs": 0.0002899169921875,
+          "max_rel": 1.4656698466045366e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-10-06": {
+      "now": "2026-10-07 00:00:00+00:00",
+      "retrain_time": "2026-10-01 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 14,
+          "max_abs": 0.0002593994140625,
+          "max_rel": 1.3959515598239557e-06
+        }
+      },
+      "passed": true
+    },
+    "2026-10-07": {
+      "now": "2026-10-08 00:00:00+00:00",
+      "retrain_time": "2026-10-01 00:00:00+00:00",
+      "origins": 96,
+      "same_origins": true,
+      "features": {
+        "1m": {
+          "nonfinite_mismatch": 0,
+          "values": 345600,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "5m": {
+          "nonfinite_mismatch": 0,
+          "values": 470016,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        },
+        "1h": {
+          "nonfinite_mismatch": 0,
+          "values": 548352,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0,
+          "mask_mismatch": 0
+        }
+      },
+      "live_vs_offline": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0
+      },
+      "offline_vs_stage_a": {
+        "nonfinite_mismatch": 0,
+        "values": 1440,
+        "rtol_fail": 0,
+        "max_abs": 0.0,
+        "max_rel": 0.0,
+        "day_subset_batch_diagnostic": {
+          "nonfinite_mismatch": 0,
+          "values": 1440,
+          "rtol_fail": 0,
+          "max_abs": 0.0,
+          "max_rel": 0.0
+        }
+      },
+      "passed": true
+    }
+  },
+  "passed": true,
+  "written_at": "2026-10-09T09:39:42.710730+00:00"
+}

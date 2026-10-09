@@ -1,0 +1,463 @@
+{
+  "kind": "R2-54 archive vs public REST parity",
+  "freeze": {
+    "path": "out\\k45_rl_r2_48_20261007\\r2_54_stageb_freeze.json",
+    "bytes": 28978,
+    "sha256": "ca7ffd5e8c1a92189150b2a7d72fa376e3a72c68a2340090b82ee1695c46a5df"
+  },
+  "rule": "data_plan.parity.metric_tolerance (amendment A1)",
+  "window": [
+    "2026-10-01 00:00:00+00:00",
+    "2026-10-08 00:00:00+00:00"
+  ],
+  "sources": {
+    "archive": "live DB D:\\StudyQuant\\artifacts\\live\\live.sqlite (read-only) source='archive' rows (data.binance.vision metrics zips, normalized by futures_metrics.backfill_metrics)",
+    "rest": {
+      "db": "out\\k45_rl_r2_48_20261007\\r2_54\\parity\\rest_staging.sqlite",
+      "base_url": "https://fapi.binance.com",
+      "endpoints": [
+        "/futures/data/globalLongShortAccountRatio",
+        "/futures/data/topLongShortAccountRatio",
+        "/futures/data/openInterestHist",
+        "/futures/data/takerlongshortRatio"
+      ],
+      "auth": "none (public GET)",
+      "raw_audit_rows": 24,
+      "first_request_utc": "2026-10-09T09:31:38.269717+00:00",
+      "last_response_utc": "2026-10-09T09:31:43.175772+00:00",
+      "non_200": 0,
+      "staging_revisions": 0,
+      "fetch": {
+        "window": [
+          "2026-10-01 00:00:00+00:00",
+          "2026-10-08 00:00:00+00:00"
+        ],
+        "tables": {
+          "futures_global_ls_5m": {
+            "inserted": 2021,
+            "same": 5,
+            "revised": 0,
+            "pages": 6,
+            "statuses": [
+              200
+            ]
+          },
+          "futures_top_ls_5m": {
+            "inserted": 2021,
+            "same": 5,
+            "revised": 0,
+            "pages": 6,
+            "statuses": [
+              200
+            ]
+          },
+          "futures_oi_5m": {
+            "inserted": 2021,
+            "same": 5,
+            "revised": 0,
+            "pages": 6,
+            "statuses": [
+              200
+            ]
+          },
+          "futures_taker_lsr_5m": {
+            "inserted": 2021,
+            "same": 5,
+            "revised": 0,
+            "pages": 6,
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "fetched_at": "2026-10-09T09:31:43.329526+00:00"
+      }
+    }
+  },
+  "archive_coverage": {
+    "zips": {
+      "required": {
+        "BTCUSDT-metrics-2026-09-30.zip": {
+          "path": "artifacts\\hold_a_2026q3\\metrics\\BTCUSDT-metrics-2026-09-30.zip",
+          "bytes": 11601,
+          "sha256": "9b256cd82e267e6c6acc147a151d3a630bf5a76aa0d6725970516c91e6f2cd02"
+        },
+        "BTCUSDT-metrics-2026-10-01.zip": {
+          "path": "artifacts\\metrics_2026q4\\BTCUSDT-metrics-2026-10-01.zip",
+          "bytes": 11631,
+          "sha256": "e65cebeb721c5179e7734cbf7053516f1e5ec04fe273f2dfa3174ac17d716042"
+        },
+        "BTCUSDT-metrics-2026-10-02.zip": {
+          "path": "artifacts\\metrics_2026q4\\BTCUSDT-metrics-2026-10-02.zip",
+          "bytes": 11620,
+          "sha256": "439edf01c8e5c1ce9ef133161c404f210e5374cf23e47da7b7e84df759fb0b47"
+        },
+        "BTCUSDT-metrics-2026-10-03.zip": {
+          "path": "artifacts\\metrics_2026q4\\BTCUSDT-metrics-2026-10-03.zip",
+          "bytes": 11158,
+          "sha256": "eb04d9cd7b26030dff159cc27babe4323e7bed779110c0b69cd9697591422fed"
+        },
+        "BTCUSDT-metrics-2026-10-04.zip": {
+          "path": "artifacts\\metrics_2026q4\\BTCUSDT-metrics-2026-10-04.zip",
+          "bytes": 11469,
+          "sha256": "2fabce09f0438992d0e6f9b8b3b5967b014bd9953596c6db602675c3ce58a89b"
+        },
+        "BTCUSDT-metrics-2026-10-05.zip": {
+          "path": "artifacts\\metrics_2026q4\\BTCUSDT-metrics-2026-10-05.zip",
+          "bytes": 11608,
+          "sha256": "c35569ea9a90fca661ababaeb257dc87ae76ffec9d1da1102871945f6a3b59c0"
+        },
+        "BTCUSDT-metrics-2026-10-06.zip": {
+          "path": "artifacts\\metrics_2026q4\\BTCUSDT-metrics-2026-10-06.zip",
+          "bytes": 11504,
+          "sha256": "22621e9fcebd4398534f4390fb8151db6c690eb224569c27afa27f1581d544b4"
+        },
+        "BTCUSDT-metrics-2026-10-07.zip": {
+          "path": "artifacts\\metrics_2026q4\\BTCUSDT-metrics-2026-10-07.zip",
+          "bytes": 11500,
+          "sha256": "04fc32b2d3746a13335609cd9159d75d28794ce3cbdc836498460a2cd7d46216"
+        }
+      },
+      "all_present": true,
+      "BTCUSDT-metrics-2026-10-08.zip_present": false,
+      "note": "BTCUSDT-metrics-2026-10-08.zip is not required: the window ends 2026-10-08 00:00:00+00:00 exclusive and the 2026-10-07 file covers 00:05 .. next-day 00:00"
+    },
+    "live_backfill_missing_days": [
+      "2026-10-08"
+    ],
+    "live_backfill_range": [
+      "2026-01-01",
+      "2026-10-08"
+    ],
+    "live_backfill_received_at": "2026-10-09T05:42:13.929203+00:00"
+  },
+  "fields": {
+    "global_ls": {
+      "passed": true,
+      "mismatch": {
+        "long_account": 0,
+        "short_account": 0,
+        "long_short_ratio": 0
+      },
+      "compared": {
+        "long_account": 2016,
+        "short_account": 2016,
+        "long_short_ratio": 2016
+      },
+      "max_abs_raw_residual": {
+        "long_account": 4.998961716407013e-05,
+        "short_account": 4.998961716407013e-05,
+        "long_short_ratio": 0.0003972199999999759
+      },
+      "missing_archive": 0,
+      "missing_rest": 0,
+      "mask_mismatch": 0,
+      "timestamp_mismatch": 0
+    },
+    "top_ls": {
+      "passed": true,
+      "mismatch": {
+        "long_account": 0,
+        "short_account": 0,
+        "long_short_ratio": 0
+      },
+      "compared": {
+        "long_account": 2016,
+        "short_account": 2016,
+        "long_short_ratio": 2016
+      },
+      "max_abs_raw_residual": {
+        "long_account": 4.9967795197169984e-05,
+        "short_account": 4.9967795197169984e-05,
+        "long_short_ratio": 0.00041088000000000235
+      },
+      "missing_archive": 0,
+      "missing_rest": 0,
+      "mask_mismatch": 0,
+      "timestamp_mismatch": 0
+    },
+    "oi": {
+      "passed": true,
+      "mismatch": {
+        "sum_open_interest": 0
+      },
+      "compared": {
+        "sum_open_interest": 2016
+      },
+      "max_abs_raw_residual": {
+        "sum_open_interest": 0.0
+      },
+      "missing_archive": 0,
+      "missing_rest": 0,
+      "mask_mismatch": 0,
+      "timestamp_mismatch": 0
+    },
+    "oi_value": {
+      "passed": true,
+      "mismatch": {
+        "sum_open_interest_value": 0
+      },
+      "compared": {
+        "sum_open_interest_value": 2016
+      },
+      "max_abs_raw_residual": {
+        "sum_open_interest_value": 0.0
+      },
+      "missing_archive": 0,
+      "missing_rest": 0,
+      "mask_mismatch": 0,
+      "timestamp_mismatch": 0
+    },
+    "taker_lsr": {
+      "passed": false,
+      "mismatch": {
+        "rest_internal_q4": 0,
+        "archive_vs_rest_q3": 250
+      },
+      "compared": {
+        "rest_internal_q4": 2016,
+        "archive_vs_rest_q3": 2016
+      },
+      "max_abs_raw_residual": {
+        "rest_internal_q4": 4.9995587566353805e-05,
+        "archive_vs_rest_q3": 0.0024540000000001783
+      },
+      "missing_archive": 0,
+      "missing_rest": 0,
+      "mask_mismatch": 0,
+      "timestamp_mismatch": 0
+    }
+  },
+  "tables": {
+    "futures_global_ls_5m": {
+      "table": "futures_global_ls_5m",
+      "window": [
+        "2026-10-01 00:00:00+00:00",
+        "2026-10-08 00:00:00+00:00"
+      ],
+      "coverage": {
+        "expected": 2016,
+        "archive_rows": 2016,
+        "rest_rows": 2016,
+        "missing_archive": [],
+        "missing_rest": [],
+        "off_grid": 0,
+        "duplicates": 0
+      },
+      "timestamps": {
+        "archive_source_timestamp_mismatch": 0,
+        "archive_logical_available_mismatch": 0,
+        "rest_source_timestamp_mismatch": 0,
+        "rest_available_before_period_end": 0
+      },
+      "masks": {
+        "mismatch": 0,
+        "both_missing": 0,
+        "examples": []
+      },
+      "fields": {
+        "long_account": {
+          "compared": 2016,
+          "mismatch": 0,
+          "max_abs_raw_residual": 4.998961716407013e-05,
+          "mean_abs_raw_residual": 2.5295156190997108e-05,
+          "examples": []
+        },
+        "short_account": {
+          "compared": 2016,
+          "mismatch": 0,
+          "max_abs_raw_residual": 4.998961716407013e-05,
+          "mean_abs_raw_residual": 2.5295156190998348e-05,
+          "examples": []
+        },
+        "long_short_ratio": {
+          "compared": 2016,
+          "mismatch": 0,
+          "max_abs_raw_residual": 0.0003972199999999759,
+          "mean_abs_raw_residual": 0.00012206393849206169,
+          "examples": []
+        }
+      },
+      "passed": true
+    },
+    "futures_top_ls_5m": {
+      "table": "futures_top_ls_5m",
+      "window": [
+        "2026-10-01 00:00:00+00:00",
+        "2026-10-08 00:00:00+00:00"
+      ],
+      "coverage": {
+        "expected": 2016,
+        "archive_rows": 2016,
+        "rest_rows": 2016,
+        "missing_archive": [],
+        "missing_rest": [],
+        "off_grid": 0,
+        "duplicates": 0
+      },
+      "timestamps": {
+        "archive_source_timestamp_mismatch": 0,
+        "archive_logical_available_mismatch": 0,
+        "rest_source_timestamp_mismatch": 0,
+        "rest_available_before_period_end": 0
+      },
+      "masks": {
+        "mismatch": 0,
+        "both_missing": 0,
+        "examples": []
+      },
+      "fields": {
+        "long_account": {
+          "compared": 2016,
+          "mismatch": 0,
+          "max_abs_raw_residual": 4.9967795197169984e-05,
+          "mean_abs_raw_residual": 2.4999748458409727e-05,
+          "examples": []
+        },
+        "short_account": {
+          "compared": 2016,
+          "mismatch": 0,
+          "max_abs_raw_residual": 4.9967795197169984e-05,
+          "mean_abs_raw_residual": 2.49997484584086e-05,
+          "examples": []
+        },
+        "long_short_ratio": {
+          "compared": 2016,
+          "mismatch": 0,
+          "max_abs_raw_residual": 0.00041088000000000235,
+          "mean_abs_raw_residual": 0.00012723075892857226,
+          "examples": []
+        }
+      },
+      "passed": true
+    },
+    "futures_oi_5m": {
+      "table": "futures_oi_5m",
+      "window": [
+        "2026-10-01 00:00:00+00:00",
+        "2026-10-08 00:00:00+00:00"
+      ],
+      "coverage": {
+        "expected": 2016,
+        "archive_rows": 2016,
+        "rest_rows": 2016,
+        "missing_archive": [],
+        "missing_rest": [],
+        "off_grid": 0,
+        "duplicates": 0
+      },
+      "timestamps": {
+        "archive_source_timestamp_mismatch": 0,
+        "archive_logical_available_mismatch": 0,
+        "rest_source_timestamp_mismatch": 0,
+        "rest_available_before_period_end": 0
+      },
+      "masks": {
+        "mismatch": 0,
+        "both_missing": 0,
+        "examples": []
+      },
+      "fields": {
+        "sum_open_interest": {
+          "compared": 2016,
+          "mismatch": 0,
+          "max_abs_raw_residual": 0.0,
+          "mean_abs_raw_residual": 0.0,
+          "examples": []
+        },
+        "sum_open_interest_value": {
+          "compared": 2016,
+          "mismatch": 0,
+          "max_abs_raw_residual": 0.0,
+          "mean_abs_raw_residual": 0.0,
+          "examples": []
+        }
+      },
+      "passed": true
+    },
+    "futures_taker_lsr_5m": {
+      "table": "futures_taker_lsr_5m",
+      "window": [
+        "2026-10-01 00:00:00+00:00",
+        "2026-10-08 00:00:00+00:00"
+      ],
+      "coverage": {
+        "expected": 2016,
+        "archive_rows": 2016,
+        "rest_rows": 2016,
+        "missing_archive": [],
+        "missing_rest": [],
+        "off_grid": 0,
+        "duplicates": 0
+      },
+      "timestamps": {
+        "archive_source_timestamp_mismatch": 0,
+        "archive_logical_available_mismatch": 0,
+        "rest_source_timestamp_mismatch": 0,
+        "rest_available_before_period_end": 0
+      },
+      "masks": {
+        "mismatch": 0,
+        "both_missing": 0,
+        "examples": []
+      },
+      "fields": {
+        "rest_internal_q4": {
+          "compared": 2016,
+          "mismatch": 0,
+          "max_abs_raw_residual": 4.9995587566353805e-05,
+          "mean_abs_raw_residual": 2.4654329311303885e-05,
+          "examples": []
+        },
+        "archive_vs_rest_q3": {
+          "compared": 2016,
+          "mismatch": 250,
+          "max_abs_raw_residual": 0.0024540000000001783,
+          "mean_abs_raw_residual": 0.00010977678571428704,
+          "examples": [
+            {
+              "create_time": "2026-10-01T00:20:00+00:00",
+              "archive": "1.106375",
+              "rest": "1.107",
+              "expected": "1.106"
+            },
+            {
+              "create_time": "2026-10-01T01:05:00+00:00",
+              "archive": "1.552197",
+              "rest": "1.553",
+              "expected": "1.552"
+            },
+            {
+              "create_time": "2026-10-01T02:10:00+00:00",
+              "archive": "1.167441",
+              "rest": "1.168",
+              "expected": "1.167"
+            },
+            {
+              "create_time": "2026-10-01T03:25:00+00:00",
+              "archive": "2.670412",
+              "rest": "2.671",
+              "expected": "2.670"
+            },
+            {
+              "create_time": "2026-10-01T03:30:00+00:00",
+              "archive": "0.608427",
+              "rest": "0.609",
+              "expected": "0.608"
+            }
+          ],
+          "diagnostic": {
+            "mismatch_within_rest_q4_half_tick": 46,
+            "mismatch_beyond_rest_q4_half_tick": 204,
+            "rows_beyond_rest_q4_half_tick": 1140,
+            "max_rel_raw_residual": 0.0010495548284500966,
+            "median_abs_raw_residual": 6.0000000000060005e-05
+          }
+        }
+      },
+      "passed": false
+    }
+  },
+  "passed": false,
+  "written_at": "2026-10-09T09:32:50.790242+00:00"
+}
