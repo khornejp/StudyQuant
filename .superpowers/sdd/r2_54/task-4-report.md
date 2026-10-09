@@ -137,3 +137,23 @@ All 8 items are fixed with tests written first. Unlock was not run, and the test
 - The dry run passes again: 14 checkpoints per side, 0 fallbacks, 0 blocked decisions.
 - `unlock-test` without `--confirm` refuses with only "confirmation missing", so the code hash matches.
 - Tests: 34 new. Full suite (sim + paper + r2_54 + rl state): 931 passed, 2 skipped.
+
+## Round 2 (amendment A4) and hold
+
+- Freeze sha is now `e1f848ee…` (A4, user-approved 2026-10-10). A4's `freeze_sha256_before` (`710cb08b`) matches the snapshot's freeze hash, and the runner checks that chain.
+- Code (commit bdbf955, tests first):
+  - validation economic gate = net4 > 0 in at least 7/10 folds; 8 bps is report-only;
+  - the 8 bps key is removed from the ranking;
+  - `final_gates` no longer checks 8 bps (still reported);
+  - the test is repeatable: each run is appended to `stageb/test_runs.jsonl` and the manifest with run id, UTC, code hash, inputs and result;
+  - hash and code mismatches still refuse a run.
+- Validation rerun: selections are unchanged and both sides now pass.
+  - Every candidate row and the ranking trace (`d1534eaf`) are unchanged; the 8 bps key never broke a tie.
+  - Short: economic gate false → true.
+  - Final fit for both sides gives the same checkpoint `521aae3b…`, because the structure is identical.
+  - Registry stays at 5544; no rows added.
+- Test run 1 started before the coordinator HOLD arrived, and was killed by hand during the long-side weekly retrains.
+  - By then the 2026 features and labels were built and written to `test/run_01`, and the long checkpoints 2026-01-08..08-27 were written.
+  - No ledger, P&L, IC, bootstrap, oracle or A3 output was computed or viewed.
+  - It is logged as ABORTED_BY_COORDINATOR_HOLD and counted as test run 1.
+- Manifest sha after the abort record: `28074c5f…`.

@@ -2575,7 +2575,7 @@
     ],
     "2026": "snapshot.stage_a_2026_folds"
   },
-  "test_status": "LOCKED",
+  "test_status": "HOLD (test run 1 aborted before any outcome; coordinator hold pending stop-width redesign)",
   "artifacts": {
     "features": {
       "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb\\features\\features_pre2026.parquet",
@@ -5102,6 +5102,22 @@
     "selection_prohibition": "Bootstrap output cannot change candidate, k, feature, horizon or side eligibility.",
     "implementation": "stageb.bootstrap_ic + stageb.holm"
   },
-  "test_runs": [],
+  "test_runs": [
+    {
+      "run_id": 1,
+      "started_utc": "2026-10-09T15:14:36.986231+00:00",
+      "status": "ABORTED_BY_COORDINATOR_HOLD: killed during long-side weekly retrains (checkpoints 2026-01-08..08-27 written); 2026 features and labels were built and written to test/run_01 (not viewed); no ledger, P&L, IC, bootstrap, oracle or A3 output was computed. Counted as test run 1.",
+      "inputs": {
+        "freeze_sha256": "e1f848ee8091e295dbc75861ffd9135a00236b45121c3b0054467e34ce4845a3",
+        "snapshot_manifest_sha256": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069",
+        "trace_sha256": "d1534eaff25c320346ad737f530718a00b69a283333d752dea0a9828379d1ca3",
+        "final_checkpoints": {
+          "long": "521aae3b0a9bb09f5c14cce75603daf6e365e0538805dd63c8eb0399bf7f3ef4",
+          "short": "521aae3b0a9bb09f5c14cce75603daf6e365e0538805dd63c8eb0399bf7f3ef4"
+        }
+      },
+      "aborted_utc": "2026-10-09T15:24:58.009666+00:00"
+    }
+  ],
   "runtime_seconds": 310.9
 }
