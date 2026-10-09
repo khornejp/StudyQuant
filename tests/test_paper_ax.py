@@ -35,7 +35,8 @@ HEADS = ("30m", "1h", "4h", "12h", "24h")
 # ---------------------------------------------------------------- configuration / names
 @needs_out
 def test_ax_books_are_exactly_the_frozen_27_sources() -> None:
-    assert tuple(catalog.BOOKS) == tuple(ROLLOUT["new_books"]) == NEW_BOOKS and len(NEW_BOOKS) == 27
+    assert tuple(catalog.BOOKS)[:27] == tuple(ROLLOUT["new_books"]) == NEW_BOOKS and len(NEW_BOOKS) == 27
+    assert tuple(catalog.BOOKS)[27:] == catalog.FLIP_BOOKS          # C1_FLIP_AX: post-freeze, config-enabled only
     assert catalog.BOOKS["C1_AX"] == ("K01", False, "NATIVE")
     assert all(catalog.BOOKS[n] == (n[:-3], False, "NATIVE") for n in NEW_BOOKS if n != "C1_AX")
     assert catalog.X3_BOOKS == X3
@@ -60,7 +61,7 @@ def test_paper_k_is_the_last_validation_window_before_cutoff(tmp_path) -> None:
                   "k": [1.0, 1.5, 2.0]}).to_csv(path, index=False)
     assert catalog.paper_k(path) == {"K02": 1.5}
     real = catalog.paper_k()
-    assert {spec for spec, _, _ in catalog.BOOKS.values()} <= set(real)
+    assert {catalog.BOOKS[n][0] for n in NEW_BOOKS} <= set(real)
     assert real["K01"] == 1.5            # out/k45_rl_r2_48_20261007/r2_52a/selected_k.csv K01 W10
 
 

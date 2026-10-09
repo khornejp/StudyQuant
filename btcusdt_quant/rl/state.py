@@ -12,7 +12,7 @@ from ..sim.strategies import CATALOG, Context, build_variant
 
 COMPOSITES = ("B1", "B2", "B3")
 OCO_FAMILIES = ("K06", "K07", "K14")          # entry="oco": no raw side, proposal channels instead (C8)
-_ATOMIC = [k for k, s in CATALOG.items() if s.simulator == "core" and k not in COMPOSITES]
+_ATOMIC = [k for k, s in CATALOG.items() if s.simulator == "core" and k not in COMPOSITES and not s.post_freeze]
 OCO_IDS = tuple(k for k in _ATOMIC if k.split("_")[0] in OCO_FAMILIES)
 SIGNAL_IDS = tuple(k for k in _ATOMIC if k not in OCO_IDS)
 SEQ_LEN = 32

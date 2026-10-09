@@ -140,3 +140,22 @@ def test_daily_zero_fill_and_paired_delta():
     days = pd.date_range(T0, periods=3, freq="D", tz="UTC")
     minute = pd.Series([1.0, 2.0], index=pd.DatetimeIndex([T0, T0 + pd.Timedelta(days=2, minutes=5)]))
     assert ax.daily(minute, days).tolist() == [1.0, 0.0, 2.0]
+
+
+def test_flip_run_scope_is_separate_and_unregistered():
+    """--flip: K01_FLIP only (C1_FLIP_AX), its own folder r2_52a_flip/, --no-register by default; the frozen 29-id
+    run keeps its scope, folder and registry behaviour."""
+    import pytest
+    args, windows, full = ax.parse_scope(["--flip"])
+    assert args.ids == ["K01_FLIP"] and Path(args.out) == ax.FLIP_OUT and args.no_register
+    assert ax.FLIP_OUT.name == "r2_52a_flip" and ax.FLIP_OUT.parent == ax.OUT.parent
+    assert full and len(windows) == len(rolling.WINDOWS) and ax.trials(args.ids) == (3, 1)
+    args, windows, full = ax.parse_scope([])
+    assert args.ids == list(ax.INCLUDED) and Path(args.out) == ax.OUT and not args.no_register and full
+    assert ax.trials(args.ids) == (87, 29)
+    for argv in (["--ids", "K01_FLIP", "--no-register"], ["--flip", "--out", str(ax.OUT)],
+                 ["--flip", "--ids", "K01"]):
+        with pytest.raises(SystemExit):
+            ax.parse_scope(argv)
+    with pytest.raises(SystemExit):
+        ax.parse_scope(["--ids", "K01"])                     # subset without --no-register

@@ -3,6 +3,7 @@
 each rolling validation window (tie -> 2.0), one continuous stitched test, paired daily PW versus BASE NONE/NATIVE,
 plus the pre-registered V3 ablation on the selected k (ablation_V3).
 Usage: python scripts/sim_adaptive_exit.py [--ids K01 ...] [--windows W01 ...] [--workers 8] [--out DIR] [--no-register]
+       python scripts/sim_adaptive_exit.py --flip [--register]   # C1_FLIP_AX: K01_FLIP only, into r2_52a_flip/
 """
 from __future__ import annotations
 import argparse, json, sys, time, traceback
@@ -29,6 +30,8 @@ N_TRIALS = len(INCLUDED) * len(K_VALUES)       # freeze trials: 29 x 3 = 87 cand
 N_TRIALS_V3 = len(INCLUDED)                     # + 29: the selected-k V3 ablation
 V3_MAX_AGE = pd.Timedelta(minutes=14)
 OUT = O / "r2_52a"
+FLIP_IDS = ("K01_FLIP",)                        # C1_FLIP_AX (Codex 2026-10-09): post-freeze, outside INCLUDED
+FLIP_OUT = O / "r2_52a_flip"                   # its own selected_k.csv / manifest; never the frozen 29-id folder
 REGISTRY = ROOT / "out/sim_registry.jsonl"
 CONFIG = SimConfig(exit_policy="R2_52A")       # strict, NATIVE rows, 4 bps round trip, PESS funding, delay 1
 PW_LABEL = "unadjusted diagnostic (no multiplicity correction; no per-id significance claim)"
@@ -273,24 +276,50 @@ def evaluate(results: dict, ok: list[str], deltas: pd.DataFrame, full_scope: boo
     return out
 
 
-def main() -> None:
+def trials(ids) -> tuple[int, int]:
+    """(candidate series, V3 ablation series) of a run scope: the freeze's 87 + 29, or 3 + 1 for the flip run."""
+    scope = FLIP_IDS if tuple(ids) == FLIP_IDS else INCLUDED
+    return len(scope) * len(K_VALUES), len(scope)
+
+
+def parse_scope(argv=None):
+    """CLI -> (args, windows, full_scope). --flip runs FLIP_IDS only into FLIP_OUT, unregistered unless --register."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ids", nargs="*", default=list(INCLUDED))
+    parser.add_argument("--ids", nargs="*", default=None)
     parser.add_argument("--windows", nargs="*", default=[w.name for w in rolling.WINDOWS])
     parser.add_argument("--workers", type=int, default=8)
-    parser.add_argument("--out", default=str(OUT))
+    parser.add_argument("--out", default=None)
     parser.add_argument("--no-register", action="store_true", help="smoke runs: do not append to the trial registry")
-    parser.add_argument("--experiment", default="R2-52A adaptive exit rolling")
-    args = parser.parse_args()
-    unknown = sorted(set(args.ids) - set(INCLUDED))
+    parser.add_argument("--experiment", default=None)
+    parser.add_argument("--flip", action="store_true", help="C1_FLIP_AX: K01_FLIP only, into r2_52a_flip/")
+    parser.add_argument("--register", action="store_true", help="--flip only: append the flip run to the registry")
+    args = parser.parse_args(argv)
+    if args.flip:
+        if args.ids is not None or (args.out is not None and Path(args.out).resolve() == OUT.resolve()):
+            raise SystemExit("--flip fixes its ids (K01_FLIP) and may not write the frozen r2_52a folder")
+        args.ids, args.out, args.no_register = list(FLIP_IDS), args.out or str(FLIP_OUT), not args.register
+        args.experiment = args.experiment or "R2-52A adaptive exit rolling C1_FLIP_AX (K01_FLIP)"
+    elif args.register:
+        raise SystemExit("--register is only for --flip")
+    args.ids = list(INCLUDED) if args.ids is None else args.ids
+    args.out = args.out or str(OUT)
+    args.experiment = args.experiment or "R2-52A adaptive exit rolling"
+    scope = FLIP_IDS if args.flip else INCLUDED
+    unknown = sorted(set(args.ids) - set(scope))
     names = [w.name for w in rolling.WINDOWS]
     picked = sorted(names.index(n) for n in args.windows)
     if unknown or picked != list(range(picked[0], picked[-1] + 1)):
         raise SystemExit(f"ids outside the freeze scope {unknown} or non-contiguous windows {args.windows}")
     windows = [rolling.WINDOWS[i] for i in picked]
-    full_scope = tuple(args.ids) == INCLUDED and len(windows) == len(rolling.WINDOWS)
+    full_scope = tuple(args.ids) == scope and len(windows) == len(rolling.WINDOWS)
     if not full_scope and not args.no_register:
         raise SystemExit("a subset run is a smoke run: pass --no-register")
+    return args, windows, full_scope
+
+
+def main() -> None:
+    args, windows, full_scope = parse_scope()
+    n_trials, n_trials_v3 = trials(args.ids)
     end = windows[-1].test_end
     if end > rolling.END:
         raise SystemExit("end after 2026-01-01: 2026H1 is untouched (freeze data_cutoff)")
@@ -308,13 +337,21 @@ def main() -> None:
                 "simulation": {"exit_policy": "R2_52A", "k_values": list(K_VALUES), "costs": FREEZE["costs"],
                                "test_start": windows[0].test_start, "test_end": end,
                                "selection": FREEZE["selection"], "comparator": "BASE NONE/NATIVE, same test calendar"},
-                "included_ids": list(INCLUDED), "ids_run": args.ids, "windows": [w.name for w in windows],
+                "included_ids": list(FLIP_IDS if args.flip else INCLUDED), "ids_run": args.ids,
+                "windows": [w.name for w in windows],
                 "input_sha256": plan2.input_hashes(end), "prediction_coverage": coverage,
-                "n_trials": N_TRIALS + N_TRIALS_V3, "n_trials_split": {"r2_52a": N_TRIALS, "v3_ablation": N_TRIALS_V3},
-                "prior_trials_registry": prior, "cumulative_trials": prior + N_TRIALS + N_TRIALS_V3,
+                "n_trials": n_trials + n_trials_v3, "n_trials_split": {"r2_52a": n_trials, "v3_ablation": n_trials_v3},
+                "prior_trials_registry": prior, "cumulative_trials": prior + n_trials + n_trials_v3,
                 "n_trials_rule": FREEZE["trials"],
                 "paper_records": "effective_switch_time, retired_books snapshot, AX config hash and retired-table hashes "
                                  "are recorded by the paper rollout (Task D); this research run touches no paper table"}
+    if args.flip:
+        manifest["flip"] = {"paper_book": "C1_FLIP_AX", "registered": not args.no_register,
+                            "design": "Codex 2026-10-09, user-approved: C1_FLIP = F3 side *= -1 + E1; R2-52A F3 state "
+                                      "exit mirrored (long <= q50, short >= q50); E1 one-shot anchor unchanged; k per "
+                                      "window by select_k (4 bps validation P&L, tie -> 2.0)",
+                            "note": "post-freeze id outside the frozen 29-id scope; frozen_hypothesis above is the "
+                                    "R2-52A text, not a pre-registered K01_FLIP gate"}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     with ProcessPoolExecutor(max_workers=min(args.workers, 8), initializer=_init, initargs=(str(end),)) as pool:
         rows = list(pool.map(run_id, args.ids, [args.windows] * len(args.ids), [str(out)] * len(args.ids)))
@@ -344,13 +381,13 @@ def main() -> None:
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     if not args.no_register:
         config = {k: str(v) for k, v in manifest["simulation"].items()}
-        registry.record(REGISTRY, {"experiment": args.experiment, "n_trials": N_TRIALS, "config": config,
+        registry.record(REGISTRY, {"experiment": args.experiment, "n_trials": n_trials, "config": config,
                                    "input_hashes": manifest["input_sha256"],
                                    "result_summary": {"valid_run": report["valid_run"],
                                                       "K01_pass": report.get("K01_primary", {}).get("pass"),
                                                       "catalog_pass": report.get("catalog_secondary", {}).get("pass")}})
         v3 = report.get("v3_ablation", {})
-        registry.record(REGISTRY, {"experiment": f"{args.experiment} V3 ablation", "n_trials": N_TRIALS_V3,
+        registry.record(REGISTRY, {"experiment": f"{args.experiment} V3 ablation", "n_trials": n_trials_v3,
                                    "config": {**config, "ablation_V3": FREEZE["ablation_V3"]},
                                    "input_hashes": manifest["input_sha256"],
                                    "result_summary": {"valid_run": report["valid_run"],

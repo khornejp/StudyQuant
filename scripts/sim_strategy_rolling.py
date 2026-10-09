@@ -191,7 +191,7 @@ def input_hashes(end: pd.Timestamp) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ids", nargs="*", default=sorted(CATALOG))
+    parser.add_argument("--ids", nargs="*", default=sorted(k for k, s in CATALOG.items() if not s.post_freeze))
     parser.add_argument("--end", default=str(rolling.END))
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--out", default=str(OUT))

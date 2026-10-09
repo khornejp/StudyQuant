@@ -156,7 +156,7 @@ def test_missing_prediction_days_masked_not_filled(ctx):
 def test_signal_ids_exclude_composites_grid_oco(store):
     if store.variant == "S4":
         pytest.skip("S4 has no technique channels")
-    core = [k for k, v in CATALOG.items() if v.simulator == "core"]
+    core = [k for k, v in CATALOG.items() if v.simulator == "core" and not v.post_freeze]
     assert set(state.SIGNAL_IDS) | set(state.OCO_IDS) == set(core) - {"B1", "B2", "B3"}
     assert not set(state.SIGNAL_IDS) & set(state.OCO_IDS)
     assert {k.split("_")[0] for k in state.OCO_IDS} == {"K06", "K07", "K14"}

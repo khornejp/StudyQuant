@@ -27,6 +27,14 @@ AX_BOOKS = ("C1_AX", "B1_AX", "B2_AX", "B3_AX", "K02_AX", "K03_AX", "K04_AX", "K
             "K12_1h_AX", "K13_AX", "K14_AX", "K15_AX", "K19_AX", "K21_A_AX", "K21_B_AX", "K26_AX", "K29_AX", "K30_AX")
 BOOKS = {name: ("K01" if name == "C1_AX" else name[:-3], False, "NATIVE") for name in AX_BOOKS}
 X3_BOOKS = tuple(f"{name}_x3" for name in AX_BOOKS)
+# C1_FLIP_AX (Codex 2026-10-09, user-approved): added after the frozen 27-book rollout; runs only when configured.
+# Source K01_FLIP (F3 side flipped + E1), k from its own rolling selection (sim_adaptive_exit.py --flip).
+FLIP_SELECTED_K = ROOT / "out/k45_rl_r2_48_20261007/r2_52a_flip/selected_k.csv"
+FLIP_BOOKS = ("C1_FLIP_AX",)
+FLIP_X3_BOOKS = tuple(f"{name}_x3" for name in FLIP_BOOKS)
+BOOKS["C1_FLIP_AX"] = ("K01_FLIP", False, "NATIVE")
+FLIP_NAMES = {"C1_FLIP_AX": "롱숏비율 극단 방향 추종 + 거래량 급증 상단 돌파 · 추세추종"}
+K_SOURCES = {"K01_FLIP": FLIP_SELECTED_K}       # research id -> its selected_k.csv (default SELECTED_K)
 # presentation_addendum_2026-10-08.name_list (verbatim): the visible x3 book's plain Korean label
 NAMES = {
     "C1_AX": "롱숏비율 역추세 + 거래량 급증 돌파",
@@ -74,7 +82,8 @@ def source_of(name: str) -> str:
 
 def label(name: str) -> str:
     """Plain Korean label of a visible x3 book (or its hidden source); no internal code, no 3x suffix."""
-    return NAMES[source_of(name)]
+    source = source_of(name)
+    return NAMES[source] if source in NAMES else FLIP_NAMES[source]
 
 
 @lru_cache(maxsize=4)
@@ -87,6 +96,11 @@ def paper_k(path: Path = SELECTED_K) -> dict[str, float]:
     inside = frame.loc[(frame.val_start >= K_WINDOW[0]) & (frame.val_end <= K_WINDOW[1])]
     last = inside.sort_values("val_end", kind="stable").groupby("id").tail(1)
     return {row.id: float(row.k) for row in last.itertuples(index=False)}
+
+
+def book_k(spec_id: str) -> float:
+    """Paper k of a research id, read from that id's own selection file (K_SOURCES, else SELECTED_K)."""
+    return paper_k(K_SOURCES.get(spec_id, SELECTED_K))[spec_id]
 
 
 def needs_model(name: str) -> bool:
@@ -392,7 +406,7 @@ def ax_table(name: str, ctx: Context, decisions: pd.DataFrame | None, book_start
     table = live_table(raw_table(name, ctx), decisions if decisions is not None else pd.DataFrame())
     table = schema.validate(table.loc[table.decision_time >= book_start].reset_index(drop=True))
     return table.assign(e0_bps=row_e0(table, e_frame(ctx), spec_id),
-                        e_col=_adaptive().e_cols(table, spec_id).astype(float), k=paper_k()[spec_id])
+                        e_col=_adaptive().e_cols(table, spec_id).astype(float), k=book_k(spec_id))
 
 
 def run_book(name: str, ctx: Context, funding: pd.DataFrame, book_start: pd.Timestamp, end: pd.Timestamp,
@@ -474,5 +488,5 @@ def ax_state(name: str, held: dict, ctx: Context, end: pd.Timestamp) -> dict:
             "anchor_lower": clean(held.get("anchor_lower")), "updated_at": pd.Timestamp(end).isoformat()}
 
 
-__all__ = ["AX_BOOKS", "BOOKS", "NAMES", "X3_BOOKS", "ax_state", "fill_rows", "label", "live_context", "paper_k",
-           "run_book"]
+__all__ = ["AX_BOOKS", "BOOKS", "FLIP_BOOKS", "FLIP_NAMES", "FLIP_X3_BOOKS", "NAMES", "X3_BOOKS", "ax_state",
+           "book_k", "fill_rows", "label", "live_context", "paper_k", "run_book"]

@@ -32,23 +32,28 @@ def _side(current, lo, hi) -> np.ndarray:
         return np.where(current >= hi, -1, np.where(current <= lo, 1, 0))
 
 
-def _k01_state(component, h: pd.DataFrame, levels: pd.DataFrame, prior_high: pd.Series) -> dict:
+def _k01_state(component, h: pd.DataFrame, levels: pd.DataFrame, prior_high: pd.Series, flip: bool = False) -> dict:
     """R2-52A: F3 rows exit long when global_ls >= q50 (short <=); E1 rows carry the prior-20 h high as the anchor
     stored at fill and the completed hourly close as the value compared with it, one-shot (anchor_once): only the
-    next completed hourly close after entry is checked (long exits when close <= level)."""
+    next completed hourly close after entry is checked (long exits when close <= level). flip (K01_FLIP, F3 side
+    flipped): the F3 rule is mirrored (long exits when global_ls <= q50, short >=); E1 unchanged."""
     f3 = np.asarray(component) == F3
     with np.errstate(invalid="ignore"):
-        return {"ax_exit_long": f3 & (levels.g >= levels.f3_mid).to_numpy(),
-                "ax_exit_short": f3 & (levels.g <= levels.f3_mid).to_numpy(),
+        up, down = (levels.g >= levels.f3_mid).to_numpy(), (levels.g <= levels.f3_mid).to_numpy()
+        if flip:
+            up, down = down, up
+        return {"ax_exit_long": f3 & up,
+                "ax_exit_short": f3 & down,
                 "anchor_upper": np.where(f3, np.nan, prior_high), "anchor_price": np.where(f3, np.nan, h.close),
                 "anchor_once": np.where(f3, np.nan, 1.0)}
 
 
-def k01_c1x(ctx: Context) -> pd.DataFrame:
-    """R2-39 C1_X: hourly; F3 (24 h, reversed only by F3) has priority over E1 (20 h)."""
+def k01_c1x(ctx: Context, flip: bool = False) -> pd.DataFrame:
+    """R2-39 C1_X: hourly; F3 (24 h, reversed only by F3) has priority over E1 (20 h). flip: K01_FLIP (C1_FLIP_AX),
+    the F3 side times -1 (upper extreme long, lower short); rows, priority and E1 unchanged."""
     h = ctx.bars(60)
     levels = hourly_levels(ctx)
-    f3 = _side(levels.g, levels.f3_lo, levels.f3_hi)
+    f3 = _side(levels.g, levels.f3_lo, levels.f3_hi) * (-1 if flip else 1)
     vol = h.volume.rolling(20, min_periods=20)
     prior_high = h.high.rolling(20, min_periods=20).max().shift()
     e1 = ((h.volume - vol.mean()) / vol.std(ddof=0) > 3) & (h.close > prior_high)
@@ -56,15 +61,23 @@ def k01_c1x(ctx: Context) -> pd.DataFrame:
     use_f3 = f3 != 0
     component = np.where(use_f3 | ~e1, F3, E1)
     return make_table(h.decision_time, np.where(use_f3, f3, np.where(e1, 1, 0)), component,
-                      np.where(use_f3, 24 * 60, 20 * 60), **_k01_state(component, h, levels, prior_high))
+                      np.where(use_f3, 24 * 60, 20 * 60), **_k01_state(component, h, levels, prior_high, flip))
 
 
-def k01_ax_rows(ctx: Context, table: pd.DataFrame) -> pd.DataFrame:
+def k01_ax_rows(ctx: Context, table: pd.DataFrame, flip: bool = False) -> pd.DataFrame:
     """R2-52A: the other component's inert row each hour, so both F3 and E1 positions see every hourly state."""
     h, levels = ctx.bars(60), hourly_levels(ctx)
     other = np.where(table.component.to_numpy() == F3, E1, F3)
     return make_table(h.decision_time, 0, other, table.max_hold_min.to_numpy(), allow_entry=False,
-                      **_k01_state(other, h, levels, h.high.rolling(20, min_periods=20).max().shift()))
+                      **_k01_state(other, h, levels, h.high.rolling(20, min_periods=20).max().shift(), flip))
+
+
+def k01_c1x_flip(ctx: Context) -> pd.DataFrame:
+    return k01_c1x(ctx, flip=True)
+
+
+def k01_flip_ax_rows(ctx: Context, table: pd.DataFrame) -> pd.DataFrame:
+    return k01_ax_rows(ctx, table, flip=True)
 
 
 def fast_signals(ctx: Context) -> pd.DataFrame:
@@ -161,6 +174,9 @@ def _composite(book: str):
 
 
 register(Spec("K01", "baseline", 60, 24 * 60, "24h", None, k01_c1x, reentry="stop_and_reverse", ax_rows=k01_ax_rows))
+# C1_FLIP_AX (Codex 2026-10-09): post-freeze, run only by scripts/sim_adaptive_exit.py --flip
+register(Spec("K01_FLIP", "baseline", 60, 24 * 60, "24h", None, k01_c1x_flip, reentry="stop_and_reverse",
+              ax_rows=k01_flip_ax_rows, post_freeze=True))
 register(Spec("K02", "reversion", 30, 4 * 60, "4h", "LOW", _single("F3-30", 30)))
 register(Spec("K03", "reversion", 30, 12 * 60, "12h", "LOW", _single("F3W-30", 30)))
 register(Spec("K04", "volatility", 15, 5 * 60, "4h", "HIGH", _single("E1-15", 15)))

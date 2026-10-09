@@ -22,6 +22,7 @@ class Spec:
     reentry: str = "strict"
     simulator: str = "core"     # "core" or "grid"
     ax_rows: Callable[[Context, pd.DataFrame], pd.DataFrame] | None = None   # R2-52A inert state rows (K01, K14)
+    post_freeze: bool = False   # added after the R2-47/48/52A freezes (K01_FLIP): kept out of catalog-wide sweeps
 
 
 CATALOG: dict[str, Spec] = {}

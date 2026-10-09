@@ -30,7 +30,7 @@ def main() -> None:
     minutes = ctx.minutes.loc[ctx.minutes.open_time >= rolling.TRAIN_START].reset_index(drop=True)
     rows = []
     for spec_id, spec in sorted(CATALOG.items()):
-        if spec.simulator != "core":
+        if spec.simulator != "core" or spec.post_freeze:
             continue
         table, config = build_variant(ctx, spec_id, False, "NATIVE")
         config = replace(config, include_funding=False)
