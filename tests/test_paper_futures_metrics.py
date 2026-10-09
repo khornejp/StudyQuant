@@ -413,10 +413,15 @@ def test_every_retried_http_attempt_is_audited(tmp_path) -> None:
         assert json.loads(audit.payload.iloc[0]) == {"code": -1003}
 
 
-def test_catalog_refuses_without_funding_backfill(tmp_path) -> None:
+def test_catalog_guard_warns_only_until_task1_activation(tmp_path, caplog) -> None:
     from btcusdt_quant.paper.store import refuse_missing_funding_backfill
 
     with PaperStore(tmp_path / "live.sqlite") as store:
+        # live DB before the R2-54 restart: no activation marker -> old behaviour (warn, keep running)
+        with caplog.at_level("WARNING"):
+            refuse_missing_funding_backfill(store)
+        assert "funding" in caplog.text
+        store.set_meta("r2_54_task1_activation", json.dumps({"at": "2026-10-09T00:00:00+00:00"}))
         with pytest.raises(SystemExit, match="funding"):
             refuse_missing_funding_backfill(store)
         engine = PaperEngine(store)
@@ -433,6 +438,24 @@ def test_catalog_refuses_without_funding_backfill(tmp_path) -> None:
         assert event.funding_time == "2026-07-01T00:00:00.005000+00:00" and event.interval_hours == 8
     source = (Path(__file__).resolve().parents[1] / "scripts" / "paper_catalog.py").read_text(encoding="utf-8")
     assert "refuse_missing_funding_backfill(store)" in source
+
+
+def test_backfill_cli_writes_activation_marker_after_funding_meta(tmp_path) -> None:
+    import subprocess
+    import sys as _sys
+    root = Path(__file__).resolve().parents[1]
+    db = tmp_path / "live.sqlite"
+    result = subprocess.run([_sys.executable, "scripts/paper_backfill.py", "--sqlite-path", str(db), "--futures-only",
+                             "--metrics-start", "2026-07-02", "--metrics-end", "2026-07-02",
+                             "--metrics-dir", "artifacts/hold_a_2026q3/metrics",
+                             "--download-dir", str(tmp_path / "dl")], cwd=root, capture_output=True, text=True,
+                            timeout=600)
+    assert result.returncode == 0, result.stderr[-2000:]
+    with PaperStore(db) as store:
+        marker = json.loads(store.get_meta("r2_54_task1_activation"))
+        assert json.loads(store.get_meta("funding_backfill"))["events"] > 0
+        assert marker["funding_events"] > 0 and marker["metrics_range"] == ["2026-07-02", "2026-07-02"]
+    assert not (tmp_path / "dl").exists()            # local zips only, nothing downloaded
 
 
 def _migration_module():

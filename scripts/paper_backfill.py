@@ -75,6 +75,10 @@ def main() -> None:
                 finally:
                     collector.close()
             summary["rest_klines"] = rest_rows
+        # R2-54 activation marker last, after funding_backfill meta: from now on paper_catalog enforces the guard
+        store.set_meta("r2_54_task1_activation", json.dumps({
+            "at": pd.Timestamp.now(tz="UTC").isoformat(), "metrics_range": [args.metrics_start, args.metrics_end],
+            "metrics_missing_days": metrics["missing_days"], "funding_events": funding["events"]}))
     print(json.dumps({**summary, "source": "Binance USD-M BTCUSDT public archives + public REST"}, default=str))
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import date
@@ -224,11 +225,19 @@ def refuse_pending_switch(store: "PaperStore") -> None:
 
 def refuse_missing_funding_backfill(store: "PaperStore") -> None:
     """paper_catalog must not write detector predictions / decisions before the R2-54 funding_events backfill:
-    predictions are INSERT OR IGNORE, so interval-less (masked) funding features would be frozen into them."""
+    predictions are INSERT OR IGNORE, so interval-less (masked) funding features would be frozen into them.
+    Enforced only after activation (meta r2_54_task1_activation, written by scripts/paper_backfill.py); before that
+    a crash-restart keeps the pre-R2-54 behaviour with a warning instead of stopping every book."""
     meta = store.get_meta("funding_backfill")
-    if meta is None or not json.loads(meta).get("events"):
-        raise SystemExit("R2-54 funding_events backfill missing: stop services, run scripts/paper_backfill.py "
-                         "--futures-only, verify, then start")
+    ready = meta is not None and bool(json.loads(meta).get("events"))
+    if ready:
+        return
+    if store.get_meta("r2_54_task1_activation") is None:
+        logging.getLogger(__name__).warning(
+            "R2-54 funding_events backfill missing (not activated yet): continuing with pre-R2-54 behaviour")
+        return
+    raise SystemExit("R2-54 funding_events backfill missing: stop services, run scripts/paper_backfill.py "
+                     "--futures-only, verify, then start")
 
 
 def utc_text(value: object) -> str:
