@@ -84,3 +84,50 @@ def test_research_replay_uses_logical_available_at_live_uses_both():
     assert regime.e_bps(live, d, "4h")[0] == 100.0                      # live: written_at <= T as well
     late_logical = research.assign(logical_available_at=t + pd.Timedelta(minutes=1))
     assert regime.e_bps(late_logical, d, "4h")[0] == 100.0
+
+
+R1 = pd.Timestamp("2026-10-01", tz="UTC")
+R2 = pd.Timestamp("2026-10-08", tz="UTC")
+
+
+def _versions(c):
+    return c.execute(f"SELECT model_id, prediction_ts, version FROM {detector.VERSIONED_TABLE} "
+                     "ORDER BY prediction_ts, model_id, version").fetchall()
+
+
+def test_versioned_table_keeps_a_differing_model_row_and_records_it():
+    c = sqlite3.connect(":memory:")
+    values = np.ones((1, len(detector.target_names())))
+    detector.write_predictions(c, pd.DatetimeIndex([T0]), R1, values)
+    assert detector.write_predictions(c, pd.DatetimeIndex([T0]), R2, 2 * values) == 0      # legacy row kept
+    assert detector.read_predictions(c).model_id.iloc[0] == "w730_raw_20261001"
+    assert _versions(c) == [("w730_raw_20261001", T0.isoformat(), 1), ("w730_raw_20261008", T0.isoformat(), 1)]
+    kinds = [r[0] for r in c.execute(f"SELECT kind FROM {detector.REVISION_TABLE}")]
+    assert kinds == ["legacy_kept_other_row"]
+
+
+def test_same_model_correction_is_a_new_version_identical_rewrite_is_noop():
+    c = sqlite3.connect(":memory:")
+    values = np.ones((1, len(detector.target_names())))
+    detector.write_predictions(c, pd.DatetimeIndex([T0]), R1, values)
+    detector.write_predictions(c, pd.DatetimeIndex([T0]), R1, values)                      # identical: nothing
+    assert _versions(c) == [("w730_raw_20261001", T0.isoformat(), 1)]
+    assert c.execute(f"SELECT COUNT(*) FROM {detector.REVISION_TABLE}").fetchone()[0] == 0
+    detector.write_predictions(c, pd.DatetimeIndex([T0]), R1, 3 * values)
+    assert _versions(c)[-1] == ("w730_raw_20261001", T0.isoformat(), 2)
+    kinds = sorted(r[0] for r in c.execute(f"SELECT kind FROM {detector.REVISION_TABLE}"))
+    assert kinds == ["correction", "legacy_kept_other_row"]
+    with pytest.raises(sqlite3.IntegrityError):
+        c.execute(f"UPDATE {detector.VERSIONED_TABLE} SET prediction_exc_4h=0")
+    with pytest.raises(sqlite3.IntegrityError):
+        c.execute(f"DELETE FROM {detector.VERSIONED_TABLE}")
+
+
+def test_legacy_rows_of_old_writers_are_mirrored_into_versions():
+    c = sqlite3.connect(":memory:")
+    _legacy_table(c, [(T0.isoformat(), "2026-10-07T07:00:16+00:00")])
+    detector.ensure_table(c)
+    detector.ensure_table(c)
+    row = c.execute(f"SELECT model_id, prediction_ts, version, logical_available_at, written_at, source "
+                    f"FROM {detector.VERSIONED_TABLE}").fetchall()
+    assert row == [("w730_raw_20261001", T0.isoformat(), 1, T0.isoformat(), "2026-10-07T07:00:16+00:00", "live")]

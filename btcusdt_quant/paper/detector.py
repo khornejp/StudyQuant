@@ -4,12 +4,13 @@ Training reuses out/run_k45_vol_detector_r2_44_window.py (fit_fold) unchanged; o
 2026-06-30 with the paper collector's tables (and the frozen Q3 premium archive). Research artefacts are read only.
 """
 from __future__ import annotations
-import importlib.util, sys
+import importlib.util, logging, sys
 from functools import lru_cache
 from pathlib import Path
 import numpy as np, pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
+log = logging.getLogger(__name__)
 R44_PATH = ROOT / "out/run_k45_vol_detector_r2_44_window.py"
 RESEARCH_CHECKPOINT = ROOT / "out/k45_vol_detector_r2_44_window_20261006/folds/w730_raw/HOLD_B/fold_0025.pt"
 Q3_PREMIUM = ROOT / "artifacts/hold_a_2026q3/premium_index"
@@ -21,6 +22,8 @@ ARCHIVE_END = pd.Timestamp("2026-07-01", tz="UTC")
 PREDICT_DAYS = 20                        # > 14-day 1 h lookback
 TABLE = "detector_predictions"
 MINUTE_TABLE = "detector_predictions_1m"
+VERSIONED_TABLE = "detector_prediction_versions"
+REVISION_TABLE = "detector_prediction_revisions"
 FRESH_HEADS = ("30m", "1h", "4h")      # refreshed every minute (detector_refresh_check: better); 12h/24h held from 15 m
 
 
@@ -182,8 +185,8 @@ def recent_data(connection, now: pd.Timestamp, every_minute: bool = False):
 
 
 def ensure_table(connection) -> None:
-    """One immutable row per origin (timestamp = prediction_ts; one model_id per origin, so also per
-    (model_id, prediction_ts)). R2-54 availability split, additive:
+    """Legacy TABLE: one immutable row per origin (timestamp = prediction_ts), read by all current readers; the
+    versioned (model_id, prediction_ts, version) history is VERSIONED_TABLE. R2-54 availability split, additive:
     logical_available_at = causal availability (the origin: its data cutoff, served by a checkpoint retrained <= it);
     written_at = physical write time; available_at = the live-usable time max(logical, written) = written_at, kept
     with its pre-R2-54 meaning for running readers. Research replay reads logical_available_at only."""
@@ -209,11 +212,66 @@ def ensure_table(connection) -> None:
                        "BEGIN SELECT RAISE(ABORT, 'detector predictions are immutable'); END")
     connection.execute(f"CREATE TRIGGER IF NOT EXISTS {TABLE}_no_delete BEFORE DELETE ON {TABLE} "
                        "BEGIN SELECT RAISE(ABORT, 'detector predictions are immutable'); END")
+    _ensure_versions(connection, columns)
+
+
+def _ensure_versions(connection, columns: str) -> None:
+    """Frozen R2-54 rule, additive: VERSIONED_TABLE keeps one immutable row per (model_id, prediction_ts, version);
+    a differing write is a new version / another model's row plus a REVISION_TABLE record, never dropped. The legacy
+    TABLE (one row per origin, read by every current reader) is dual-written; rows of pre-R2-54 / old-code writers
+    are mirrored here as version 1 on every call."""
+    connection.execute(f"CREATE TABLE IF NOT EXISTS {VERSIONED_TABLE} (model_id TEXT NOT NULL, "
+                       "prediction_ts TEXT NOT NULL, version INTEGER NOT NULL, retrain_time TEXT, "
+                       f"{columns}, logical_available_at TEXT, written_at TEXT, source TEXT, "
+                       "PRIMARY KEY(model_id, prediction_ts, version))")
+    connection.execute(f"CREATE TABLE IF NOT EXISTS {REVISION_TABLE} (prediction_ts TEXT NOT NULL, "
+                       "model_id TEXT NOT NULL, version INTEGER NOT NULL, kind TEXT NOT NULL, "
+                       "kept_model_id TEXT, kept_version INTEGER, detected_at TEXT NOT NULL)")
+    for name in (VERSIONED_TABLE, REVISION_TABLE):
+        connection.execute(f"CREATE TRIGGER IF NOT EXISTS {name}_no_update BEFORE UPDATE ON {name} "
+                           "BEGIN SELECT RAISE(ABORT, 'detector predictions are immutable'); END")
+        connection.execute(f"CREATE TRIGGER IF NOT EXISTS {name}_no_delete BEFORE DELETE ON {name} "
+                           "BEGIN SELECT RAISE(ABORT, 'detector predictions are immutable'); END")
+    names = ", ".join(f"prediction_{t}" for t in target_names())
+    connection.execute(f"INSERT OR IGNORE INTO {VERSIONED_TABLE} (model_id, prediction_ts, version, retrain_time, "
+                       f"{names}, logical_available_at, written_at, source) SELECT COALESCE(model_id, retrain_time), "
+                       f"timestamp, 1, retrain_time, {names}, logical_available_at, written_at, source FROM {TABLE} "
+                       f"WHERE NOT EXISTS (SELECT 1 FROM {VERSIONED_TABLE} v WHERE v.prediction_ts={TABLE}.timestamp "
+                       f"AND v.model_id=COALESCE({TABLE}.model_id, {TABLE}.retrain_time))")
+
+
+def _write_versions(connection, rows: list[tuple], now: str) -> None:
+    """rows = legacy-column tuples; see _ensure_versions."""
+    names = [f"prediction_{t}" for t in target_names()]
+    k = len(names)
+    for row in rows:
+        stamp, retrain, values = row[0], row[1], tuple(None if v != v else v for v in row[2:2 + k])   # NaN = NULL
+        model, source, logical, written = row[2 + k + 2], row[2 + k + 3], row[2 + k + 4], row[2 + k + 5]
+        kept = connection.execute(f"SELECT model_id, {', '.join(names)} FROM {TABLE} WHERE timestamp=?",
+                                  (stamp,)).fetchone()
+        last = connection.execute(f"SELECT version, {', '.join(names)} FROM {VERSIONED_TABLE} WHERE model_id=? AND "
+                                  "prediction_ts=? ORDER BY version DESC LIMIT 1", (model, stamp)).fetchone()
+        if last is not None and tuple(last[1:]) == values:
+            continue
+        version = 1 if last is None else last[0] + 1
+        connection.execute(f"INSERT INTO {VERSIONED_TABLE} (model_id, prediction_ts, version, retrain_time, "
+                           f"{', '.join(names)}, logical_available_at, written_at, source) VALUES "
+                           f"({', '.join('?' * (k + 7))})", (model, stamp, version, retrain, *values, logical, written,
+                                                             source))
+        if last is not None:
+            connection.execute(f"INSERT INTO {REVISION_TABLE} VALUES (?,?,?,?,?,?,?)",
+                               (stamp, model, version, "correction", model, last[0], now))
+        if kept is not None and (kept[0] != model or tuple(kept[1:]) != values):
+            log.warning("detector prediction %s: legacy row %s kept; %s v%d stored in %s", stamp, kept[0], model,
+                        version, VERSIONED_TABLE)
+            connection.execute(f"INSERT INTO {REVISION_TABLE} VALUES (?,?,?,?,?,?,?)",
+                               (stamp, model, version, "legacy_kept_other_row", kept[0], None, now))
 
 
 def write_predictions(connection, origins: pd.DatetimeIndex, retrain: pd.Timestamp, values: np.ndarray,
                       source: str = "live", table: str = TABLE) -> int:
-    """INSERT OR IGNORE: a later model never overwrites an origin's prediction."""
+    """Legacy table: INSERT OR IGNORE (a later model never overwrites an origin's prediction); the 15 m grid is
+    also written to VERSIONED_TABLE, where nothing differing is dropped. Returns legacy rows written."""
     ensure_table(connection)
     names = [f"prediction_{t}" for t in target_names()]
     now = pd.Timestamp.now(tz="UTC").isoformat()
@@ -221,6 +279,8 @@ def write_predictions(connection, origins: pd.DatetimeIndex, retrain: pd.Timesta
                "logical_available_at", "written_at"]
     rows = [(o.isoformat(), retrain.isoformat(), *map(float, v), now, now, f"w730_raw_{retrain:%Y%m%d}", source,
              o.isoformat(), now) for o, v in zip(origins, values)]
+    if table == TABLE:          # before the legacy insert, so a differing row is compared with the kept one
+        _write_versions(connection, rows, now)
     before = connection.total_changes
     connection.executemany(f"INSERT OR IGNORE INTO {table} ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
                            rows)

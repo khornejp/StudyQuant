@@ -86,14 +86,68 @@ def test_changing_inputs_after_cutoff_does_not_change_earlier_predictions():
 def test_written_folds_are_immutable(tmp_path):
     retrain = pd.Timestamp("2026-01-01", tz="UTC")
     ckpt, preds, meta = gen.fold_paths(tmp_path, retrain)
-    assert not gen.completed(tmp_path, retrain, "c")
+    inputs = {"snapshot_manifest_sha256": "s"}
+    assert not gen.completed(tmp_path, retrain, "c", inputs)
     for p in (ckpt, preds):
         p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b"x")
     with pytest.raises(RuntimeError, match="partial"):
-        gen.completed(tmp_path, retrain, "c")
+        gen.completed(tmp_path, retrain, "c", inputs)
     sha = detector.r44().r.sha256_file(ckpt)
     meta.parent.mkdir(parents=True, exist_ok=True)
-    meta.write_text(json.dumps({"code_sha256": "c", "checkpoint_sha256": sha, "predictions_sha256": sha}))
-    assert gen.completed(tmp_path, retrain, "c")
+    meta.write_text(json.dumps({"code_sha256": "c", "checkpoint_sha256": sha, "predictions_sha256": sha,
+                                "inputs": inputs}))
+    assert gen.completed(tmp_path, retrain, "c", inputs)
     with pytest.raises(RuntimeError, match="does not verify"):
-        gen.completed(tmp_path, retrain, "other code")
+        gen.completed(tmp_path, retrain, "other code", inputs)
+    with pytest.raises(RuntimeError, match="does not verify"):          # other input provenance: never reused
+        gen.completed(tmp_path, retrain, "c", {"snapshot_manifest_sha256": "other"})
+
+
+def test_funding_coverage_guard_finds_missing_and_unknown_interval_events():
+    t = pd.date_range("2026-09-30", "2026-09-30T16:00", freq="8h", tz="UTC")
+    ok = pd.DataFrame({"funding_time": [x.isoformat() for x in t], "interval_hours": 8.0})
+    end = pd.Timestamp("2026-10-01", tz="UTC")
+    assert gen.coverage_of(ok, pd.Timestamp("2026-09-30T04:00", tz="UTC"), end)["complete"]
+    late = gen.coverage_of(ok, pd.Timestamp("2026-09-30T04:00", tz="UTC"), end + pd.Timedelta(hours=8))
+    assert not late["complete"] and late["gaps"] == [{"expected": "2026-10-01 00:00:00+00:00", "next_stored": None}]
+    unknown = ok.assign(interval_hours=[8.0, np.nan, 8.0])
+    assert gen.coverage_of(unknown, pd.Timestamp("2026-09-30T04:00", tz="UTC"), end)["unknown_interval_events"] == 1
+    hole = ok.drop(index=1)
+    assert gen.coverage_of(hole, pd.Timestamp("2026-09-30T04:00", tz="UTC"), end)["gaps"][0]["expected"]         == "2026-09-30 08:00:00+00:00"
+
+
+def _write_snapshot(root, frames, end):
+    r = detector.r44().r
+    records = {}
+    for name, frame in zip(gen.FRAMES, frames):
+        r.write_parquet(root / f"{name}.parquet", frame)
+        records[name] = {"sha256": gen.frame_sha256(frame), "file": r.file_record(root / f"{name}.parquet")}
+    r.write_json(root / "manifest.json", {"data_end_exclusive": str(end), "frames": records,
+                                         "funding_coverage": {"complete": True}, "funding_gaps_accepted": False})
+
+
+def test_run_inputs_come_only_from_a_verified_snapshot(tmp_path):
+    market, metrics, premium, funding = _synthetic(days=3)
+    frames = (market, metrics, premium, funding.assign(interval_missing=0))
+    end = market.open_time.iloc[-1] + pd.Timedelta(minutes=1)
+    root = tmp_path / "snap"
+    _write_snapshot(root, frames, end)
+    loaded, prov = gen.load_snapshot(root, end)
+    assert gen.frame_sha256(loaded[0]) == gen.frame_sha256(market)
+    cut, prov_cut = gen.load_snapshot(root, end - pd.Timedelta(days=1))
+    assert cut[0].open_time.max() < end - pd.Timedelta(days=1) and prov_cut != prov    # cut changes provenance
+    with pytest.raises(ValueError):
+        gen.load_snapshot(root, end + pd.Timedelta(days=1))
+    frame = pd.read_parquet(root / "premium.parquet")
+    frame.loc[0, "premium"] = 1.0
+    frame.to_parquet(root / "premium.parquet", index=False)
+    with pytest.raises(RuntimeError, match="file hash"):
+        gen.load_snapshot(root, end)
+
+
+def test_hold_b_acceptance_needs_all_26_bit_exact_folds():
+    good = {"frozen_checkpoint_max_abs_bps": 0.0, "regenerated_max_abs_bps": 0.0, "regenerated_missing_rows": 0}
+    folds = {str(k): good for k in range(26)}
+    assert gen.hold_b_acceptance(folds)["passed"]
+    assert not gen.hold_b_acceptance(dict(list(folds.items())[:25]))["passed"]
+    assert not gen.hold_b_acceptance({**folds, "0": {**good, "regenerated_max_abs_bps": 1e-7}})["passed"]
