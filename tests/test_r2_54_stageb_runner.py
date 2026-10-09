@@ -16,7 +16,7 @@ def test_unlock_refuses_without_every_recorded_hash_and_the_confirmation():
     problems = run.unlock_preconditions({}, None)
     for text in ("freeze hash", "snapshot hash", "selection trace", "no side passed", "registry", "confirmation"):
         assert any(text in p for p in problems), text
-    assert any("one-shot" in p for p in run.unlock_preconditions({"test_unlock": {"unlock_utc": "x"}}, run.CONFIRM))
+    assert not any("unlocked" in p for p in run.unlock_preconditions({"test_runs": [{"run_id": 1}]}, run.CONFIRM))
     m = {"opened_sides": ["long"], "final_fit": {"long": {"checkpoint": {"path": "missing.bin", "sha256": "0"}}}}
     assert any("long final checkpoint" in p for p in run.unlock_preconditions(m, run.CONFIRM))
     assert not any("confirmation" in p for p in run.unlock_preconditions(m, run.CONFIRM))
@@ -88,7 +88,7 @@ def test_unlock_refuses_when_code_differs_from_the_frozen_manifest():
 @pytest.mark.parametrize("stage", ["snapshot", "refit"])
 def test_snapshot_and_refit_checks_refuse_before_the_one_shot_flag(tmp_path, monkeypatch, stage):
     monkeypatch.setattr(run, "OUT", tmp_path)
-    m = {"opened_sides": ["long"], "test_unlock": None}
+    m = {"opened_sides": ["long"], "test_runs": []}
     (tmp_path / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
     monkeypatch.setattr(run, "unlock_preconditions", lambda m, c: [])
     calls = []
@@ -120,3 +120,16 @@ def test_rest_taker_swap_and_trade_comparison():
     c = run.compare_trades(a, r)
     assert c["matched_entry_times"] == 1 and c["only_archive_entry_times"] == [str(utc("2026-10-02"))]
     assert c["only_rest_entry_times"] == [str(utc("2026-10-03"))] and len(c["matched_with_different_exit"]) == 1
+
+
+def test_test_runs_are_appended_and_counted(tmp_path):
+    log = tmp_path / "test_runs.jsonl"
+    a = run.append_run(log, {"code": "x", "result": {"long": 1}})
+    b = run.append_run(log, {"code": "y", "result": {"long": 2}})
+    rows = [json.loads(l) for l in log.read_text(encoding="utf-8").splitlines()]
+    assert (a["run_id"], b["run_id"]) == (1, 2) and [r["run_id"] for r in rows] == [1, 2]
+    assert rows[0]["result"] == {"long": 1} and "utc" in rows[1]
+
+
+def test_snapshot_freeze_chain_through_a4():
+    assert run.SNAPSHOT_FREEZE_SHA == run.sb.amendment("A4")["freeze_sha256_before"]

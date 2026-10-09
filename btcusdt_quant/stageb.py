@@ -1,7 +1,9 @@
 """R2-54 Stage B (freeze out/k45_rl_r2_48_20261007/r2_54_stageb_freeze.json, amendments A1-A3): fixed-horizon gross
 signed-return labels, causal V5/V6 feature views, Ridge/CatBoost, the deterministic position rule through the R2-52A
 core ledger (scripts/sim_adaptive_exit.py), per-side ranking, gates, block bootstrap and Holm.
-Pure functions only; orchestration, artifacts and the one-shot test unlock live in out/run_r2_54_stageb.py."""
+Amendment A4: the 8 bps stress ledger is report-only in every gate and is not a ranking key; the final test may be
+run more than once (every run logged and counted, never used to choose anything).
+Pure functions only; orchestration, artifacts and the logged test runs live in out/run_r2_54_stageb.py."""
 from __future__ import annotations
 import contextlib, functools, hashlib, importlib.util, io, json, math, pickle, sys
 from dataclasses import dataclass, replace
@@ -54,6 +56,10 @@ def freeze() -> dict:
     return json.loads(FREEZE_PATH.read_text(encoding="utf-8"))
 
 
+def amendment(ident: str) -> dict:
+    return next(a for a in freeze()["amendments"] if a["id"] == ident)
+
+
 def parse_interval(text: str) -> tuple[pd.Timestamp, pd.Timestamp]:
     a, b = text.strip("[)").split(",")
     return pd.Timestamp(a.strip()), pd.Timestamp(b.strip())
@@ -93,6 +99,7 @@ def check_freeze() -> None:
           and f["status"]["design"] == "FROZEN" and f["bootstrap"]["block_rows"] == 672
           and f["bootstrap"]["replicates"] == 10000 and f["bootstrap"]["seed"] == 20261008)
     n_trials()
+    ok = ok and amendment("A4")["freeze_sha256_before"] == "710cb08b8f60c3c3c142ed5fd398122751eb891918df3aa8b2f8f930fad034a6"
     if not ok:
         raise ValueError("stageb constants differ from the freeze")
 
@@ -697,6 +704,7 @@ def holm(pvalues: dict) -> dict:
 
 
 # ---------------------------------------------------------------- ranking, eligibility, gates
+RANK_NUMERIC = ("net4", "median_ic")            # A4 removed "pooled 8 bps net" from the frozen rank keys
 _K_ORDER = {2.0: 0, 1.5: 1, 1.0: 2}
 _VIEW_ORDER = {"V5_continuous": 0, "V6_full": 1}
 _H_ORDER = {h: i for i, h in enumerate(HORIZONS)}
@@ -709,7 +717,7 @@ def _num(x) -> float:
 
 def _compare(a: dict, b: dict) -> int:
     """selection.rank_per_side, tie_tolerance 1e-12 on the numeric keys, then the frozen priorities."""
-    for key in ("net4", "median_ic", "net8"):
+    for key in RANK_NUMERIC:
         x, y = _num(a[key]), _num(b[key])
         if x == y or (math.isfinite(x) and math.isfinite(y) and abs(x - y) <= TIE):
             continue
@@ -747,11 +755,19 @@ def validation_gates(fold_ic, fold_net4, pooled_net8: float, buckets: dict) -> d
         return bool(np.isfinite(v).all() and np.sum(v > 0) >= 2 and not np.any(v < -0.01))
 
     stability = all(stable(buckets[name]) for name in ("M", "L"))
-    economic = bool(np.sum(np.asarray(fold_net4, float) > 0) >= 7 and pooled_net8 >= 0)
+    economic = bool(np.sum(np.asarray(fold_net4, float) > 0) >= 7)       # A4: 8 bps pooled net is report-only
     return {"statistical": statistical, "stability": stability, "economic": economic,
             "pass": statistical and stability and economic, "median_ic": float(np.nanmedian(ic)),
             "positive_ic_folds": int(np.sum(ic > 0)), "positive_net4_folds": int(np.sum(np.asarray(fold_net4) > 0)),
-            "pooled_net8": float(pooled_net8), "buckets": buckets}
+            "pooled_net8_report_only": float(pooled_net8), "buckets": buckets}
+
+
+def final_gates(result: dict, holm_side: dict) -> dict:
+    """gates.final_test after A4: Holm p, bootstrap lower bound, cumulative 4 bps net, N_eff, positions; 8 bps reported."""
+    g = {"holm_p_le_0.05": holm_side["p_adj"] <= 0.05, "bootstrap_lower_gt_0": result["bootstrap"]["lower"] > 0,
+         "net4_gt_0": result["4bps"]["net_bps"] > 0, "n_eff_ge_100": result["n_eff"] >= 100,
+         "positions_ge_100": result["4bps"]["completed_positions"] >= 100}
+    return {**g, "pass": all(g.values()), "net8_report_only": result["8bps"]["net_bps"], "holm": holm_side}
 
 
 def v6_gates(full_ic: float, family_ic, top_id_ic: float, id_shares) -> dict:

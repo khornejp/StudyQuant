@@ -245,6 +245,21 @@ def row(**kw):
     return {**base, **kw}
 
 
+def test_amendment_a4_8bps_is_not_a_ranking_key():
+    rank = lambda rows: [r["k"] for r in sb.rank_candidates(rows)]
+    assert rank([row(k=1.0, net8=99.0), row(k=2.0, net8=-99.0)]) == [2.0, 1.0]   # tie on 4 bps + IC -> k priority
+    assert sb.RANK_NUMERIC == ("net4", "median_ic") and sb.amendment("A4")["id"] == "A4"
+
+
+def test_final_test_gates_after_a4():
+    r = {"bootstrap": {"lower": .01}, "4bps": {"net_bps": 10.0, "completed_positions": 150}, "8bps": {"net_bps": -50.0},
+         "n_eff": 200}
+    g = sb.final_gates(r, {"p_adj": .01})
+    assert g["pass"] and g["net8_report_only"] == -50.0 and "net8_ge_0" not in g
+    assert not sb.final_gates({**r, "4bps": {"net_bps": -1.0, "completed_positions": 150}}, {"p_adj": .01})["pass"]
+    assert not sb.final_gates(r, {"p_adj": .06})["pass"]
+
+
 def test_ranking_keys_in_frozen_order_with_1e12_tolerance():
     rank = lambda rows: [(r["view"], r["horizon"], r["model"], r["k"]) for r in sb.rank_candidates(rows)]
     assert rank([row(net4=1.0), row(net4=2.0, k=1.0)])[0][3] == 1.0
@@ -274,7 +289,9 @@ def test_validation_gates():
     g = sb.validation_gates(ic, net4, 1.0, buckets)
     assert g["statistical"] and g["stability"] and g["economic"] and g["pass"]
     assert not sb.validation_gates(ic[:6] + [-.01] * 4, net4, 1.0, buckets)["statistical"]
-    assert not sb.validation_gates(ic, net4, -0.1, buckets)["economic"]
+    g8 = sb.validation_gates(ic, net4, -785.0, buckets)                 # A4: 8 bps is report-only
+    assert g8["economic"] and g8["pass"] and g8["pooled_net8_report_only"] == -785.0
+    assert not sb.validation_gates(ic, [5.0] * 6 + [-1.0] * 4, 1.0, buckets)["economic"]
     assert not sb.validation_gates(ic, net4, 1.0, {"M": [.01, .02, -.02], "L": [.01, .01, .01]})["stability"]
     assert not sb.validation_gates(ic, net4, 1.0, {"M": [.01, -.001, -.002], "L": [.01, .01, .01]})["stability"]
     v6 = sb.v6_gates(full_ic=.02, family_ic=[.01, .01, .01, .01, .01, -.01], top_id_ic=.017,

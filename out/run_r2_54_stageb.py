@@ -5,8 +5,9 @@
                 the 7 robustness removals -> registry (+127) -> final refit of each gate-passing side on all pre-test
                 data -> manifest. Reads no 2026 market, label or outcome data (only snapshot file hashes).
   dry-run       the final-test replay code on an already-seen validation-era window (code check only, unregistered).
-  unlock-test   ONE-SHOT final test. Refuses unless the manifest holds the freeze, snapshot, selection-trace and
-                final checkpoint hashes and they verify; needs --confirm R2-54-STAGEB-ONE-SHOT. Not run by Task 4.
+  unlock-test   final test (amendment A4: repeatable; every run is appended to stageb/test_runs.jsonl and the
+                manifest with UTC, code hash, inputs and result, and counted). Refuses unless the freeze, snapshot,
+                selection-trace, code and final checkpoint hashes verify; needs --confirm R2-54-STAGEB-ONE-SHOT.
 
 Usage: venv_btcusdt\\Scripts\\python.exe out\\run_r2_54_stageb.py run [--workers 4]
        venv_btcusdt\\Scripts\\python.exe out\\run_r2_54_stageb.py dry-run
@@ -31,7 +32,8 @@ BASE = ROOT / "out/k45_rl_r2_48_20261007/r2_54"
 OUT = BASE / "stageb"
 SNAPSHOT = BASE / "stageb_snapshot"
 SNAPSHOT_SHA = "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069"     # Task 3 FINAL snapshot
-FREEZE_SHA = "710cb08b8f60c3c3c142ed5fd398122751eb891918df3aa8b2f8f930fad034a6"       # on-disk freeze incl. A3
+FREEZE_SHA = "e1f848ee8091e295dbc75861ffd9135a00236b45121c3b0054467e34ce4845a3"       # on-disk freeze incl. A4
+SNAPSHOT_FREEZE_SHA = "710cb08b8f60c3c3c142ed5fd398122751eb891918df3aa8b2f8f930fad034a6"  # freeze (A3) the snapshot used
 REGISTRY = ROOT / "out/sim_registry.jsonl"
 CONFIRM = "R2-54-STAGEB-ONE-SHOT"
 KNOWN_PREDICTION_GAPS = {"2023-12-31", "2025-12-31"}     # last day of each R2-44 stage-1 segment
@@ -105,8 +107,8 @@ def verify_snapshot(read_frames: bool = False) -> dict:
     m = json.loads(path.read_text(encoding="utf-8"))
     if m["status"] != "FINAL" or not m["parity"]["passed"] or not m["prediction_parity"]["passed"]:
         raise SystemExit("snapshot is not FINAL with passed parity")
-    if m["freeze"]["sha256"] != FREEZE_SHA:
-        raise SystemExit("snapshot was taken under another freeze hash")
+    if m["freeze"]["sha256"] != SNAPSHOT_FREEZE_SHA or sb.amendment("A4")["freeze_sha256_before"] != SNAPSHOT_FREEZE_SHA:
+        raise SystemExit("snapshot freeze hash does not chain to the current freeze (A4 freeze_sha256_before)")
     checked = {}
     for name, record in m["artifacts"].items():
         actual = sha(ROOT / record["path"])
@@ -591,13 +593,15 @@ def run(args) -> None:
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(digest)
     manifest["artifacts"]["features"]["frame_sha256"] = digest
-    previous = OUT / "manifest_round0.json"
-    if previous.exists():
+    rounds = sorted(OUT.glob("manifest_round*.json"))
+    if rounds:
+        reasons = {"manifest_round0.json": "fix round 1: ledgers book actual fundingTime events (minute bucketing only "
+                                           "inside the simulator); V4 availability in the causality gate; code changed",
+                   "manifest_round1.json": "amendment A4: 8 bps report-only in the validation economic gate and removed "
+                                           "from the rank keys; repeatable logged final test; code changed"}
         manifest["validation_rerun"] = {
-            "reason": "Codex pre-unlock fix round 1: ledgers book actual fundingTime events (minute bucketing only "
-                      "inside the simulator) instead of the 8 h-rounded schedule; V4 availability added to the "
-                      "causality gate; code changed",
-            "previous_manifest": {"path": rel(previous), "sha256": sha(previous)},
+            "previous_manifests": [{"path": rel(r), "sha256": sha(r), "superseded_because": reasons.get(r.name)}
+                                   for r in rounds],
             "fold_fits": "reused: feature frame sha256 identical to round 0 (marker folds/_features_frame_sha256.txt)",
             "registry": "no new rows: same 127 trials (5417 -> 5544 recorded once in round 0)"}
     gates = data_gates(ctx, feats, labels)
@@ -740,7 +744,7 @@ def run(args) -> None:
             manifest["final_fit"][side] = {"opened": False, "reason": "validation selection or gates failed; no test"}
     manifest["opened_sides"] = [s for s in sb.SIDES if selection[s].get("pass")]
     manifest["bootstrap_plan"] = {**sb.freeze()["bootstrap"], "implementation": "stageb.bootstrap_ic + stageb.holm"}
-    manifest["test_unlock"] = None
+    manifest["test_runs"] = []
     manifest["runtime_seconds"] = round(time.time() - started, 1)
     dump(OUT / "manifest.json", manifest)
     print(json.dumps({"selection": {s: (selection[s].get("selected") or {}) and
@@ -928,10 +932,8 @@ def test_context() -> tuple[Context, pd.DataFrame, pd.DataFrame]:
 
 
 def unlock_preconditions(m: dict, confirm: str | None) -> list:
-    """Every reason to refuse the one-shot unlock (empty list = allowed)."""
+    """Every reason to refuse a final-test run (empty list = allowed). A4: earlier runs do not block."""
     problems = []
-    if m.get("test_unlock"):
-        problems.append("test already unlocked (one-shot; manifest is append-only)")
     if (m.get("freeze") or {}).get("sha256") != FREEZE_SHA or sha(sb.FREEZE_PATH) != FREEZE_SHA:
         problems.append("freeze hash missing or changed")
     if (m.get("snapshot") or {}).get("manifest_sha256") != SNAPSHOT_SHA or sha(SNAPSHOT / "manifest.json") != SNAPSHOT_SHA:
@@ -954,6 +956,21 @@ def unlock_preconditions(m: dict, confirm: str | None) -> list:
     if confirm != CONFIRM:
         problems.append(f"explicit confirmation missing (--confirm {CONFIRM})")
     return problems
+
+
+TEST_RUNS = OUT / "test_runs.jsonl"
+
+
+def append_run(log: Path, record: dict, run_id: int | None = None) -> dict:
+    """A4 run log: append-only JSON lines; a new run gets the next run_id."""
+    rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines() if x.strip()] if log.exists() else []
+    if run_id is None:
+        run_id = 1 + max((r["run_id"] for r in rows), default=0)
+    row = {"run_id": run_id, "utc": now(), **record}
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+    return row
 
 
 def refit_check(m: dict) -> dict:
@@ -983,11 +1000,17 @@ def unlock(args) -> None:
     refit = refit_check(m)                                  # pre-2026 artifacts only
     if not all(r["equal"] for r in refit.values()):
         raise SystemExit(f"refused: final checkpoint refit hash differs {refit}")
-    m["test_unlock"] = {"unlock_utc": now(), "pid": os.getpid(), "host": socket.gethostname(),
-                        "user": getpass.getuser(), "python": sys.version, "platform": platform.platform(),
-                        "argv": sys.argv, "git": git(), "code_sha256": code_hashes(), "snapshot_verified": snapshot,
-                        "refit_check": refit}
-    m["test_status"] = "UNLOCKED"
+    inputs = {"freeze_sha256": FREEZE_SHA, "snapshot_manifest_sha256": SNAPSHOT_SHA,
+              "trace_sha256": m["selection"]["trace_sha256"],
+              "final_checkpoints": {s: m["final_fit"][s]["checkpoint"]["sha256"] for s in m["opened_sides"]}}
+    start = append_run(TEST_RUNS, {"status": "STARTED", "pid": os.getpid(), "host": socket.gethostname(),
+                                   "user": getpass.getuser(), "python": sys.version, "platform": platform.platform(),
+                                   "argv": sys.argv, "git": git(), "code_sha256": code_hashes(), "inputs": inputs,
+                                   "snapshot_verified": snapshot, "refit_check": refit})
+    run_id = start["run_id"]
+    m.setdefault("test_runs", []).append({"run_id": run_id, "started_utc": start["utc"], "status": "STARTED",
+                                          "inputs": inputs})
+    m["test_status"] = f"TEST RUN {run_id} (A4: repeatable, logged, counted)"
     dump(path, m)                                      # recorded before any 2026 frame is read
     test = {"snapshot": verify_snapshot(read_frames=True)}
     ctx, funding, settle = test_context()
@@ -998,12 +1021,14 @@ def unlock(args) -> None:
     same = old.frame.columns.equals(feats.frame.columns) and old.frame.equals(feats.frame.iloc[:n].reset_index(drop=True))
     test["pre_2026_feature_parity"] = {"rows": n, "identical": bool(same)}
     if not same:
-        m["test"] = {**test, "status": "ABORTED: pre-2026 feature rows differ between validation and test builds"}
+        status = "ABORTED: pre-2026 feature rows differ between validation and test builds"
+        m["test_runs"][-1].update(status=status, test=test)
         dump(path, m)
-        raise SystemExit(m["test"]["status"])
+        append_run(TEST_RUNS, {"status": status, "test": test}, run_id)
+        raise SystemExit(status)
     labels = sb.make_labels(ctx.minutes, pd.DatetimeIndex(feats.frame.decision_time))   # test labels opened here
     sb.assert_isolated(feats.frame, labels)
-    folder = OUT / "test"
+    folder = OUT / f"test/run_{run_id:02d}"
     parquet(folder / "features_full.parquet", feats.frame)
     parquet(folder / "labels_full.parquet", labels)
     results, pvals, raw = {}, {}, {}
@@ -1025,16 +1050,17 @@ def unlock(args) -> None:
         if not r["opened"]:
             r["gates"] = {"pass": False, "reason": "not opened"}
             continue
-        g = {"holm_p_le_0.05": h[side]["p_adj"] <= 0.05, "bootstrap_lower_gt_0": r["bootstrap"]["lower"] > 0,
-             "net4_gt_0": r["4bps"]["net_bps"] > 0, "net8_ge_0": r["8bps"]["net_bps"] >= 0,
-             "n_eff_ge_100": r["n_eff"] >= 100, "positions_ge_100": r["4bps"]["completed_positions"] >= 100}
-        r["gates"] = {**g, "pass": all(g.values()), "holm": h[side]}
-    m["test"] = {**test, "status": "PRIMARY_FROZEN", "results": results, "holm": h, "written_utc": now(),
-                 "claim_rule": sb.freeze()["manifest"]["result_claim"]}
+        r["gates"] = sb.final_gates(r, h[side])
+    record = {**test, "status": "PRIMARY_FROZEN", "results": results, "holm": h, "written_utc": now(),
+              "claim_rule": sb.freeze()["manifest"]["result_claim"], "folder": rel(folder)}
+    m["test_runs"][-1].update(record)
     dump(path, m)                                      # primary result frozen before any oracle or diagnostic
-    m["test"]["oracles_non_selectable"] = oracles(ctx, feats, labels, m, settle, folder)
-    m["test"]["a3_taker_source_diagnostic"] = taker_diagnostic(ctx, funding, labels, m, settle, folder, raw)
+    append_run(TEST_RUNS, {"status": "PRIMARY_FROZEN", "results": results, "holm": h}, run_id)
+    extra = {"oracles_non_selectable": oracles(ctx, feats, labels, m, settle, folder),
+             "a3_taker_source_diagnostic": taker_diagnostic(ctx, funding, labels, m, settle, folder, raw)}
+    m["test_runs"][-1].update(extra, status="COMPLETED")
     dump(path, m)
+    append_run(TEST_RUNS, {"status": "COMPLETED", **extra}, run_id)
     print(json.dumps({s: results[s].get("gates") for s in sb.SIDES}, indent=1, default=str))
 
 
