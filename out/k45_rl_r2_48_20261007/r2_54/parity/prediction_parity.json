@@ -2,8 +2,8 @@
   "kind": "R2-54 offline vs live feature/prediction parity",
   "freeze": {
     "path": "out\\k45_rl_r2_48_20261007\\r2_54_stageb_freeze.json",
-    "bytes": 28978,
-    "sha256": "ca7ffd5e8c1a92189150b2a7d72fa376e3a72c68a2340090b82ee1695c46a5df"
+    "bytes": 31889,
+    "sha256": "710cb08b8f60c3c3c142ed5fd398122751eb891918df3aa8b2f8f930fad034a6"
   },
   "rule": "data_plan.parity.prediction_check: exact timestamps and masks, numeric rtol=1e-6, atol=0",
   "offline_path": "detector.build_data(snapshot frames) (= Stage-A generator inputs) + detector.predict",
@@ -918,5 +918,5 @@
     }
   },
   "passed": true,
-  "written_at": "2026-10-09T09:39:42.710730+00:00"
+  "written_at": "2026-10-09T10:28:19.460079+00:00"
 }

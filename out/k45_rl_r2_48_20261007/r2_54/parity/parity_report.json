@@ -2,10 +2,10 @@
   "kind": "R2-54 archive vs public REST parity",
   "freeze": {
     "path": "out\\k45_rl_r2_48_20261007\\r2_54_stageb_freeze.json",
-    "bytes": 28978,
-    "sha256": "ca7ffd5e8c1a92189150b2a7d72fa376e3a72c68a2340090b82ee1695c46a5df"
+    "bytes": 31889,
+    "sha256": "710cb08b8f60c3c3c142ed5fd398122751eb891918df3aa8b2f8f930fad034a6"
   },
-  "rule": "data_plan.parity.metric_tolerance (amendment A1)",
+  "rule": "data_plan.parity.metric_tolerance (amendment A1; taker per amendment A3: archive-vs-REST Q3 report-only)",
   "window": [
     "2026-10-01 00:00:00+00:00",
     "2026-10-08 00:00:00+00:00"
@@ -134,6 +134,11 @@
   "fields": {
     "global_ls": {
       "passed": true,
+      "blocking": {
+        "long_account": true,
+        "short_account": true,
+        "long_short_ratio": true
+      },
       "mismatch": {
         "long_account": 0,
         "short_account": 0,
@@ -156,6 +161,11 @@
     },
     "top_ls": {
       "passed": true,
+      "blocking": {
+        "long_account": true,
+        "short_account": true,
+        "long_short_ratio": true
+      },
       "mismatch": {
         "long_account": 0,
         "short_account": 0,
@@ -178,6 +188,9 @@
     },
     "oi": {
       "passed": true,
+      "blocking": {
+        "sum_open_interest": true
+      },
       "mismatch": {
         "sum_open_interest": 0
       },
@@ -194,6 +207,9 @@
     },
     "oi_value": {
       "passed": true,
+      "blocking": {
+        "sum_open_interest_value": true
+      },
       "mismatch": {
         "sum_open_interest_value": 0
       },
@@ -209,7 +225,11 @@
       "timestamp_mismatch": 0
     },
     "taker_lsr": {
-      "passed": false,
+      "passed": true,
+      "blocking": {
+        "rest_internal_q4": true,
+        "archive_vs_rest_q3": false
+      },
       "mismatch": {
         "rest_internal_q4": 0,
         "archive_vs_rest_q3": 250
@@ -261,21 +281,24 @@
           "mismatch": 0,
           "max_abs_raw_residual": 4.998961716407013e-05,
           "mean_abs_raw_residual": 2.5295156190997108e-05,
-          "examples": []
+          "examples": [],
+          "blocking": true
         },
         "short_account": {
           "compared": 2016,
           "mismatch": 0,
           "max_abs_raw_residual": 4.998961716407013e-05,
           "mean_abs_raw_residual": 2.5295156190998348e-05,
-          "examples": []
+          "examples": [],
+          "blocking": true
         },
         "long_short_ratio": {
           "compared": 2016,
           "mismatch": 0,
           "max_abs_raw_residual": 0.0003972199999999759,
           "mean_abs_raw_residual": 0.00012206393849206169,
-          "examples": []
+          "examples": [],
+          "blocking": true
         }
       },
       "passed": true
@@ -312,21 +335,24 @@
           "mismatch": 0,
           "max_abs_raw_residual": 4.9967795197169984e-05,
           "mean_abs_raw_residual": 2.4999748458409727e-05,
-          "examples": []
+          "examples": [],
+          "blocking": true
         },
         "short_account": {
           "compared": 2016,
           "mismatch": 0,
           "max_abs_raw_residual": 4.9967795197169984e-05,
           "mean_abs_raw_residual": 2.49997484584086e-05,
-          "examples": []
+          "examples": [],
+          "blocking": true
         },
         "long_short_ratio": {
           "compared": 2016,
           "mismatch": 0,
           "max_abs_raw_residual": 0.00041088000000000235,
           "mean_abs_raw_residual": 0.00012723075892857226,
-          "examples": []
+          "examples": [],
+          "blocking": true
         }
       },
       "passed": true
@@ -363,14 +389,16 @@
           "mismatch": 0,
           "max_abs_raw_residual": 0.0,
           "mean_abs_raw_residual": 0.0,
-          "examples": []
+          "examples": [],
+          "blocking": true
         },
         "sum_open_interest_value": {
           "compared": 2016,
           "mismatch": 0,
           "max_abs_raw_residual": 0.0,
           "mean_abs_raw_residual": 0.0,
-          "examples": []
+          "examples": [],
+          "blocking": true
         }
       },
       "passed": true
@@ -407,7 +435,8 @@
           "mismatch": 0,
           "max_abs_raw_residual": 4.9995587566353805e-05,
           "mean_abs_raw_residual": 2.4654329311303885e-05,
-          "examples": []
+          "examples": [],
+          "blocking": true
         },
         "archive_vs_rest_q3": {
           "compared": 2016,
@@ -452,12 +481,13 @@
             "rows_beyond_rest_q4_half_tick": 1140,
             "max_rel_raw_residual": 0.0010495548284500966,
             "median_abs_raw_residual": 6.0000000000060005e-05
-          }
+          },
+          "blocking": false
         }
       },
-      "passed": false
+      "passed": true
     }
   },
-  "passed": false,
-  "written_at": "2026-10-09T09:32:50.790242+00:00"
+  "passed": true,
+  "written_at": "2026-10-09T10:26:14.470757+00:00"
 }

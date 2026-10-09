@@ -1,0 +1,888 @@
+{
+  "kind": "R2-54 Stage-B immutable snapshot",
+  "status": "FINAL",
+  "created_at": "2026-10-09T10:28:44.896870+00:00",
+  "freeze": {
+    "path": "out\\k45_rl_r2_48_20261007\\r2_54_stageb_freeze.json",
+    "bytes": 31889,
+    "sha256": "710cb08b8f60c3c3c142ed5fd398122751eb891918df3aa8b2f8f930fad034a6",
+    "frozen_utc": "2026-10-09T01:35:00Z",
+    "amendments": [
+      "A1",
+      "A2",
+      "A3"
+    ]
+  },
+  "git": {
+    "commit": "b9b68755e93a0fe3e5ab746d6f317128346daf22",
+    "dirty_diff_sha256": "5d48fed4f679024aa6b07918c4ec7d9f567277c05301a0b4bccc9180a4cdfe8b",
+    "dirty_diff_bytes": 18400,
+    "untracked_or_modified": 61
+  },
+  "interval": [
+    "2026-01-01T00:00:00+00:00",
+    "2026-10-08T00:00:00+00:00"
+  ],
+  "data_cutoff_exclusive": "2026-10-08T00:00:00+00:00",
+  "registry": {
+    "registry_base": 5417,
+    "registry_after": 5544,
+    "source": "amendment A2",
+    "superseded_body": {
+      "registry_base": 5413,
+      "registry_after": 5540
+    }
+  },
+  "taker_source_rule": "At decision time T, first require create_time<=T and logical_available_at<=T. A finalized REST taker row is real-time eligible only when the live/paper collector physically received it by T (received_at<=T). When both an eligible REST row and an archive row exist, use REST buy_sell_ratio; never replace it later with the archive value. When no eligible REST row exists, historical training, validation, final-test replay, and backfill use archive sum_taker_long_short_vol_ratio. Never average or blend sources, and never silently fill a missing selected-source value from the other source. Preserve source, received_at, logical_available_at, age, and missing masks. Taker parity blocking checks: complete expected-period coverage, normalized timestamp and alignment, missing-mask agreement, and REST buySellRatio = Q4(buyVol/sellVol) with Decimal ROUND_HALF_UP. Archive-versus-REST Q3 mismatch counts and raw absolute/relative residuals are mandatory report-only diagnostics and do not affect parity pass. This supersedes only A1's taker archive-versus-REST Q3 blocking requirement; global LS, top LS, OI, OI value and prediction parity requirements are unchanged. Stage-B training, validation and final testing use archive taker; later live-paper rows use causally received REST taker. This is an intentional documented source shift, not exact train/serve parity; accepted for research and paper replay only, with no predictive-equivalence claim. After Stage-B selection (no reselection), compare feature -> prediction -> entry on the 7 overlapping days with archive vs REST taker and record the result.",
+  "time_structure": {
+    "development": "[2022-03-01T00:00:00Z, 2026-01-01T00:00:00Z)",
+    "validation_folds": [
+      "[2023-06-01T00:00:00Z, 2023-09-01T00:00:00Z)",
+      "[2023-09-01T00:00:00Z, 2023-12-01T00:00:00Z)",
+      "[2023-12-01T00:00:00Z, 2024-03-01T00:00:00Z)",
+      "[2024-03-01T00:00:00Z, 2024-06-01T00:00:00Z)",
+      "[2024-06-01T00:00:00Z, 2024-09-01T00:00:00Z)",
+      "[2024-09-01T00:00:00Z, 2024-12-01T00:00:00Z)",
+      "[2024-12-01T00:00:00Z, 2025-03-01T00:00:00Z)",
+      "[2025-03-01T00:00:00Z, 2025-06-01T00:00:00Z)",
+      "[2025-06-01T00:00:00Z, 2025-09-01T00:00:00Z)",
+      "[2025-09-01T00:00:00Z, 2025-12-01T00:00:00Z)"
+    ],
+    "validation_training": "Expanding train before each fold with horizon purge and a 24-hour fold-start embargo.",
+    "final_test_nominal": "[2026-01-01T00:00:00Z, 2026-10-08T00:00:00Z)",
+    "final_test_evaluable": "[2026-01-02T00:00:00Z, 2026-10-08T00:00:00Z) after the frozen 24-hour embargo; labels must exit before 2026-10-08T00:00:00Z.",
+    "final_test_mode": "One causal continuous replay with the frozen weekly retraining rule. Do not reset positions at retrain boundaries.",
+    "exposure_note": "2026H1 and 2026Q3 were viewed by earlier discounted experiments. Record this contamination; do not describe the interval as a pristine holdout.",
+    "one_shot": "Unlock labels and outcomes only after freeze hash, data snapshot, parity report, validation selection and selected checkpoint hashes are committed to the manifest."
+  },
+  "artifacts": {
+    "market_1m": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\market_1m.parquet",
+      "sha256": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59",
+      "bytes": 18222962,
+      "rows": 403200,
+      "frame_sha256": "2171c50a31ec5dd6ec79caf0415a348428635062a2c539d3f18d8df435b1157d",
+      "schema": {
+        "open_time": "datetime64[ns, UTC]",
+        "open": "float64",
+        "high": "float64",
+        "low": "float64",
+        "close": "float64",
+        "volume": "float64",
+        "quote_volume": "float64",
+        "number_of_trades": "int64",
+        "taker_buy_base_volume": "float64"
+      },
+      "time_column": "open_time",
+      "min_time": "2026-01-01 00:00:00+00:00",
+      "max_time": "2026-10-07 23:59:00+00:00",
+      "source": "artifacts/btcusdt_2020_2026h1.parquet + artifacts/hold_a_2026q3/market_2026q3.parquet + live DB klines_1m (open_time >= 2026-10-01); via stage_a_2026_inputs/market.parquet (hash-verified)"
+    },
+    "premium_1m": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\premium_1m.parquet",
+      "sha256": "c42bc22035ae9c899de19fae1cfb7c7e4b04c0715b4a4246dcb7063b7ec78f29",
+      "bytes": 7564720,
+      "rows": 402956,
+      "frame_sha256": "a35c5e9f467cf5a0abb54ecf8096899b61f7ca8bea4db551e36e559c2c3fde6c",
+      "schema": {
+        "open_time": "datetime64[ns, UTC]",
+        "close_time": "datetime64[ns, UTC]",
+        "premium": "float64"
+      },
+      "time_column": "open_time",
+      "min_time": "2026-01-01 00:00:00+00:00",
+      "max_time": "2026-10-07 23:59:00+00:00",
+      "source": "premium zips artifacts/premium_index_2020_2026h1 + artifacts/hold_a_2026q3/premium_index + live DB premium_1m (open_time >= 2026-10-01); via stage_a_2026_inputs/premium.parquet (hash-verified)"
+    },
+    "futures_global_ls_5m": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\futures_global_ls_5m.parquet",
+      "sha256": "2a05a86ce530ec20d5b6a916b1a9a3d59214af1c6f8afd26d6f47cc72c8687c4",
+      "bytes": 2067198,
+      "rows": 80639,
+      "frame_sha256": "4b38b9b54a1b77f5e01ac11de95460b69549b91a088949c57341a386ee88ad5b",
+      "schema": {
+        "symbol": "object",
+        "create_time": "object",
+        "source_timestamp": "object",
+        "long_short_ratio": "float64",
+        "long_account": "object",
+        "short_account": "object",
+        "logical_available_at": "object",
+        "received_at": "object",
+        "source": "object"
+      },
+      "time_column": "create_time",
+      "min_time": "2026-01-01 00:00:00+00:00",
+      "max_time": "2026-10-07 23:55:00+00:00",
+      "source": "live DB futures_global_ls_5m (read-only), all sources; archive = data.binance.vision metrics zips normalized by futures_metrics.backfill_metrics"
+    },
+    "futures_top_ls_5m": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\futures_top_ls_5m.parquet",
+      "sha256": "4fa37b22d58a1e1d19c90f05cab191258025346e1f6bac1a7c4f130c351dcd0e",
+      "bytes": 2066966,
+      "rows": 80639,
+      "frame_sha256": "65ebb0441f05283a52b5525da722c51cfee630d259812983e59c0248c7e6a494",
+      "schema": {
+        "symbol": "object",
+        "create_time": "object",
+        "source_timestamp": "object",
+        "long_short_ratio": "float64",
+        "long_account": "object",
+        "short_account": "object",
+        "logical_available_at": "object",
+        "received_at": "object",
+        "source": "object"
+      },
+      "time_column": "create_time",
+      "min_time": "2026-01-01 00:00:00+00:00",
+      "max_time": "2026-10-07 23:55:00+00:00",
+      "source": "live DB futures_top_ls_5m (read-only), all sources; archive = data.binance.vision metrics zips normalized by futures_metrics.backfill_metrics"
+    },
+    "futures_oi_5m": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\futures_oi_5m.parquet",
+      "sha256": "c57afca74c4096acc2728a2db17bed71bdb43634ee323961db240d99a448c74d",
+      "bytes": 2665055,
+      "rows": 80639,
+      "frame_sha256": "5ee1e4b57e306fb5aced5c0c5afee326d017a0f3630115a8b30366c4f45b5f05",
+      "schema": {
+        "symbol": "object",
+        "create_time": "object",
+        "source_timestamp": "object",
+        "sum_open_interest": "float64",
+        "sum_open_interest_value": "float64",
+        "logical_available_at": "object",
+        "received_at": "object",
+        "source": "object"
+      },
+      "time_column": "create_time",
+      "min_time": "2026-01-01 00:00:00+00:00",
+      "max_time": "2026-10-07 23:55:00+00:00",
+      "source": "live DB futures_oi_5m (read-only), all sources; archive = data.binance.vision metrics zips normalized by futures_metrics.backfill_metrics"
+    },
+    "futures_taker_lsr_5m": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\futures_taker_lsr_5m.parquet",
+      "sha256": "3af59d9a6325e0eadc7fd99f744f5a996c83c52a5d6f22abcf55db26afad2cbb",
+      "bytes": 2052467,
+      "rows": 80639,
+      "frame_sha256": "091954fd581eb6d2727a3e4dfbbcfb94b93e22627fcbe7be7c2bb54bd94f1dd5",
+      "schema": {
+        "symbol": "object",
+        "create_time": "object",
+        "source_timestamp": "object",
+        "buy_sell_ratio": "float64",
+        "buy_volume": "object",
+        "sell_volume": "object",
+        "logical_available_at": "object",
+        "received_at": "object",
+        "source": "object"
+      },
+      "time_column": "create_time",
+      "min_time": "2026-01-01 00:00:00+00:00",
+      "max_time": "2026-10-07 23:55:00+00:00",
+      "source": "live DB futures_taker_lsr_5m (read-only), source=archive only (amendment A3; REST rows in window asserted 0); archive = data.binance.vision metrics zips normalized by futures_metrics.backfill_metrics"
+    },
+    "funding_events": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\funding_events.parquet",
+      "sha256": "a3f98555f18f74e373a77336a9714fb5da59e0ba46f91a13b49ac5d7bbce0268",
+      "bytes": 33326,
+      "rows": 819,
+      "frame_sha256": "864534a8c69e42758068feb552a3ba21b0bc777a633ac299d36f6b902d71fd02",
+      "schema": {
+        "funding_time": "object",
+        "funding_rate": "float64",
+        "interval_hours": "float64",
+        "interval_missing": "int64",
+        "source_timestamp": "object",
+        "logical_available_at": "object",
+        "received_at": "object",
+        "source": "object"
+      },
+      "time_column": "funding_time",
+      "min_time": "2026-01-01 00:00:00.008000+00:00",
+      "max_time": "2026-09-30 16:00:00.002000+00:00",
+      "source": "live DB funding_events (read-only): actual fundingTime, interval_hours (archive funding_interval_hours), interval_missing"
+    },
+    "funding_live_table": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\funding_live_table.parquet",
+      "sha256": "9ed9698e9625d816db626b3375273c684886df1984ec08f1b242c76f5a9aff46",
+      "bytes": 26037,
+      "rows": 840,
+      "frame_sha256": "11d10c78c65b45486a712bb347d46a3f51f64047dcb7fe9e900fc9f56e863f0a",
+      "schema": {
+        "time": "object",
+        "rate": "float64",
+        "raw_calc_time": "object",
+        "source": "object",
+        "received_at": "object"
+      },
+      "time_column": "raw_calc_time",
+      "min_time": "2026-01-01 00:00:00.008000+00:00",
+      "max_time": "2026-10-07 16:00:00+00:00",
+      "source": "live DB funding (read-only): October REST events absent from funding_events; interval unknown"
+    },
+    "funding_model_input": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\funding_model_input.parquet",
+      "sha256": "ac0f660302dc805c421a9c79304b4af6fecb332b6b01704d908e1805297e6590",
+      "bytes": 18131,
+      "rows": 840,
+      "frame_sha256": "93bb17724566d4aaa6abf838420caf33dcd341cff154ef607fc3e1cd3d81f078",
+      "schema": {
+        "publish_time": "datetime64[ns, UTC]",
+        "rate": "float64",
+        "interval_hours": "float64",
+        "interval_missing": "int64"
+      },
+      "time_column": "publish_time",
+      "min_time": "2026-01-01 00:00:00.008000+00:00",
+      "max_time": "2026-10-07 16:00:00+00:00",
+      "source": "funding zips artifacts/funding_2020_2026h1 + artifacts/hold_a_2026q3/funding + live DB funding/funding_events via detector.live_inputs (publish_time >= 2026-10-01; unknown interval = missing); via stage_a_2026_inputs/funding.parquet; interval_missing=1 -> masked, never 8 h"
+    },
+    "stage_a_2026": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\stage_a_2026.parquet",
+      "sha256": "974feb8ff7b9a108df73bd673213a31c367321613433a927af6846c18eb7658b",
+      "bytes": 3623617,
+      "rows": 26880,
+      "frame_sha256": "4db1b514de068ac4def8b47da338adca48933ff1c5d65edf858ddd0430cd63ee",
+      "schema": {
+        "prediction_ts": "datetime64[ns, UTC]",
+        "retrain_time": "datetime64[ns, UTC]",
+        "model_id": "object",
+        "logical_available_at": "datetime64[ns, UTC]",
+        "written_at": "datetime64[ns, UTC]",
+        "source": "object",
+        "prediction_range_30m": "float64",
+        "prediction_range_1h": "float64",
+        "prediction_range_4h": "float64",
+        "prediction_range_12h": "float64",
+        "prediction_range_24h": "float64",
+        "prediction_rv_30m": "float64",
+        "prediction_rv_1h": "float64",
+        "prediction_rv_4h": "float64",
+        "prediction_rv_12h": "float64",
+        "prediction_rv_24h": "float64",
+        "prediction_exc_30m": "float64",
+        "prediction_exc_1h": "float64",
+        "prediction_exc_4h": "float64",
+        "prediction_exc_12h": "float64",
+        "prediction_exc_24h": "float64"
+      },
+      "time_column": "prediction_ts",
+      "min_time": "2026-01-01 00:00:00+00:00",
+      "max_time": "2026-10-07 23:45:00+00:00",
+      "source": "byte copy of out\\k45_rl_r2_48_20261007\\r2_54\\stage_a_2026\\stage_a_2026.parquet (single-lineage R2-44 w730_raw)",
+      "copied_from": {
+        "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stage_a_2026\\stage_a_2026.parquet",
+        "sha256": "974feb8ff7b9a108df73bd673213a31c367321613433a927af6846c18eb7658b"
+      }
+    },
+    "technique_metrics": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\technique_metrics.parquet",
+      "sha256": "dd5afe89d138b0ec63f27de3738bcbde0ef75664e4288bfe8d95fa578a3e5408",
+      "bytes": 4544741,
+      "rows": 80639,
+      "frame_sha256": "0849c1d511a7011b0fa11856eaa2a5870913e05e11dc3409e45a6101fd770f33",
+      "schema": {
+        "available_time": "datetime64[ns, UTC]",
+        "global_ls": "float64",
+        "top_ls": "float64",
+        "oi": "float64",
+        "oi_value": "float64",
+        "taker_lsr": "float64"
+      },
+      "time_column": "available_time",
+      "min_time": "2026-01-01 00:05:00+00:00",
+      "max_time": "2026-10-08 00:00:00+00:00",
+      "source": "four futures tables, source='archive', available_time=logical_available_at=create_time+5m (sim.data.load_metrics format; NaN = missing)"
+    },
+    "technique_premium": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\technique_premium.parquet",
+      "sha256": "5d02b5ba1015b28812fc08b1d9ca7232f1298d8556c5b55b40ce3ac2c2300c98",
+      "bytes": 4463775,
+      "rows": 402956,
+      "frame_sha256": "a9bc271fcb5bf3b3f5dfef21c5fe16a086a9ac31f8aa270b16f7ac2faab426cf",
+      "schema": {
+        "available_time": "datetime64[ns, UTC]",
+        "premium": "float64"
+      },
+      "time_column": "available_time",
+      "min_time": "2026-01-01 00:01:00+00:00",
+      "max_time": "2026-10-08 00:00:00+00:00",
+      "source": "premium_1m, available_time=close_time+1 ms (sim.data.load_premium)"
+    },
+    "availability": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\availability.json",
+      "sha256": "2839d4060a9fc20bc9a4291de2799eff552b69ff5c7c3547a19531aee624b9dc",
+      "bytes": 14324,
+      "rows": null,
+      "schema": "json",
+      "min_time": null,
+      "max_time": null,
+      "source": "derived from the artifacts above (coverage, nulls, availability rules)"
+    }
+  },
+  "pre_2026_train_validation": [
+    {
+      "path": "artifacts\\btcusdt_2020_2026h1.parquet",
+      "bytes": 182249475,
+      "sha256": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4"
+    },
+    {
+      "path": "artifacts\\metrics",
+      "files": 2129,
+      "bytes": 24637748,
+      "tree_sha256": "fb9591579dacfab0a93de72f120770496f6f04b2b6cebd58859e9449acc904bd",
+      "first": "BTCUSDT-metrics-2020-09-01.zip",
+      "last": "BTCUSDT-metrics-2026-06-30.zip"
+    },
+    {
+      "path": "artifacts\\premium_index_2020_2026h1",
+      "files": 2373,
+      "bytes": 64537700,
+      "tree_sha256": "3e246393245cfb0bc1a6ed81e9c81320e144cb87822a8696f9695d1867f5121c",
+      "first": "BTCUSDT-1m-2020-01-01.zip",
+      "last": "BTCUSDT-1m-2026-06-30.zip"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1",
+      "files": 78,
+      "bytes": 69259,
+      "tree_sha256": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+      "first": "BTCUSDT-fundingRate-2020-01.zip",
+      "last": "BTCUSDT-fundingRate-2026-06.zip"
+    },
+    {
+      "path": "artifacts\\metrics",
+      "pattern": "*.zip",
+      "before": "2026-01-01 00:00:00+00:00",
+      "files": 1948,
+      "bytes": 22613345,
+      "tree_sha256": "02fc9bfe9d88c7aad6fb04e3568df04e7ced3cbcd9d738dbd1953ce39646a150",
+      "first": "BTCUSDT-metrics-2020-09-01.zip",
+      "last": "BTCUSDT-metrics-2025-12-31.zip"
+    },
+    {
+      "path": "artifacts\\premium_index_2020_2026h1",
+      "pattern": "*.zip",
+      "before": "2026-01-01 00:00:00+00:00",
+      "files": 2192,
+      "bytes": 59394264,
+      "tree_sha256": "75e865bc564522c43219912402157ceb9037f9919e2b47a9f8491ae472f56623",
+      "first": "BTCUSDT-1m-2020-01-01.zip",
+      "last": "BTCUSDT-1m-2025-12-31.zip"
+    },
+    {
+      "path": "artifacts\\funding_2020_2026h1",
+      "pattern": "*.zip",
+      "before": "2026-01-01 00:00:00+00:00",
+      "files": 72,
+      "bytes": 63445,
+      "tree_sha256": "fb2fdc898e33250b3df7bdf69ac82aa3c21af6f4a7d3485e14278cad3b52ed21",
+      "first": "BTCUSDT-fundingRate-2020-01.zip",
+      "last": "BTCUSDT-fundingRate-2025-12.zip"
+    },
+    {
+      "path": "out\\k45_vol_detector_r2_44_window_20261006\\folds\\w730_raw\\DEV_FRONT",
+      "pattern": "*",
+      "before": null,
+      "files": 288,
+      "bytes": 68570007,
+      "tree_sha256": "970f57ec48978eac60b6dc05187d9786ba11bffcae7876973acc3a3cb65fc89b",
+      "first": "fold_0000.json",
+      "last": "fold_0095_predictions.parquet"
+    },
+    {
+      "path": "out\\k45_vol_detector_r2_44_window_20261006\\folds\\w730_raw\\DEV_BACK",
+      "pattern": "*",
+      "before": null,
+      "files": 315,
+      "bytes": 74932702,
+      "tree_sha256": "4366ba5c0057c538272808339c2a19ea417acf4c2a84b7adf2366bdc7c5a0391",
+      "first": "fold_0000.json",
+      "last": "fold_0104_predictions.parquet"
+    }
+  ],
+  "parity": {
+    "report": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\parity\\parity_report.json",
+      "bytes": 15116,
+      "sha256": "9ee09197076904964171bd139207b573dce4dae11b10cc3003cf32d1f914c684"
+    },
+    "passed": true,
+    "fields": {
+      "global_ls": {
+        "passed": true,
+        "blocking": {
+          "long_account": true,
+          "short_account": true,
+          "long_short_ratio": true
+        },
+        "mismatch": {
+          "long_account": 0,
+          "short_account": 0,
+          "long_short_ratio": 0
+        },
+        "compared": {
+          "long_account": 2016,
+          "short_account": 2016,
+          "long_short_ratio": 2016
+        },
+        "max_abs_raw_residual": {
+          "long_account": 4.998961716407013e-05,
+          "short_account": 4.998961716407013e-05,
+          "long_short_ratio": 0.0003972199999999759
+        },
+        "missing_archive": 0,
+        "missing_rest": 0,
+        "mask_mismatch": 0,
+        "timestamp_mismatch": 0
+      },
+      "top_ls": {
+        "passed": true,
+        "blocking": {
+          "long_account": true,
+          "short_account": true,
+          "long_short_ratio": true
+        },
+        "mismatch": {
+          "long_account": 0,
+          "short_account": 0,
+          "long_short_ratio": 0
+        },
+        "compared": {
+          "long_account": 2016,
+          "short_account": 2016,
+          "long_short_ratio": 2016
+        },
+        "max_abs_raw_residual": {
+          "long_account": 4.9967795197169984e-05,
+          "short_account": 4.9967795197169984e-05,
+          "long_short_ratio": 0.00041088000000000235
+        },
+        "missing_archive": 0,
+        "missing_rest": 0,
+        "mask_mismatch": 0,
+        "timestamp_mismatch": 0
+      },
+      "oi": {
+        "passed": true,
+        "blocking": {
+          "sum_open_interest": true
+        },
+        "mismatch": {
+          "sum_open_interest": 0
+        },
+        "compared": {
+          "sum_open_interest": 2016
+        },
+        "max_abs_raw_residual": {
+          "sum_open_interest": 0.0
+        },
+        "missing_archive": 0,
+        "missing_rest": 0,
+        "mask_mismatch": 0,
+        "timestamp_mismatch": 0
+      },
+      "oi_value": {
+        "passed": true,
+        "blocking": {
+          "sum_open_interest_value": true
+        },
+        "mismatch": {
+          "sum_open_interest_value": 0
+        },
+        "compared": {
+          "sum_open_interest_value": 2016
+        },
+        "max_abs_raw_residual": {
+          "sum_open_interest_value": 0.0
+        },
+        "missing_archive": 0,
+        "missing_rest": 0,
+        "mask_mismatch": 0,
+        "timestamp_mismatch": 0
+      },
+      "taker_lsr": {
+        "passed": true,
+        "blocking": {
+          "rest_internal_q4": true,
+          "archive_vs_rest_q3": false
+        },
+        "mismatch": {
+          "rest_internal_q4": 0,
+          "archive_vs_rest_q3": 250
+        },
+        "compared": {
+          "rest_internal_q4": 2016,
+          "archive_vs_rest_q3": 2016
+        },
+        "max_abs_raw_residual": {
+          "rest_internal_q4": 4.9995587566353805e-05,
+          "archive_vs_rest_q3": 0.0024540000000001783
+        },
+        "missing_archive": 0,
+        "missing_rest": 0,
+        "mask_mismatch": 0,
+        "timestamp_mismatch": 0
+      }
+    },
+    "rest_staging_db": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\parity\\rest_staging.sqlite",
+      "bytes": 3072000,
+      "sha256": "4ecc69fa138ffd27beb4dbc56d89706dc1b12d12df1e72a79f7fd8415c5599e4"
+    }
+  },
+  "prediction_parity": {
+    "report": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\parity\\prediction_parity.json",
+      "bytes": 24956,
+      "sha256": "bb5e9a36e3eb98f7a7696bca6f99c97e2ebf280dde2fcabfacc3f00a6e762a36"
+    },
+    "passed": true
+  },
+  "stage_a": {
+    "manifest": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stage_a_2026\\manifest.json",
+      "bytes": 104120,
+      "sha256": "ccf6fe955132f4d08d68de0c223d254ac2d6ba2429f0e13946b1e688fa4d5f23"
+    },
+    "inputs_manifest": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stage_a_2026_inputs\\manifest.json",
+      "bytes": 7062,
+      "sha256": "a9f67f944a6952e71228536d18775a51803aad083af61dc0b69b5ea0befe2332"
+    },
+    "folds": [
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260101",
+        "retrain_time": "2026-01-01 00:00:00+00:00",
+        "train_cutoff": "2025-12-30 23:45:00+00:00",
+        "checkpoint_sha256": "152ce937e5c19728b68cafbde21399fcb1760eba927df041afe9e0e1f546c090",
+        "predictions_sha256": "7cda95add84809b65031efd211e08f867da4b4099ef8e390d27554b1ee4becd0"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260108",
+        "retrain_time": "2026-01-08 00:00:00+00:00",
+        "train_cutoff": "2026-01-06 23:45:00+00:00",
+        "checkpoint_sha256": "75a61fbe3062d9847fdc140d47a8a7a1e57ccc48ce94b1d8b4c17bbf05e3267d",
+        "predictions_sha256": "73d35fd0dada5b717ba51e845a2c6bef5e876ff6d14e40e66d15320ebbecc082"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260115",
+        "retrain_time": "2026-01-15 00:00:00+00:00",
+        "train_cutoff": "2026-01-13 23:45:00+00:00",
+        "checkpoint_sha256": "d4c27826ea7a5fb45ea7268b7f32c77e48fd2743c925a403c19a0ee260bf0318",
+        "predictions_sha256": "4c3388c6624bac81fc7654d5c80f107ff601072a415bc963d23cc110b7df1a95"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260122",
+        "retrain_time": "2026-01-22 00:00:00+00:00",
+        "train_cutoff": "2026-01-20 23:45:00+00:00",
+        "checkpoint_sha256": "1586d5ed7e9f4a8c1caaaaa1892dd590a80bc14367b6d1cee487aeacd10de408",
+        "predictions_sha256": "d5a72517d166631af3b48ef30d4f119c32a757349c872966dc2b48ef73be9459"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260129",
+        "retrain_time": "2026-01-29 00:00:00+00:00",
+        "train_cutoff": "2026-01-27 23:45:00+00:00",
+        "checkpoint_sha256": "6989618f47f6d6198a56fa70b2a8aac71269a885ade274dec84d6d7dea5c8bd6",
+        "predictions_sha256": "e0c5bfa9016d43668ce4d22c30abc8edb0c6dfbdfa230a2f43f8d332ab8fadfb"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260205",
+        "retrain_time": "2026-02-05 00:00:00+00:00",
+        "train_cutoff": "2026-02-03 23:45:00+00:00",
+        "checkpoint_sha256": "6a2283647e7046fef8d269d75d326ef79c33651a23346026cc68700def066ecf",
+        "predictions_sha256": "b60a2ce7aba8930f505ce6ebe364f108a05875b220871ba59b4d03b9ff4a0bb4"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260212",
+        "retrain_time": "2026-02-12 00:00:00+00:00",
+        "train_cutoff": "2026-02-10 23:45:00+00:00",
+        "checkpoint_sha256": "571408aadecc2d4764598554edf77381c115690a2302954815efbdfb31d8fdc6",
+        "predictions_sha256": "6a8ed87c91637432b7f8e5129d81cd377823060e0a17f2d18d046b01522827b3"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260219",
+        "retrain_time": "2026-02-19 00:00:00+00:00",
+        "train_cutoff": "2026-02-17 23:45:00+00:00",
+        "checkpoint_sha256": "9aa7c7ded25e0881867be020ee1f1fe8b1e43c6fee2e299b61e6b53e6f9abcb3",
+        "predictions_sha256": "cff63300d207c41440231ca6c221b8b818eb6d1ee61ec883ffb8d7a1e7d93908"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260226",
+        "retrain_time": "2026-02-26 00:00:00+00:00",
+        "train_cutoff": "2026-02-24 23:45:00+00:00",
+        "checkpoint_sha256": "907140ac51c91181cf1d0b958353543a59fc91d581b264ce31c5c55fff1ed547",
+        "predictions_sha256": "456b15ff1fc2a36b04d6d87a36d729dd889474a2804e5d88b007337c108f5782"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260305",
+        "retrain_time": "2026-03-05 00:00:00+00:00",
+        "train_cutoff": "2026-03-03 23:45:00+00:00",
+        "checkpoint_sha256": "923734af34c5dd4116182ab0951b4591f16742b291b72f4f53d8520833172003",
+        "predictions_sha256": "e067529db6772d754869f2b2600c3ac6594d119f548e53902328819d00df8725"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260312",
+        "retrain_time": "2026-03-12 00:00:00+00:00",
+        "train_cutoff": "2026-03-10 23:45:00+00:00",
+        "checkpoint_sha256": "1f185737037bd87f2d5dc1be319ebe94d49224afcf100b566eaf340cb361c0b7",
+        "predictions_sha256": "45fda5b479b1c0553ab20038e28d07cc57587bb3e652f2ecdc6adac944fd46fb"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260319",
+        "retrain_time": "2026-03-19 00:00:00+00:00",
+        "train_cutoff": "2026-03-17 23:45:00+00:00",
+        "checkpoint_sha256": "0cf4f4931c4002a80eafbbd5a58f46a5f297fa8d564af2b36bbaa255f8cff3be",
+        "predictions_sha256": "fd7a4c8a8657d56c0100a7f2fad3763ec82a0d28498aa2ae873afd1525a3f04e"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260326",
+        "retrain_time": "2026-03-26 00:00:00+00:00",
+        "train_cutoff": "2026-03-24 23:45:00+00:00",
+        "checkpoint_sha256": "3468d22d4da1534e31e015d28d79e5ebf5d8b07dbc81b5203162117eb40cf0af",
+        "predictions_sha256": "efa0f105eec0c6f06d3f987de14d1efcd3def48d1de08ab4105cc4f99cd89a8f"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260402",
+        "retrain_time": "2026-04-02 00:00:00+00:00",
+        "train_cutoff": "2026-03-31 23:45:00+00:00",
+        "checkpoint_sha256": "8d7aab814b6d4d43d836925b74b8f78037399a9d79666245d7edda01019aafe4",
+        "predictions_sha256": "954b89481fb995afea7e52da803e6dfebf8e00e79f5c8398a32e7f68fb4b3814"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260409",
+        "retrain_time": "2026-04-09 00:00:00+00:00",
+        "train_cutoff": "2026-04-07 23:45:00+00:00",
+        "checkpoint_sha256": "839be21e615fe8410051a858b1911b2c9e186a94f49e0d8f95ac60692b4156c2",
+        "predictions_sha256": "5b77d12e519f0783fb5dbb6532797f89ceba767d9a5e70f08b7f82e61a2fd672"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260416",
+        "retrain_time": "2026-04-16 00:00:00+00:00",
+        "train_cutoff": "2026-04-14 23:45:00+00:00",
+        "checkpoint_sha256": "34bab47ac92e06d7ce986feb687044650478606114a8db2331914eaaaa3ebfe1",
+        "predictions_sha256": "15e75e5f902f1f49b8151dae7cdd4142967b34b536f11d86e23f19609b91ae7c"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260423",
+        "retrain_time": "2026-04-23 00:00:00+00:00",
+        "train_cutoff": "2026-04-21 23:45:00+00:00",
+        "checkpoint_sha256": "6fa9fb521e1dc697b97405d4319a2c4a2b1b54684069e9797a25fb5d79062c69",
+        "predictions_sha256": "5adf6e8e2372fff8e25a5b51a7e0cd80bc0d8628001e70cbbc67ff2303697fde"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260430",
+        "retrain_time": "2026-04-30 00:00:00+00:00",
+        "train_cutoff": "2026-04-28 23:45:00+00:00",
+        "checkpoint_sha256": "4135343caa9a0eb20589078fd9f0900b3114391a61e8be57bc7b7b692f8c57eb",
+        "predictions_sha256": "81614c4a128ce7be4a23e5071f326cd1bd391de29d3799b82cfe5d3e10fa9010"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260507",
+        "retrain_time": "2026-05-07 00:00:00+00:00",
+        "train_cutoff": "2026-05-05 23:45:00+00:00",
+        "checkpoint_sha256": "9635268e94bbc6c2237a1756dc3b499c80ddf6808f70b103e7f0b279eaeb66ff",
+        "predictions_sha256": "a00e287de0c173b25db89476439c0677792ca93838776ea5e310a85753c604d8"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260514",
+        "retrain_time": "2026-05-14 00:00:00+00:00",
+        "train_cutoff": "2026-05-12 23:45:00+00:00",
+        "checkpoint_sha256": "89ca7cc05d686bc0263ea098aaa8ca849cf379f482e2997bfdc33095bbd164a6",
+        "predictions_sha256": "a45b796d89035f15f0a6ebb4f1cca8c10c01198449cc852f615286e9fd77e776"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260521",
+        "retrain_time": "2026-05-21 00:00:00+00:00",
+        "train_cutoff": "2026-05-19 23:45:00+00:00",
+        "checkpoint_sha256": "4ee438573acbf3d7489fc93896f2c8ffcd2192b89bfb4799675a4aba07e71146",
+        "predictions_sha256": "4b0944cb9ab5e125a0f2fd31c064867ee9c577dffd0c3927095d427d0c69b5e1"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260528",
+        "retrain_time": "2026-05-28 00:00:00+00:00",
+        "train_cutoff": "2026-05-26 23:45:00+00:00",
+        "checkpoint_sha256": "61d2f1af5a1f0b1a2785a88846ed9596a4ac1c7c73f7f566978eecef5776d457",
+        "predictions_sha256": "6639a0d5bab5dfbc794a9ec062b6a1639d65d92ac66c138ab6d0ec3486cccf76"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260604",
+        "retrain_time": "2026-06-04 00:00:00+00:00",
+        "train_cutoff": "2026-06-02 23:45:00+00:00",
+        "checkpoint_sha256": "64adebe03f0250f28e42a27f0d6dcace5e40228250d7d8b852a9558453b0192c",
+        "predictions_sha256": "e36c81184d0e406c130d295b9ac912229beb0afbc1989c5e4cc7813323e423ea"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260611",
+        "retrain_time": "2026-06-11 00:00:00+00:00",
+        "train_cutoff": "2026-06-09 23:45:00+00:00",
+        "checkpoint_sha256": "246fef2160ec359d7a29be1c51774fdfef86a8913ffde866f6820479e92ada29",
+        "predictions_sha256": "c64bf47efeb180a11dc48d830fd13197c1ae5ea29b45a39137ce5247c58ba164"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260618",
+        "retrain_time": "2026-06-18 00:00:00+00:00",
+        "train_cutoff": "2026-06-16 23:45:00+00:00",
+        "checkpoint_sha256": "40867df5448e9945120acc43d56b867d888da728aad1cb5ae8b0f8e030e9175a",
+        "predictions_sha256": "e43cc5f4f45f58654695a52da08be1e0ac9cf6e3f33b7d6e45e7d309695c5584"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260625",
+        "retrain_time": "2026-06-25 00:00:00+00:00",
+        "train_cutoff": "2026-06-23 23:45:00+00:00",
+        "checkpoint_sha256": "3ad2055d9bc9419fac857269b128d8ccb532cb8adb0881f20e462adcb6b6fd13",
+        "predictions_sha256": "5fa8ef103074b029af300a7aa71e5aebe1f90efc189995323c67b1238c4ee481"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260702",
+        "retrain_time": "2026-07-02 00:00:00+00:00",
+        "train_cutoff": "2026-06-30 23:45:00+00:00",
+        "checkpoint_sha256": "e20e8e0e5c9461f9967e3acf8a8ab39702c119247a8e4a9fe33ad49ab4f0c470",
+        "predictions_sha256": "adeb74fea16e8042189aaccbd1a9169dd81279dd407d7531216c8e27d12a04a1"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260709",
+        "retrain_time": "2026-07-09 00:00:00+00:00",
+        "train_cutoff": "2026-07-07 23:45:00+00:00",
+        "checkpoint_sha256": "e7be43e78eb72814b2ee96428724a62e0c0a215022058f766a8c40814ae598fd",
+        "predictions_sha256": "4c7f6f447f3e4a17764e7c7621ede479aad1ab9381709883e7a098cfd6065e30"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260716",
+        "retrain_time": "2026-07-16 00:00:00+00:00",
+        "train_cutoff": "2026-07-14 23:45:00+00:00",
+        "checkpoint_sha256": "274100aaf2534db61932cde6a8becdb3bfc03fd7d030bdd5020e9cf108ccd6df",
+        "predictions_sha256": "2a4840307bddcbeba5cce5fa0b4ca60c5a5c29603d691dbb3ae5358dc4b327a6"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260723",
+        "retrain_time": "2026-07-23 00:00:00+00:00",
+        "train_cutoff": "2026-07-21 23:45:00+00:00",
+        "checkpoint_sha256": "9ebcf90a2059c72e2cf7cf11a1fccf7ea6afd328821457e78b16c82a6a772c4e",
+        "predictions_sha256": "8da8dc5dbb6a0ba07618568fde198e6be66ed25a11c073957c1181b0adf9da92"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260730",
+        "retrain_time": "2026-07-30 00:00:00+00:00",
+        "train_cutoff": "2026-07-28 23:45:00+00:00",
+        "checkpoint_sha256": "99fcb6e5ac26027f6ed42e72c85505eaf17fe0737238fe485c4eb1f817bbd150",
+        "predictions_sha256": "f1efcc2f15a2662d0fe946480d84b080f5f80e3888a49f14a9699734f49ce1b7"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260806",
+        "retrain_time": "2026-08-06 00:00:00+00:00",
+        "train_cutoff": "2026-08-04 23:45:00+00:00",
+        "checkpoint_sha256": "d12e323c1f0aa8ddd1f8a697d73ebc1d04d1a1aafe635878314971fc60e1dbf5",
+        "predictions_sha256": "96a34cb5ef6960812d4004c5c6f3de23ed5103d0f75d6f9a8ee1ebecfd1ce59e"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260813",
+        "retrain_time": "2026-08-13 00:00:00+00:00",
+        "train_cutoff": "2026-08-11 23:45:00+00:00",
+        "checkpoint_sha256": "e2ee2da826955a64e5a1e5604096be7c7cfafd285a1d8f309b3b084df082edaf",
+        "predictions_sha256": "202f020ca9a100dad3f45610b5ff7749576e17293c1b6d0768b5a1de735f1838"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260820",
+        "retrain_time": "2026-08-20 00:00:00+00:00",
+        "train_cutoff": "2026-08-18 23:45:00+00:00",
+        "checkpoint_sha256": "82ba0970098dfd07dc947d1c187d915cf1dad0a1e8692ccce1505dae014890a6",
+        "predictions_sha256": "1a91e0b08d09137273d6e7de6f6e879ab8f72cd32da0f74c7cb19a41e602fcf8"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260827",
+        "retrain_time": "2026-08-27 00:00:00+00:00",
+        "train_cutoff": "2026-08-25 23:45:00+00:00",
+        "checkpoint_sha256": "e47ee82556f587799275fa2765dafddb6dc853bc3b1aa848cb9b171f1fea23f4",
+        "predictions_sha256": "8e1e065eefe7ff515e22684434c53c880bce630dddf5057ddd8730c7925c87ac"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260903",
+        "retrain_time": "2026-09-03 00:00:00+00:00",
+        "train_cutoff": "2026-09-01 23:45:00+00:00",
+        "checkpoint_sha256": "0fdcdbdcf1a39838283c1c533fb7f266a8d933147bc447741af2a8e8c7663186",
+        "predictions_sha256": "0f4cd0758860051a745bd0e81c85ccefb7419a1075639f2382df346c23a3b9df"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260910",
+        "retrain_time": "2026-09-10 00:00:00+00:00",
+        "train_cutoff": "2026-09-08 23:45:00+00:00",
+        "checkpoint_sha256": "c863107ad97e2b29c683f48eab074477168f1603330ba7085d7ee4505a9d05bc",
+        "predictions_sha256": "ea9e4a02aee84703ffb5888ab552b2fdf9283e5f653d6b18a735440dc0139f36"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260917",
+        "retrain_time": "2026-09-17 00:00:00+00:00",
+        "train_cutoff": "2026-09-15 23:45:00+00:00",
+        "checkpoint_sha256": "d782a07632cf28f9ee6210648ebab3f7e74078c30a7d5b577471fac248865f32",
+        "predictions_sha256": "9832062b06561bbafe77f12aa30d40dd594a60ce73dde87c88388297e8a091e5"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20260924",
+        "retrain_time": "2026-09-24 00:00:00+00:00",
+        "train_cutoff": "2026-09-22 23:45:00+00:00",
+        "checkpoint_sha256": "d8db8f6561cec8e4b70d43f6d19d958c38129a28a4fac76ebdf8e6f1470e1628",
+        "predictions_sha256": "c47de46b7255d713b9d2546f98bf5c1c2ad796c43b66f695cdadfc96a596b5f6"
+      },
+      {
+        "model_id": "r2_54_stage_a_2026_w730_raw_20261001",
+        "retrain_time": "2026-10-01 00:00:00+00:00",
+        "train_cutoff": "2026-09-29 23:45:00+00:00",
+        "checkpoint_sha256": "dd498baa402b6c18fe644b12ead3079814e122c33b8c904a81530ad01138c8a1",
+        "predictions_sha256": "3e721c8331b6c6eabe17b139fcbb6fca95d021bab43c12506b247d22a7b37e08"
+      }
+    ]
+  },
+  "live_db": {
+    "path": "D:\\StudyQuant\\artifacts\\live\\live.sqlite",
+    "mode": "read-only"
+  },
+  "code": [
+    {
+      "path": "out\\run_r2_54_parity_snapshot.py",
+      "bytes": 46543,
+      "sha256": "703f396add7eece1c05990e9385cf88f4c9467e4ce7cac31d4bbcb16a960263e"
+    },
+    {
+      "path": "out\\run_r2_54_stage_a_2026.py",
+      "bytes": 30653,
+      "sha256": "e10af9558aec9d4e0712969cd052db9d4e1d71288dca9ca808b919cf8137ea37"
+    },
+    {
+      "path": "btcusdt_quant\\paper\\futures_metrics.py",
+      "bytes": 11683,
+      "sha256": "c7229b34f7a799d1b39835e86f339da368d2d860eda315f95fecc5bf7525c0d7"
+    },
+    {
+      "path": "btcusdt_quant\\paper\\detector.py",
+      "bytes": 18922,
+      "sha256": "68eea94b4b0d74b215c517c5d22b72d530186edcebc3a9ee8894d17e9eebc85f"
+    },
+    {
+      "path": "btcusdt_quant\\paper\\collector.py",
+      "bytes": 28146,
+      "sha256": "6ab8b799ce49dd0108a98c2ed2185a57c6eed0ce54dd945d163bd23633aa8d71"
+    }
+  ],
+  "gates_data": {
+    "no_missing_or_duplicate_1m_bars": true,
+    "market_checked_interval": [
+      "2020-01-01 00:00:00+00:00",
+      "2026-10-07 23:59:00+00:00"
+    ],
+    "no_row_available_before_period_end": {
+      "futures_global_ls_5m": 0,
+      "futures_top_ls_5m": 0,
+      "futures_oi_5m": 0,
+      "futures_taker_lsr_5m": 0
+    },
+    "stage_a_logical_available_eq_prediction_ts": true,
+    "stage_a_retrain_le_prediction_ts": true,
+    "stage_a_checkpoints_trained_past_prediction_ts": 0,
+    "split_crossing_labels": "not applicable to the snapshot (no labels stored); enforced by Stage-B (Task 4)",
+    "parity_passed": true,
+    "prediction_parity_passed": true
+  },
+  "use": "Final evaluation reads only this snapshot; pre-2026 artifacts are hashed above.",
+  "write_policy": "write-once; every file set read-only after write"
+}

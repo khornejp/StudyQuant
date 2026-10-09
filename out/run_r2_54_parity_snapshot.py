@@ -131,13 +131,32 @@ def _fields(table: str, a: pd.DataFrame, r: pd.DataFrame) -> dict[str, dict]:
     result = {"rest_internal_q4": _field(internal), "archive_vs_rest_q3": _field(cross)}
     bad = [abs(c[4]) for c in cross if c[3] != c[2]]
     rel = [abs(c[4]) / abs(float(c[1])) for c in cross if c[1]]
-    result["archive_vs_rest_q3"]["diagnostic"] = {      # report only; the A1 pass rule is unchanged
+    result["archive_vs_rest_q3"]["diagnostic"] = {      # mandatory report-only diagnostic (amendment A3)
         "mismatch_within_rest_q4_half_tick": sum(b <= 5e-05 + 1e-12 for b in bad),
         "mismatch_beyond_rest_q4_half_tick": sum(b > 5e-05 + 1e-12 for b in bad),
         "rows_beyond_rest_q4_half_tick": sum(abs(c[4]) > 5e-05 + 1e-12 for c in cross),
         "max_rel_raw_residual": float(max(rel)) if rel else None,
         "median_abs_raw_residual": float(np.median([abs(c[4]) for c in cross])) if cross else None}
     return result
+
+
+REPORT_ONLY = {"archive_vs_rest_q3"}    # amendment A3 (supersedes only A1's taker cross-source Q3 block)
+
+
+def final_taker(frame: pd.DataFrame) -> pd.DataFrame:
+    """A3 source rule for Stage-B training/validation/final-test replay: archive taker only. The frozen snapshot
+    window holds no causally received REST taker rows; any REST row there refuses (never blended or filled)."""
+    rest = int(frame.source.ne("archive").sum())
+    if rest:
+        raise RuntimeError(f"{rest} REST taker rows in the final-test window; A3 uses archive taker there")
+    return frame.loc[frame.source.eq("archive")].reset_index(drop=True)
+
+
+def registry(doc: dict) -> dict:
+    """Registry counts from amendment A2 (found by id); the trials body values are superseded, not edited."""
+    a2 = next(a for a in doc["amendments"] if a["id"] == "A2")
+    return {**{k: a2["new"][k] for k in ("registry_base", "registry_after")}, "source": "amendment A2",
+            "superseded_body": {k: doc["trials"][k] for k in ("registry_base", "registry_after")}}
 
 
 def check_table(table: str, archive: pd.DataFrame, rest: pd.DataFrame, start: pd.Timestamp,
@@ -170,9 +189,11 @@ def check_table(table: str, archive: pd.DataFrame, rest: pd.DataFrame, start: pd
     masks = {"mismatch": int(mask_bad.sum()), "both_missing": int((a_any & r_any).sum()),
              "examples": [t.isoformat() for t in both[mask_bad][:5]]}
     fields = _fields(table, a.loc[present], r.loc[present])
+    for name, value in fields.items():     # A3: taker archive-vs-REST Q3 is report-only; every other field blocks
+        value["blocking"] = name not in REPORT_ONLY
     passed = (not coverage["missing_archive"] and not coverage["missing_rest"] and not coverage["off_grid"]
               and not coverage["duplicates"] and not any(timestamps.values()) and not masks["mismatch"]
-              and all(v["mismatch"] == 0 for v in fields.values()))
+              and all(v["mismatch"] == 0 for v in fields.values() if v["blocking"]))
     return {"table": table, "window": [str(start), str(end)], "coverage": coverage, "timestamps": timestamps,
             "masks": masks, "fields": fields, "passed": bool(passed)}
 
@@ -276,7 +297,8 @@ def parity(staging: Path = STAGING, live_db: Path = DB, start: pd.Timestamp = PA
         common_ok = (not part["coverage"]["missing_archive"] and not part["coverage"]["missing_rest"]
                      and not part["coverage"]["off_grid"] and not part["coverage"]["duplicates"]
                      and not any(part["timestamps"].values()) and not part["masks"]["mismatch"])
-        fields[name] = {"passed": bool(common_ok and all(v["mismatch"] == 0 for v in chosen.values())),
+        fields[name] = {"passed": bool(common_ok and all(v["mismatch"] == 0 for v in chosen.values() if v["blocking"])),
+                        "blocking": {k: v["blocking"] for k, v in chosen.items()},
                         "mismatch": {k: v["mismatch"] for k, v in chosen.items()},
                         "compared": {k: v["compared"] for k, v in chosen.items()},
                         "max_abs_raw_residual": {k: v["max_abs_raw_residual"] for k, v in chosen.items()},
@@ -287,7 +309,7 @@ def parity(staging: Path = STAGING, live_db: Path = DB, start: pd.Timestamp = PA
     files = archive_files(start, end)
     report = {
         "kind": "R2-54 archive vs public REST parity", "freeze": r.file_record(FREEZE),
-        "rule": "data_plan.parity.metric_tolerance (amendment A1)", "window": [str(start), str(end)],
+        "rule": "data_plan.parity.metric_tolerance (amendment A1; taker per amendment A3: archive-vs-REST Q3 report-only)", "window": [str(start), str(end)],
         "sources": {"archive": f"live DB {live_db} (read-only) source='archive' rows (data.binance.vision metrics zips, "
                                "normalized by futures_metrics.backfill_metrics)",
                     "rest": {"db": str(staging.relative_to(ROOT)), "base_url": "https://fapi.binance.com",
@@ -568,9 +590,12 @@ def build_snapshot(out: Path = SNAPSHOT_DIR, live_db: Path = DB, allow_failed_pa
     for table in fm.TABLES:
         frame = _db_table(live_db, f"SELECT * FROM {table} WHERE create_time>=? AND create_time<? "
                                    "ORDER BY create_time, source", (lo, hi))
+        note = "all sources"
+        if table == "futures_taker_lsr_5m":       # A3: final-test replay uses archive taker; REST rows here refuse
+            frame, note = final_taker(frame), "source=archive only (amendment A3; REST rows in window asserted 0)"
         tables[table] = frame
         art[table] = write_artifact(out / f"{table}.parquet", frame, "create_time",
-                                    f"live DB {table} (read-only), all sources; archive = data.binance.vision metrics "
+                                    f"live DB {table} (read-only), {note}; archive = data.binance.vision metrics "
                                     "zips normalized by futures_metrics.backfill_metrics")
     events = _db_table(live_db, "SELECT * FROM funding_events WHERE funding_time>=? AND funding_time<? "
                                 "ORDER BY funding_time, source", (lo, hi))
@@ -672,7 +697,8 @@ def build_snapshot(out: Path = SNAPSHOT_DIR, live_db: Path = DB, allow_failed_pa
         "freeze": {**r.file_record(FREEZE), "frozen_utc": freeze_doc["status"]["frozen_utc"],
                    "amendments": [a["id"] for a in freeze_doc.get("amendments", [])]},
         "git": _git(), "interval": [lo, hi], "data_cutoff_exclusive": hi,
-        "registry": {k: freeze_doc["amendments"][-1]["new"][k] for k in ("registry_base", "registry_after")},
+        "registry": registry(freeze_doc),
+        "taker_source_rule": next(a["new"] for a in freeze_doc["amendments"] if a["id"] == "A3"),
         "time_structure": freeze_doc["time_structure"],
         "artifacts": art,
         "pre_2026_train_validation": pre_2026,

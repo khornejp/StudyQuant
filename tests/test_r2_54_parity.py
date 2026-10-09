@@ -201,3 +201,62 @@ def test_archive_file_period_start_daily_and_monthly():
     assert par.file_period_start("BTCUSDT-metrics-2025-12-31.zip") == pd.Timestamp("2025-12-31", tz="UTC")
     assert par.file_period_start("BTCUSDT-fundingRate-2020-01.zip") == pd.Timestamp("2020-01-01", tz="UTC")
     assert par.file_period_start("BTCUSDT-premiumIndexKlines-1m-2026-01.zip") == pd.Timestamp("2026-01-01", tz="UTC")
+
+
+def _taker_fixture(cross_bad: bool):
+    archive = _rows("archive", [{"buy_sell_ratio": r, "buy_volume": None, "sell_volume": None}
+                                for r in ((1.2589 if cross_bad else 1.256407), 0.9873, 1.0004)])
+    rest = _rows("rest", [{"buy_sell_ratio": 1.2564, "buy_volume": 1256.4070, "sell_volume": 1000.0},
+                          {"buy_sell_ratio": 0.9873, "buy_volume": 987.3, "sell_volume": 1000.0},
+                          {"buy_sell_ratio": 1.0004, "buy_volume": 1000.4, "sell_volume": 1000.0}])
+    return archive, rest
+
+
+def test_a3_taker_cross_source_q3_is_report_only():
+    archive, rest = _taker_fixture(cross_bad=True)
+    out = par.check_table("futures_taker_lsr_5m", archive, rest, START, END)
+    cross = out["fields"]["archive_vs_rest_q3"]
+    assert cross["mismatch"] == 1 and cross["blocking"] is False          # counted and kept in the report
+    assert cross["max_abs_raw_residual"] == pytest.approx(0.0025, abs=1e-9)
+    assert cross["diagnostic"]["max_rel_raw_residual"] > 0
+    assert out["fields"]["rest_internal_q4"]["blocking"] is True
+    assert out["passed"]                                                  # A3: does not affect parity pass
+
+
+def test_a3_taker_blocking_checks_still_fail_closed():
+    archive, rest = _taker_fixture(cross_bad=False)
+    rest.loc[0, "buy_sell_ratio"] = 1.2563                                # != Q4(buyVol/sellVol)
+    assert not par.check_table("futures_taker_lsr_5m", archive, rest, START, END)["passed"]
+    archive, rest = _taker_fixture(cross_bad=False)
+    rest = rest.iloc[:2]                                                  # coverage
+    assert not par.check_table("futures_taker_lsr_5m", archive, rest, START, END)["passed"]
+    archive, rest = _taker_fixture(cross_bad=False)
+    rest["source_timestamp"] = archive.logical_available_at               # alignment (+5 m)
+    assert not par.check_table("futures_taker_lsr_5m", archive, rest, START, END)["passed"]
+    archive, rest = _taker_fixture(cross_bad=False)
+    rest.loc[1, "sell_volume"] = None                                     # mask
+    assert not par.check_table("futures_taker_lsr_5m", archive, rest, START, END)["passed"]
+
+
+def test_a3_other_tables_keep_every_field_blocking():
+    ratios = [1.1, 1.2, 1.3]
+    archive = _rows("archive", [{"long_short_ratio": r, "long_account": None, "short_account": None} for r in ratios])
+    out = par.check_table("futures_global_ls_5m", archive, _rows("rest", [_ls(r) for r in ratios], shift=par.PERIOD),
+                          START, END)
+    assert all(v["blocking"] for v in out["fields"].values())
+
+
+def test_final_taker_reader_uses_archive_only_and_refuses_rest_rows():
+    archive, rest = _taker_fixture(cross_bad=False)
+    assert par.final_taker(archive).source.eq("archive").all()
+    with pytest.raises(RuntimeError, match="REST taker rows"):
+        par.final_taker(pd.concat([archive, rest], ignore_index=True))
+
+
+def test_registry_comes_from_amendment_a2_not_the_last_amendment():
+    doc = {"trials": {"registry_base": 5413, "registry_after": 5540},
+           "amendments": [{"id": "A1", "new": "text"},
+                          {"id": "A2", "new": {"registry_base": 5417, "registry_after": 5544}},
+                          {"id": "A3", "new": "taker text"}]}
+    assert par.registry(doc) == {"registry_base": 5417, "registry_after": 5544, "source": "amendment A2",
+                                 "superseded_body": {"registry_base": 5413, "registry_after": 5540}}
