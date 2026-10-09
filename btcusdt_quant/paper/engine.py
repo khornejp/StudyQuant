@@ -124,16 +124,24 @@ class PaperEngine:
                           "received_at": utc_text(received_at or stamp)})
 
     def store_funding(self, time: object, rate: float, *, raw_calc_time: object | None = None,
-                      source: str = "archive", received_at: object | None = None) -> None:
+                      source: str = "archive", received_at: object | None = None,
+                      interval_hours: float | None = None) -> None:
+        """Actual fundingTime as-is (R2-54: no 8 h rounding). interval_hours unknown -> NULL + interval_missing."""
         raw = pd.Timestamp(raw_calc_time or time)
-        interval = pd.Timedelta(hours=8).value
-        scheduled_ns = ((raw.value + interval // 2) // interval) * interval
-        if abs(raw.value - scheduled_ns) > pd.Timedelta(seconds=60).value:
-            raise ValueError("funding timestamp exceeds 60s tolerance")
-        stamp = pd.Timestamp(scheduled_ns, tz="UTC")
-        self.store.upsert("funding", {"time": utc_text(stamp), "rate": float(rate),
-                          "raw_calc_time": utc_text(raw), "source": source,
-                          "received_at": utc_text(received_at or raw)})
+        raw_text = utc_text(raw)
+        received = pd.Timestamp(received_at or raw)
+        # legacy rows were keyed by the rounded 8 h time; the same raw event must not become a second event
+        legacy = self.store.connection.execute(
+            "SELECT 1 FROM funding WHERE raw_calc_time=? AND time<>?", (raw_text, raw_text)).fetchone()
+        if legacy is None:
+            self.store.upsert("funding", {"time": raw_text, "rate": float(rate), "raw_calc_time": raw_text,
+                              "source": source, "received_at": utc_text(received)})
+        hours = None if interval_hours is None or pd.isna(interval_hours) else float(interval_hours)
+        self.store.put_versioned("funding_events", {
+            "funding_time": raw_text, "funding_rate": float(rate), "interval_hours": hours,
+            "interval_missing": int(hours is None), "source_timestamp": raw_text,
+            "logical_available_at": utc_text(max(raw, received) if source == "rest" else raw),
+            "received_at": utc_text(received), "source": source})
 
     def replay_books(self, start: object, end: object,
                      features: pd.DataFrame | None = None,

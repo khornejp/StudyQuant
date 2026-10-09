@@ -151,7 +151,8 @@ def minute_components(trades: pd.DataFrame, closes: pd.Series, funding: pd.DataF
             included = inside or ((at_entry or at_exit) and
                 ((boundary == "PESS" and value < 0) or (boundary == "OPT" and value > 0)))
             if included:
-                location = index.get_indexer([pd.Timestamp(event_time, tz="UTC")])[0]
+                # actual event times carry ms offsets (R2-54); book the cashflow on the minute holding the event
+                location = index.get_indexer([pd.Timestamp(event_time, tz="UTC").floor("min")])[0]
                 if location >= 0:
                     result.iloc[location, result.columns.get_loc("funding_bps")] += value
     result["net_bps"] = result.gross_bps - result.cost_bps + result.funding_bps

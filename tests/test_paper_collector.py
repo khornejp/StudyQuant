@@ -43,7 +43,9 @@ def test_collector_recorded_responses_and_gap(tmp_path) -> None:
     with PaperStore(tmp_path / "live.sqlite") as store:
         collector = Collector(PaperEngine(store), tmp_path / "raw", Client())
         result = collector.collect_once(start + pd.Timedelta(minutes=4))
-        assert result == {"klines": 2, "premium": 1, "ls_ratio": 1, "funding": 1}
+        assert {k: result[k] for k in ("klines", "premium", "ls_ratio", "funding")} == {
+            "klines": 2, "premium": 1, "ls_ratio": 1, "funding": 1}
+        assert result["futures_global_ls_5m"] == 1          # R2-54: same global page also feeds the new table
         assert store.frame("collector_health").gaps.tolist() == [0, 1]
         assert len(store.frame("funding")) == 1
     assert list((tmp_path / "raw").glob("*.jsonl.gz"))
@@ -75,13 +77,12 @@ def test_ls_ratio_pages_from_cursor_after_long_outage(tmp_path) -> None:
         assert store.get_meta("last_ls_timestamp") == pd.to_datetime(every[-1], unit="ms", utc=True).isoformat()
 
 
-def test_funding_normalization_rejects_bad_time(tmp_path) -> None:
+def test_funding_keeps_actual_funding_time(tmp_path) -> None:
+    # R2-54 freeze: store actual fundingTime; the 8 h rounding (and its 60 s tolerance) is removed.
     with PaperStore(tmp_path / "live.sqlite") as store:
         engine = PaperEngine(store)
         engine.store_funding("2026-07-01T00:00:00.007Z", .0001)
-        assert store.frame("funding").time.tolist() == ["2026-07-01T00:00:00+00:00"]
-        with pytest.raises(ValueError, match="60s"):
-            engine.store_funding("2026-07-01T00:02:00Z", .0001)
+        assert store.frame("funding").time.tolist() == ["2026-07-01T00:00:00.007000+00:00"]
 
 
 def test_book_ticker_reducer_matches_research_definition() -> None:

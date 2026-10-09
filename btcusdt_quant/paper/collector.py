@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import logging
 import re
@@ -18,6 +19,7 @@ from typing import Callable, Mapping
 import numpy as np
 import pandas as pd
 
+from . import futures_metrics as fm
 from .engine import PaperEngine
 from .store import PaperStore
 
@@ -143,26 +145,33 @@ class PublicBinanceClient:
         self.base_url = base_url.rstrip("/")
         self.opener = opener or (lambda request: urllib.request.urlopen(request, timeout=15))
 
-    def get(self, path: str, parameters: Mapping[str, object]) -> object:
+    def get_raw(self, path: str, parameters: Mapping[str, object]) -> tuple[int, str]:
+        """(HTTP status, body text). Unauthenticated: no API key header is ever sent."""
         query = urllib.parse.urlencode(parameters)
         request = urllib.request.Request(f"{self.base_url}{path}?{query}",
                                          headers={"User-Agent": "StudyQuant-paper/1"})
         for attempt in range(3):
             try:
                 with self.opener(request) as response:
-                    return json.loads(response.read().decode("utf-8"))
+                    return int(getattr(response, "status", 200)), response.read().decode("utf-8")
             except urllib.error.HTTPError as error:
                 if error.code not in {418, 429} or attempt == 2:
                     raise
                 time.sleep(min(60.0, float(error.headers.get("Retry-After", 1))))
         raise RuntimeError("unreachable")
 
+    def get(self, path: str, parameters: Mapping[str, object]) -> object:
+        return json.loads(self.get_raw(path, parameters)[1])
+
 
 class Collector:
     def __init__(self, engine: PaperEngine, raw_root: str | Path,
                  client: PublicBinanceClient | None = None,
-                 websocket_factory: Callable[..., object] | None = None):
+                 websocket_factory: Callable[..., object] | None = None,
+                 futures_lookback: pd.Timedelta = pd.Timedelta(days=1)):
         self.engine = engine
+        self.futures_lookback = futures_lookback     # first REST start for a futures table without a cursor
+        self._probed: set[str] = set()               # endpoints probed by this process (startup probe)
         self.raw_root = Path(raw_root)
         self.client = client or PublicBinanceClient()
         self._websocket_factory = websocket_factory
@@ -182,6 +191,7 @@ class Collector:
     def collect_once(self, now: object | None = None) -> dict[str, int]:
         """REST gap fill and non-WS datasets. Safe to call every minute."""
         received = pd.Timestamp(now or datetime.now(timezone.utc))
+        self._wall_start = pd.Timestamp.now(tz="UTC")     # per-response received_at = received + elapsed wall time
         last = self.engine.store.get_meta("last_processed_minute")
         start = ((pd.Timestamp(last) + pd.Timedelta(minutes=1)) if last else
                  received.floor("min") - pd.Timedelta(minutes=5))
@@ -212,45 +222,136 @@ class Collector:
                 self.engine.store.set_meta("last_premium_minute", stamp.isoformat())
                 premium_count += 1
 
-        # Without endTime the endpoint returns the latest 500 rows, so page from our own cursor.
-        cursor = self.engine.store.get_meta("last_ls_timestamp")
-        ls_start = (pd.Timestamp(cursor) + pd.Timedelta(milliseconds=1)) if cursor else start
-        ls = []
-        while ls_start < received:
-            ls_end = min(ls_start + pd.Timedelta(minutes=5 * 500), received)
-            page = self.client.get("/futures/data/globalLongShortAccountRatio", {
-                "symbol": "BTCUSDT", "period": "5m", "startTime": _utc_ms(ls_start),
-                "endTime": _utc_ms(ls_end), "limit": 500})
-            ls.extend(page)
-            ls_start = ls_end + pd.Timedelta(milliseconds=1)
-        self._audit("globalLongShortAccountRatio", ls, received)
-        if ls:
-            last_ls = max(int(row["timestamp"]) for row in ls)
-            self.engine.store.set_meta(
-                "last_ls_timestamp", pd.to_datetime(last_ls, unit="ms", utc=True).isoformat())
-        for row in ls:
-            # REST is end/availability labelled. Keeping it unshifted makes strict-prior causal.
-            stamp = pd.to_datetime(int(row["timestamp"]), unit="ms", utc=True)
-            self.engine.store.upsert("ls_ratio", {
-                "timestamp": stamp.isoformat(), "global_ls_account": float(row["longShortRatio"]),
-                "long_account": float(row["longAccount"]), "short_account": float(row["shortAccount"]),
-                "source": "rest", "received_at": received.isoformat()})
+        futures = self._collect_futures(received)
 
         stored_funding = self.engine.store.frame("funding")
-        funding_start = (pd.to_datetime(stored_funding.time, utc=True, format="mixed").max() +
+        # resume after the last raw event time (legacy rows keep a rounded `time`; raw_calc_time is actual)
+        funding_start = (pd.to_datetime(stored_funding.raw_calc_time, utc=True, format="mixed").max() +
                          pd.Timedelta(milliseconds=1) if len(stored_funding) else
                          received - pd.Timedelta(hours=9))
         funding = self.client.get("/fapi/v1/fundingRate", {
             "symbol": "BTCUSDT", "startTime": _utc_ms(funding_start), "limit": 1_000})
         self._audit("fundingRate", funding, received)
+        interval = self._funding_interval() if funding else None
         funding_count = 0
         for row in funding:
             raw = pd.to_datetime(int(row["fundingTime"]), unit="ms", utc=True)
+            # fundingInfo gives the interval in force now: it belongs to the current event only
+            hours = interval if interval and raw + pd.Timedelta(hours=interval) > received else None
             self.engine.store_funding(raw, float(row["fundingRate"]), raw_calc_time=raw,
-                                      source="rest", received_at=received)
+                                      source="rest", received_at=received, interval_hours=hours)
             funding_count += 1
-        return {"klines": inserted, "premium": premium_count,
-                "ls_ratio": len(ls), "funding": funding_count}
+        return {"klines": inserted, "premium": premium_count, **futures, "funding": funding_count}
+
+    def _fetch(self, path: str, parameters: Mapping[str, object]) -> tuple[int | None, object]:
+        """Public GET; the raw response is persisted before any parsing. Returns (status, parsed | None)."""
+        request_utc = pd.Timestamp.now(tz="UTC")
+        get_raw = getattr(self.client, "get_raw", None)
+        try:
+            if get_raw is not None:
+                status, text = get_raw(path, parameters)
+            else:                                     # offline/test clients that only expose get()
+                status, text = 200, json.dumps(self.client.get(path, parameters), separators=(",", ":"))
+        except urllib.error.HTTPError as error:
+            body = error.read() if error.fp is not None else b""
+            status, text = error.code, (body or b"").decode("utf-8", "replace")
+        except Exception as error:
+            status, text = None, self._safe_error(error)
+        self.last_response_utc = pd.Timestamp.now(tz="UTC")
+        self.engine.store.connection.execute(
+            "INSERT INTO futures_raw_audit(endpoint,params,request_utc,response_utc,status,sha256,payload) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (path, json.dumps(dict(parameters), sort_keys=True), request_utc.isoformat(),
+             self.last_response_utc.isoformat(), status, hashlib.sha256(text.encode()).hexdigest(), text))
+        if status != 200:
+            return status, None
+        try:
+            return status, json.loads(text)
+        except ValueError:
+            return status, fm.SchemaDrift("invalid JSON")
+
+    def _funding_interval(self) -> float | None:
+        _, payload = self._fetch("/fapi/v1/fundingInfo", {})
+        if not isinstance(payload, list):
+            return None
+        row = next((r for r in payload if isinstance(r, Mapping) and r.get("symbol") == "BTCUSDT"), None)
+        try:
+            hours = float(row["fundingIntervalHours"]) if row else None
+        except (KeyError, TypeError, ValueError):
+            return None
+        return hours if hours and hours > 0 else None
+
+    def _collect_futures(self, received: pd.Timestamp) -> dict[str, int]:
+        """Four /futures/data endpoints (period=5m, limit 500, bounded startTime/endTime paging, no API key).
+        Fail closed per endpoint on 401/403, schema drift or empty finalized coverage: nothing is stored for it
+        (missing rows = mask) and 401/403/drift wait for the periodic capability probe; no auth fallback."""
+        store = self.engine.store
+        capability = json.loads(store.get_meta("futures_capability") or "{}")
+        counts: dict[str, int] = {}
+        for endpoint, (table, shift, _) in fm.REST_SPECS.items():
+            legacy = endpoint == "/futures/data/globalLongShortAccountRatio"
+            counts[table] = 0
+            if legacy:
+                counts["ls_ratio"] = 0
+            state = capability.get(endpoint, {})
+            if (endpoint in self._probed and state.get("status") in {"HTTP_401", "HTTP_403", "SCHEMA_DRIFT"}
+                    and received - pd.Timestamp(state["checked_at"]) < fm.PROBE_INTERVAL):
+                continue
+            self._probed.add(endpoint)
+            # the global cursor stays the legacy one so ls_ratio keeps its paging semantics
+            cursor_key = "last_ls_timestamp" if legacy else f"last_{table}_timestamp"
+            cursor = store.get_meta(cursor_key)
+            page_start = (pd.Timestamp(cursor) + pd.Timedelta(milliseconds=1) if cursor else
+                          (received - self.futures_lookback).floor("5min"))
+            payloads, status = [], "OK"
+            for _ in range(fm.MAX_PAGES):
+                if page_start >= received:
+                    break
+                page_end = min(page_start + fm.PERIOD * 500, received)
+                code, payload = self._fetch(endpoint, {
+                    "symbol": "BTCUSDT", "period": "5m", "startTime": _utc_ms(page_start),
+                    "endTime": _utc_ms(page_end), "limit": 500})
+                if code in {401, 403}:
+                    status = f"HTTP_{code}"
+                elif code != 200:
+                    status = f"ERROR_{code}"
+                elif isinstance(payload, fm.SchemaDrift):
+                    status = "SCHEMA_DRIFT"
+                if status != "OK":
+                    break
+                payloads.append((payload, received + (self.last_response_utc - self._wall_start)))
+                page_start = page_end + pd.Timedelta(milliseconds=1)
+            rows: list[dict[str, object]] = []
+            if status == "OK":
+                try:
+                    for payload, page_received in payloads:
+                        rows.extend(fm.normalize_rest(endpoint, payload, page_received)[1])
+                except fm.SchemaDrift:
+                    status, rows = "SCHEMA_DRIFT", []
+            if status == "OK":
+                # the API rounds startTime down to the period, so the cursor row comes back: count new rows only
+                with store.transaction() as connection:
+                    new = [row for row in rows if store.put_versioned(table, row, connection) == "inserted"]
+                counts[table] = len(new)
+                if rows:
+                    store.set_meta(cursor_key, max(pd.Timestamp(r["source_timestamp"]) for r in rows).isoformat())
+                if legacy:
+                    for row in new:
+                        # legacy ls_ratio keeps the REST end/availability label (catalog/detector until Task 2/3)
+                        store.upsert("ls_ratio", {
+                            "timestamp": row["source_timestamp"], "global_ls_account": row["long_short_ratio"],
+                            "long_account": row["long_account"], "short_account": row["short_account"],
+                            "source": "rest", "received_at": row["received_at"]})
+                    counts["ls_ratio"] = len(new)
+                latest = store.get_meta(cursor_key)
+                newest_final = received.floor("5min") - fm.PERIOD + shift    # REST stamp of the last closed period
+                if latest is None or pd.Timestamp(latest) < newest_final - 2 * fm.PERIOD:
+                    status = "EMPTY"            # no finalized coverage for the latest periods
+            capability[endpoint] = {"status": status, "checked_at": received.isoformat(), "rows": counts[table]}
+            if status != "OK":
+                LOG.warning("futures metrics %s fail closed: %s", endpoint, status)
+        store.set_meta("futures_capability", json.dumps(capability, sort_keys=True))
+        return counts
 
     def on_ws_message(self, message: str | Mapping[str, object],
                       received_at: object | None = None) -> bool:

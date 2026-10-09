@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -124,6 +125,47 @@ CREATE TABLE IF NOT EXISTS revisions (
     event_time TEXT NOT NULL, column_name TEXT NOT NULL, live_value TEXT,
     archive_value TEXT, detected_at TEXT NOT NULL
 );
+-- R2-54 futures metrics, additive. create_time = interval start, logical_available_at = earliest as-of time
+CREATE TABLE IF NOT EXISTS futures_global_ls_5m (
+    symbol TEXT NOT NULL, create_time TEXT NOT NULL, source_timestamp TEXT NOT NULL,
+    long_short_ratio REAL, long_account REAL, short_account REAL,
+    logical_available_at TEXT NOT NULL, received_at TEXT NOT NULL, source TEXT NOT NULL,
+    PRIMARY KEY(symbol, create_time, source)
+);
+CREATE TABLE IF NOT EXISTS futures_top_ls_5m (
+    symbol TEXT NOT NULL, create_time TEXT NOT NULL, source_timestamp TEXT NOT NULL,
+    long_short_ratio REAL, long_account REAL, short_account REAL,
+    logical_available_at TEXT NOT NULL, received_at TEXT NOT NULL, source TEXT NOT NULL,
+    PRIMARY KEY(symbol, create_time, source)
+);
+CREATE TABLE IF NOT EXISTS futures_oi_5m (
+    symbol TEXT NOT NULL, create_time TEXT NOT NULL, source_timestamp TEXT NOT NULL,
+    sum_open_interest REAL, sum_open_interest_value REAL,
+    logical_available_at TEXT NOT NULL, received_at TEXT NOT NULL, source TEXT NOT NULL,
+    PRIMARY KEY(symbol, create_time, source)
+);
+CREATE TABLE IF NOT EXISTS futures_taker_lsr_5m (
+    symbol TEXT NOT NULL, create_time TEXT NOT NULL, source_timestamp TEXT NOT NULL,
+    buy_sell_ratio REAL, buy_volume REAL, sell_volume REAL,
+    logical_available_at TEXT NOT NULL, received_at TEXT NOT NULL, source TEXT NOT NULL,
+    PRIMARY KEY(symbol, create_time, source)
+);
+CREATE TABLE IF NOT EXISTS funding_events (
+    funding_time TEXT NOT NULL, funding_rate REAL NOT NULL, interval_hours REAL,
+    interval_missing INTEGER NOT NULL, source_timestamp TEXT NOT NULL,
+    logical_available_at TEXT NOT NULL, received_at TEXT NOT NULL, source TEXT NOT NULL,
+    PRIMARY KEY(funding_time, source)
+);
+CREATE TABLE IF NOT EXISTS futures_raw_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, endpoint TEXT NOT NULL, params TEXT NOT NULL,
+    request_utc TEXT NOT NULL, response_utc TEXT NOT NULL, status INTEGER, sha256 TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS futures_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, dataset TEXT NOT NULL, key TEXT NOT NULL,
+    old_sha256 TEXT NOT NULL, new_sha256 TEXT NOT NULL, old_payload TEXT NOT NULL,
+    new_payload TEXT NOT NULL, detected_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_signals_book_time ON signals(book, decision_time);
 CREATE INDEX IF NOT EXISTS idx_trades_book_time ON trades(book, entry_time);
 CREATE INDEX IF NOT EXISTS idx_leverage_trades_book_time
@@ -131,6 +173,22 @@ CREATE INDEX IF NOT EXISTS idx_leverage_trades_book_time
 CREATE INDEX IF NOT EXISTS idx_notifications_delivery
     ON notifications(status, next_attempt_at, id);
 """
+
+# versioned tables: (key columns, payload columns hashed for revision detection)
+_METRIC_KEY = ("symbol", "create_time", "source")
+VERSIONED = {
+    "futures_global_ls_5m": (_METRIC_KEY, ("source_timestamp", "long_short_ratio", "long_account", "short_account")),
+    "futures_top_ls_5m": (_METRIC_KEY, ("source_timestamp", "long_short_ratio", "long_account", "short_account")),
+    "futures_oi_5m": (_METRIC_KEY, ("source_timestamp", "sum_open_interest", "sum_open_interest_value")),
+    "futures_taker_lsr_5m": (_METRIC_KEY, ("source_timestamp", "buy_sell_ratio", "buy_volume", "sell_volume")),
+    "funding_events": (("funding_time", "source"), ("source_timestamp", "funding_rate", "interval_hours")),
+}
+
+
+def payload_sha256(row: Mapping[str, object], columns: Iterable[str]) -> tuple[str, str]:
+    text = json.dumps({name: row.get(name) for name in columns}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest(), text
+
 
 DATASET_TABLE = {
     "klines_1m": "klines_1m",
@@ -265,11 +323,39 @@ class PaperStore:
             target.commit()
         return int(cursor.lastrowid or 0)
 
+    def put_versioned(self, table: str, row: Mapping[str, object],
+                      connection: sqlite3.Connection | None = None) -> str:
+        """Insert once per key; an identical payload is a no-op (first receipt kept), a differing one is never
+        overwritten but recorded in futures_revisions with old/new hash. Returns inserted|same|revised."""
+        keys, payload = VERSIONED[table]
+        target = connection or self.connection
+        old = target.execute(f"SELECT * FROM {table} WHERE " + " AND ".join(f"{k}=?" for k in keys),
+                             tuple(row[k] for k in keys)).fetchone()
+        if old is None:
+            columns = list(row)
+            target.execute(f"INSERT INTO {table} ({','.join(columns)}) VALUES ({','.join('?' * len(columns))})",
+                           tuple(row[name] for name in columns))
+            result = "inserted"
+        else:
+            old_hash, old_text = payload_sha256(dict(old), payload)
+            new_hash, new_text = payload_sha256(row, payload)
+            result = "same" if old_hash == new_hash else "revised"
+            if result == "revised":
+                target.execute(
+                    "INSERT INTO futures_revisions(dataset,key,old_sha256,new_sha256,old_payload,new_payload,"
+                    "detected_at) VALUES(?,?,?,?,?,?,?)",
+                    (table, json.dumps([row[k] for k in keys]), old_hash, new_hash, old_text, new_text,
+                     pd.Timestamp.now(tz="UTC").isoformat()))
+        if connection is None and target.in_transaction:
+            target.commit()
+        return result
+
     def frame(self, table: str, where: str = "", parameters: Iterable[object] = ()) -> pd.DataFrame:
         allowed = set(DATASET_TABLE.values()) | {
             "signals", "positions", "trades", "daily_pnl", "collector_health", "revisions",
             "notifications", "meta", "leverage_state", "leverage_positions",
-            "leverage_trades", "leverage_daily", "leverage_skips"}
+            "leverage_trades", "leverage_daily", "leverage_skips", "futures_raw_audit",
+            "futures_revisions", *VERSIONED}
         if table not in allowed:
             raise ValueError(f"read table not allowed: {table}")
         suffix = f" WHERE {where}" if where else ""

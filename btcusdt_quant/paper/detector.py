@@ -66,9 +66,17 @@ def live_inputs(connection, since: pd.Timestamp | None = None) -> tuple[pd.DataF
     p_open = pd.to_datetime(premium.open_time, utc=True).astype("datetime64[ns, UTC]")
     premium = pd.DataFrame({"open_time": p_open, "close_time": p_open + pd.Timedelta(milliseconds=59_999),
                             "premium": premium.premium_index.astype(float)})
-    funding = frame("SELECT time, rate, raw_calc_time FROM funding")
+    # R2-54: the stored, causally available interval (no 8 h constant); unknown -> interval_missing=1 and
+    # interval_hours=0, which attach_exogenous treats as an expired event (funding_missing=1, rate 0).
+    has_events = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='funding_events'").fetchone() is not None
+    funding = frame("SELECT f.rate, f.raw_calc_time, " + (
+        "(SELECT MAX(e.interval_hours) FROM funding_events e WHERE e.funding_time=f.raw_calc_time)"
+        if has_events else "NULL") + " AS interval_hours FROM funding f")
+    interval = pd.to_numeric(funding.interval_hours, errors="coerce")
     funding = pd.DataFrame({"publish_time": pd.to_datetime(funding.raw_calc_time, utc=True, format="mixed"),
-                            "rate": funding.rate.astype(float), "interval_hours": 8.0})
+                            "rate": funding.rate.astype(float), "interval_hours": interval.fillna(0.0),
+                            "interval_missing": interval.isna().astype(int)})
     return market, metrics, premium, funding
 
 
