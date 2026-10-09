@@ -306,10 +306,50 @@ def test_weekly_retrain_schedule_and_fallback_rule():
     assert sb.fallback_ok(utc("2026-01-15"), utc("2026-01-08")) and not sb.fallback_ok(utc("2026-01-22"), utc("2026-01-08"))
 
 
-def test_settlements_round_to_the_scheduled_8h_minute():
-    ev = pd.DataFrame({"time": pd.to_datetime(["2026-01-01T00:00:00.008Z", "2026-01-01T08:00:00Z"], format="ISO8601"),
-                       "rate": [1e-4, 2e-4]})
-    s = sb.settlements(ev)
-    assert s.time.tolist() == [utc("2026-01-01"), utc("2026-01-01 08:00")] and s.rate.tolist() == [1e-4, 2e-4]
+def test_settlements_keep_actual_funding_time_and_bucket_minutes_only_in_the_simulator():
+    raw = pd.to_datetime(["2026-01-01T00:00:00.008Z", "2026-01-01T04:03:20Z"], format="ISO8601")
+    s = sb.settlements(pd.DataFrame({"time": raw, "rate": [1e-4, 2e-4]}))
+    assert s.time.tolist() == list(raw)                                   # no 8 h rounding, a 4 h event stays put
+    t, rate = sb.simulator_minutes(s)
+    assert list(pd.to_datetime(t, utc=True)) == [utc("2026-01-01"), utc("2026-01-01 04:03")]
+    from btcusdt_quant.sim import costs
+    with sb.ledger_settlements(s):
+        ev = costs.funding_events(-1, utc("2026-01-01 03:00"), utc("2026-01-01 05:00"))
+    assert ev == [(utc("2026-01-01 04:03"), pytest.approx(2.0))]          # short receives 2 bps at its minute
     with pytest.raises(ValueError):
-        sb.settlements(ev.assign(time=pd.to_datetime(["2026-01-01T00:03:00Z", "2026-01-01T08:00:00Z"])))
+        sb.simulator_minutes(pd.DataFrame({"time": pd.to_datetime(["2026-01-01T00:00:01Z", "2026-01-01T00:00:40Z"]),
+                                           "rate": [1e-4, 1e-4]}))
+
+
+def test_actual_settlements_equal_the_sim_schedule_minutes_pre_2026():
+    from btcusdt_quant.sim import costs
+    base = costs._settlements()
+    t, rate = sb.simulator_minutes(sb.actual_settlements(base))
+    np.testing.assert_array_equal(t, sb.ns(base.time)); np.testing.assert_array_equal(rate, base.rate.to_numpy())
+
+
+def _weekly(fail=()):
+    times = pd.date_range(utc("2026-01-01"), utc("2026-01-29"), freq="15min", tz="UTC", inclusive="left")
+    schedule = sb.thursdays(utc("2026-01-01"), utc("2026-01-29"))
+
+    def fit(r):
+        if r in fail:
+            raise RuntimeError("boom")
+        return r.day, {"source": "fit"}
+    return times, sb.weekly_predictions(times, schedule, utc("2026-01-29"), fit,
+                                        lambda m, mask: np.full(int(mask.sum()), float(m)))
+
+
+def test_weekly_predictions_serve_the_latest_checkpoint():
+    times, (yhat, events) = _weekly()
+    assert [e["fallback"] for e in events] == [None] * 4
+    assert yhat[times < utc("2026-01-08")].tolist() == [1.0] * 672 and (yhat[times >= utc("2026-01-22")] == 22).all()
+
+
+def test_retrain_failure_blocks_predictions_after_active_retrain_plus_7_days():
+    times, (yhat, events) = _weekly(fail=(utc("2026-01-15"),))
+    week = (times >= utc("2026-01-15")) & (times < utc("2026-01-22"))
+    assert np.isnan(yhat[week]).all() and events[2]["blocked_decisions"] == 672    # 01-08 + 7 d = 01-15
+    assert "previous checkpoint" in events[2]["fallback"] and (yhat[times >= utc("2026-01-22")] == 22).all()
+    times, (yhat, events) = _weekly(fail=(utc("2026-01-01"),))
+    assert np.isnan(yhat[times < utc("2026-01-08")]).all() and "hard failure" in events[0]["fallback"]

@@ -1,6 +1,6 @@
 {
   "kind": "R2-54 Stage-B validation selection",
-  "created_utc": "2026-10-09T13:28:42.061695+00:00",
+  "created_utc": "2026-10-09T14:30:29.654312+00:00",
   "freeze": {
     "path": "out\\k45_rl_r2_48_20261007\\r2_54_stageb_freeze.json",
     "sha256": "710cb08b8f60c3c3c142ed5fd398122751eb891918df3aa8b2f8f930fad034a6",
@@ -13,14 +13,14 @@
     ]
   },
   "git": {
-    "commit": "324a56ecb54d82d33d0a640389234ceb0bd17edd",
-    "dirty_diff_sha256": "2570fe7d2aab00a62c130c5eea6aa11a2d4ae707b4f3b015f8b495041603855a",
-    "dirty_diff_bytes": 790,
-    "untracked_or_modified": 62
+    "commit": "59ea29d21a3b7214f97ff8b22692c2bd095e7769",
+    "dirty_diff_sha256": "44b76cb9a9470a9f7cdc8233f4ab31d0e9760094f2a488176fc78e935308e33f",
+    "dirty_diff_bytes": 68013,
+    "untracked_or_modified": 65
   },
   "code_sha256": {
-    "out\\run_r2_54_stageb.py": "abdcdb088604047887273af7c14769e2a031e79fb9e5b9b1908914a744faa873",
-    "btcusdt_quant\\stageb.py": "2d77c5983cf4be6269527889e870c341c0ff56e9d211d582372c97642f0cb2fc",
+    "out\\run_r2_54_stageb.py": "b77a686151e1057abfcc4297d26e63e0e1fe8dbb782ffe667648245dac3528c7",
+    "btcusdt_quant\\stageb.py": "280818c5abaf35838d2e5fcc4cc905b3806c60879e2b89c7cef69f63db0be947",
     "btcusdt_quant\\rl\\state.py": "bfeff94d112ab8b738b37d84fb1e5ad826bc1061e065edf35153c0f14bab7967",
     "scripts\\sim_adaptive_exit.py": "df2b7cac2978bd1dc2246187aab15b6cb7a10bfbc23859a89723b23264ab1f50",
     "btcusdt_quant\\sim\\core.py": "b8b58f8dfb1baeaf298e3c2e3d967520fafb556771b7e10040bba697f4d00993",
@@ -43,7 +43,7 @@
     "note": "amendment A2 supersedes the body 5413/5540",
     "prior_cumulative": 5417,
     "cumulative_after": 5544,
-    "registered_now": true,
+    "registered_now": false,
     "registered_ok": true
   },
   "intervals": {
@@ -493,13 +493,56 @@
   },
   "sources": {
     "pre_2026": {
-      "market": "artifacts\\btcusdt_2020_2026h1.parquet",
-      "metrics": "artifacts\\metrics",
-      "premium": "artifacts\\premium_index_2020_2026h1",
-      "funding": "artifacts/funding_2020_2026h1",
-      "stage_a": "out\\k45_vol_detector_r2_44_window_20261006\\folds\\w730_raw",
-      "origin": "data.binance.vision archives (market klines, metrics, premium index, funding rate) and R2-44 w730_raw walk-forward folds",
-      "data_cutoff": "2026-01-01 00:00:00+00:00"
+      "data_cutoff_exclusive": "2026-01-01 00:00:00+00:00",
+      "retrieval_timestamp_rule": "local file modification time (UTC) of the downloaded archive",
+      "market": {
+        "source_url": "https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/1m/",
+        "source": "data.binance.vision (Binance public archive)",
+        "local": "artifacts\\btcusdt_2020_2026h1.parquet",
+        "files": 1,
+        "retrieved_first_utc": "2026-10-07T16:52:10.556993+00:00",
+        "retrieved_last_utc": "2026-10-07T16:52:10.556993+00:00",
+        "first_file": "btcusdt_2020_2026h1.parquet",
+        "last_file": "btcusdt_2020_2026h1.parquet",
+        "note": "single parquet built from the monthly kline archives; rows >= 2026-01-01 not read"
+      },
+      "metrics": {
+        "source_url": "https://data.binance.vision/data/futures/um/daily/metrics/BTCUSDT/",
+        "source": "data.binance.vision (Binance public archive)",
+        "local": "artifacts\\metrics",
+        "files": 1948,
+        "retrieved_first_utc": "2026-07-02T09:19:29.326983+00:00",
+        "retrieved_last_utc": "2026-07-02T09:30:43.966711+00:00",
+        "first_file": "BTCUSDT-metrics-2020-09-01.zip",
+        "last_file": "BTCUSDT-metrics-2025-12-31.zip"
+      },
+      "premium": {
+        "source_url": "https://data.binance.vision/data/futures/um/daily/premiumIndexKlines/BTCUSDT/1m/",
+        "source": "data.binance.vision (Binance public archive)",
+        "local": "artifacts\\premium_index_2020_2026h1",
+        "files": 2192,
+        "retrieved_first_utc": "2026-08-14T04:09:28.723281+00:00",
+        "retrieved_last_utc": "2026-08-14T04:22:29.131543+00:00",
+        "first_file": "BTCUSDT-1m-2020-01-01.zip",
+        "last_file": "BTCUSDT-1m-2025-12-31.zip"
+      },
+      "funding": {
+        "source_url": "https://data.binance.vision/data/futures/um/monthly/fundingRate/BTCUSDT/",
+        "source": "data.binance.vision (Binance public archive)",
+        "local": "artifacts\\funding_2020_2026h1",
+        "files": 78,
+        "retrieved_first_utc": "2026-10-07T16:36:34.940642+00:00",
+        "retrieved_last_utc": "2026-10-07T16:36:58.967832+00:00",
+        "first_file": "BTCUSDT-fundingRate-2020-01.zip",
+        "last_file": "BTCUSDT-fundingRate-2026-06.zip"
+      },
+      "stage_a": {
+        "source": "R2-44 w730_raw walk-forward folds (local generation, no URL)",
+        "local": "out\\k45_vol_detector_r2_44_window_20261006\\folds\\w730_raw",
+        "files": 201,
+        "retrieved_first_utc": "2026-10-06T09:09:57.659353+00:00",
+        "retrieved_last_utc": "2026-10-06T17:29:02.647322+00:00"
+      }
     },
     "final_test": "Task 3 FINAL snapshot (sources, retrieval timestamps and cutoffs in its manifest)"
   },
@@ -2535,19 +2578,27 @@
   "artifacts": {
     "features": {
       "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb\\features\\features_pre2026.parquet",
-      "sha256": "e005ee6a695b139b07c978c431dd7a94fb26b16ffa71553dccd6611ad3afe7c6"
+      "sha256": "e005ee6a695b139b07c978c431dd7a94fb26b16ffa71553dccd6611ad3afe7c6",
+      "bytes": 218135585,
+      "rows": 134592,
+      "frame_sha256": "204014f08295e51de9feeb025a92d0c6788160b85f9d8ac415c4040486d8ce62"
     },
     "labels": {
       "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb\\labels\\labels_pre2026.parquet",
-      "sha256": "c3a71b6532ab8905cec301fd5423a129a8b5f371b67ff57b1f92bf408a10a584"
+      "sha256": "c3a71b6532ab8905cec301fd5423a129a8b5f371b67ff57b1f92bf408a10a584",
+      "bytes": 14301846,
+      "rows": 134592
     },
     "availability": {
       "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb\\features\\features_avail_pre2026.parquet",
-      "sha256": "1877165a0a16508e8609f8f571714c49bcc2c5337f9cba893de3b4d925905ef4"
+      "sha256": "1877165a0a16508e8609f8f571714c49bcc2c5337f9cba893de3b4d925905ef4",
+      "bytes": 2523038,
+      "rows": 134592
     },
     "meta": {
       "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb\\features\\feature_meta.json",
-      "sha256": "1857f796bdbb752524d2e241ac283d40433aebe7b1a6dd1104fdeee5c720eb26"
+      "sha256": "23fd39e152ad8765b742f0c74daee7bacb1eae456d058342c688f34c5dc27665",
+      "bytes": 21973
     },
     "validation_predictions": {
       "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb\\validation\\predictions.parquet",
@@ -2586,6 +2637,15 @@
       "sha256": "e08c38fa4e6bf46d75bac0ca4ab6ec924cdc6b67e08ba5f4e1eee94538b083aa",
       "bytes": 8505
     }
+  },
+  "validation_rerun": {
+    "reason": "Codex pre-unlock fix round 1: ledgers book actual fundingTime events (minute bucketing only inside the simulator) instead of the 8 h-rounded schedule; V4 availability added to the causality gate; code changed",
+    "previous_manifest": {
+      "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb\\manifest_round0.json",
+      "sha256": "f3ef6c36cd6d1b1bfa7c0f302732d8660c0758e5764e0a84961f4ffd37f86142"
+    },
+    "fold_fits": "reused: feature frame sha256 identical to round 0 (marker folds/_features_frame_sha256.txt)",
+    "registry": "no new rows: same 127 trials (5417 -> 5544 recorded once in round 0)"
   },
   "data_gates": {
     "no_missing_or_duplicate_1m_bars": true,
@@ -4984,7 +5044,7 @@
       },
       "retrain_time": "2026-01-01 00:00:00+00:00",
       "publication_time_logical": "2026-01-01 00:00:00+00:00",
-      "written_at": "2026-10-09T13:53:01.477400+00:00",
+      "written_at": "2026-10-09T14:35:56.642034+00:00",
       "train_rows": 133520,
       "train_first": "2022-03-01 00:00:00+00:00",
       "train_last": "2025-12-31 19:45:00+00:00",
@@ -4997,7 +5057,7 @@
         "sha256": "521aae3b0a9bb09f5c14cce75603daf6e365e0538805dd63c8eb0399bf7f3ef4",
         "bytes": 490122
       },
-      "seconds": 14.8
+      "seconds": 14.6
     },
     "short": {
       "opened": false,
@@ -5021,5 +5081,5 @@
     "implementation": "stageb.bootstrap_ic + stageb.holm"
   },
   "test_unlock": null,
-  "runtime_seconds": 1459.4
+  "runtime_seconds": 327.0
 }

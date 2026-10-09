@@ -4,7 +4,7 @@
     "2025-09-01 00:00:00+00:00",
     "2025-12-01 00:00:00+00:00"
   ],
-  "created_utc": "2026-10-09T13:53:59.742531+00:00",
+  "created_utc": "2026-10-09T14:37:05.081065+00:00",
   "long": {
     "config": {
       "view": "V5_continuous",
@@ -15,6 +15,7 @@
     "checkpoints": 14,
     "fallbacks": [],
     "train_cutoff_before_retrain": true,
+    "blocked_decisions": 0,
     "completed_positions_4bps": 143,
     "n_eval": 8624,
     "n_eff": 539,
@@ -30,6 +31,7 @@
     "checkpoints": 14,
     "fallbacks": [],
     "train_cutoff_before_retrain": true,
+    "blocked_decisions": 0,
     "completed_positions_4bps": 114,
     "n_eval": 8624,
     "n_eff": 539,

@@ -68,11 +68,55 @@ def test_snapshot_merge_keeps_2026_rows_and_rounds_settlements():
     ctx, funding, ledger = run.combine_context(pre_m, pre_metrics, pre_premium, settle, pre_p, snap, end)
     assert ctx.minutes.open_time.iloc[-1] == end - pd.Timedelta(minutes=1) and len(ctx.minutes) == 4 * 1440
     assert ctx.metrics.global_ls.tolist() == [1.0, 1.2, 1.3]                 # snapshot wins on a shared time
-    assert ledger.time.tolist() == [utc("2025-12-31 16:00"), utc("2026-01-01"), utc("2026-01-01 08:00"),
-                                    utc("2026-01-01 16:00")]                 # 2026 from the snapshot only
+    assert ledger.time.tolist() == [utc("2025-12-31 16:00"), utc("2026-01-01 00:00:00.008"), utc("2026-01-01 08:00"),
+                                    utc("2026-01-01 16:00:00.003")]          # actual fundingTime, 2026 from the snapshot
+    assert ctx.funding.time.tolist() == [utc("2025-12-31 16:00"), utc("2026-01-01"), utc("2026-01-01 08:00"),
+                                         utc("2026-01-01 16:00")]            # technique inputs: sim minute buckets
     assert ledger.rate.tolist() == [1e-4, 2e-4, 3e-4, 4e-4]
     assert funding.interval_missing.tolist() == [0, 0, 1] and np.isnan(funding.interval_hours.iloc[-1])
     assert funding.rate.tolist() == [1e-4, 2e-4, 3e-4]                      # pre-2026 settle row at 2026-01-01 dropped
     assert (ctx.regime.timestamp.diff().dropna() == pd.Timedelta("15min")).all() and "M" in ctx.regime
     with pytest.raises(RuntimeError):
         run.combine_context(pre_m, pre_metrics, pre_premium, settle, pre_p, {**snap, "market_1m": snap_m.iloc[:-1]}, end)
+
+
+def test_unlock_refuses_when_code_differs_from_the_frozen_manifest():
+    assert any("code hashes" in p for p in run.unlock_preconditions({"code_sha256": {"x": "0"}}, run.CONFIRM))
+    assert not any("code hashes" in p for p in run.unlock_preconditions({"code_sha256": run.code_hashes()}, run.CONFIRM))
+
+
+@pytest.mark.parametrize("stage", ["snapshot", "refit"])
+def test_snapshot_and_refit_checks_refuse_before_the_one_shot_flag(tmp_path, monkeypatch, stage):
+    monkeypatch.setattr(run, "OUT", tmp_path)
+    m = {"opened_sides": ["long"], "test_unlock": None}
+    (tmp_path / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    monkeypatch.setattr(run, "unlock_preconditions", lambda m, c: [])
+    calls = []
+
+    def snapshot(read_frames=False):
+        calls.append(read_frames)
+        if stage == "snapshot":
+            raise SystemExit("snapshot manifest sha256 changed")
+        return {}
+    monkeypatch.setattr(run, "verify_snapshot", snapshot)
+    monkeypatch.setattr(run, "refit_check", lambda m: {"long": {"equal": False}})
+    monkeypatch.setattr(run, "test_context", lambda: pytest.fail("2026 data read before the checks"))
+    with pytest.raises(SystemExit):
+        run.unlock(type("A", (), {"confirm": run.CONFIRM})())
+    assert calls == [False]                                   # only the bytes-only check ran
+    assert json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8")) == m   # no one-shot flag recorded
+
+
+def test_rest_taker_swap_and_trade_comparison():
+    t = pd.DatetimeIndex([utc("2026-09-30 23:55"), utc("2026-10-01 00:05"), utc("2026-10-01 00:10")])
+    metrics = pd.DataFrame({"available_time": t, "taker_lsr": [1.0, 1.1, 1.2]})
+    rest = pd.DataFrame({"create_time": ["2026-10-01T00:00:00+00:00"], "buy_sell_ratio": [2.0]})
+    out = run.rest_taker_metrics(metrics, rest, utc("2026-10-01"), utc("2026-10-08"))
+    assert out.taker_lsr.tolist()[:2] == [1.0, 2.0] and np.isnan(out.taker_lsr.iloc[2])   # no REST row: missing
+    a = pd.DataFrame({"position_id": [1, 2], "entry_time": [utc("2026-10-01 01:01"), utc("2026-10-02")],
+                      "exit_time": [utc("2026-10-01 05:00"), utc("2026-10-02 03:00")], "net_bps": [5.0, -1.0]})
+    r = pd.DataFrame({"position_id": [1, 2], "entry_time": [utc("2026-10-01 01:01"), utc("2026-10-03")],
+                      "exit_time": [utc("2026-10-01 06:00"), utc("2026-10-03 01:00")], "net_bps": [4.0, 2.0]})
+    c = run.compare_trades(a, r)
+    assert c["matched_entry_times"] == 1 and c["only_archive_entry_times"] == [str(utc("2026-10-02"))]
+    assert c["only_rest_entry_times"] == [str(utc("2026-10-03"))] and len(c["matched_with_different_exit"]) == 1

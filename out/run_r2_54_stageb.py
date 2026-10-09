@@ -125,6 +125,43 @@ def verify_snapshot(read_frames: bool = False) -> dict:
             "gates_data": m["gates_data"], "taker_archive_only_asserted_on_rows": bool(read_frames)}
 
 
+def features_frame_sha256(frame: pd.DataFrame) -> str:
+    return hashlib.sha256(pd.util.hash_pandas_object(frame, index=False).to_numpy().tobytes()).hexdigest()
+
+
+ARCHIVE_URLS = {"market": "https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/1m/",
+                "metrics": "https://data.binance.vision/data/futures/um/daily/metrics/BTCUSDT/",
+                "premium": "https://data.binance.vision/data/futures/um/daily/premiumIndexKlines/BTCUSDT/1m/",
+                "funding": "https://data.binance.vision/data/futures/um/monthly/fundingRate/BTCUSDT/"}
+
+
+def _mtimes(paths) -> dict:
+    stamps = sorted(datetime.fromtimestamp(Path(p).stat().st_mtime, timezone.utc) for p in paths)
+    return {"files": len(stamps), "retrieved_first_utc": stamps[0].isoformat() if stamps else None,
+            "retrieved_last_utc": stamps[-1].isoformat() if stamps else None}
+
+
+def source_provenance() -> dict:
+    """manifest.required_records: pre-2026 source URLs, local copies, retrieval timestamps (file mtime: the download
+    time of each archive; no separate retrieval log exists) and the data cutoff."""
+    funding_dir = ROOT / "artifacts/funding_2020_2026h1"
+    out = {"data_cutoff_exclusive": str(sb.TEST_START),
+           "retrieval_timestamp_rule": "local file modification time (UTC) of the downloaded archive"}
+    for name, local in (("market", data.MARKET_PATH), ("metrics", data.METRICS_DIR), ("premium", data.PREMIUM_DIR),
+                        ("funding", funding_dir)):
+        files = [local] if Path(local).is_file() else sorted(Path(local).glob("*.zip"))
+        daily = name in ("metrics", "premium")             # loaders read only daily files dated before the cutoff
+        used = [f for f in files if not daily or data._file_day(f) < sb.TEST_START]
+        out[name] = {"source_url": ARCHIVE_URLS[name], "source": "data.binance.vision (Binance public archive)",
+                     "local": rel(local), **_mtimes(used),
+                     "first_file": Path(used[0]).name if used else None, "last_file": Path(used[-1]).name if used else None}
+    out["market"]["note"] = "single parquet built from the monthly kline archives; rows >= 2026-01-01 not read"
+    folds = sorted(data.PREDICTIONS_DIR.glob("DEV_*/fold_*_predictions.parquet"))
+    out["stage_a"] = {"source": "R2-44 w730_raw walk-forward folds (local generation, no URL)",
+                      "local": rel(data.PREDICTIONS_DIR), **_mtimes(folds)}
+    return out
+
+
 def stage_a_pre2026() -> list:
     out = []
     for segment in ("DEV_FRONT", "DEV_BACK"):
@@ -294,6 +331,7 @@ class Ledger:
     def __init__(self, ctx: Context):
         ax = sb.ax_runner()
         self.ctx, self.minutes = ctx, ctx.minutes
+        self.settle = sb.actual_settlements(costs._settlements())      # actual fundingTime events
         mt = pd.DatetimeIndex(self.minutes.open_time)
         self.e = {h: ax.e_series(ctx.regime, mt, h) for h in sb.HORIZONS}
         self.slices = {}
@@ -310,8 +348,9 @@ class Ledger:
         t = pd.DatetimeIndex(times[rows])
         e0 = sb.ax_runner().e_at(self.ctx.regime, t, horizon)
         table = sb.signal_table(t, np.asarray(yhat)[rows], side, e0, k)
-        r4 = sb.fold_ledger(table, minutes, e, e_min, start, b, sb.FEE_NOMINAL, k)
-        r8 = sb.fold_ledger(table, minutes, e, e_min, start, b, sb.FEE_STRESS, k)
+        with sb.ledger_settlements(self.settle):
+            r4 = sb.fold_ledger(table, minutes, e, e_min, start, b, sb.FEE_NOMINAL, k)
+            r8 = sb.fold_ledger(table, minutes, e, e_min, start, b, sb.FEE_STRESS, k)
         wants = table.side != 0
         return {"net4": r4["pnl"], "net8": r8["pnl"], "completed": r4["completed"], "valid": r4["valid"] and r8["valid"],
                 "open_at_end": r4["open_at_end"], "exit_reasons": r4["exit_reasons"],
@@ -529,12 +568,7 @@ def run(args) -> None:
                                       "viewed by earlier discounted experiments; the final-test interval is not a "
                                       "pristine holdout.",
                 "snapshot": verify_snapshot(read_frames=False),
-                "sources": {"pre_2026": {"market": rel(data.MARKET_PATH), "metrics": rel(data.METRICS_DIR),
-                                         "premium": rel(data.PREMIUM_DIR), "funding": "artifacts/funding_2020_2026h1",
-                                         "stage_a": rel(data.PREDICTIONS_DIR),
-                                         "origin": "data.binance.vision archives (market klines, metrics, premium "
-                                                   "index, funding rate) and R2-44 w730_raw walk-forward folds",
-                                         "data_cutoff": str(sb.TEST_START)},
+                "sources": {"pre_2026": source_provenance(),
                             "final_test": "Task 3 FINAL snapshot (sources, retrieval timestamps and cutoffs in its "
                                           "manifest)"},
                 "input_sha256_pre_2026": sb.ax_runner().plan2.input_hashes(sb.TEST_START),
@@ -550,6 +584,22 @@ def run(args) -> None:
             ("availability", OUT / "features/features_avail_pre2026.parquet"),
             ("meta", OUT / "features/feature_meta.json"))}
     manifest["artifacts"] = records
+    digest = features_frame_sha256(feats.frame)
+    marker = OUT / "folds/_features_frame_sha256.txt"
+    if marker.exists() and marker.read_text().strip() != digest:
+        raise SystemExit("fold cache was fit on a different feature frame; delete stageb/folds and robustness_folds")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(digest)
+    manifest["artifacts"]["features"]["frame_sha256"] = digest
+    previous = OUT / "manifest_round0.json"
+    if previous.exists():
+        manifest["validation_rerun"] = {
+            "reason": "Codex pre-unlock fix round 1: ledgers book actual fundingTime events (minute bucketing only "
+                      "inside the simulator) instead of the 8 h-rounded schedule; V4 availability added to the "
+                      "causality gate; code changed",
+            "previous_manifest": {"path": rel(previous), "sha256": sha(previous)},
+            "fold_fits": "reused: feature frame sha256 identical to round 0 (marker folds/_features_frame_sha256.txt)",
+            "registry": "no new rows: same 127 trials (5417 -> 5544 recorded once in round 0)"}
     gates = data_gates(ctx, feats, labels)
     gates["real_data_truncation_causality"] = real_causality(ctx, funding, feats)
     gates["pass"] = gates["pass"] and gates["real_data_truncation_causality"]["pass"]
@@ -707,59 +757,57 @@ def run(args) -> None:
 # ---------------------------------------------------------------- final-test replay (shared by dry-run and unlock)
 def replay(ctx: Context, feats: sb.Features, labels: pd.DataFrame, cfg: dict, side: str, first: pd.Timestamp,
            end: pd.Timestamp, folder: Path, first_checkpoint: dict | None = None, settle: pd.DataFrame | None = None,
-           train_end_override=None) -> dict:
-    """final_test_mode: one causal continuous replay from flat at first + 24 h with weekly Thursday retraining; the
-    checkpoint retrained at r serves decisions in [r, next r); positions are never reset at retrain boundaries."""
+           reuse: list | None = None, tag: str = "") -> dict:
+    """final_test_mode: one causal continuous replay from flat at first + 24 h with weekly Thursday retraining
+    (stageb.weekly_predictions); positions are never reset at retrain boundaries. first_checkpoint: the committed,
+    hash-verified final fit serves the first week (its refit check ran before the unlock). reuse: the checkpoint
+    events of an earlier replay, loaded and hash-verified instead of retraining (A3 diagnostic)."""
     times = pd.DatetimeIndex(feats.frame.decision_time)
     cols = sb.view_columns(feats, cfg["view"])
     x = feats.frame[cols].to_numpy(np.float32)
     horizon, h = cfg["horizon"], sb.HORIZONS[cfg["horizon"]]
-    g_all = labels[f"g_{horizon}"].to_numpy(float)
+    g_all = labels[f"g_{horizon}"].to_numpy(float) if labels is not None else np.full(len(times), np.nan)
     schedule = sorted({first, *sb.thursdays(first, end)})
-    yhat = np.full(len(times), np.nan)
-    events, active, active_r = [], None, None
     folder.mkdir(parents=True, exist_ok=True)
     code = hashlib.sha256(json.dumps(code_hashes(), sort_keys=True).encode()).hexdigest()
-    for j, r in enumerate(schedule):
-        nxt = schedule[j + 1] if j + 1 < len(schedule) else end
-        rec = {"retrain_time": str(r), "serves": [str(r), str(nxt)], "code_sha256": code,
-               "feature_sha256": hashlib.sha256(json.dumps(cols).encode()).hexdigest()}
-        try:
-            if j == 0 and first_checkpoint is not None:
-                blob = (ROOT / first_checkpoint["checkpoint"]["path"]).read_bytes()
-                if sb.sha256_bytes(blob) != first_checkpoint["checkpoint"]["sha256"]:
-                    raise RuntimeError("final checkpoint hash changed")
-                model = sb.load_checkpoint(blob)
-                refit = final_fit(feats, labels, cfg, r, folder, f"refit_check_{side}")
-                rec.update(source="committed final fit", refit_sha256_equal=
-                           refit["checkpoint"]["sha256"] == first_checkpoint["checkpoint"]["sha256"],
-                           train_rows=first_checkpoint["train_rows"],
-                           train_cutoff=first_checkpoint["train_cutoff_label_exit_max"])
-            else:
-                tr = sb.train_mask(times, h, r)
-                model = sb.fit_model(cfg["model"], x[tr], g_all[tr], cols)
-                blob = sb.checkpoint_bytes(model)
-                rec.update(source="weekly retrain", train_rows=int(tr.sum()),
-                           train_cutoff=str(labels[f"exit_{horizon}"][tr].max()))
-                if not np.isfinite(g_all[tr]).all() or labels[f"exit_{horizon}"][tr].max() >= r:
-                    raise RuntimeError("training label crosses the retrain time")
-            path = folder / f"{side}_{r:%Y%m%d}.bin"
-            path.write_bytes(blob)
-            rec.update(checkpoint_sha256=sb.sha256_bytes(blob), checkpoint_path=rel(path),
-                       publication_time_logical=str(r), written_at=now(), fallback=None)
-            active, active_r = model, r
-        except Exception as error:      # live_retraining.fallback / hard_failure
-            if active is not None and sb.fallback_ok(r, active_r):
-                rec.update(fallback=f"retrain failed ({type(error).__name__}: {error}); previous checkpoint "
-                                    f"{active_r} (scheduled age <= 7 d)")
-            else:
-                rec.update(fallback=f"hard failure ({type(error).__name__}: {error}); new entries blocked")
-                active = None
-        serve = (times >= r) & (times < nxt)
-        if active is not None and serve.any():
-            yhat[serve] = sb.predict(active, x[serve])
-            rec["first_prediction"] = str(times[serve][0])
-        events.append(rec)
+    fsha = hashlib.sha256(json.dumps(cols).encode()).hexdigest()
+    previous = {e["retrain_time"]: e for e in (reuse or [])}
+
+    def load(path: str, digest: str):
+        blob = (ROOT / path).read_bytes()
+        if sb.sha256_bytes(blob) != digest:
+            raise RuntimeError(f"checkpoint {path} hash changed")
+        return sb.load_checkpoint(blob)
+
+    def fit(r):
+        info = {"code_sha256": code, "feature_sha256": fsha, "publication_time_logical": str(r)}
+        if reuse is not None:
+            e = previous[str(r)]
+            if e.get("checkpoint_path") is None:
+                raise RuntimeError(f"no checkpoint in the reused replay ({e.get('fallback')})")
+            return load(e["checkpoint_path"], e["checkpoint_sha256"]), {**info, "source": "reused",
+                                                                         "checkpoint_sha256": e["checkpoint_sha256"]}
+        tr = sb.train_mask(times, h, r)
+        if not np.isfinite(g_all[tr]).all() or labels[f"exit_{horizon}"][tr].max() >= r:
+            raise RuntimeError("training label crosses the retrain time")
+        model = sb.fit_model(cfg["model"], x[tr], g_all[tr], cols)
+        blob = sb.checkpoint_bytes(model)
+        path = folder / f"{side}_{r:%Y%m%d}.bin"
+        path.write_bytes(blob)
+        return model, {**info, "source": "weekly retrain", "train_rows": int(tr.sum()),
+                       "train_cutoff": str(labels[f"exit_{horizon}"][tr].max()), "checkpoint_path": rel(path),
+                       "checkpoint_sha256": sb.sha256_bytes(blob), "written_at": now()}
+
+    first_model = None
+    if first_checkpoint is not None and reuse is None:
+        ck = first_checkpoint["checkpoint"]
+        first_model = (load(ck["path"], ck["sha256"]),
+                       {"source": "committed final fit", "checkpoint_path": ck["path"], "checkpoint_sha256": ck["sha256"],
+                        "train_rows": first_checkpoint["train_rows"], "code_sha256": code, "feature_sha256": fsha,
+                        "train_cutoff": first_checkpoint["train_cutoff_label_exit_max"],
+                        "publication_time_logical": str(first)})
+    yhat, events = sb.weekly_predictions(times, schedule, end, fit,
+                                         lambda model, mask: sb.predict(model, x[mask]), first_model)
     ax = sb.ax_runner()
     start = first + sb.EMBARGO
     mt = pd.DatetimeIndex(ctx.minutes.open_time)
@@ -769,29 +817,35 @@ def replay(ctx: Context, feats: sb.Features, labels: pd.DataFrame, cfg: dict, si
     rows = (times >= start) & (times < end)
     t = times[rows]
     e0 = ax.e_at(ctx.regime, t, horizon)
-    side_i = sb.SIDES[side]
-    table = sb.signal_table(t, yhat[rows], side_i, e0, cfg["k"])
+    table = sb.signal_table(t, yhat[rows], sb.SIDES[side], e0, cfg["k"])
     out = {"checkpoints": events, "k_entry": cfg["k"]}
-    with sb.ledger_settlements(settle if settle is not None else costs._settlements()):
+    settle = settle if settle is not None else sb.actual_settlements(costs._settlements())
+    with sb.ledger_settlements(settle):
         for fee, name in ((sb.FEE_NOMINAL, "4bps"), (sb.FEE_STRESS, "8bps")):
             config = replace(sb.CONFIG, fee_per_side=fee, close_at_end=True)
             res = ax.run_ax(table, minutes, e, e_min, start, end, config, np.full(len(minutes), cfg["k"]))
             tr = res.trades.assign(k_entry=cfg["k"])
-            parquet(folder / f"{side}_trades_{name}.parquet", tr)
-            parquet(folder / f"{side}_minute_ledger_{name}.parquet",
+            parquet(folder / f"{side}{tag}_trades_{name}.parquet", tr)
+            parquet(folder / f"{side}{tag}_minute_ledger_{name}.parquet",
                     pd.DataFrame({"open_time": res.minute_pnl.index, "pnl_bps": res.minute_pnl.to_numpy()}))
             admin = tr.exit_reason == "data_end"
-            out[name] = {"net_bps": float(res.minute_pnl.sum()), "completed_positions": int(tr.loc[~admin].position_id.nunique()),
+            out[name] = {"net_bps": float(res.minute_pnl.sum()),
+                         "completed_positions": int(tr.loc[~admin].position_id.nunique()),
                          "data_end_close": {"n": int(admin.sum()), "net_bps": float(tr.loc[admin, "net_bps"].sum())},
                          "fee_bps": float(tr.fee_bps.sum()), "funding_bps": float(tr.funding_bps.sum()),
                          "exit_reasons": tr.exit_reason.value_counts().to_dict()}
+            out[f"_trades_{name}"] = tr
     keep = sb.block_mask(times, h, first, end)
     wants = table.side != 0
     out.update(ic=sb.spearman(yhat[keep], g_all[keep]), n_eval=int(keep.sum()), n_eff=sb.n_eff(times, keep, h),
                entry_signals=int(wants.sum()), no_entry_e_rows=int((wants & ~(np.isfinite(e0) & (e0 > 0))).sum()),
-               _ic_rows=(yhat[keep], g_all[keep]))
-    parquet(folder / f"{side}_predictions.parquet", pd.DataFrame({"decision_time": times[rows], "yhat": yhat[rows]}))
+               _ic_rows=(yhat[keep], g_all[keep]), _yhat=yhat[rows])
+    parquet(folder / f"{side}{tag}_predictions.parquet", pd.DataFrame({"decision_time": t, "yhat": yhat[rows]}))
     return out
+
+
+def strip(r: dict) -> dict:
+    return {k: v for k, v in r.items() if not k.startswith("_")}
 
 
 def dry_run(args) -> None:
@@ -806,12 +860,12 @@ def dry_run(args) -> None:
         sel = m["selection"]["per_side"][side].get("selected") or \
             next(r for r in json.loads((OUT / "validation/ranking_trace.json").read_text(encoding="utf-8"))["trace"][side])
         cfg = {k: sel[k] for k in ("view", "horizon", "model", "k")}
-        r = replay(ctx, feats, labels, cfg, side, first, end, OUT / "dry_run", None, None)
-        r.pop("_ic_rows")
+        r = strip(replay(ctx, feats, labels, cfg, side, first, end, OUT / "dry_run"))
         out[side] = {"config": cfg, "checkpoints": len(r["checkpoints"]),
                      "fallbacks": [c["fallback"] for c in r["checkpoints"] if c.get("fallback")],
                      "train_cutoff_before_retrain": all(pd.Timestamp(c["train_cutoff"]) < pd.Timestamp(c["retrain_time"])
-                                                        for c in r["checkpoints"]),
+                                                        for c in r["checkpoints"] if "train_cutoff" in c),
+                     "blocked_decisions": sum(c["blocked_decisions"] for c in r["checkpoints"]),
                      "completed_positions_4bps": r["4bps"]["completed_positions"], "n_eval": r["n_eval"],
                      "n_eff": r["n_eff"], "no_entry_e_rows": r["no_entry_e_rows"]}
     print(json.dumps(out, indent=1, default=str))
@@ -844,8 +898,11 @@ def combine_context(pre_minutes, pre_metrics, pre_premium, pre_settle, pre_predi
     late = pd.DataFrame({"time": pd.to_datetime(live.time, utc=True, format="ISO8601"), "rate": live.rate.to_numpy(float)})
     late = late.loc[late.time > ev.time.max()]           # October: live REST events absent from funding_events
     base = pre_settle.loc[pre_settle.time < sb.TEST_START]
-    settle = pd.concat([base[["time", "rate", "raw_calc_time"]], sb.settlements(pd.concat([ev, late], ignore_index=True))],
-                       ignore_index=True)
+    events_2026 = sb.settlements(pd.concat([ev, late], ignore_index=True))
+    settle = sb.settlements(pd.concat([sb.actual_settlements(base), events_2026], ignore_index=True))  # actual times
+    t2026, r2026 = sb.simulator_minutes(events_2026)
+    technique_funding = pd.concat([base[["time", "rate"]], pd.DataFrame(
+        {"time": pd.to_datetime(t2026, utc=True), "rate": r2026})], ignore_index=True)   # sim minute buckets
     fmi = snap["funding_model_input"]
     funding = pd.concat([sb.funding_frame(base),
                          pd.DataFrame({"available_time": pd.to_datetime(fmi.publish_time, utc=True),
@@ -856,7 +913,7 @@ def combine_context(pre_minutes, pre_metrics, pre_premium, pre_settle, pre_predi
     sa = snap["stage_a_2026"].rename(columns={"prediction_ts": "timestamp"})
     preds = pd.concat([pre_p, sa[list(pre_p.columns)]], ignore_index=True).sort_values("timestamp").reset_index(drop=True)
     regime_frame = load_regime(data.validate_predictions(preds))
-    ctx = Context(minutes=minutes, metrics=metrics, premium=premium, funding=settle[["time", "rate"]],
+    ctx = Context(minutes=minutes, metrics=metrics, premium=premium, funding=technique_funding,
                   regime=regime_frame, end=end)
     return ctx, funding, settle
 
@@ -892,9 +949,26 @@ def unlock_preconditions(m: dict, confirm: str | None) -> list:
             problems.append(f"{side} final checkpoint hash missing or changed")
     if not (m.get("registry") or {}).get("registered_ok"):
         problems.append("registry 127 trials not recorded")
+    if m.get("code_sha256") != code_hashes():
+        problems.append("code hashes differ from the frozen manifest code_sha256")
     if confirm != CONFIRM:
         problems.append(f"explicit confirmation missing (--confirm {CONFIRM})")
     return problems
+
+
+def refit_check(m: dict) -> dict:
+    """Before any 2026 access: refit each opened side on the pre-2026 artifacts; the hash must equal the committed
+    final checkpoint."""
+    feats, labels = load_inputs()
+    out = {}
+    scratch = OUT / "unlock_refit_check"
+    for side in m["opened_sides"]:
+        ff = m["final_fit"][side]
+        refit = final_fit(feats, labels, {**m["selection"]["per_side"][side]["selected"]}, sb.TEST_START, scratch,
+                          f"refit_{side}")
+        out[side] = {"committed": ff["checkpoint"]["sha256"], "refit": refit["checkpoint"]["sha256"],
+                     "equal": refit["checkpoint"]["sha256"] == ff["checkpoint"]["sha256"]}
+    return out
 
 
 def unlock(args) -> None:
@@ -905,9 +979,14 @@ def unlock(args) -> None:
     problems = unlock_preconditions(m, args.confirm)
     if problems:
         raise SystemExit("refused: " + "; ".join(problems))
+    snapshot = verify_snapshot(read_frames=False)          # file hashes only; SystemExit refuses before the flag
+    refit = refit_check(m)                                  # pre-2026 artifacts only
+    if not all(r["equal"] for r in refit.values()):
+        raise SystemExit(f"refused: final checkpoint refit hash differs {refit}")
     m["test_unlock"] = {"unlock_utc": now(), "pid": os.getpid(), "host": socket.gethostname(),
                         "user": getpass.getuser(), "python": sys.version, "platform": platform.platform(),
-                        "argv": sys.argv, "git": git(), "code_sha256": code_hashes()}
+                        "argv": sys.argv, "git": git(), "code_sha256": code_hashes(), "snapshot_verified": snapshot,
+                        "refit_check": refit}
     m["test_status"] = "UNLOCKED"
     dump(path, m)                                      # recorded before any 2026 frame is read
     test = {"snapshot": verify_snapshot(read_frames=True)}
@@ -927,7 +1006,7 @@ def unlock(args) -> None:
     folder = OUT / "test"
     parquet(folder / "features_full.parquet", feats.frame)
     parquet(folder / "labels_full.parquet", labels)
-    results, pvals, ic_rows = {}, {}, {}
+    results, pvals, raw = {}, {}, {}
     for side in sb.SIDES:
         if side not in m["opened_sides"]:
             results[side] = {"opened": False, "reason": m["final_fit"][side].get("reason")}
@@ -935,10 +1014,11 @@ def unlock(args) -> None:
             continue
         cfg = {**m["selection"]["per_side"][side]["selected"]}
         r = replay(ctx, feats, labels, cfg, side, sb.TEST_START, sb.TEST_END, folder, m["final_fit"][side], settle)
-        x, y = r.pop("_ic_rows")
+        raw[side] = r
+        x, y = r["_ic_rows"]
         plan = sb.freeze()["bootstrap"]
         boot = sb.bootstrap_ic(x, y, block=plan["block_rows"], reps=plan["replicates"], seed=plan["seed"])
-        results[side] = {"opened": True, "config": cfg, **r, "bootstrap": boot}
+        results[side] = {"opened": True, "config": cfg, **strip(r), "bootstrap": boot}
         pvals[side] = boot["p"]
     h = sb.holm(pvals)
     for side, r in results.items():
@@ -953,7 +1033,7 @@ def unlock(args) -> None:
                  "claim_rule": sb.freeze()["manifest"]["result_claim"]}
     dump(path, m)                                      # primary result frozen before any oracle or diagnostic
     m["test"]["oracles_non_selectable"] = oracles(ctx, feats, labels, m, settle, folder)
-    m["test"]["a3_taker_source_diagnostic"] = taker_diagnostic(ctx, funding, m, folder)
+    m["test"]["a3_taker_source_diagnostic"] = taker_diagnostic(ctx, funding, labels, m, settle, folder, raw)
     dump(path, m)
     print(json.dumps({s: results[s].get("gates") for s in sb.SIDES}, indent=1, default=str))
 
@@ -992,38 +1072,52 @@ def oracles(ctx, feats, labels, m, settle, folder) -> dict:
     return out
 
 
-def taker_diagnostic(ctx, funding, m, folder) -> dict:
-    """Amendment A3: feature -> prediction -> entry on 2026-10-01..10-07 with archive vs REST taker (report only)."""
+def rest_taker_metrics(metrics: pd.DataFrame, rest: pd.DataFrame, a: pd.Timestamp, b: pd.Timestamp) -> pd.DataFrame:
+    """Archive metrics with taker_lsr replaced by REST buy_sell_ratio for rows available in (a, b] (period end);
+    a period without a REST row becomes missing (never filled from the archive, amendment A3)."""
+    when = pd.to_datetime(rest.create_time, utc=True, format="ISO8601") + pd.Timedelta(minutes=5)
+    values = pd.Series(rest.buy_sell_ratio.to_numpy(float), index=pd.DatetimeIndex(when)).groupby(level=0).last()
+    out = metrics.copy()
+    swap = ((out.available_time > a) & (out.available_time <= b)).to_numpy()
+    out.loc[swap, "taker_lsr"] = values.reindex(pd.DatetimeIndex(out.available_time[swap])).to_numpy()
+    return out
+
+
+def compare_trades(archive: pd.DataFrame, rest: pd.DataFrame) -> dict:
+    """Position-level comparison of two continuous replays: matched and unmatched entry times, exit differences."""
+    a = archive.drop_duplicates("position_id").set_index("entry_time")
+    r = rest.drop_duplicates("position_id").set_index("entry_time")
+    both = a.index.intersection(r.index)
+    exit_diff = [{"entry_time": str(t), "exit_archive": str(a.exit_time[t]), "exit_rest": str(r.exit_time[t])}
+                 for t in both if a.exit_time[t] != r.exit_time[t]]
+    return {"positions_archive": len(a), "positions_rest": len(r), "matched_entry_times": len(both),
+            "only_archive_entry_times": [str(t) for t in a.index.difference(r.index)],
+            "only_rest_entry_times": [str(t) for t in r.index.difference(a.index)],
+            "matched_with_different_exit": exit_diff,
+            "net4_archive": float(archive.net_bps.sum()), "net4_rest": float(rest.net_bps.sum())}
+
+
+def taker_diagnostic(ctx, funding, labels, m, settle, folder, primary: dict) -> dict:
+    """Amendment A3 (report only): the identical continuous replay (same checkpoints, rule, k and ledger) with REST
+    instead of archive taker on 2026-10-01..10-07; records the actual entry/exit time differences."""
     import sqlite3
     db = BASE / "parity/rest_staging.sqlite"
     with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as c:
         rest = pd.read_sql_query("SELECT create_time, buy_sell_ratio FROM futures_taker_lsr_5m WHERE source='rest'", c)
-    rest_t = pd.to_datetime(rest.create_time, utc=True, format="ISO8601") + pd.Timedelta(minutes=5)
     a, b = pd.Timestamp("2026-10-01", tz="UTC"), sb.TEST_END
-    metrics = ctx.metrics.copy()
-    swap = (metrics.available_time > a) & (metrics.available_time <= b)
-    values = pd.Series(rest.buy_sell_ratio.to_numpy(float), index=rest_t).groupby(level=0).last()
-    metrics.loc[swap, "taker_lsr"] = values.reindex(pd.DatetimeIndex(metrics.loc[swap, "available_time"])).to_numpy()
-    alt = replace(ctx, metrics=metrics)
-    base_f = sb.build_features(ctx, a - pd.Timedelta(days=2), b, funding)
-    alt_f = sb.build_features(alt, a - pd.Timedelta(days=2), b, funding)
-    keep = (base_f.frame.decision_time >= a).to_numpy()
-    out = {"rest_rows": len(rest), "note": "REST rows placed at period end (logical); staging received_at is after "
-                                           "the window, so this is the as-if-real-time comparison"}
-    diff_cols = [c for c in base_f.frame.columns[1:] if not np.array_equal(
-        base_f.frame[c].to_numpy()[keep], alt_f.frame[c].to_numpy()[keep], equal_nan=True)]
-    out["features_differing"] = diff_cols
+    alt = replace(ctx, metrics=rest_taker_metrics(ctx.metrics, rest, a, b))
+    alt_f = sb.build_features(alt, sb.DEV_START, sb.TEST_END, funding)
+    out = {"rest_rows": len(rest), "window": [str(a), str(b)],
+           "note": "REST rows placed at period end (logical); staging received_at is after the window, so this is "
+                   "the as-if-real-time comparison; report only, no reselection"}
     for side in m["opened_sides"]:
         cfg = m["selection"]["per_side"][side]["selected"]
-        served = folder / f"{side}_20261001.bin"             # the replay checkpoint serving 2026-10-01..10-07
-        model = sb.load_checkpoint(served.read_bytes())
-        cols = sb.view_columns(base_f, cfg["view"])
-        ya = sb.predict(model, base_f.frame[cols].to_numpy(np.float32)[keep])
-        yr = sb.predict(model, alt_f.frame[cols].to_numpy(np.float32)[keep])
-        s = sb.SIDES[side]
-        ea, er = s * ya - sb.ENTRY_BPS > 0, s * yr - sb.ENTRY_BPS > 0
-        out[side] = {"max_abs_yhat_diff": float(np.max(np.abs(ya - yr))), "entry_archive": int(ea.sum()),
-                     "entry_rest": int(er.sum()), "entry_disagree": int((ea != er).sum())}
+        r = replay(alt, alt_f, labels, cfg, side, sb.TEST_START, sb.TEST_END, folder, m["final_fit"][side], settle,
+                   reuse=primary[side]["checkpoints"], tag="_rest_taker")
+        diff = np.abs(r["_yhat"] - primary[side]["_yhat"])
+        out[side] = {"max_abs_yhat_diff": float(np.nanmax(diff)) if np.isfinite(diff).any() else 0.0,
+                     "decisions_with_yhat_diff": int((diff > 0).sum()),
+                     **compare_trades(primary[side]["_trades_4bps"], r["_trades_4bps"])}
     return out
 
 

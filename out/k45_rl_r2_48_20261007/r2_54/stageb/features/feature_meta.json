@@ -653,5 +653,5 @@
   },
   "missingness": "no backward fill, no future-derived imputation; Ridge imputes NaN at the train mean (z = 0) after train-only standardization; CatBoost native NaN",
   "max_logical_available_minus_t_ns": 0,
-  "seconds": 18.8
+  "seconds": 23.0
 }

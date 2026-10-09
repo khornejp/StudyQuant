@@ -92,3 +92,48 @@ Status: **DONE_WITH_CONCERNS.**
    - "Sparse" means fewer than 100 events.
    - Unopened sides count as p=1 in Holm.
 7. `out/` is gitignored, so only the scripts, manifest, trace, CSV and final checkpoint are force-added. Fold artifacts (481 MB) are hashed in the manifest but not committed.
+
+## Fix round 1 (Codex pre-unlock review: safe to unlock NO)
+
+All 8 items are fixed with tests written first. Unlock was not run, and the test stays LOCKED.
+
+1. **BLOCKER** `unlock_preconditions` now refuses unless `code_hashes()` equals the manifest `code_sha256` exactly.
+2. **BLOCKER** Unlock order:
+   1. preconditions;
+   2. `verify_snapshot(read_frames=False)`;
+   3. refit check;
+   4. only then the one-shot flag;
+   5. after the flag, the taker row check and any 2026 read.
+
+   A test confirms that a snapshot or refit failure leaves the manifest byte-unchanged and reads no 2026 data.
+3. **BLOCKER** `refit_check` refits each opened side on the pre-2026 artifacts before any 2026 access. A hash mismatch refuses the unlock. The replay only loads the hash-verified committed checkpoint.
+4. **BLOCKER** Funding:
+   - `stageb.settlements` keeps the actual fundingTime (no 8 h rounding).
+   - `simulator_minutes` buckets events to their minute only inside the ledger override.
+   - Validation ledgers now use these actual events as well.
+   - Validation was rerun; see the old vs new table below.
+5. **HIGH** `stageb.weekly_predictions`: on a retrain failure, the previous checkpoint serves only decisions before active_retrain + 7 d. Later decisions get NaN, which blocks new entries and model exits; R2-52A stops keep running. Tests cover a fallback week and a hard failure.
+6. **MEDIUM** The A3 diagnostic is now the identical continuous replay:
+   - it reuses the same hash-verified checkpoints, rule, k and ledger;
+   - archive taker vs REST taker for 10-01..10-07, with missing REST periods left missing;
+   - it records actual matched and unmatched entry times and exit differences.
+7. **MEDIUM** V4 availability (technique row decision_time, K10 plan time) now feeds `seen()` and the causality gate. The gate passes, and the feature frame is unchanged (sha `204014f0…`).
+8. **MEDIUM** The manifest `sources.pre_2026` now holds data.binance.vision URLs and the local files used, with retrieval timestamps. The timestamps are file mtimes, since no download log exists; this is noted in the manifest.
+
+### Validation: old vs new
+- The minute floor of the actual fundingTime equals the 8 h-rounded time for all 7,119 pre-2026 and 819 2026 events, so the ledgers are bit-identical.
+- Across all 240 rows, the max diff is 0 for net4, net8, median IC, completed and folds_valid, and every fold list is equal.
+- Gates, robustness, ranking trace (`d1534eaf…`) and final checkpoint (`521aae3b…`) are all unchanged.
+
+| side | selection old = new | net4 | net8 | gates |
+|---|---|---|---|---|
+| long | V5_continuous, 4h, CatBoost, 2.0 | 8,741 = 8,741 | 3,025 = 3,025 | PASS = PASS |
+| short | V5_continuous, 4h, CatBoost, 2.0 | 5,251 = 5,251 | −785 = −785 | FAIL (economic) = FAIL |
+
+- Fold fits were reused, guarded by the identical feature-frame hash (marker `folds/_features_frame_sha256.txt`).
+- Registry: no new rows. It stays at 5544, and the manifest has a `validation_rerun` note.
+- Round-0 files kept: `manifest_round0.json` (sha `f3ef6c36…`) and `validation/candidates_round0.csv`.
+- New manifest sha: `c01c7601b6195e4de9cbab8ee4eae0677e99fb9a720d17fad2d3785b82104df8`. Rerun runtime: 327 s.
+- The dry run passes again: 14 checkpoints per side, 0 fallbacks, 0 blocked decisions.
+- `unlock-test` without `--confirm` refuses with only "confirmation missing", so the code hash matches.
+- Tests: 34 new. Full suite (sim + paper + r2_54 + rl state): 931 passed, 2 skipped.

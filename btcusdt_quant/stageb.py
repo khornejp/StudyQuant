@@ -376,21 +376,31 @@ def build_features(ctx: Context, start: pd.Timestamp, end: pd.Timestamp, funding
     # V4 techniques: raw NONE/NATIVE side channels, OCO proposals, K10 grid proposal (no fabricated side)
     sig_ids, oco_ids = technique_ids()
     close15 = _take(c, k15)
+
+    def seen_rows(table):
+        """A technique row is available at its decision_time; the channels read the latest row <= T."""
+        tt = np.sort(ns(table.decision_time))
+        p = _pos(tt, t)
+        seen(_take(tt, p, 0), p >= 0)
+
     for ident in sig_ids:
         table, _ = build_variant(ctx, ident, gated=False, style="NATIVE")
         channels = state.side_channels(table, times, CATALOG[ident].cadence_min == 5)
         for name, x in zip(("event_side", "last_side", "age", "never_seen"), channels):
             put(f"v4_{ident}_{name}", x, "V4", ident)
+        seen_rows(table)
     for ident in oco_ids:
         table, _ = build_variant(ctx, ident, gated=False, style="NATIVE")
         for name, x in zip(("proposal_active", "upper_bps", "lower_bps"), state.oco_channels(table, times, close15)):
             put(f"v4_{ident}_{name}", x, "V4", ident)
+        seen_rows(table)
     plan = grid_strategy.grid_plan(ctx, gated=False)
     gt = ns(plan.decision_time)
     k = _pos(gt, t)
     active = (k >= 0) & (_take(gt, k, 0) == t)
     put("v4_K10_proposal_active", active.astype(float), "V4", "K10")
     put("v4_K10_step_bps", np.where(active, _take(plan.g.to_numpy(float), k), np.nan), "V4", "K10")
+    seen(_take(gt, k, 0), k >= 0)
 
     data = {name: np.where(np.isfinite(x), x, np.nan).astype(np.float32) for name, x in cols.items()}
     frame = pd.concat([pd.DataFrame({"decision_time": times}), pd.DataFrame(data)], axis=1)
@@ -568,31 +578,72 @@ def fold_ledger(table, minutes, e, e_min, a, b, fee_per_side: float, k: float) -
 
 
 def settlements(events: pd.DataFrame) -> pd.DataFrame:
-    """Ledger settlements (time, rate, raw_calc_time) from actual funding times: the out/k45_funding.py rule (nearest
-    00/08/16 UTC, 60 s tolerance) that every pre-2026 ledger used."""
-    raw = pd.to_datetime(events.time, utc=True)
-    raw_ns = ns(raw)
-    eight = pd.Timedelta(hours=8).value
-    scheduled = ((raw_ns + eight // 2) // eight) * eight
-    if (np.abs(raw_ns - scheduled) > pd.Timedelta(seconds=60).value).any():
-        raise ValueError("funding timestamp exceeds 60 s tolerance")
-    out = pd.DataFrame({"time": pd.to_datetime(scheduled, utc=True), "rate": events.rate.to_numpy(float),
-                        "raw_calc_time": raw}).sort_values("time", kind="stable").reset_index(drop=True)
+    """Funding events (time = actual fundingTime, rate), sorted; no schedule rounding (data_plan.funding)."""
+    out = pd.DataFrame({"time": pd.to_datetime(events.time, utc=True), "rate": events.rate.to_numpy(float)})
+    out = out.sort_values("time", kind="stable").reset_index(drop=True)
     if out.time.duplicated().any():
-        raise ValueError("duplicate scheduled funding timestamp")
+        raise ValueError("duplicate funding event time")
     return out
+
+
+def actual_settlements(sim_settlements: pd.DataFrame) -> pd.DataFrame:
+    """Pre-2026 events from costs._settlements: its raw_calc_time is the actual fundingTime."""
+    return settlements(pd.DataFrame({"time": sim_settlements.raw_calc_time, "rate": sim_settlements.rate}))
+
+
+def simulator_minutes(frame: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Minute bucketing, used only inside the simulator: each actual event books at the minute containing it."""
+    t = ns(pd.DatetimeIndex(pd.to_datetime(frame.time, utc=True)).floor("min"))
+    if len(t) > 1 and not np.all(np.diff(t) > 0):
+        raise ValueError("two funding events in one minute")
+    return t, frame.rate.to_numpy(float)
 
 
 @contextlib.contextmanager
 def ledger_settlements(frame: pd.DataFrame):
-    """Temporarily point the sim ledger (costs.funding_events) at `frame` (final-test replay: snapshot funding)."""
-    arrays = (ns(frame.time), frame.rate.to_numpy(float))
+    """Point the sim ledger (costs.funding_events) at the actual events of `frame` for the duration of the block."""
+    arrays = simulator_minutes(frame)
     original = costs._settlement_arrays
     costs._settlement_arrays = lambda: arrays
     try:
         yield
     finally:
         costs._settlement_arrays = original
+
+
+def weekly_predictions(times, schedule: list, end: pd.Timestamp, fit, predict_rows, first_model=None):
+    """live_retraining on the 15-minute grid: the checkpoint retrained at r serves [r, next r). On retrain failure the
+    previous checkpoint serves only decisions before its retrain_time + 7 d; later decisions (and every decision with
+    no valid checkpoint) get NaN, which blocks new entries and model exits (R2-52A stops continue).
+    fit(r) -> (model, record); predict_rows(model, mask) -> values. Returns (yhat, events)."""
+    times = pd.DatetimeIndex(times)
+    yhat = np.full(len(times), np.nan)
+    events, active, active_r = [], None, None
+    for j, r in enumerate(schedule):
+        nxt = schedule[j + 1] if j + 1 < len(schedule) else end
+        rec = {"retrain_time": str(r), "serves": [str(r), str(nxt)], "fallback": None}
+        try:
+            model, info = (first_model if j == 0 and first_model is not None else fit(r))
+            rec.update(info)
+            active, active_r = model, r
+        except Exception as error:
+            reason = f"{type(error).__name__}: {error}"
+            if active is not None and fallback_ok(r, active_r):
+                rec["fallback"] = (f"retrain failed ({reason}); previous checkpoint {active_r} serves only before "
+                                   f"{active_r + pd.Timedelta(days=7)}")
+            else:
+                rec["fallback"] = f"hard failure ({reason}); new entries blocked"
+                active = None
+        window = (times >= r) & (times < nxt)
+        serve = window & (times < active_r + pd.Timedelta(days=7)) if active is not None and active_r != r else window
+        if active is None:
+            serve = np.zeros(len(times), bool)
+        rec["blocked_decisions"] = int(window.sum() - serve.sum())
+        if active is not None and serve.any():
+            yhat[serve] = predict_rows(active, serve)
+            rec["first_prediction"] = str(times[serve][0])
+        events.append(rec)
+    return yhat, events
 
 
 # ---------------------------------------------------------------- statistics
