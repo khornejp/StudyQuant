@@ -159,3 +159,49 @@ def test_flip_run_scope_is_separate_and_unregistered():
             ax.parse_scope(argv)
     with pytest.raises(SystemExit):
         ax.parse_scope(["--ids", "K01"])                     # subset without --no-register
+
+
+# --- R2-52B (freeze out/k45_rl_r2_48_20261007/r2_52b_exit_freeze.json) ---
+def test_r2_52b_select_k_ties_go_to_lower_k():
+    assert ax.K_VALUES_B == (1.0, 1.5, 2.0, 2.5, 3.0)
+    assert ax.select_k_lower({1.0: 1.0, 1.5: 4.0, 2.0: 4.0, 2.5: 4.0, 3.0: 2.0}) == 1.5
+    assert ax.select_k_lower({k: 0.0 for k in ax.K_VALUES_B}) == 1.0
+    assert ax.select_k_lower({1.0: -1.0, 1.5: -1.0 - 1e-12, 2.0: 5.0, 2.5: 6.0, 3.0: 6.0}) == 2.5
+
+
+def test_r2_52b_scope_trials_outputs_and_no_v3():
+    import pytest
+    pol = ax.policy_spec("R2_52B")
+    assert pol["config"].exit_policy == "R2_52B" and not pol["v3"] and not pol["gate_8bps"]
+    assert ax.FREEZE_B["status"] == "FROZEN_NOT_RUN" and "not rerun" in ax.FREEZE_B["ablation_V3"]
+    assert ax.trials(ax.INCLUDED, "R2_52B") == (145, 0) and ax.trials(ax.FLIP_IDS, "R2_52B") == (5, 0)
+    args, windows, full = ax.parse_scope(["--policy", "R2_52B"])
+    assert Path(args.out) == ax.OUT_B and ax.OUT_B.name == "r2_52b" and full and not args.no_register
+    args, windows, full = ax.parse_scope(["--policy", "R2_52B", "--flip", "--register"])
+    assert args.ids == ["K01_FLIP"] and Path(args.out) == ax.FLIP_OUT_B and ax.FLIP_OUT_B.name == "r2_52b_flip"
+    assert not args.no_register and full
+    for argv in (["--policy", "R2_52B", "--flip", "--out", str(ax.OUT_B)], ["--policy", "R2_52B", "--ids", "K01"]):
+        with pytest.raises(SystemExit):
+            ax.parse_scope(argv)
+    assert ax.policy_spec("R2_52A")["config"] == ax.CONFIG and ax.parse_scope([])[0].policy == "R2_52A"
+
+
+def test_r2_52b_k01_gate_8bps_report_only():
+    r = {"pw_delta": {"lower": 1.0}, "delta_8bps": -50.0, "delta_4bps": 10.0, "worst_position_bps": -300.0,
+         "native_worst_position_bps": -400.0, "max_drawdown_bps": 10.0, "native_max_drawdown_bps": 20.0}
+    b = ax.k01_gates(r, gate_8bps=False)
+    assert b["pass"] and "delta_8bps_ge_0" not in b and b["delta_8bps_report_only"]
+    assert not ax.k01_gates(r)["pass"]                       # R2-52A keeps its 8 bps gate
+
+
+def test_r2_52b_stitched_hard_stop_floor_and_k_lock():
+    m = flat(300)
+    m.loc[150, "low"] = 100 * math.exp(-0.035)              # 350 adverse: below S0 = 400 (k=4), above 300 (k=1)
+    t = table([{"decision_time": at(50), "side": 1}]).assign(e0_bps=100.0)
+    e = np.full(len(m), 100.0); e_min = np.full(len(m), np.nan)
+    cfg = SimConfig(include_funding=False, exit_policy="R2_52B", close_at_end=True)
+    k = ax.k_schedule(m.open_time, {"W01": 4.0, "W02": 1.0, "W03": 1.0}, windows())
+    assert ax.run_ax(t, m, e, e_min, at(0), at(300), cfg, k).trades.exit_reason.tolist() == ["data_end"]
+    k = ax.k_schedule(m.open_time, {"W01": 1.0, "W02": 4.0, "W03": 4.0}, windows())
+    tr = ax.run_ax(t, m, e, e_min, at(0), at(300), cfg, k).trades.iloc[0]
+    assert tr.exit_reason == "stop" and np.isclose(tr.exit_price, 100 * math.exp(-0.03))

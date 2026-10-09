@@ -1,0 +1,1266 @@
+{
+  "created_utc": "2026-10-09T20:11:27.953937+00:00",
+  "source": "scripts/sim_adaptive_exit.py",
+  "freeze": "out\\k45_rl_r2_48_20261007\\r2_52b_exit_freeze.json",
+  "freeze_sha256": "e7ef93bef2474478d70690efe1a2f3db3bc5551b50e89cf49ae7d9f39cc48856",
+  "experiment": "R2-52B adaptive hard-stop and separate trailing-exit layer (no max hold) for catalog techniques",
+  "frozen_hypothesis": {
+    "hierarchy": "K01 is the sole primary research test. Only after K01 passes, evaluate the catalog aggregate as the second research gate.",
+    "daily_alignment": "use every UTC day in the stitched test calendar; missing activity is zero-filled for both policies before differencing",
+    "K01": [
+      "the validation-selected continuous policy has paired daily PW 95% lower >0 versus K01 NONE/NATIVE at 4 bps",
+      "using the same selected k sequence without reselection, report cumulative delta at 8 bps; report-only, never a gate",
+      "worst_position_bps >= NATIVE worst_position_bps",
+      "max_drawdown_bps <= NATIVE max_drawdown_bps"
+    ],
+    "catalog": [
+      "the denominator is the frozen 29 included ids; no id may be dropped after results are seen",
+      "at least 15 of 29 ids have cumulative 4 bps delta >0",
+      "for every UTC test day, compute each included id's adaptive-minus-NATIVE daily delta after zero filling, then take the arithmetic mean with weight 1/29; paired daily PW lower of that series >0",
+      "a valid zero-trade result remains in the denominator as zero; a failed or missing simulation invalidates the run instead of being dropped",
+      "Holm correction uses 29 hypotheses when claims concern the 29 validation-selected policies; use 87 only if claims are made separately for every id-k pair"
+    ],
+    "holdout_note": "2023-09..2025-12 influenced earlier design, not a clean holdout; 2026H1 checked once after rules and code are frozen",
+    "scope": "research classification only. Pass or fail does not gate paper rollout, retirement, active configuration/dashboard/Telegram filtering, or primary_book=C1_AX. All paper switching follows paper_rollout.switch_condition."
+  },
+  "ablation_V3": "Not part of R2-52B trial accounting or exits. The parent R2-52A V3 ablation remains historical and is not rerun here.",
+  "data_cutoff": "2026-01-01; 2026H1 untouched",
+  "full_scope": true,
+  "simulation": {
+    "exit_policy": "R2_52B",
+    "k_values": [
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0
+    ],
+    "costs": "4 bps flat maker round trip, PESS funding, delay 1 minute, slippage 0 nominal; 8 bps is report-only under project rule #1 and never selects or gates",
+    "test_start": "2023-09-01 00:00:00+00:00",
+    "test_end": "2026-01-01 00:00:00+00:00",
+    "selection": "For each included id and each rolling window, run k in {1.0,1.5,2.0,2.5,3.0} on the validation interval from a flat position at val_start, using earlier data only as indicator warm-up. Rank candidates by 4 bps validation minute-ledger P&L, marking any open position to the val_end close without a synthetic exit fee; ties use lower k first. The stitched test policy starts flat at the first test_start and then runs continuously. At later test boundaries, an already-open position retains k, E0, S0, S_t, A0, A_t and anchors fixed for that position; newly selected k applies only to entries opened after the boundary. No position is closed or reset at a window boundary. NATIVE uses the same continuous test calendar. Never select on stitched test results.",
+    "comparator": "BASE NONE/NATIVE, same test calendar"
+  },
+  "included_ids": [
+    "B1",
+    "B2",
+    "B3",
+    "K01",
+    "K02",
+    "K03",
+    "K04",
+    "K05",
+    "K06_k0.5",
+    "K06_k1.0",
+    "K07_k0.5",
+    "K07_k1.0",
+    "K08",
+    "K09",
+    "K11_15m",
+    "K11_1h",
+    "K12_30m",
+    "K12_1h",
+    "K13",
+    "K14",
+    "K15",
+    "K19",
+    "K21_A",
+    "K21_B",
+    "K23",
+    "K24",
+    "K26",
+    "K29",
+    "K30"
+  ],
+  "ids_run": [
+    "B1",
+    "B2",
+    "B3",
+    "K01",
+    "K02",
+    "K03",
+    "K04",
+    "K05",
+    "K06_k0.5",
+    "K06_k1.0",
+    "K07_k0.5",
+    "K07_k1.0",
+    "K08",
+    "K09",
+    "K11_15m",
+    "K11_1h",
+    "K12_30m",
+    "K12_1h",
+    "K13",
+    "K14",
+    "K15",
+    "K19",
+    "K21_A",
+    "K21_B",
+    "K23",
+    "K24",
+    "K26",
+    "K29",
+    "K30"
+  ],
+  "windows": [
+    "W01",
+    "W02",
+    "W03",
+    "W04",
+    "W05",
+    "W06",
+    "W07",
+    "W08",
+    "W09",
+    "W10"
+  ],
+  "input_sha256": {
+    "market_file": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "market_note": "single parquet to 2026-06-30; load_minutes filters open_time < cutoff at read",
+    "metrics_before_cutoff": "02fc9bfe9d88c7aad6fb04e3568df04e7ced3cbcd9d738dbd1953ce39646a150",
+    "premium_before_cutoff": "75e865bc564522c43219912402157ceb9037f9919e2b47a9f8491ae472f56623",
+    "funding": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "predictions_segments": [
+      "DEV_FRONT",
+      "DEV_BACK"
+    ],
+    "predictions": "6a42115a058401350e67cdf3ea589d4f1774c53bb6b71c6a74c28a4677702ed0",
+    "code": "2ff85ebe5824464355e40e1dbd3599d8d06d865b7eb089afec408a42f3ebd20b"
+  },
+  "prediction_coverage": {
+    "expected": 134592,
+    "present": 134400,
+    "missing": 192,
+    "missing_days": [
+      "2023-12-31",
+      "2025-12-31"
+    ],
+    "retrain_after_timestamp": 0
+  },
+  "n_trials": 145,
+  "n_trials_split": {
+    "r2_52b": 145,
+    "v3_ablation": 0
+  },
+  "prior_trials_registry": 5544,
+  "cumulative_trials": 5689,
+  "n_trials_rule": "29 included ids x 5 k = 145 candidate return series; rolling windows are folds, not trials",
+  "freeze_status": "FROZEN_NOT_RUN",
+  "freeze_time_utc": "2026-10-09T19:49:43Z",
+  "parent_freeze": {
+    "path": "out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json",
+    "sha256": "d1d56efa3b35465059e24f30380b7f413a029a4384da2ed45056977327a0eced",
+    "sha256_frozen": "d1d56efa3b35465059e24f30380b7f413a029a4384da2ed45056977327a0eced"
+  },
+  "trial_registry_frozen": {
+    "base": 5544,
+    "trials": 145,
+    "allocation": "R2-52B 5545..5689",
+    "registry_after": 5689,
+    "sequence": [
+      "R2-54 5544",
+      "R2-52B 5689",
+      "K01_FLIP 5694",
+      "R2-54 A5 5901",
+      "R2-55 rebase 5951"
+    ]
+  },
+  "registered": true,
+  "paper_records": "R2-52B hidden shadow start time and source+x3 configuration hash are recorded by the later paper step; this research run touches no paper table",
+  "selected_k": {
+    "B1": {
+      "W01": 2.0,
+      "W02": 3.0,
+      "W03": 2.0,
+      "W04": 3.0,
+      "W05": 2.5,
+      "W06": 2.5,
+      "W07": 3.0,
+      "W08": 3.0,
+      "W09": 3.0,
+      "W10": 2.5
+    },
+    "B2": {
+      "W01": 2.0,
+      "W02": 3.0,
+      "W03": 2.0,
+      "W04": 2.0,
+      "W05": 1.5,
+      "W06": 2.5,
+      "W07": 1.0,
+      "W08": 1.0,
+      "W09": 3.0,
+      "W10": 1.0
+    },
+    "B3": {
+      "W01": 1.0,
+      "W02": 3.0,
+      "W03": 1.5,
+      "W04": 1.5,
+      "W05": 3.0,
+      "W06": 2.0,
+      "W07": 1.0,
+      "W08": 1.0,
+      "W09": 3.0,
+      "W10": 1.0
+    },
+    "K01": {
+      "W01": 1.5,
+      "W02": 3.0,
+      "W03": 1.0,
+      "W04": 1.5,
+      "W05": 2.5,
+      "W06": 1.0,
+      "W07": 1.0,
+      "W08": 1.0,
+      "W09": 3.0,
+      "W10": 1.0
+    },
+    "K02": {
+      "W01": 1.0,
+      "W02": 2.5,
+      "W03": 3.0,
+      "W04": 1.5,
+      "W05": 2.5,
+      "W06": 1.5,
+      "W07": 3.0,
+      "W08": 1.0,
+      "W09": 2.5,
+      "W10": 2.0
+    },
+    "K03": {
+      "W01": 1.5,
+      "W02": 3.0,
+      "W03": 1.5,
+      "W04": 1.5,
+      "W05": 2.5,
+      "W06": 2.5,
+      "W07": 2.5,
+      "W08": 1.0,
+      "W09": 3.0,
+      "W10": 1.0
+    },
+    "K04": {
+      "W01": 1.5,
+      "W02": 1.5,
+      "W03": 2.0,
+      "W04": 1.0,
+      "W05": 2.0,
+      "W06": 1.0,
+      "W07": 1.5,
+      "W08": 1.0,
+      "W09": 1.5,
+      "W10": 1.0
+    },
+    "K05": {
+      "W01": 1.0,
+      "W02": 3.0,
+      "W03": 2.5,
+      "W04": 1.5,
+      "W05": 3.0,
+      "W06": 2.5,
+      "W07": 1.0,
+      "W08": 3.0,
+      "W09": 1.5,
+      "W10": 3.0
+    },
+    "K06_k0.5": {
+      "W01": 3.0,
+      "W02": 2.5,
+      "W03": 1.0,
+      "W04": 1.5,
+      "W05": 2.5,
+      "W06": 1.5,
+      "W07": 3.0,
+      "W08": 2.0,
+      "W09": 1.0,
+      "W10": 3.0
+    },
+    "K06_k1.0": {
+      "W01": 2.5,
+      "W02": 3.0,
+      "W03": 3.0,
+      "W04": 2.5,
+      "W05": 3.0,
+      "W06": 2.5,
+      "W07": 3.0,
+      "W08": 3.0,
+      "W09": 2.0,
+      "W10": 2.0
+    },
+    "K07_k0.5": {
+      "W01": 3.0,
+      "W02": 3.0,
+      "W03": 3.0,
+      "W04": 2.0,
+      "W05": 2.5,
+      "W06": 3.0,
+      "W07": 3.0,
+      "W08": 3.0,
+      "W09": 2.5,
+      "W10": 2.5
+    },
+    "K07_k1.0": {
+      "W01": 3.0,
+      "W02": 2.5,
+      "W03": 2.5,
+      "W04": 1.5,
+      "W05": 2.5,
+      "W06": 2.5,
+      "W07": 3.0,
+      "W08": 2.0,
+      "W09": 3.0,
+      "W10": 3.0
+    },
+    "K08": {
+      "W01": 2.5,
+      "W02": 3.0,
+      "W03": 2.5,
+      "W04": 1.0,
+      "W05": 2.5,
+      "W06": 1.5,
+      "W07": 1.0,
+      "W08": 1.5,
+      "W09": 2.5,
+      "W10": 1.0
+    },
+    "K09": {
+      "W01": 3.0,
+      "W02": 2.0,
+      "W03": 2.5,
+      "W04": 3.0,
+      "W05": 1.5,
+      "W06": 2.5,
+      "W07": 3.0,
+      "W08": 2.0,
+      "W09": 1.0,
+      "W10": 2.0
+    },
+    "K11_15m": {
+      "W01": 3.0,
+      "W02": 2.5,
+      "W03": 1.5,
+      "W04": 2.0,
+      "W05": 1.5,
+      "W06": 2.0,
+      "W07": 1.0,
+      "W08": 1.0,
+      "W09": 3.0,
+      "W10": 1.0
+    },
+    "K11_1h": {
+      "W01": 1.5,
+      "W02": 1.0,
+      "W03": 3.0,
+      "W04": 1.0,
+      "W05": 2.5,
+      "W06": 1.0,
+      "W07": 1.5,
+      "W08": 3.0,
+      "W09": 3.0,
+      "W10": 2.5
+    },
+    "K12_30m": {
+      "W01": 1.5,
+      "W02": 1.0,
+      "W03": 2.5,
+      "W04": 1.0,
+      "W05": 2.5,
+      "W06": 2.5,
+      "W07": 1.0,
+      "W08": 1.0,
+      "W09": 2.0,
+      "W10": 3.0
+    },
+    "K12_1h": {
+      "W01": 1.0,
+      "W02": 2.0,
+      "W03": 2.5,
+      "W04": 1.5,
+      "W05": 2.5,
+      "W06": 2.0,
+      "W07": 2.5,
+      "W08": 2.5,
+      "W09": 1.5,
+      "W10": 2.5
+    },
+    "K13": {
+      "W01": 1.5,
+      "W02": 2.5,
+      "W03": 3.0,
+      "W04": 2.0,
+      "W05": 1.0,
+      "W06": 1.5,
+      "W07": 2.0,
+      "W08": 3.0,
+      "W09": 1.5,
+      "W10": 2.0
+    },
+    "K14": {
+      "W01": 3.0,
+      "W02": 1.5,
+      "W03": 1.0,
+      "W04": 2.0,
+      "W05": 1.0,
+      "W06": 2.5,
+      "W07": 3.0,
+      "W08": 1.0,
+      "W09": 2.5,
+      "W10": 1.5
+    },
+    "K15": {
+      "W01": 1.0,
+      "W02": 2.0,
+      "W03": 3.0,
+      "W04": 2.5,
+      "W05": 1.5,
+      "W06": 3.0,
+      "W07": 1.0,
+      "W08": 2.0,
+      "W09": 1.0,
+      "W10": 1.5
+    },
+    "K19": {
+      "W01": 3.0,
+      "W02": 1.0,
+      "W03": 2.0,
+      "W04": 3.0,
+      "W05": 2.5,
+      "W06": 1.0,
+      "W07": 2.0,
+      "W08": 1.0,
+      "W09": 2.5,
+      "W10": 1.5
+    },
+    "K21_A": {
+      "W01": 1.0,
+      "W02": 2.5,
+      "W03": 3.0,
+      "W04": 2.0,
+      "W05": 1.0,
+      "W06": 1.5,
+      "W07": 1.0,
+      "W08": 2.0,
+      "W09": 2.0,
+      "W10": 2.0
+    },
+    "K21_B": {
+      "W01": 2.5,
+      "W02": 2.0,
+      "W03": 2.5,
+      "W04": 1.0,
+      "W05": 1.5,
+      "W06": 1.5,
+      "W07": 2.0,
+      "W08": 1.5,
+      "W09": 1.0,
+      "W10": 1.0
+    },
+    "K23": {
+      "W01": 1.0,
+      "W02": 2.5,
+      "W03": 2.0,
+      "W04": 2.5,
+      "W05": 2.5,
+      "W06": 1.0,
+      "W07": 2.0,
+      "W08": 1.0,
+      "W09": 2.5,
+      "W10": 2.0
+    },
+    "K24": {
+      "W01": 3.0,
+      "W02": 1.0,
+      "W03": 1.0,
+      "W04": 1.5,
+      "W05": 2.5,
+      "W06": 1.5,
+      "W07": 1.5,
+      "W08": 1.0,
+      "W09": 1.0,
+      "W10": 2.0
+    },
+    "K26": {
+      "W01": 1.5,
+      "W02": 1.0,
+      "W03": 2.0,
+      "W04": 3.0,
+      "W05": 2.5,
+      "W06": 3.0,
+      "W07": 3.0,
+      "W08": 2.0,
+      "W09": 1.0,
+      "W10": 3.0
+    },
+    "K29": {
+      "W01": 2.5,
+      "W02": 1.5,
+      "W03": 1.0,
+      "W04": 3.0,
+      "W05": 1.5,
+      "W06": 3.0,
+      "W07": 2.0,
+      "W08": 1.0,
+      "W09": 1.5,
+      "W10": 1.0
+    },
+    "K30": {
+      "W01": 2.5,
+      "W02": 2.0,
+      "W03": 1.0,
+      "W04": 2.0,
+      "W05": 3.0,
+      "W06": 2.0,
+      "W07": 2.0,
+      "W08": 2.5,
+      "W09": 3.0,
+      "W10": 3.0
+    }
+  },
+  "carried_positions": {
+    "B1": [
+      {
+        "boundary": "2023-12-01 00:00:00+00:00",
+        "window": "W02",
+        "position_id": 82,
+        "entry_time": "2023-11-28 22:01:00+00:00",
+        "exit_time": "2023-12-01 09:19:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 308,
+        "entry_time": "2024-05-31 15:01:00+00:00",
+        "exit_time": "2024-06-01 22:31:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-09-01 00:00:00+00:00",
+        "window": "W05",
+        "position_id": 401,
+        "entry_time": "2024-08-30 17:01:00+00:00",
+        "exit_time": "2024-09-04 01:22:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-03-01 00:00:00+00:00",
+        "window": "W07",
+        "position_id": 586,
+        "entry_time": "2025-02-28 15:31:00+00:00",
+        "exit_time": "2025-03-02 15:28:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-06-01 00:00:00+00:00",
+        "window": "W08",
+        "position_id": 663,
+        "entry_time": "2025-05-30 03:01:00+00:00",
+        "exit_time": "2025-06-05 21:33:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 712,
+        "entry_time": "2025-08-26 04:31:00+00:00",
+        "exit_time": "2025-09-10 12:31:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-12-01 00:00:00+00:00",
+        "window": "W10",
+        "position_id": 771,
+        "entry_time": "2025-11-27 06:01:00+00:00",
+        "exit_time": "2025-12-01 00:30:00+00:00",
+        "side": 1
+      }
+    ],
+    "B2": [
+      {
+        "boundary": "2023-12-01 00:00:00+00:00",
+        "window": "W02",
+        "position_id": 69,
+        "entry_time": "2023-11-28 22:01:00+00:00",
+        "exit_time": "2023-12-01 09:19:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2025-03-01 00:00:00+00:00",
+        "window": "W07",
+        "position_id": 511,
+        "entry_time": "2025-02-28 15:31:00+00:00",
+        "exit_time": "2025-03-02 15:28:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 729,
+        "entry_time": "2025-08-31 23:31:00+00:00",
+        "exit_time": "2025-09-01 05:05:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-12-01 00:00:00+00:00",
+        "window": "W10",
+        "position_id": 787,
+        "entry_time": "2025-11-27 13:31:00+00:00",
+        "exit_time": "2025-12-01 00:32:00+00:00",
+        "side": 1
+      }
+    ],
+    "B3": [
+      {
+        "boundary": "2023-12-01 00:00:00+00:00",
+        "window": "W02",
+        "position_id": 114,
+        "entry_time": "2023-11-30 05:31:00+00:00",
+        "exit_time": "2023-12-01 04:32:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 290,
+        "entry_time": "2024-05-31 17:31:00+00:00",
+        "exit_time": "2024-06-03 08:01:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-09-01 00:00:00+00:00",
+        "window": "W05",
+        "position_id": 406,
+        "entry_time": "2024-08-30 21:01:00+00:00",
+        "exit_time": "2024-09-01 06:10:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-06-01 00:00:00+00:00",
+        "window": "W08",
+        "position_id": 706,
+        "entry_time": "2025-05-31 14:01:00+00:00",
+        "exit_time": "2025-06-05 18:19:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 806,
+        "entry_time": "2025-08-30 05:01:00+00:00",
+        "exit_time": "2025-09-01 00:28:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-12-01 00:00:00+00:00",
+        "window": "W10",
+        "position_id": 885,
+        "entry_time": "2025-11-27 06:01:00+00:00",
+        "exit_time": "2025-12-01 00:30:00+00:00",
+        "side": 1
+      }
+    ],
+    "K01": [
+      {
+        "boundary": "2023-12-01 00:00:00+00:00",
+        "window": "W02",
+        "position_id": 27,
+        "entry_time": "2023-11-28 17:01:00+00:00",
+        "exit_time": "2023-12-02 19:09:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 80,
+        "entry_time": "2024-05-31 17:01:00+00:00",
+        "exit_time": "2024-06-03 06:39:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 251,
+        "entry_time": "2025-08-29 22:01:00+00:00",
+        "exit_time": "2025-09-02 14:36:00+00:00",
+        "side": -1
+      }
+    ],
+    "K02": [
+      {
+        "boundary": "2023-12-01 00:00:00+00:00",
+        "window": "W02",
+        "position_id": 59,
+        "entry_time": "2023-11-28 18:01:00+00:00",
+        "exit_time": "2023-12-01 09:18:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 104,
+        "entry_time": "2024-05-31 17:01:00+00:00",
+        "exit_time": "2024-06-03 06:39:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-03-01 00:00:00+00:00",
+        "window": "W07",
+        "position_id": 221,
+        "entry_time": "2025-02-28 15:31:00+00:00",
+        "exit_time": "2025-03-02 15:28:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 294,
+        "entry_time": "2025-08-29 21:01:00+00:00",
+        "exit_time": "2025-09-02 13:50:00+00:00",
+        "side": -1
+      }
+    ],
+    "K03": [
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 137,
+        "entry_time": "2024-05-31 15:01:00+00:00",
+        "exit_time": "2024-06-03 09:31:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-09-01 00:00:00+00:00",
+        "window": "W05",
+        "position_id": 201,
+        "entry_time": "2024-08-30 17:01:00+00:00",
+        "exit_time": "2024-09-04 01:05:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-06-01 00:00:00+00:00",
+        "window": "W08",
+        "position_id": 317,
+        "entry_time": "2025-05-30 03:01:00+00:00",
+        "exit_time": "2025-06-05 19:33:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 350,
+        "entry_time": "2025-08-30 02:31:00+00:00",
+        "exit_time": "2025-09-02 13:50:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-12-01 00:00:00+00:00",
+        "window": "W10",
+        "position_id": 382,
+        "entry_time": "2025-11-28 16:31:00+00:00",
+        "exit_time": "2025-12-01 00:21:00+00:00",
+        "side": 1
+      }
+    ],
+    "K04": [],
+    "K05": [
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 215,
+        "entry_time": "2024-05-31 15:01:00+00:00",
+        "exit_time": "2024-06-01 22:31:00+00:00",
+        "side": -1
+      }
+    ],
+    "K06_k0.5": [
+      {
+        "boundary": "2024-09-01 00:00:00+00:00",
+        "window": "W05",
+        "position_id": 3064,
+        "entry_time": "2024-08-31 23:20:00+00:00",
+        "exit_time": "2024-09-01 00:01:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-03-01 00:00:00+00:00",
+        "window": "W07",
+        "position_id": 4447,
+        "entry_time": "2025-02-28 18:32:00+00:00",
+        "exit_time": "2025-03-01 01:01:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2025-06-01 00:00:00+00:00",
+        "window": "W08",
+        "position_id": 4992,
+        "entry_time": "2025-05-31 22:33:00+00:00",
+        "exit_time": "2025-06-01 02:26:00+00:00",
+        "side": -1
+      }
+    ],
+    "K06_k1.0": [
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 1221,
+        "entry_time": "2024-05-31 23:08:00+00:00",
+        "exit_time": "2024-06-01 00:01:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-03-01 00:00:00+00:00",
+        "window": "W07",
+        "position_id": 2349,
+        "entry_time": "2025-02-28 15:14:00+00:00",
+        "exit_time": "2025-03-01 03:06:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 3086,
+        "entry_time": "2025-08-31 23:17:00+00:00",
+        "exit_time": "2025-09-01 05:37:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-12-01 00:00:00+00:00",
+        "window": "W10",
+        "position_id": 3494,
+        "entry_time": "2025-11-30 23:23:00+00:00",
+        "exit_time": "2025-12-01 00:05:00+00:00",
+        "side": -1
+      }
+    ],
+    "K07_k0.5": [
+      {
+        "boundary": "2023-12-01 00:00:00+00:00",
+        "window": "W02",
+        "position_id": 1458,
+        "entry_time": "2023-11-30 13:49:00+00:00",
+        "exit_time": "2023-12-01 01:31:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 4319,
+        "entry_time": "2024-05-31 21:22:00+00:00",
+        "exit_time": "2024-06-01 01:01:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-09-01 00:00:00+00:00",
+        "window": "W05",
+        "position_id": 6100,
+        "entry_time": "2024-08-31 22:21:00+00:00",
+        "exit_time": "2024-09-01 02:08:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-12-01 00:00:00+00:00",
+        "window": "W06",
+        "position_id": 7570,
+        "entry_time": "2024-11-30 22:48:00+00:00",
+        "exit_time": "2024-12-01 00:16:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-03-01 00:00:00+00:00",
+        "window": "W07",
+        "position_id": 8821,
+        "entry_time": "2025-02-28 23:42:00+00:00",
+        "exit_time": "2025-03-01 00:01:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 11448,
+        "entry_time": "2025-08-31 22:32:00+00:00",
+        "exit_time": "2025-09-01 00:42:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-12-01 00:00:00+00:00",
+        "window": "W10",
+        "position_id": 12853,
+        "entry_time": "2025-11-30 23:23:00+00:00",
+        "exit_time": "2025-12-01 00:05:00+00:00",
+        "side": -1
+      }
+    ],
+    "K07_k1.0": [
+      {
+        "boundary": "2024-09-01 00:00:00+00:00",
+        "window": "W05",
+        "position_id": 4618,
+        "entry_time": "2024-08-31 23:04:00+00:00",
+        "exit_time": "2024-09-01 00:16:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-12-01 00:00:00+00:00",
+        "window": "W06",
+        "position_id": 5691,
+        "entry_time": "2024-11-30 22:47:00+00:00",
+        "exit_time": "2024-12-01 00:16:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-12-01 00:00:00+00:00",
+        "window": "W10",
+        "position_id": 9685,
+        "entry_time": "2025-11-30 17:08:00+00:00",
+        "exit_time": "2025-12-01 00:05:00+00:00",
+        "side": -1
+      }
+    ],
+    "K08": [
+      {
+        "boundary": "2024-03-01 00:00:00+00:00",
+        "window": "W03",
+        "position_id": 190,
+        "entry_time": "2024-02-29 16:46:00+00:00",
+        "exit_time": "2024-03-01 08:46:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-09-01 00:00:00+00:00",
+        "window": "W05",
+        "position_id": 383,
+        "entry_time": "2024-08-31 21:46:00+00:00",
+        "exit_time": "2024-09-01 02:16:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 702,
+        "entry_time": "2025-08-31 23:16:00+00:00",
+        "exit_time": "2025-09-01 05:38:00+00:00",
+        "side": -1
+      }
+    ],
+    "K09": [
+      {
+        "boundary": "2024-12-01 00:00:00+00:00",
+        "window": "W06",
+        "position_id": 598,
+        "entry_time": "2024-11-30 23:31:00+00:00",
+        "exit_time": "2024-12-01 03:46:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 956,
+        "entry_time": "2025-08-31 23:46:00+00:00",
+        "exit_time": "2025-09-01 05:46:00+00:00",
+        "side": 1
+      }
+    ],
+    "K11_15m": [
+      {
+        "boundary": "2023-12-01 00:00:00+00:00",
+        "window": "W02",
+        "position_id": 238,
+        "entry_time": "2023-11-30 23:16:00+00:00",
+        "exit_time": "2023-12-01 01:31:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-09-01 00:00:00+00:00",
+        "window": "W05",
+        "position_id": 930,
+        "entry_time": "2024-08-31 22:01:00+00:00",
+        "exit_time": "2024-09-01 00:46:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2024-12-01 00:00:00+00:00",
+        "window": "W06",
+        "position_id": 1148,
+        "entry_time": "2024-11-30 22:31:00+00:00",
+        "exit_time": "2024-12-01 03:12:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 1860,
+        "entry_time": "2025-08-31 23:16:00+00:00",
+        "exit_time": "2025-09-01 00:42:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-12-01 00:00:00+00:00",
+        "window": "W10",
+        "position_id": 2071,
+        "entry_time": "2025-11-30 20:31:00+00:00",
+        "exit_time": "2025-12-01 01:09:00+00:00",
+        "side": -1
+      }
+    ],
+    "K11_1h": [
+      {
+        "boundary": "2023-12-01 00:00:00+00:00",
+        "window": "W02",
+        "position_id": 65,
+        "entry_time": "2023-11-30 08:01:00+00:00",
+        "exit_time": "2023-12-01 03:01:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-03-01 00:00:00+00:00",
+        "window": "W03",
+        "position_id": 134,
+        "entry_time": "2024-02-29 23:01:00+00:00",
+        "exit_time": "2024-03-01 10:01:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-06-01 00:00:00+00:00",
+        "window": "W08",
+        "position_id": 442,
+        "entry_time": "2025-05-31 19:01:00+00:00",
+        "exit_time": "2025-06-01 10:01:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 499,
+        "entry_time": "2025-08-31 19:01:00+00:00",
+        "exit_time": "2025-09-01 00:01:00+00:00",
+        "side": 1
+      }
+    ],
+    "K12_30m": [
+      {
+        "boundary": "2023-12-01 00:00:00+00:00",
+        "window": "W02",
+        "position_id": 55,
+        "entry_time": "2023-11-29 15:01:00+00:00",
+        "exit_time": "2023-12-01 03:01:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-12-01 00:00:00+00:00",
+        "window": "W06",
+        "position_id": 307,
+        "entry_time": "2024-11-30 01:31:00+00:00",
+        "exit_time": "2024-12-01 08:31:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-06-01 00:00:00+00:00",
+        "window": "W08",
+        "position_id": 448,
+        "entry_time": "2025-05-31 14:31:00+00:00",
+        "exit_time": "2025-06-01 09:31:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2025-12-01 00:00:00+00:00",
+        "window": "W10",
+        "position_id": 576,
+        "entry_time": "2025-11-30 23:31:00+00:00",
+        "exit_time": "2025-12-01 01:09:00+00:00",
+        "side": -1
+      }
+    ],
+    "K12_1h": [
+      {
+        "boundary": "2024-12-01 00:00:00+00:00",
+        "window": "W06",
+        "position_id": 157,
+        "entry_time": "2024-11-30 11:01:00+00:00",
+        "exit_time": "2024-12-01 18:01:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-03-01 00:00:00+00:00",
+        "window": "W07",
+        "position_id": 194,
+        "entry_time": "2025-02-28 16:01:00+00:00",
+        "exit_time": "2025-03-01 06:19:00+00:00",
+        "side": 1
+      }
+    ],
+    "K13": [
+      {
+        "boundary": "2024-03-01 00:00:00+00:00",
+        "window": "W03",
+        "position_id": 2630,
+        "entry_time": "2024-02-29 23:46:00+00:00",
+        "exit_time": "2024-03-01 00:16:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-09-01 00:00:00+00:00",
+        "window": "W05",
+        "position_id": 5353,
+        "entry_time": "2024-08-31 23:46:00+00:00",
+        "exit_time": "2024-09-01 00:01:00+00:00",
+        "side": -1
+      }
+    ],
+    "K14": [
+      {
+        "boundary": "2025-06-01 00:00:00+00:00",
+        "window": "W08",
+        "position_id": 1853,
+        "entry_time": "2025-05-31 14:01:00+00:00",
+        "exit_time": "2025-06-01 01:41:00+00:00",
+        "side": 1
+      }
+    ],
+    "K15": [
+      {
+        "boundary": "2024-03-01 00:00:00+00:00",
+        "window": "W03",
+        "position_id": 141,
+        "entry_time": "2024-02-29 17:46:00+00:00",
+        "exit_time": "2024-03-01 00:31:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 201,
+        "entry_time": "2024-05-31 16:16:00+00:00",
+        "exit_time": "2024-06-01 00:46:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2025-03-01 00:00:00+00:00",
+        "window": "W07",
+        "position_id": 387,
+        "entry_time": "2025-02-28 14:46:00+00:00",
+        "exit_time": "2025-03-01 00:31:00+00:00",
+        "side": -1
+      }
+    ],
+    "K19": [
+      {
+        "boundary": "2023-12-01 00:00:00+00:00",
+        "window": "W02",
+        "position_id": 39,
+        "entry_time": "2023-11-28 20:01:00+00:00",
+        "exit_time": "2023-12-02 19:09:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2024-03-01 00:00:00+00:00",
+        "window": "W03",
+        "position_id": 66,
+        "entry_time": "2024-02-29 18:01:00+00:00",
+        "exit_time": "2024-03-01 20:58:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 100,
+        "entry_time": "2024-05-29 17:01:00+00:00",
+        "exit_time": "2024-06-03 12:39:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-03-01 00:00:00+00:00",
+        "window": "W07",
+        "position_id": 196,
+        "entry_time": "2025-02-28 20:01:00+00:00",
+        "exit_time": "2025-03-01 00:01:00+00:00",
+        "side": 1
+      }
+    ],
+    "K21_A": [],
+    "K21_B": [],
+    "K23": [
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 125,
+        "entry_time": "2024-05-31 16:01:00+00:00",
+        "exit_time": "2024-06-03 09:01:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2024-09-01 00:00:00+00:00",
+        "window": "W05",
+        "position_id": 168,
+        "entry_time": "2024-08-30 16:01:00+00:00",
+        "exit_time": "2024-09-04 01:05:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-06-01 00:00:00+00:00",
+        "window": "W08",
+        "position_id": 305,
+        "entry_time": "2025-05-30 01:01:00+00:00",
+        "exit_time": "2025-06-05 19:21:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 337,
+        "entry_time": "2025-08-29 15:01:00+00:00",
+        "exit_time": "2025-09-02 14:31:00+00:00",
+        "side": -1
+      },
+      {
+        "boundary": "2025-12-01 00:00:00+00:00",
+        "window": "W10",
+        "position_id": 370,
+        "entry_time": "2025-11-27 02:01:00+00:00",
+        "exit_time": "2025-12-01 00:28:00+00:00",
+        "side": 1
+      }
+    ],
+    "K24": [],
+    "K26": [
+      {
+        "boundary": "2024-06-01 00:00:00+00:00",
+        "window": "W04",
+        "position_id": 190,
+        "entry_time": "2024-05-31 17:01:00+00:00",
+        "exit_time": "2024-06-01 13:16:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2025-03-01 00:00:00+00:00",
+        "window": "W07",
+        "position_id": 405,
+        "entry_time": "2025-02-28 15:16:00+00:00",
+        "exit_time": "2025-03-01 00:16:00+00:00",
+        "side": 1
+      }
+    ],
+    "K29": [
+      {
+        "boundary": "2023-12-01 00:00:00+00:00",
+        "window": "W02",
+        "position_id": 34,
+        "entry_time": "2023-11-30 14:16:00+00:00",
+        "exit_time": "2023-12-01 01:31:00+00:00",
+        "side": 1
+      },
+      {
+        "boundary": "2025-09-01 00:00:00+00:00",
+        "window": "W09",
+        "position_id": 249,
+        "entry_time": "2025-08-31 23:46:00+00:00",
+        "exit_time": "2025-09-01 00:01:00+00:00",
+        "side": 1
+      }
+    ],
+    "K30": []
+  },
+  "failed_ids": [],
+  "valid_run": true
+}

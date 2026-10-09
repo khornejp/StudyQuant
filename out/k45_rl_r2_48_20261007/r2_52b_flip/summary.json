@@ -1,0 +1,72 @@
+{
+  "valid_run": true,
+  "failed_ids": [],
+  "pw_label": "per-id pw_delta: unadjusted diagnostic (no multiplicity correction; no per-id significance claim); Holm not computed (no p-value helper in analytics)",
+  "diagnostics": {
+    "runtime_seconds": {
+      "value": 49.4
+    }
+  },
+  "strategies": [
+    {
+      "id": "K01_FLIP",
+      "status": "ok",
+      "trade_n": 272,
+      "zero_reason": null,
+      "exit_reasons": {
+        "stop": 122,
+        "trail": 117,
+        "flag": 19,
+        "state": 13,
+        "data_end": 1
+      },
+      "data_end_closes": 1,
+      "net_4bps": -10451.748094271486,
+      "delta_4bps": -2930.3237681730775,
+      "delta_8bps": -2322.323768173077,
+      "pw_delta": {
+        "mean": -3.435315085783209,
+        "lower": -11.154948253983362,
+        "upper": 4.160158876159387,
+        "block": 2.4647488945590155,
+        "reason": "ok"
+      },
+      "pw_label": "unadjusted diagnostic (no multiplicity correction; no per-id significance claim)",
+      "worst_position_bps": -518.2046999999999,
+      "native_worst_position_bps": -1028.2194567137258,
+      "max_drawdown_bps": 11670.375359188265,
+      "native_max_drawdown_bps": 8764.565344995912,
+      "native_trade_n": 424,
+      "native_net_4bps": -7521.424326098408,
+      "no_entry_e_market_rows": 0
+    }
+  ],
+  "catalog_secondary": {
+    "evaluated": false,
+    "pass": null,
+    "reason": "K01 primary did not pass (pass_criteria.hierarchy)"
+  },
+  "atomic_only_diagnostic": null,
+  "holm": "not computed; no per-id significance claim (freeze: 29 hypotheses if claims are made)",
+  "v3_ablation": {
+    "scope": "Not part of R2-52B trial accounting or exits. The parent R2-52A V3 ablation remains historical and is not rerun here.",
+    "run": false
+  },
+  "K01_FLIP_diagnostic": {
+    "pw_lower_gt_0": false,
+    "worst_position_ge_native": true,
+    "max_drawdown_le_native": false,
+    "pass": false,
+    "delta_4bps": -2930.3237681730775,
+    "delta_8bps": -2322.323768173077,
+    "pw_delta": {
+      "mean": -3.435315085783209,
+      "lower": -11.154948253983362,
+      "upper": 4.160158876159387,
+      "block": 2.4647488945590155,
+      "reason": "ok"
+    },
+    "delta_8bps_report_only": true,
+    "note": "K01 criteria applied as a diagnostic; not pre-registered"
+  }
+}

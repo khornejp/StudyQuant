@@ -21,6 +21,7 @@ class SimConfig:
     market_slippage_bps: float = 0.0    # adverse on every market fill: buys at o*(1+s/1e4), sells at o*(1-s/1e4)
     action_mode: bool = False       # rows are target positions (R2-48 C1): only decision_time and side are read
     exit_policy: str = "BASE"       # "R2_52A": adaptive full-position exits (r2_52a_exit_freeze.json), no max hold
+                                    # "R2_52B": R2_52A with a 300-500 hard stop S and a separate trail A (r2_52b)
 
 @dataclass
 class SimResult:
@@ -73,16 +74,25 @@ def slip(price: float, direction: int, bps: float) -> float:
     return price * (1 + direction * bps / 1e4)
 
 def check_policy(config: SimConfig) -> bool:
-    """True for R2_52A, which runs NATIVE/strict rows only (no DETEXIT legs, no action targets)."""
-    if config.exit_policy not in ("BASE", "R2_52A") or (config.exit_policy == "R2_52A" and (
+    """True for R2_52A / R2_52B, which run NATIVE/strict rows only (no DETEXIT legs, no action targets)."""
+    if config.exit_policy not in ("BASE", "R2_52A", "R2_52B") or (config.exit_policy != "BASE" and (
             config.exit_style != "NATIVE" or config.reentry != "strict" or config.action_mode)):
         raise ValueError("bad config")
-    return config.exit_policy == "R2_52A"
+    return config.exit_policy != "BASE"
 
-def adaptive_state(component, k, e0, r0, r, best, armed, anchor_upper, anchor_lower) -> dict:
-    return {"component": int(component), "max_hold_end": None, "k": float(k), "e0_bps": float(e0),
-            "r0_bps": float(r0), "r_bps": float(r), "best_price": float(best), "trail_armed": bool(armed),
-            "anchor_upper": float(anchor_upper), "anchor_lower": float(anchor_lower)}
+
+def hard_bps(k_e: float) -> float:
+    """R2_52B hard-stop width for one k*E: clip(k*E, 300, 500) log-bps (r2_52b_exit_freeze.json risk_unit.S0)."""
+    return min(max(k_e, 300.0), 500.0)
+
+def adaptive_state(component, k, e0, r0, r, best, armed, anchor_upper, anchor_lower, s0=None, s=None) -> dict:
+    """r0/r: R2_52A R (hard stop and trail); R2_52B trail A0/A_t, with the hard stop S0/S_t added as s0_bps/s_bps."""
+    out = {"component": int(component), "max_hold_end": None, "k": float(k), "e0_bps": float(e0),
+           "r0_bps": float(r0), "r_bps": float(r), "best_price": float(best), "trail_armed": bool(armed),
+           "anchor_upper": float(anchor_upper), "anchor_lower": float(anchor_lower)}
+    if s0 is not None:
+        out.update(s0_bps=float(s0), s_bps=float(s))
+    return out
 
 def adaptive_exits(signals: pd.DataFrame) -> pd.DataFrame:
     """R2_52A exits on the native flag or the family state flag of the same row (schema.ADAPTIVE_FLAGS). The state
@@ -264,7 +274,10 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min, e_col, k_mi
     """R2-52A frozen minute order: E update -> stop at the open -> known state/native exit at the open -> (flat at
     the open only) market entries / OCO placement -> OCO fills -> entry bar vs hard stop -> carried stop touch ->
     best price / MFE for the next minute. One unit; hard stop entry*exp(-side*R_t), trail best*exp(-side*0.5*R_t)
-    once MFE >= R0 on prices up to the previous minute; R_t = min(R_t, k*E_t, 300) from the minute after entry."""
+    once MFE >= R0 on prices up to the previous minute; R_t = min(R_t, k*E_t, 300) from the minute after entry.
+    R2_52B (r2_52b_exit_freeze.json): same order; the hard stop uses its own S_t (S0 = clip(k*E0,300,500),
+    S_t = min(S_t, clip(k*E_t,300,500))) and pos["r"] is the separate trail A_t (R2_52A: S_t is R_t)."""
+    b_policy = config.exit_policy == "R2_52B"
     s_bps, stop_slip, fee = config.market_slippage_bps, config.stop_slippage_bps, config.fee_per_side
     t_index = pd.DatetimeIndex(minutes.open_time)
     o, h, l, c = (minutes[k].to_numpy(float) for k in ("open", "high", "low", "close"))
@@ -298,9 +311,10 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min, e_col, k_mi
         opened += 1
         k = float(row.k) if k_minute is None else float(k_minute[i])     # schedule: k of the fill minute
         r0 = min(k * e0, 300.0)
+        s0 = hard_bps(k * e0) if b_policy else r0
         pos = {"side": side, "price": price, "i": i, "decision": pd.Timestamp(row.decision_time),
-               "component": int(row.component), "k": k, "e0": e0, "r0": r0, "r": r0, "best": price, "col": e_col[j],
-               "armed": False, "anchor_upper": float(row.anchor_upper), "anchor_lower": float(row.anchor_lower),
+               "component": int(row.component), "k": k, "e0": e0, "r0": r0, "r": r0, "s0": s0, "s": s0, "best": price,
+               "col": e_col[j], "armed": False, "anchor_upper": float(row.anchor_upper), "anchor_lower": float(row.anchor_lower),
                "once": row.anchor_once > 0,
                "position_id": opened}
         pnl[i] += -costs.fee_bps(1.0, fee)
@@ -309,7 +323,7 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min, e_col, k_mi
 
     def active_stop():
         side, r = pos["side"], pos["r"]
-        hard = pos["price"] * math.exp(-side * r / 1e4)
+        hard = pos["price"] * math.exp(-side * pos["s"] / 1e4)
         if pos["armed"]:
             trail = pos["best"] * math.exp(-side * 0.5 * r / 1e4)
             if side * (trail - hard) > 0:
@@ -328,6 +342,7 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min, e_col, k_mi
                 pnl[i] += side * math.log(o[i] / c[i - 1]) * 1e4 * 1.0
             if i > pos["i"] and valid(e_min[i, pos["col"]]):
                 pos["r"] = min(pos["r"], pos["k"] * e_min[i, pos["col"]], 300.0)
+                pos["s"] = min(pos["s"], hard_bps(pos["k"] * e_min[i, pos["col"]])) if b_policy else pos["r"]
             level, reason = active_stop()
             if (side == 1 and o[i] <= level) or (side == -1 and o[i] >= level):
                 book_exit(i, o[i] * (1 - side * stop_slip / 1e4), reason)
@@ -368,7 +383,7 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min, e_col, k_mi
                 pending = keep
             if pos is not None:       # entry bar: full high/low against the new hard stop
                 side = pos["side"]
-                hard = pos["price"] * math.exp(-side * pos["r"] / 1e4)
+                hard = pos["price"] * math.exp(-side * pos["s"] / 1e4)
                 if (side == 1 and l[i] <= hard) or (side == -1 and h[i] >= hard):
                     book_exit(i, hard * (1 - side * stop_slip / 1e4), "stop")
         elif pos is not None:         # carried position: the open was inside the stop, test the bar
@@ -388,7 +403,7 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min, e_col, k_mi
     if result.open_position is not None:
         result.open_position.update(adaptive_state(pos["component"], pos["k"], pos["e0"], pos["r0"], pos["r"],
                                                    pos["best"], pos["armed"], pos["anchor_upper"],
-                                                   pos["anchor_lower"]))
+                                                   pos["anchor_lower"], *((pos["s0"], pos["s"]) if b_policy else ())))
     return result
 
 

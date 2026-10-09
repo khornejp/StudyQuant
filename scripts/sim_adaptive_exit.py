@@ -2,8 +2,12 @@
 (SimConfig.exit_policy="R2_52A") on the NONE/NATIVE signal table of each included id, k in {1.0, 1.5, 2.0} selected on
 each rolling validation window (tie -> 2.0), one continuous stitched test, paired daily PW versus BASE NONE/NATIVE,
 plus the pre-registered V3 ablation on the selected k (ablation_V3).
+R2-52B (--policy R2_52B, freeze r2_52b_exit_freeze.json): SimConfig.exit_policy="R2_52B" (hard stop
+S=clip(k*E,300,500), separate trail A=min(k*E,300)), k in {1.0, 1.5, 2.0, 2.5, 3.0} (tie -> lower k), no V3 ablation,
+8 bps report-only; output r2_52b/ (r2_52b_flip/ with --flip).
 Usage: python scripts/sim_adaptive_exit.py [--ids K01 ...] [--windows W01 ...] [--workers 8] [--out DIR] [--no-register]
        python scripts/sim_adaptive_exit.py --flip [--register]   # C1_FLIP_AX: K01_FLIP only, into r2_52a_flip/
+       python scripts/sim_adaptive_exit.py --policy R2_52B [--flip --register]
 """
 from __future__ import annotations
 import argparse, json, sys, time, traceback
@@ -34,6 +38,11 @@ FLIP_IDS = ("K01_FLIP",)                        # C1_FLIP_AX (Codex 2026-10-09):
 FLIP_OUT = O / "r2_52a_flip"                   # its own selected_k.csv / manifest; never the frozen 29-id folder
 REGISTRY = ROOT / "out/sim_registry.jsonl"
 CONFIG = SimConfig(exit_policy="R2_52A")       # strict, NATIVE rows, 4 bps round trip, PESS funding, delay 1
+FREEZE_B_PATH = O / "r2_52b_exit_freeze.json"
+FREEZE_B = json.loads(FREEZE_B_PATH.read_text(encoding="utf-8"))
+K_VALUES_B = (1.0, 1.5, 2.0, 2.5, 3.0)             # r2_52b selection; tie -> lower k
+OUT_B = O / "r2_52b"
+FLIP_OUT_B = O / "r2_52b_flip"
 PW_LABEL = "unadjusted diagnostic (no multiplicity correction; no per-id significance claim)"
 _CTX: Context | None = None
 
@@ -41,6 +50,25 @@ _CTX: Context | None = None
 def select_k(scores: dict[float, float]) -> float:
     """Best validation P&L; ties go to the candidate nearest 2.0 (the largest k)."""
     return max(scores, key=lambda k: (scores[k], k))
+
+
+def select_k_lower(scores: dict[float, float]) -> float:
+    """R2-52B: best validation P&L; ties go to the lower k (r2_52b_exit_freeze.json selection)."""
+    return max(scores, key=lambda k: (scores[k], -k))
+
+
+def policy_spec(policy: str) -> dict:
+    """Frozen per-policy run constants. R2_52A is the historical default and stays unchanged."""
+    if policy == "R2_52A":
+        return {"freeze_path": FREEZE_PATH, "freeze": FREEZE, "config": CONFIG, "k_values": K_VALUES,
+                "select": select_k, "v3": True, "gate_8bps": True, "out": OUT, "flip_out": FLIP_OUT}
+    if policy == "R2_52B":
+        if tuple(FREEZE_B["scope"]["included_ids"]) != INCLUDED:
+            raise SystemExit("r2_52b included_ids differ from r2_52a")
+        return {"freeze_path": FREEZE_B_PATH, "freeze": FREEZE_B, "config": SimConfig(exit_policy="R2_52B"),
+                "k_values": K_VALUES_B, "select": select_k_lower, "v3": False, "gate_8bps": False, "out": OUT_B,
+                "flip_out": FLIP_OUT_B}
+    raise SystemExit(f"unknown policy {policy}")
 
 
 def _valid_e(frame: pd.DataFrame, head: str) -> pd.DataFrame:
@@ -188,9 +216,11 @@ def _init(end: str) -> None:
     _CTX = Context.load(end=pd.Timestamp(end))
 
 
-def run_id(spec_id: str, names: list[str], out_dir: str) -> dict:
+def run_id(spec_id: str, names: list[str], out_dir: str, policy: str = "R2_52A") -> dict:
     try:
         ctx = _CTX
+        pol = policy_spec(policy)
+        config, k_values, select, with_v3 = pol["config"], pol["k_values"], pol["select"], pol["v3"]
         windows = [w for w in rolling.WINDOWS if w.name in names]
         table, _ = build_variant(ctx, spec_id, False, "NATIVE", ax=True)
         table = table.assign(e0_bps=row_e0(table, ctx.regime, spec_id), e_col=e_cols(table, spec_id).astype(float))
@@ -199,33 +229,37 @@ def run_id(spec_id: str, names: list[str], out_dir: str) -> dict:
         e, e_min = e_matrix(ctx.regime, times, heads(spec_id))
         picks, selection = {}, []
         for w in windows:
-            scores = {k: validation_pnl(table, minutes, e, e_min, w.val_start, w.val_end, CONFIG, k) for k in K_VALUES}
-            picks[w.name] = select_k(scores)
+            scores = {k: validation_pnl(table, minutes, e, e_min, w.val_start, w.val_end, config, k) for k in k_values}
+            picks[w.name] = select(scores)
             selection.append({"id": spec_id, "window": w.name, "val_start": w.val_start, "val_end": w.val_end,
                               **{f"val_net_4bps_k{k}": v for k, v in scores.items()}, "k": picks[w.name]})
         a, b = windows[0].test_start, windows[-1].test_end
         k_minute = k_schedule(times, picks, windows)
-        final = replace(CONFIG, close_at_end=True)       # data end: administrative close, flagged data_end
+        final = replace(config, close_at_end=True)       # data end: administrative close, flagged data_end
         fee8 = replace(final, fee_per_side=4.0)          # same k sequence, no reselection
         ax4 = run_ax(table, minutes, e, e_min, a, b, final, k_minute)
         ax8 = run_ax(table, minutes, e, e_min, a, b, fee8, k_minute)
-        fixed_r, m = np.full_like(e_min, np.nan), v3_series(ctx.regime, times)   # V3: R_t = R0, causal M exit
-        v34 = run_ax(table, minutes, e, fixed_r, a, b, final, k_minute, m)
-        v38 = run_ax(table, minutes, e, fixed_r, a, b, fee8, k_minute, m)
+        if with_v3:
+            fixed_r, m = np.full_like(e_min, np.nan), v3_series(ctx.regime, times)   # V3: R_t = R0, causal M exit
+            v34 = run_ax(table, minutes, e, fixed_r, a, b, final, k_minute, m)
+            v38 = run_ax(table, minutes, e, fixed_r, a, b, fee8, k_minute, m)
         native, native_config = build_variant(ctx, spec_id, False, "NATIVE")
         inside = ((minutes.open_time >= a) & (minutes.open_time < b)).to_numpy()
         test_minutes = minutes.loc[inside].reset_index(drop=True)
         nat4 = core.simulate(native, test_minutes, a, b, replace(native_config, close_at_end=True))
         nat8 = core.simulate(native, test_minutes, a, b, replace(native_config, close_at_end=True, fee_per_side=4.0))
         days = pd.date_range(a, b, freq="D", inclusive="left")
-        frame = pd.DataFrame({f"{n}_{c}": daily(r.minute_pnl, days) for n, c, r in (
-            ("ax", "4bps", ax4), ("ax", "8bps", ax8), ("v3", "4bps", v34), ("v3", "8bps", v38),
-            ("native", "4bps", nat4), ("native", "8bps", nat8))})
-        for name, value in (("daily", frame), ("trades_ax", ax4.trades), ("trades_v3", v34.trades),
-                            ("trades_native", nat4.trades)):
+        runs = [("ax", "4bps", ax4), ("ax", "8bps", ax8)]
+        outputs = [("trades_ax", ax4.trades)]
+        if with_v3:
+            runs += [("v3", "4bps", v34), ("v3", "8bps", v38)]
+            outputs += [("trades_v3", v34.trades)]
+        runs += [("native", "4bps", nat4), ("native", "8bps", nat8)]
+        frame = pd.DataFrame({f"{n}_{c}": daily(r.minute_pnl, days) for n, c, r in runs})
+        for name, value in [("daily", frame)] + outputs + [("trades_native", nat4.trades)]:
             Path(out_dir, name).mkdir(parents=True, exist_ok=True)
             value.to_parquet(Path(out_dir, name, f"{spec_id}.parquet"))
-        executes = pd.DatetimeIndex(table.decision_time) + pd.Timedelta(minutes=CONFIG.delay_min)
+        executes = pd.DatetimeIndex(table.decision_time) + pd.Timedelta(minutes=config.delay_min)
         wants = ((table.side != 0) & table.allow_entry & (table.entry == "market") & (executes >= a)
                  & (executes < b)).to_numpy()
         e0 = table.e0_bps.to_numpy()
@@ -233,19 +267,24 @@ def run_id(spec_id: str, names: list[str], out_dir: str) -> dict:
                 **compare(ax4, ax8, nat4, nat8, days), "native_trade_n": int(plan2.positions(nat4.trades).shape[0]),
                 "native_net_4bps": float(nat4.minute_pnl.sum()),
                 "no_entry_e_market_rows": int((wants & ~(np.isfinite(e0) & (e0 > 0))).sum()),
-                "v3": compare(v34, v38, nat4, nat8, days)}
+                **({"v3": compare(v34, v38, nat4, nat8, days)} if with_v3 else {})}
     except Exception as error:      # a failed id invalidates the run (pass_criteria.catalog); never dropped
         return {"id": spec_id, "status": "error", "error": f"{type(error).__name__}: {error}",
                 "traceback": traceback.format_exc(limit=5)}
 
 
-def k01_gates(r: dict) -> dict:
+def k01_gates(r: dict, gate_8bps: bool = True) -> dict:
+    """gate_8bps=False (R2-52B): the 8 bps delta is report-only and never gates (project rule #1)."""
     worst, native_worst = r["worst_position_bps"], r["native_worst_position_bps"]
-    gates = {"pw_lower_gt_0": r["pw_delta"]["lower"] > 0, "delta_8bps_ge_0": r["delta_8bps"] >= 0,
+    gates = {"pw_lower_gt_0": r["pw_delta"]["lower"] > 0,
+             **({"delta_8bps_ge_0": r["delta_8bps"] >= 0} if gate_8bps else {}),
              "worst_position_ge_native": worst is not None and native_worst is not None and worst >= native_worst,
              "max_drawdown_le_native": r["max_drawdown_bps"] <= r["native_max_drawdown_bps"]}
-    return {**gates, "pass": all(gates.values()), "delta_4bps": r["delta_4bps"], "delta_8bps": r["delta_8bps"],
-            "pw_delta": r["pw_delta"]}
+    out = {**gates, "pass": all(gates.values()), "delta_4bps": r["delta_4bps"], "delta_8bps": r["delta_8bps"],
+           "pw_delta": r["pw_delta"]}
+    if not gate_8bps:
+        out["delta_8bps_report_only"] = True
+    return out
 
 
 def aggregate(deltas: pd.DataFrame, ids, results: dict) -> dict:
@@ -264,11 +303,11 @@ def catalog_gate(k01_pass: bool, deltas: pd.DataFrame, ids, results: dict, full_
             "pass": bool(full_scope and out["improved_ids"] >= 15 and out["pw_mean_delta"]["lower"] > 0)}
 
 
-def evaluate(results: dict, ok: list[str], deltas: pd.DataFrame, full_scope: bool) -> dict:
+def evaluate(results: dict, ok: list[str], deltas: pd.DataFrame, full_scope: bool, gate_8bps: bool = True) -> dict:
     """K01 primary, then catalog, then the atomic-only diagnostic, for one policy (base or V3)."""
     out = {}
     if "K01" in ok:
-        out["K01_primary"] = k01_gates(results["K01"])
+        out["K01_primary"] = k01_gates(results["K01"], gate_8bps)
     out["catalog_secondary"] = catalog_gate(out.get("K01_primary", {}).get("pass", False), deltas, ok, results,
                                             full_scope)
     atomic = [i for i in ATOMIC if i in ok]
@@ -276,10 +315,12 @@ def evaluate(results: dict, ok: list[str], deltas: pd.DataFrame, full_scope: boo
     return out
 
 
-def trials(ids) -> tuple[int, int]:
-    """(candidate series, V3 ablation series) of a run scope: the freeze's 87 + 29, or 3 + 1 for the flip run."""
+def trials(ids, policy: str = "R2_52A") -> tuple[int, int]:
+    """(candidate series, V3 ablation series) of a run scope: the freeze's 87 + 29, or 3 + 1 for the flip run;
+    R2_52B: 145 + 0, or 5 + 0 for the flip run."""
     scope = FLIP_IDS if tuple(ids) == FLIP_IDS else INCLUDED
-    return len(scope) * len(K_VALUES), len(scope)
+    pol = policy_spec(policy)
+    return len(scope) * len(pol["k_values"]), len(scope) if pol["v3"] else 0
 
 
 def parse_scope(argv=None):
@@ -293,17 +334,23 @@ def parse_scope(argv=None):
     parser.add_argument("--experiment", default=None)
     parser.add_argument("--flip", action="store_true", help="C1_FLIP_AX: K01_FLIP only, into r2_52a_flip/")
     parser.add_argument("--register", action="store_true", help="--flip only: append the flip run to the registry")
+    parser.add_argument("--policy", choices=("R2_52A", "R2_52B"), default="R2_52A")
     args = parser.parse_args(argv)
+    pol = policy_spec(args.policy)
+    b_policy = args.policy == "R2_52B"
     if args.flip:
-        if args.ids is not None or (args.out is not None and Path(args.out).resolve() == OUT.resolve()):
-            raise SystemExit("--flip fixes its ids (K01_FLIP) and may not write the frozen r2_52a folder")
-        args.ids, args.out, args.no_register = list(FLIP_IDS), args.out or str(FLIP_OUT), not args.register
-        args.experiment = args.experiment or "R2-52A adaptive exit rolling C1_FLIP_AX (K01_FLIP)"
+        frozen = {OUT.resolve(), OUT_B.resolve()}
+        if args.ids is not None or (args.out is not None and Path(args.out).resolve() in frozen):
+            raise SystemExit("--flip fixes its ids (K01_FLIP) and may not write a frozen 29-id folder")
+        args.ids, args.out, args.no_register = list(FLIP_IDS), args.out or str(pol["flip_out"]), not args.register
+        args.experiment = args.experiment or ("R2-52B K01_FLIP adaptive hard-stop + separate trail rolling" if b_policy
+                                              else "R2-52A adaptive exit rolling C1_FLIP_AX (K01_FLIP)")
     elif args.register:
         raise SystemExit("--register is only for --flip")
     args.ids = list(INCLUDED) if args.ids is None else args.ids
-    args.out = args.out or str(OUT)
-    args.experiment = args.experiment or "R2-52A adaptive exit rolling"
+    args.out = args.out or str(pol["out"])
+    args.experiment = args.experiment or ("R2-52B adaptive hard-stop + separate trail rolling" if b_policy
+                                          else "R2-52A adaptive exit rolling")
     scope = FLIP_IDS if args.flip else INCLUDED
     unknown = sorted(set(args.ids) - set(scope))
     names = [w.name for w in rolling.WINDOWS]
@@ -319,7 +366,10 @@ def parse_scope(argv=None):
 
 def main() -> None:
     args, windows, full_scope = parse_scope()
-    n_trials, n_trials_v3 = trials(args.ids)
+    pol = policy_spec(args.policy)
+    b_policy = args.policy == "R2_52B"
+    freeze_path, freeze = pol["freeze_path"], pol["freeze"]
+    n_trials, n_trials_v3 = trials(args.ids, args.policy)
     end = windows[-1].test_end
     if end > rolling.END:
         raise SystemExit("end after 2026-01-01: 2026H1 is untouched (freeze data_cutoff)")
@@ -330,22 +380,43 @@ def main() -> None:
     if coverage["retrain_after_timestamp"] or set(coverage["missing_days"]) - plan2.KNOWN_PREDICTION_GAPS:
         raise SystemExit(f"prediction availability check failed: {coverage}")
     prior = registry.cumulative_trials(REGISTRY)
+    if b_policy and not args.no_register:          # r2_52b trial_registry.sequence: R2-52B 5544 -> 5689, K01_FLIP -> 5694
+        expected = freeze["trial_registry"]["base"] + (freeze["trial_registry"]["trials"] if args.flip else 0)
+        if prior != expected:
+            raise SystemExit(f"registry cumulative_trials {prior} != frozen {expected}")
     manifest = {"created_utc": datetime.now(timezone.utc).isoformat(), "source": "scripts/sim_adaptive_exit.py",
-                "freeze": str(FREEZE_PATH.relative_to(ROOT)), "freeze_sha256": provenance.file_sha256(FREEZE_PATH),
-                "experiment": FREEZE["experiment"], "frozen_hypothesis": FREEZE["pass_criteria"],
-                "ablation_V3": FREEZE["ablation_V3"], "data_cutoff": FREEZE["data_cutoff"], "full_scope": full_scope,
-                "simulation": {"exit_policy": "R2_52A", "k_values": list(K_VALUES), "costs": FREEZE["costs"],
+                "freeze": str(freeze_path.relative_to(ROOT)), "freeze_sha256": provenance.file_sha256(freeze_path),
+                "experiment": freeze["experiment"], "frozen_hypothesis": freeze["pass_criteria"],
+                "ablation_V3": freeze["ablation_V3"], "data_cutoff": freeze["data_cutoff"], "full_scope": full_scope,
+                "simulation": {"exit_policy": args.policy, "k_values": list(pol["k_values"]), "costs": freeze["costs"],
                                "test_start": windows[0].test_start, "test_end": end,
-                               "selection": FREEZE["selection"], "comparator": "BASE NONE/NATIVE, same test calendar"},
+                               "selection": freeze["selection"], "comparator": "BASE NONE/NATIVE, same test calendar"},
                 "included_ids": list(FLIP_IDS if args.flip else INCLUDED), "ids_run": args.ids,
                 "windows": [w.name for w in windows],
                 "input_sha256": plan2.input_hashes(end), "prediction_coverage": coverage,
-                "n_trials": n_trials + n_trials_v3, "n_trials_split": {"r2_52a": n_trials, "v3_ablation": n_trials_v3},
+                "n_trials": n_trials + n_trials_v3,
+                "n_trials_split": {args.policy.lower(): n_trials, "v3_ablation": n_trials_v3},
                 "prior_trials_registry": prior, "cumulative_trials": prior + n_trials + n_trials_v3,
-                "n_trials_rule": FREEZE["trials"],
+                "n_trials_rule": freeze["trials"],
                 "paper_records": "effective_switch_time, retired_books snapshot, AX config hash and retired-table hashes "
                                  "are recorded by the paper rollout (Task D); this research run touches no paper table"}
-    if args.flip:
+    if b_policy:
+        parent = ROOT / freeze["parent_freeze"]["path"]
+        manifest.update({"freeze_status": freeze["status"], "freeze_time_utc": freeze["freeze_time_utc"],
+                         "parent_freeze": {"path": freeze["parent_freeze"]["path"],
+                                           "sha256": provenance.file_sha256(parent),
+                                           "sha256_frozen": freeze["parent_freeze"]["sha256"]},
+                         "trial_registry_frozen": freeze["trial_registry"], "registered": not args.no_register})
+        manifest.pop("paper_records")
+        manifest["paper_records"] = ("R2-52B hidden shadow start time and source+x3 configuration hash are recorded by "
+                                     "the later paper step; this research run touches no paper table")
+    if args.flip and b_policy:
+        manifest["flip"] = {"paper_book": "C1_FLIP_AX (R2-52B shadow candidate)", "registered": not args.no_register,
+                            "design": "K01_FLIP (F3 side *= -1 + E1, mirrored F3 state exit) under R2_52B exits; k per "
+                                      "window by select_k_lower (4 bps validation P&L, tie -> lower k)",
+                            "note": "post-freeze id outside the frozen 29-id scope; K01_FLIP_diagnostic in summary "
+                                    "applies the K01 criteria as a diagnostic, not a pre-registered gate"}
+    elif args.flip:
         manifest["flip"] = {"paper_book": "C1_FLIP_AX", "registered": not args.no_register,
                             "design": "Codex 2026-10-09, user-approved: C1_FLIP = F3 side *= -1 + E1; R2-52A F3 state "
                                       "exit mirrored (long <= q50, short >= q50); E1 one-shot anchor unchanged; k per "
@@ -354,20 +425,28 @@ def main() -> None:
                                     "R2-52A text, not a pre-registered K01_FLIP gate"}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     with ProcessPoolExecutor(max_workers=min(args.workers, 8), initializer=_init, initargs=(str(end),)) as pool:
-        rows = list(pool.map(run_id, args.ids, [args.windows] * len(args.ids), [str(out)] * len(args.ids)))
+        rows = list(pool.map(run_id, args.ids, [args.windows] * len(args.ids), [str(out)] * len(args.ids),
+                             [args.policy] * len(args.ids)))
     results = {r["id"]: r for r in rows}
     failed = [r for r in rows if r["status"] != "ok"]
     ok = [i for i in args.ids if results[i]["status"] == "ok"]
     pd.DataFrame([s for i in ok for s in results[i]["selection"]]).to_csv(out / "selected_k.csv", index=False)
     frames = {i: pd.read_parquet(out / "daily" / f"{i}.parquet") for i in ok}
     deltas = pd.DataFrame({i: f.ax_4bps - f.native_4bps for i, f in frames.items()})
-    deltas_v3 = pd.DataFrame({i: f.v3_4bps - f.native_4bps for i, f in frames.items()})
+    deltas_v3 = None if b_policy else pd.DataFrame({i: f.v3_4bps - f.native_4bps for i, f in frames.items()})
     report = {"valid_run": full_scope and not failed, "failed_ids": [{k: r[k] for k in ("id", "error")} for r in failed],
               "pw_label": f"per-id pw_delta: {PW_LABEL}; Holm not computed (no p-value helper in analytics)",
               "diagnostics": {"runtime_seconds": {"value": round(time.time() - started, 1)}},
               "strategies": [{k: v for k, v in results[i].items() if k not in ("selection", "carried", "v3")}
                              for i in ok]}
-    if not failed and ok:
+    if not failed and ok and b_policy:
+        report.update(evaluate(results, ok, deltas, full_scope, gate_8bps=False))
+        report["holm"] = "not computed; no per-id significance claim (freeze: 29 hypotheses if claims are made)"
+        report["v3_ablation"] = {"scope": freeze["ablation_V3"], "run": False}
+        if args.flip:
+            report["K01_FLIP_diagnostic"] = {**k01_gates(results["K01_FLIP"], gate_8bps=False),
+                                             "note": "K01 criteria applied as a diagnostic; not pre-registered"}
+    elif not failed and ok:
         report.update(evaluate(results, ok, deltas, full_scope))
         v3 = {i: results[i]["v3"] for i in ok}
         report["v3_ablation"] = {"scope": "separate pre-registered ablation; does not gate the base R2-52A switch",
@@ -387,8 +466,9 @@ def main() -> None:
                                                       "K01_pass": report.get("K01_primary", {}).get("pass"),
                                                       "catalog_pass": report.get("catalog_secondary", {}).get("pass")}})
         v3 = report.get("v3_ablation", {})
+    if not args.no_register and n_trials_v3:
         registry.record(REGISTRY, {"experiment": f"{args.experiment} V3 ablation", "n_trials": n_trials_v3,
-                                   "config": {**config, "ablation_V3": FREEZE["ablation_V3"]},
+                                   "config": {**config, "ablation_V3": freeze["ablation_V3"]},
                                    "input_hashes": manifest["input_sha256"],
                                    "result_summary": {"valid_run": report["valid_run"],
                                                       "K01_pass": v3.get("K01_primary", {}).get("pass"),
@@ -396,6 +476,7 @@ def main() -> None:
     print(json.dumps({"valid_run": report["valid_run"], "failed": [r["id"] for r in failed],
                       "K01_primary": report.get("K01_primary"), "catalog": report.get("catalog_secondary"),
                       "v3_K01": report.get("v3_ablation", {}).get("K01_primary"),
+                      "K01_FLIP_diagnostic": report.get("K01_FLIP_diagnostic"),
                       "runtime_seconds": report["diagnostics"]["runtime_seconds"]["value"]}, indent=1, default=str))
 
 
