@@ -1,0 +1,11 @@
+{
+  "utc": "2026-10-09T15:08:38.030193+00:00",
+  "T_add": "2026-10-09T15:08:00Z",
+  "last_processed_minute": "2026-10-09T15:07:00+00:00",
+  "config_hash_before": "dc8233b179fe23620f86eec8783b2e4dde71012e99498a0dc0d98484ac263754",
+  "config_hash_after": "9f05d167127a6ade43c33001bccd081742aa8de0f7f7576998c9887c91c9be9b",
+  "db_backup": "D:\\StudyQuant\\artifacts\\live\\live.pre_flip_add.sqlite",
+  "addendum": "out/k45_rl_r2_48_20261007/r2_52a_flip/c1_flip_ax_paper_addendum.json",
+  "selected_k_sha256": "85ba676b14fc7b338d2830439d6b86aff83142c2c358eca340044666a301cf18",
+  "note": "added before R2-55 causal guard (user 2026-10-10); same conditions as the 27 AX books"
+}
