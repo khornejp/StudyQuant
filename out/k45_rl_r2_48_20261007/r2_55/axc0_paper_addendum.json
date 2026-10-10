@@ -12,7 +12,8 @@
     "sha256": "d1d56efa3b35465059e24f30380b7f413a029a4384da2ed45056977327a0eced"
   },
   "base_commit": "9cfd84f",
-  "data_cutoff": "2026-01-01 (k from W10 validation 2025-09-01..2025-12-01)",
+  "k_selection_cutoff": "2026-01-01 (k = R2-55 AXC0 selection, last validation window W10 2025-09-01..2025-12-01)",
+  "observed_through": "2026-10-08 (R2-55 historical test / R2-56 replay / parity window end, exclusive)",
   "rule": "R2-55 AXC0 tables: build_variant(ax=True, axc0=True) = R2-52A AX table with the E1-15 component exiting at the fixed entry breakout level (prior-20-bar 15m high/low stored at fill, never updated; long exits when a later completed 15m close <= stored high, short >= stored low), E1 rolling-edge AX flags dropped; other components unchanged. SimConfig(exit_policy=R2_52A, causal_guard=True). Maker flat 4 bps round trip, no slippage.",
   "books": {
     "B3_AXC0": {
@@ -67,7 +68,7 @@
   },
   "parity": {
     "path": "out/k45_rl_r2_48_20261007/r2_56/paper_axc0_parity.json",
-    "sha256": "c0bccc04b089911cbcc88425356b1254e857b0258897c83c528317110b7ca8a6",
+    "sha256": "4adcb587a8764f236bcd2fbbbdca59ce6d1fe3e1b5f071c1af390c9aca6c61a8",
     "match": true,
     "window": [
       "2026-10-01 00:00:00+00:00",
@@ -76,6 +77,15 @@
     "books": {
       "B3_AXC0": {
         "k": 1.0,
+        "sim_vs_ref": {
+          "n": [
+            7,
+            7
+          ],
+          "times_sides_match": true,
+          "max_abs_net_diff_bps": 0.0,
+          "match": true
+        },
         "paper_vs_ref": {
           "n": [
             6,
@@ -85,6 +95,50 @@
           "max_abs_net_diff_bps": 2.2026824808563106e-13,
           "match": true
         },
+        "open_suffix": {
+          "paper_open": {
+            "entry_time": "2026-10-07 13:31:00+00:00",
+            "side": -1
+          },
+          "expected": {
+            "entry_time": "2026-10-07 13:31:00+00:00",
+            "side": -1
+          },
+          "match": true
+        },
+        "x3": {
+          "n": [
+            6,
+            6
+          ],
+          "times_sides_match": true,
+          "liquidated": false,
+          "max_abs_diff_usd": {
+            "notional_usd": 0.0,
+            "funding_usd": 0.0,
+            "pnl_usd": 0.0,
+            "balance_after_usd": 0.0
+          },
+          "balance_usd": [
+            97.25942024188397,
+            97.25942024188397
+          ],
+          "status": "RUNNING",
+          "open": {
+            "entry_time": "2026-10-07 13:31:00+00:00",
+            "side": -1,
+            "notional_usd": 291.77826072565193
+          },
+          "match": true
+        },
+        "live_plus_1min_diagnostic": {
+          "positions": 5,
+          "net_4bps_closed": -156.52774204077576,
+          "open": "2026-10-07 13:32:00+00:00"
+        }
+      },
+      "K04_AXC0": {
+        "k": 2.0,
         "sim_vs_ref": {
           "n": [
             6,
@@ -94,14 +148,6 @@
           "max_abs_net_diff_bps": 0.0,
           "match": true
         },
-        "open_position_match": true,
-        "live_plus_1min_diagnostic": {
-          "positions": 5,
-          "net_4bps_closed": -156.52774204077576
-        }
-      },
-      "K04_AXC0": {
-        "k": 2.0,
         "paper_vs_ref": {
           "n": [
             6,
@@ -111,19 +157,36 @@
           "max_abs_net_diff_bps": 3.659295089164516e-13,
           "match": true
         },
-        "sim_vs_ref": {
+        "open_suffix": {
+          "paper_open": null,
+          "expected": null,
+          "match": true
+        },
+        "x3": {
           "n": [
             6,
             6
           ],
           "times_sides_match": true,
-          "max_abs_net_diff_bps": 0.0,
+          "liquidated": false,
+          "max_abs_diff_usd": {
+            "notional_usd": 0.0,
+            "funding_usd": 0.0,
+            "pnl_usd": 0.0,
+            "balance_after_usd": 0.0
+          },
+          "balance_usd": [
+            103.16626657835364,
+            103.16626657835364
+          ],
+          "status": "RUNNING",
+          "open": null,
           "match": true
         },
-        "open_position_match": true,
         "live_plus_1min_diagnostic": {
           "positions": 6,
-          "net_4bps_closed": 103.39986981691631
+          "net_4bps_closed": 103.39986981691631,
+          "open": null
         }
       }
     }

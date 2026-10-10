@@ -113,3 +113,32 @@ def test_catalog_cycle_with_axc0_publishes_30_sources_and_30_x3(tmp_path, monkey
         x3 = tuple(f"{n}_x3" for n in config.books)
         assert set(store.frame("leverage_state").book) == set(x3)
         assert set(store.frame("trades").book) == set(config.books)
+
+
+SNAPSHOT = ROOT / "out/k45_rl_r2_48_20261007/r2_54/stageb_snapshot/manifest.json"
+
+
+def test_parity_gate_rejects_extra_or_missing_positions() -> None:
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import paper_axc0_parity as parity
+    t = pd.date_range("2026-10-01", periods=3, freq="h", tz="UTC")
+    ref = pd.DataFrame({"entry_time": t[:2], "exit_time": t[1:], "side": [1, -1], "net_bps": [1.0, 2.0]})
+    extra = pd.concat([ref, ref.iloc[[-1]]], ignore_index=True)
+    assert parity.same(ref, ref)["match"] and not parity.same(extra, ref)["match"] and not parity.same(ref[:1], ref)["match"]
+
+
+@pytest.mark.skipif(not SNAPSHOT.exists(), reason="R2-54 FINAL snapshot (untracked out/) absent")
+def test_snapshot_parity_source_and_x3_match_the_sim_for_both_books() -> None:
+    """2026-10-01..10-08: full sim list == R2-56, paper closed == R2-56 closed, B3 open short 10-07 13:31 == the
+    R2-56 data_end suffix, and the x3 overlay (paper_catalog._x3 -> simulate_book) == an independent 3x
+    compounding of the sim legs (trades, funding, PnL, balance, open notional)."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import paper_axc0_parity as parity
+    report = parity.run_all()
+    for name in AXC0:
+        book = report["books"][name]
+        assert book["sim_vs_ref"]["match"] and book["paper_vs_ref"]["match"] and book["open_suffix"]["match"], name
+        assert book["x3"]["match"] and book["x3"]["n"][0] == book["paper_vs_ref"]["n"][0] == 6, name
+    assert report["books"]["B3_AXC0"]["sim_vs_ref"]["n"] == [7, 7]
+    assert report["books"]["B3_AXC0"]["x3"]["open"]["entry_time"] == "2026-10-07 13:31:00+00:00"
+    assert report["books"]["K04_AXC0"]["x3"]["open"] is None and report["match"]

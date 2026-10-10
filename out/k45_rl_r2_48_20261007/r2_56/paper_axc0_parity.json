@@ -7,6 +7,15 @@
   "books": {
     "B3_AXC0": {
       "k": 1.0,
+      "sim_vs_ref": {
+        "n": [
+          7,
+          7
+        ],
+        "times_sides_match": true,
+        "max_abs_net_diff_bps": 0.0,
+        "match": true
+      },
       "paper_vs_ref": {
         "n": [
           6,
@@ -16,16 +25,113 @@
         "max_abs_net_diff_bps": 2.2026824808563106e-13,
         "match": true
       },
-      "sim_vs_ref": {
+      "open_suffix": {
+        "ref_data_end_positions": [
+          {
+            "entry_time": "2026-10-07 13:31:00+00:00",
+            "exit_time": "2026-10-07 23:59:00+00:00",
+            "side": -1,
+            "net_bps": 0.929012974890264
+          }
+        ],
+        "paper_open": {
+          "entry_time": "2026-10-07 13:31:00+00:00",
+          "side": -1
+        },
+        "expected": {
+          "entry_time": "2026-10-07 13:31:00+00:00",
+          "side": -1
+        },
+        "match": true
+      },
+      "x3": {
         "n": [
           6,
           6
         ],
         "times_sides_match": true,
-        "max_abs_net_diff_bps": 0.0,
+        "liquidated": false,
+        "max_abs_diff_usd": {
+          "notional_usd": 0.0,
+          "funding_usd": 0.0,
+          "pnl_usd": 0.0,
+          "balance_after_usd": 0.0
+        },
+        "balance_usd": [
+          97.25942024188397,
+          97.25942024188397
+        ],
+        "status": "RUNNING",
+        "open_match": true,
+        "open": {
+          "entry_time": "2026-10-07 13:31:00+00:00",
+          "side": -1,
+          "notional_usd": 291.77826072565193
+        },
+        "trades": [
+          {
+            "entry_time": "2026-10-02 03:16:00+00:00",
+            "exit_time": "2026-10-02 04:22:00+00:00",
+            "side": 1,
+            "notional_usd": 300.0,
+            "funding_usd": 0.0,
+            "pnl_usd": 2.9965881045764675,
+            "balance_after_usd": 102.99658810457646,
+            "exit_reason": "TRAIL"
+          },
+          {
+            "entry_time": "2026-10-02 04:31:00+00:00",
+            "exit_time": "2026-10-02 05:37:00+00:00",
+            "side": 1,
+            "notional_usd": 308.9897643137294,
+            "funding_usd": 0.0,
+            "pnl_usd": -2.8017235013637984,
+            "balance_after_usd": 100.19486460321266,
+            "exit_reason": "STOP"
+          },
+          {
+            "entry_time": "2026-10-04 22:16:00+00:00",
+            "exit_time": "2026-10-05 04:16:00+00:00",
+            "side": 1,
+            "notional_usd": 300.584593809638,
+            "funding_usd": -0.02251979776821808,
+            "pnl_usd": -1.6021675442461547,
+            "balance_after_usd": 98.59269705896651,
+            "exit_reason": "STATE"
+          },
+          {
+            "entry_time": "2026-10-05 14:01:00+00:00",
+            "exit_time": "2026-10-05 14:31:00+00:00",
+            "side": 1,
+            "notional_usd": 295.7780911768995,
+            "funding_usd": 0.0,
+            "pnl_usd": -0.820892384739787,
+            "balance_after_usd": 97.77180467422671,
+            "exit_reason": "STATE"
+          },
+          {
+            "entry_time": "2026-10-07 02:01:00+00:00",
+            "exit_time": "2026-10-07 02:02:00+00:00",
+            "side": -1,
+            "notional_usd": 293.31541402268016,
+            "funding_usd": 0.0,
+            "pnl_usd": 1.282444914781692,
+            "balance_after_usd": 99.0542495890084,
+            "exit_reason": "TRAIL"
+          },
+          {
+            "entry_time": "2026-10-07 02:31:00+00:00",
+            "exit_time": "2026-10-07 05:59:00+00:00",
+            "side": -1,
+            "notional_usd": 297.1627487670252,
+            "funding_usd": 0.0,
+            "pnl_usd": -1.7948293471244399,
+            "balance_after_usd": 97.25942024188397,
+            "exit_reason": "STOP"
+          }
+        ],
         "match": true
       },
-      "open_position_match": true,
       "paper_net_4bps_closed": -89.30679268243978,
       "ref_net_4bps_closed": -89.30679268244,
       "live_plus_1min_diagnostic": {
@@ -64,10 +170,6 @@
             "net_bps": -60.24042129516511
           }
         ]
-      },
-      "paper_open": {
-        "entry_time": "2026-10-07 13:31:00+00:00",
-        "side": -1
       },
       "paper_positions": [
         {
@@ -155,15 +257,6 @@
     },
     "K04_AXC0": {
       "k": 2.0,
-      "paper_vs_ref": {
-        "n": [
-          6,
-          6
-        ],
-        "times_sides_match": true,
-        "max_abs_net_diff_bps": 3.659295089164516e-13,
-        "match": true
-      },
       "sim_vs_ref": {
         "n": [
           6,
@@ -173,7 +266,105 @@
         "max_abs_net_diff_bps": 0.0,
         "match": true
       },
-      "open_position_match": true,
+      "paper_vs_ref": {
+        "n": [
+          6,
+          6
+        ],
+        "times_sides_match": true,
+        "max_abs_net_diff_bps": 3.659295089164516e-13,
+        "match": true
+      },
+      "open_suffix": {
+        "ref_data_end_positions": [],
+        "paper_open": null,
+        "expected": null,
+        "match": true
+      },
+      "x3": {
+        "n": [
+          6,
+          6
+        ],
+        "times_sides_match": true,
+        "liquidated": false,
+        "max_abs_diff_usd": {
+          "notional_usd": 0.0,
+          "funding_usd": 0.0,
+          "pnl_usd": 0.0,
+          "balance_after_usd": 0.0
+        },
+        "balance_usd": [
+          103.16626657835364,
+          103.16626657835364
+        ],
+        "status": "RUNNING",
+        "open_match": true,
+        "open": null,
+        "trades": [
+          {
+            "entry_time": "2026-10-01 05:01:00+00:00",
+            "exit_time": "2026-10-01 07:31:00+00:00",
+            "side": 1,
+            "notional_usd": 300.0,
+            "funding_usd": 0.0,
+            "pnl_usd": -2.382936034579377,
+            "balance_after_usd": 97.61706396542063,
+            "exit_reason": "STATE"
+          },
+          {
+            "entry_time": "2026-10-02 03:16:00+00:00",
+            "exit_time": "2026-10-02 12:33:00+00:00",
+            "side": 1,
+            "notional_usd": 292.85119189626187,
+            "funding_usd": -0.029285119189626188,
+            "pnl_usd": 4.551311246986556,
+            "balance_after_usd": 102.16837521240718,
+            "exit_reason": "TRAIL"
+          },
+          {
+            "entry_time": "2026-10-03 12:31:00+00:00",
+            "exit_time": "2026-10-03 21:16:00+00:00",
+            "side": 1,
+            "notional_usd": 306.50512563722157,
+            "funding_usd": -0.013878552088853392,
+            "pnl_usd": -0.7428861646688192,
+            "balance_after_usd": 101.42548904773837,
+            "exit_reason": "STATE"
+          },
+          {
+            "entry_time": "2026-10-04 06:31:00+00:00",
+            "exit_time": "2026-10-04 16:02:00+00:00",
+            "side": 1,
+            "notional_usd": 304.2764671432151,
+            "funding_usd": -0.022017445162483044,
+            "pnl_usd": 0.8937975410175154,
+            "balance_after_usd": 102.31928658875589,
+            "exit_reason": "TRAIL"
+          },
+          {
+            "entry_time": "2026-10-04 20:46:00+00:00",
+            "exit_time": "2026-10-04 22:29:00+00:00",
+            "side": 1,
+            "notional_usd": 306.9578597662677,
+            "funding_usd": 0.0,
+            "pnl_usd": 1.7131642937372284,
+            "balance_after_usd": 104.03245088249311,
+            "exit_reason": "TRAIL"
+          },
+          {
+            "entry_time": "2026-10-05 14:01:00+00:00",
+            "exit_time": "2026-10-05 14:31:00+00:00",
+            "side": 1,
+            "notional_usd": 312.09735264747934,
+            "funding_usd": 0.0,
+            "pnl_usd": -0.8661843041394706,
+            "balance_after_usd": 103.16626657835364,
+            "exit_reason": "STATE"
+          }
+        ],
+        "match": true
+      },
       "paper_net_4bps_closed": 107.33421070228533,
       "ref_net_4bps_closed": 107.3342107022855,
       "live_plus_1min_diagnostic": {
@@ -219,7 +410,6 @@
           }
         ]
       },
-      "paper_open": null,
       "paper_positions": [
         {
           "entry_time": "2026-10-01 05:01:00+00:00",
