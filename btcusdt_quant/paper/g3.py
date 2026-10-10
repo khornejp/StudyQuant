@@ -62,20 +62,45 @@ DEPS = (Path(__file__), ROOT / "btcusdt_quant/paper/store.py", ROOT / "btcusdt_q
         *(ROOT / f"btcusdt_quant/sim/{n}.py" for n in ("data", "provenance", "registry", "store")),
         *(ROOT / f"out/run_new_model_batch{i}_20261010.py" for i in range(1, 6)))
 MISMATCH = "behavior_hash_mismatch"
+INPUT_MISMATCH = "input_hash_mismatch"
+MANIFEST = ROOT / "out/new_model_batch5_20261010/NM-B5-20261010T080025Z-c55285f2/manifest.json"
 
 
 def code_hash() -> str:
-    """sha256 over the dependency chain (file name + bytes of every DEPS file); read fresh on every call."""
+    """sha256 over the dependency chain (file name + bytes of every DEPS file, CRLF -> LF so a git autocrlf checkout
+    hashes the same); read fresh on every call."""
     h = hashlib.sha256()
     for path in DEPS:
         h.update(Path(path).name.encode() + b"\0")
-        h.update(Path(path).read_bytes())
+        h.update(Path(path).read_bytes().replace(b"\r\n", b"\n"))
     return h.hexdigest()
 
 
-def behavior_hash(book: str, start: pd.Timestamp, code: str | None = None) -> str:
-    """Everything that decides a sleeve's path: code chain, sleeve params, execution params, book start (config)."""
-    spec = {"code": code or code_hash(), "book": book, "sleeve": SLEEVES[book],
+class InputMismatch(RuntimeError):
+    """A fixed signal input differs from the research run manifest."""
+
+
+@lru_cache(maxsize=1)
+def verified_inputs() -> tuple[tuple[str, str], ...]:
+    """SHA256 of the fixed signal inputs (DEV market parquet, DEV funding zip tree, snapshot market_1m) checked once
+    per process against the NM-B5 run manifest input_sha256; raises InputMismatch on any difference."""
+    b2 = engine().b2
+    prov = engine().provenance
+    now = {"dev_market": prov.file_sha256(b2.DEV_MARKET),
+           "dev_funding_tree": prov.tree_sha256(b2.DEV_FUNDING, "*.zip")["sha256"],
+           "snap_market_1m.parquet": prov.file_sha256(b2.SNAP / "market_1m.parquet")}
+    ref = json.loads(MANIFEST.read_text(encoding="utf-8"))["input_sha256"]
+    bad = {k: (v, ref.get(k)) for k, v in now.items() if ref.get(k) != v}
+    if bad:
+        raise InputMismatch(f"{INPUT_MISMATCH}: {bad}")
+    return tuple(sorted(now.items()))
+
+
+def behavior_hash(book: str, start: pd.Timestamp, code: str | None = None, inputs=None) -> str:
+    """Everything that decides a sleeve's path: code chain, verified signal inputs, sleeve params, execution params,
+    book start (config)."""
+    spec = {"code": code or code_hash(), "inputs": dict(inputs or verified_inputs()), "book": book,
+            "sleeve": SLEEVES[book],
             "execution": {"offset_bps": OFFSET_BPS, "pen_bps": PEN_BPS, "ttl_min": TTL_MIN,
                           "exit_quote_bps": EXIT_QUOTE_BPS, "requote_min": REQUOTE_MIN},
             "start": utc_text(pd.Timestamp(start))}
@@ -363,9 +388,19 @@ def run_cycle(store, starts: dict[str, pd.Timestamp], minutes: pd.DataFrame, fun
             cache["sig"] = signals(minutes, funding, end, live_from)
         return cache["sig"]
 
+    try:            # fixed signal inputs: once per process, before any resume
+        inputs = verified_inputs()
+    except Exception as exc:
+        error = INPUT_MISMATCH if isinstance(exc, InputMismatch) else f"{INPUT_MISMATCH}: {type(exc).__name__}: {exc}"
+        for book, start in starts.items():
+            with store.transaction() as connection:
+                row = connection.execute("SELECT state FROM g3_state WHERE book=?", (book,)).fetchone()
+                last = json.loads(row[0])["last_bar"] if row else initial_state(start)["last_bar"]
+                write_health(connection, book, error, last, end, now, stale=True)
+        return 0
     done, code = 0, code_hash()
     for book, start in starts.items():
-        behavior = behavior_hash(book, start, code)
+        behavior = behavior_hash(book, start, code, inputs)
         error = None
         try:
             with store.transaction() as connection:
@@ -406,4 +441,4 @@ def run_cycle(store, starts: dict[str, pd.Timestamp], minutes: pd.DataFrame, fun
     return done
 
 
-__all__ = ["BOOKS", "DEPS", "NAMES", "SLEEVES", "behavior_hash", "book_of", "code_hash", "initial_state", "run_cycle", "signals", "sleeve_signal", "step"]
+__all__ = ["BOOKS", "DEPS", "NAMES", "SLEEVES", "behavior_hash", "book_of", "code_hash", "verified_inputs", "initial_state", "run_cycle", "signals", "sleeve_signal", "step"]

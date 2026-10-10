@@ -433,3 +433,78 @@ def test_signals_compact_path_equals_research_and_funding_at_t_is_excluded(synth
     assert with_row[T.value] == s.sig[T.value]
     with pytest.raises(ValueError, match="missing 4h decision bar"):
         g3.signals(minutes.loc[minutes.open_time != pd.Timestamp("2021-01-05T03:59Z")], fund, end, live_from)
+
+
+# ---------------------------------------------------------------- fix round 3: inputs, line endings, start reset
+@needs_engine
+def test_code_hash_is_line_ending_independent(tmp_path, monkeypatch) -> None:
+    lf, crlf = [], []
+    for path in g3.DEPS:
+        text = Path(path).read_bytes().replace(b"\r\n", b"\n")
+        for folder, data, out in (("lf", text, lf), ("crlf", text.replace(b"\n", b"\r\n"), crlf)):
+            copy = tmp_path / folder / Path(path).name
+            copy.parent.mkdir(exist_ok=True)
+            copy.write_bytes(data)
+            out.append(copy)
+    monkeypatch.setattr(g3, "DEPS", tuple(lf))
+    a = g3.code_hash()
+    monkeypatch.setattr(g3, "DEPS", tuple(crlf))
+    assert g3.code_hash() == a
+    monkeypatch.setattr(g3, "DEPS", tuple(g3.DEPS[:-1]) + (g3.DEPS[-1].with_name("x.py"),))
+    g3.DEPS[-1].write_bytes(crlf[-1].read_bytes() + b"#")
+    assert g3.code_hash() != a
+
+
+@needs_engine
+@pytest.mark.skipif(not g3.MANIFEST.exists(), reason="NM-B5 run manifest absent")
+def test_signal_inputs_are_verified_against_the_run_manifest(synthetic, tmp_path, monkeypatch) -> None:
+    s = synthetic
+    inputs = dict(g3.verified_inputs())
+    assert set(inputs) == {"dev_market", "dev_funding_tree", "snap_market_1m.parquet"}
+    assert g3.behavior_hash("G3_LONG", START) != g3.behavior_hash("G3_LONG", START, inputs={**inputs, "dev_market": "x"})
+    manifest = json.loads(g3.MANIFEST.read_text(encoding="utf-8"))
+    manifest["input_sha256"]["dev_funding_tree"] = "0" * 64
+    bad = tmp_path / "manifest.json"
+    bad.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(g3, "MANIFEST", bad)
+    monkeypatch.setattr(g3, "signals", lambda minutes, funding, end, live_from=None: s.sig)
+    g3.verified_inputs.cache_clear()
+    try:
+        with pytest.raises(g3.InputMismatch):
+            g3.verified_inputs()
+        path = tmp_path / "p.sqlite"
+        with PaperStore(path) as store:
+            assert g3.run_cycle(store, {b: START for b in g3.SLEEVES}, _cycle_inputs(s, days=2), s.fund,
+                                START + pd.Timedelta(days=1), "cfg") == 0
+        h = _health(path)
+        assert (h.last_error == g3.INPUT_MISMATCH).all() and (h.stale == 1).all() and _events(path).empty
+    finally:
+        g3.verified_inputs.cache_clear()
+
+
+@needs_engine
+def test_start_change_needs_an_explicit_flat_reset(synthetic, tmp_path, monkeypatch) -> None:
+    s = synthetic
+    monkeypatch.setattr(g3, "signals", lambda minutes, funding, end, live_from=None: s.sig)
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import paper_g3_migrate
+    minutes = _cycle_inputs(s, days=6)
+    path, book = tmp_path / "p.sqlite", "G3_LONG"
+    e1 = START + pd.Timedelta(days=2)
+    with PaperStore(path) as store:
+        g3.run_cycle(store, {book: START}, minutes, s.fund, e1, "cfg")
+        early, later = START + pd.Timedelta(hours=8), e1 + pd.Timedelta(hours=2)
+        assert g3.run_cycle(store, {book: later}, minutes, s.fund, e1 + pd.Timedelta(days=1), "cfg") == 0
+        with pytest.raises(SystemExit, match="--reset"):
+            paper_g3_migrate.migrate(store, book, later, "cfg", "t", apply=True)
+        with pytest.raises(SystemExit, match="after the last processed bar"):
+            paper_g3_migrate.migrate(store, book, early, "cfg", "t", reset=True)
+        assert paper_g3_migrate.migrate(store, book, later, "cfg", "t", reset=True)["applied"] == "RESET"
+        state = json.loads(store.connection.execute("SELECT state FROM g3_state").fetchone()[0])
+        assert state["status"] == "FLAT" and state["start"] == later.value
+        assert g3.run_cycle(store, {book: later}, minutes, s.fund, e1 + pd.Timedelta(days=1), "cfg") == 1
+    ev = _events(path)
+    reset = ev.loc[ev.event_type == "RESET"]
+    assert len(reset) == 1 and "old_state" in json.loads(reset.payload.iloc[0])
+    new = ev.loc[ev.event_type == "DECISION", "event_time"]
+    assert new.max() > later.isoformat() and not new.between(e1.isoformat(), later.isoformat(), inclusive="left").any()

@@ -67,7 +67,7 @@
   "state_machines": "two independent sleeves, each an incremental state machine over closed 1m bars (FLAT -> ENTRY_PENDING -> OPEN -> EXIT_PENDING -> FLAT) = minute-by-minute batch-2 simulate(kind='state'); flat start at the book start, no inherited position",
   "paper_implementation": {
     "module": "btcusdt_quant/paper/g3.py",
-    "module_sha256": "9da75a620970376c9b437830805521945cb998db9a439df347578bf29dff4637",
+    "module_sha256": "91cd6440b72edf702e172f23b89ee91a3e0daabd3aa248ee7858c0dc9fa67e73",
     "engine": "out/run_new_model_batch5_20261010.py (+ batch4/3/2/1) imported unchanged (sha256 c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428); build_state / core_signal only",
     "signal_inputs": "4h decision-bar closes since 2020-01-01 (DEV artifacts/btcusdt_2020_2026h1.parquet < 2026-01-01 + R2-54 FINAL snapshot [2026-01-01, 2026-10-08) cached as ~15k floats; live klines_1m >= 2026-10-08) + all funding events (DEV archive < 2026-01-01, live funding table >= 2026-01-01, < data end); identical to the research inputs, so signals are bit-exact; computed only on cycles that contain a 4h decision bar",
     "storage": {
@@ -77,7 +77,7 @@
       "daily_pnl": "derived from the stored ledger (batch-2 Book 1m MTM net4 incl. open trade + reserved 2 bps exit fee), upsert per UTC day since the start day; never deleted",
       "g3_health": "last_success, last_error, last_error_at, last_bar, stale (data end - next bar > 5 min)"
     },
-    "fail_closed": "missing minute -> the sleeve stops before the gap, the cycle transaction rolls back, g3_health error + stale; missing 4h bar or signal -> error",
+    "fail_closed": "missing minute -> the sleeve commits the contiguous prefix and stops before the gap (g3_health 'gap after ...', stale 1) and resumes when the minute arrives; missing 4h bar or signal -> cycle error, nothing committed; behavior hash mismatch -> no progress, 'behavior_hash_mismatch', stale 1; signal input hash mismatch -> no progress, 'input_hash_mismatch', stale 1",
     "not_written": "positions, OPT rows, x3, Telegram, dashboard",
     "full_replay": "verification only: scripts/paper_g3_parity.py",
     "code_hash_deps": [
@@ -94,9 +94,19 @@
       "run_new_model_batch4_20261010.py",
       "run_new_model_batch5_20261010.py"
     ],
-    "code_hash": "84e168186e33a1dd8c814112d4074328ec2a60440668c48f7a29335a3ee9ef21",
-    "behavior_hash": "sha256(json{code_hash, book, sleeve params, execution params, book start}); stored in g3_state.state.behavior_hash and in every g3_events.code_hash",
-    "migration": "scripts/paper_g3_migrate.py --book G3_LONG|G3_SHORT [--apply] (sha256 5c4a5c516c1225238d1c014507e3b48727965a2587c1a6d52383be2c84d476d3)"
+    "code_hash": "ebf6af09b128dc1717d52a45834e117a7bdd9b79c854d394b76ff33bdf64352a",
+    "behavior_hash": "sha256(json{code_hash, verified input hashes, book, sleeve params, execution params, book start}); stored in g3_state.state.behavior_hash and in every g3_events.code_hash",
+    "migration": "scripts/paper_g3_migrate.py --book G3_LONG|G3_SHORT: --apply (same start only; MIGRATION event, state re-stamped) or --reset (changed start; RESET event with the old state, flat at the new start, start must be after the old last bar) (sha256 054605d357d9d71be27528fc99c24cd788ff77b1ad27fa579d843709ed360143)",
+    "input_verification": {
+      "manifest": "out/new_model_batch5_20261010/NM-B5-20261010T080025Z-c55285f2/manifest.json",
+      "verified_once_per_process": {
+        "dev_funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+        "dev_market": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+        "snap_market_1m.parquet": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59"
+      },
+      "in_behavior_hash": true
+    },
+    "code_hash_line_endings": "CRLF normalised to LF before hashing"
   },
   "parity": {
     "script": "scripts/paper_g3_parity.py",
@@ -219,9 +229,10 @@
     "daily_pnl is derived (upsert): a revised funding row can change a past day's MTM; decisions, orders, fills and closed trades are immutable",
     "TEST long sleeve 14 closed, top1 trade 59.29% of long net (Codex); long boot60 TEST negative",
     "MAD0 fallback drives DEV short selection (DEV-FULL short 5787.7475 vs 4661.7445 with MAD0 blocked); TEST impact 0",
-    "live dry run (live DB read-only, temp paper DB, start 2026-10-08): catch-up cycle 0.71 s, 1m cycles 0.04-0.06 s; process peak working set 446 MB, RSS 373 MB (206 MB of it the DB frames)"
+    "live dry run (live DB read-only, temp paper DB, start 2026-10-08): catch-up cycle 0.88 s, 1m cycles 0.04-0.06 s; process peak working set 452 MB, RSS 380 MB (206 MB of it the DB frames)"
   ],
   "observed_through": "2026-10-08 (snapshot); live dry run to 2026-10-10T09:23Z ok",
   "fix_round_1": "Codex review of 0aec612 (live apply NO, 3 P1): flat start + incremental append-only state machine, per-sleeve books (no UNIQUE collision), 4h-only signal history (memory), g3_health",
-  "fix_round_2": "Codex re-review of e4577d9: behavior hash over the full dependency chain + sleeve / execution params + book start, stored in g3_state at first start; resume mismatch fails closed (g3_health last_error behavior_hash_mismatch, stale 1); explicit migration scripts/paper_g3_migrate.py (MIGRATION event); health written in the state transaction on success; accounting only over processed bars (a gap stops the sleeve before it)"
+  "fix_round_2": "Codex re-review of e4577d9: behavior hash over the full dependency chain + sleeve / execution params + book start, stored in g3_state at first start; resume mismatch fails closed (g3_health last_error behavior_hash_mismatch, stale 1); explicit migration scripts/paper_g3_migrate.py (MIGRATION event); health written in the state transaction on success; accounting only over processed bars (a gap stops the sleeve before it)",
+  "fix_round_3": "Codex re-review of f6667be: fixed signal inputs verified against the NM-B5 manifest and in the behavior hash; CRLF-independent code hash; start-change migration rejected, explicit --reset; gap wording corrected"
 }
