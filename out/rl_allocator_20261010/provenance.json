@@ -131,5 +131,10 @@
     "git_head": "a77d0a96ba7288a704639163acd4625b84dcacd2",
     "smoke_pass": true,
     "note": "round6 smoke used the F1 normalizer (load_cell default) - superseded by r2"
+  },
+  "round8_pilot_g3": {
+    "code_commit": "e145385c47702010ea2887350a1ef10b273abcb3",
+    "report_sha256": "e6aa4f7601176d5935a01bed33c71968c9a82aa46ba846fc10324b4385f8eccf",
+    "pilot_pass": false
   }
 }
