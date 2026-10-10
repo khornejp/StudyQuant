@@ -2993,11 +2993,220 @@ def regime_experiment(mode: str) -> None:
     log(f"{name} {'PASS' if rep['pass'] else 'FAIL'} {rep['pass_criteria']} {rep['runtime_sec']}s")
 
 
+# ================================================================ consistent gates: G3 baseline, r1 rescoring, MA100 veto
+G_CELLS = [(o, p) for o in (2, 5) for p in (0.5, 1.0, 2.0)]
+
+
+def g3_setup():
+    """DEV-only market (dev_data), G3 causal state and the paper G3 sleeve signals (long-only S180 W180-P65,
+    short-only F180 V-ENS), built with the unchanged LBR-FUND-MAT / Batch-5 code."""
+    from btcusdt_quant.rl import dev_data as DD
+    MAT = load("lbr_mat_gates", "out/run_lbr_fund_materialize_20261010.py")
+    minutes, funding, in_hash = DD.load_dev()
+    m = MAT.b2.Market.from_frames(minutes, funding)
+    del minutes
+    dec4 = np.arange(239, m.N, 240)
+    st = MAT.b5.build_state(m, dec4)
+    return MAT, m, dec4, st, in_hash
+
+
+def g3_signals(MAT, st) -> dict:
+    return {"long": MAT.L.s180_signal(st), "short": MAT.short_signal(st)}
+
+
+def book_series(b2, m, dec, side, w, cell, kind="state", entry_ok=None, lo=0, hold=0):
+    """Continuous run -> (daily net4 2022-01-01..2025-12-31, closed per year, Book)."""
+    from btcusdt_quant.rl import gates as GT
+    o, p = cell
+    tr, od = b2.simulate(m, kind, dec, side, w, o, b2.TTL_TREND, p, lo, m.N, hold=hold, entry_ok=entry_ok)
+    bk = b2.Book(m, tr, od, lo, m.N)
+    a, b = m.idx(GT.START), m.idx(GT.END)
+    if b != m.N:
+        raise SystemExit("DEV market must end at 2025-12-31 23:59")
+    closed = {}
+    for y in GT.YEARS:
+        ya, yb = m.idx(pd.Timestamp(f"{y}-01-01", tz="UTC")), m.idx(pd.Timestamp(f"{y + 1}-01-01", tz="UTC"))
+        closed[y] = bk.window(ya, yb)["closed"]
+    return bk.daily(a, b), closed, bk, tr
+
+
+def g3_combined(b2, m, dec4, sig: dict, entry_ok: dict | None = None) -> dict:
+    out = {}
+    for cell in G_CELLS:
+        parts = {}
+        for sd in ("long", "short"):
+            parts[sd] = book_series(b2, m, dec4, sig[sd]["side"], sig[sd]["w"], cell,
+                                    entry_ok=None if entry_ok is None else entry_ok[sd])
+        dl, cl, bkl, trl = parts["long"]
+        ds, cs, bks, trs = parts["short"]
+        out[f"o{cell[0]}_p{cell[1]}"] = {"daily": dl + ds, "closed": {y: cl[y] + cs[y] for y in cl},
+                                         "long_daily": dl, "short_daily": ds, "books": (bkl, bks), "trades": (trl, trs)}
+    return out
+
+
+def veto_entry_ok(side: np.ndarray, allowed_at: np.ndarray) -> tuple[np.ndarray, list]:
+    """Episode = maximal run of the same nonzero target side. Its permission is fixed at its first decision; a vetoed
+    episode stays vetoed until the target goes flat (no late entry after an in-episode regime flip)."""
+    ok = np.ones(len(side), bool)
+    eps, k = [], 0
+    n = len(side)
+    while k < n:
+        if side[k] == 0:
+            k += 1
+            continue
+        j = k
+        while j + 1 < n and side[j + 1] == side[k]:
+            j += 1
+        allow = bool(allowed_at[k])
+        ok[k:j + 1] = allow
+        eps.append((k, j, int(side[k]), allow))
+        k = j + 1
+    return ok, eps
+
+
+def cmd_gates(args) -> None:
+    import btcusdt_quant.rl.gates as GT
+    t0 = time.time()
+    GD = OUT / "gates"
+    GD.mkdir(parents=True, exist_ok=True)
+    MAT, m, dec4, st, in_hash = g3_setup()
+    b2 = MAT.b2
+    sig = g3_signals(MAT, st)
+    log(f"gates: G3 state/signals {time.time() - t0:.0f}s")
+    # ---------------- baseline: paper G3 combined (reference reproduction)
+    base = g3_combined(b2, m, dec4, sig)
+    gb = GT.evaluate({c: {"daily": v["daily"], "closed": v["closed"]} for c, v in base.items()})
+    pooled = [x["pooled_net4"] for x in gb["cells"].values()]
+    p60 = [x["pooled_boot_p05"]["60"] for x in gb["cells"].values()]
+    gb["reference_check"] = {"diag_year_boot": gb["diagnostics"]["year_cell_block_boot_p05>0"],
+                             "pooled_boot60_range": [min(p60), max(p60)], "pooled_net4_range": [min(pooled), max(pooled)],
+                             "expected": {"diag": "37/72", "boot60": [5.068, 5.872], "net4": [16136.077, 16967.267]}}
+    gb["reference_ok"] = bool(gb["diagnostics"]["year_cell_block_boot_p05>0"] == "37/72"
+                              and abs(min(p60) - 5.068) < 5e-4 and abs(max(p60) - 5.872) < 5e-4
+                              and abs(min(pooled) - 16136.077) < 5e-3 and abs(max(pooled) - 16967.267) < 5e-3)
+    gb.update(input_sha256=in_hash, git_head=git("rev-parse", "HEAD"))
+    dump(GD / "gate_g3_combined_baseline.json", gb)
+    log(f"gates: G3 baseline {gb['absolute']} diag {gb['diagnostics']} ref_ok {gb['reference_ok']} "
+        f"boot60 {min(p60):.3f}~{max(p60):.3f} net {min(pooled):.3f}~{max(pooled):.3f}")
+    base_daily = {c: v["daily"] for c, v in base.items()}
+    # ---------------- experiment 1: REGIME-BIDIR-24H-r1 rescored on one continuous 2022..2025 run
+    from btcusdt_quant.rl import regime_short as RS
+    r1 = json.loads((OUT / "regime_bidir_24h_r1/regime_bidir_report.json").read_text(encoding="utf-8"))
+    stx = pd.read_parquet(OUT / "state/state_1h.parquet", columns=["T", "exec_cell"] + list(RS.FEATURES))
+    stx = stx[stx.exec_cell == CELL_TAG[PRIMARY]].sort_values("T").reset_index(drop=True)
+    sp.guard_times(stx["T"].to_numpy(np.int64), False, "state")
+    stx = stx[stx["T"].to_numpy(np.int64) % (4 * 3600 * 10**9) == 0].reset_index(drop=True)
+    T = stx["T"].to_numpy(np.int64)
+    X = stx[list(RS.FEATURES)].to_numpy(float)
+    d = np.searchsorted(m.t, T) - 1
+    y_s, lend = RS.short_labels(m.t, m.c, m.ft, m.fr, d)
+    y_l, _ = RS.long_labels(m.t, m.c, m.ft, m.fr, d)
+    bear, _ = ma100_bear(m, T, d)
+    ts = lambda x: pd.Timestamp(x, tz="UTC").value  # noqa: E731
+    dd_all, side_all, same_model = [], [], {}
+    for f, (tr_w, va_w) in FOLDS_A2.items():
+        emb = ts(va_w[0]) - RS.HOLD_MIN * sp.MIN
+        tr = (T >= ts(tr_w[0])) & (T < ts(tr_w[1])) & (lend <= emb) & np.isfinite(y_s)
+        va = (T >= ts(va_w[0])) & (T < ts(va_w[1]))
+        med, sc = RS.fit_norm(X[tr])
+        side = np.zeros(int(va.sum()), int)
+        chk = []
+        for sd, y in (("short", y_s), ("long", y_l)):
+            lam, _ = RS.cv_lambda(X[tr], y[tr], T[tr], lend[tr])
+            w, b0 = RS.ridge(RS.apply_norm(X[tr], med, sc), y[tr], lam)
+            pred = RS.apply_norm(X[va], med, sc) @ w + b0
+            ref = r1["folds"][f]["models"][sd]
+            chk.append(lam == ref["lambda"] and abs(b0 - ref["intercept"]) < 1e-9
+                       and abs(float((pred > 0).mean()) - ref["pred_positive_share"]) < 1e-12)
+            side = np.where((bear[va] if sd == "short" else ~bear[va]) & (pred > 0), -1 if sd == "short" else 1, side)
+        same_model[f] = bool(all(chk))
+        dd_all.append(d[va])
+        side_all.append(side)
+    dd_all, side_all = np.concatenate(dd_all), np.concatenate(side_all)
+    lo = m.idx(GT.START)
+    r1c = {}
+    for cell in G_CELLS:
+        daily, closed, bk, _ = book_series(b2, m, dd_all, side_all, np.ones(len(side_all)), cell, kind="event", lo=lo,
+                                           hold=RS.HOLD_MIN)
+        r1c[f"o{cell[0]}_p{cell[1]}"] = {"daily": daily, "closed": closed}
+    g1 = GT.evaluate(r1c, baseline=base_daily)
+    g1.update(model_recomputed_equal_r1=same_model, continuous=True,
+              note="fold models recomputed by the same deterministic code (lambda, intercept and positive share equal "
+                   "the r1 report); decisions 2022..2025 stitched by fold and executed in ONE continuous simulation "
+                   "from 2022-01-01 (positions may carry across year ends, unlike the per-fold r1 runs)",
+              git_head=git("rev-parse", "HEAD"))
+    dump(GD / "r1_rescore_continuous.json", g1)
+    log(f"gates: r1 rescore {g1['absolute']} {g1['replacement']} same_model {same_model}")
+    # ---------------- experiment 2: G3-MA100-ENTRY-VETO-r1
+    T4 = m.t[dec4] + sp.MIN
+    bear4, _ = ma100_bear(m, T4, dec4)
+    ok, eps = {}, {}
+    ok["long"], eps["long"] = veto_entry_ok(sig["long"]["side"], ~bear4)
+    ok["short"], eps["short"] = veto_entry_ok(sig["short"]["side"], bear4)
+    veto = g3_combined(b2, m, dec4, sig, entry_ok=ok)
+    g2 = GT.evaluate({c: {"daily": v["daily"], "closed": v["closed"]} for c, v in veto.items()}, baseline=base_daily)
+    # vetoed episodes (start in 2022..2025) and the original G3 P&L of their trades
+    s22, s26 = m.idx(GT.START), m.idx(GT.END)
+    vstat = {}
+    for sd in ("long", "short"):
+        v_eps = [e for e in eps[sd] if not e[3] and s22 <= dec4[e[0]] < s26]
+        a_eps = [e for e in eps[sd] if e[3] and s22 <= dec4[e[0]] < s26]
+        cells_pnl = {}
+        for c, v in base.items():
+            trd = v["trades"][0 if sd == "long" else 1]
+            bk = v["books"][0 if sd == "long" else 1]
+            k = (trd.decision_idx.to_numpy() - 239) // 240
+            inv = np.zeros(len(trd), bool)
+            for (k0, k1, _, _) in v_eps:
+                inv |= (k >= k0) & (k <= k1)
+            cells_pnl[c] = {"trades": int(inv.sum()), "net4_full": float(bk.net4_full[inv].sum()) if len(trd) else 0.0}
+        vstat[sd] = {"episodes_2022_2025": len(v_eps) + len(a_eps), "vetoed": len(v_eps), "allowed": len(a_eps),
+                     "vetoed_original_pnl": cells_pnl}
+    # tamper: prices / funding after 2024-01-01 x1.7 -> entry permissions and trades closed before the cut unchanged
+    cut = pd.Timestamp("2024-01-01", tz="UTC")
+    n = m.idx(cut)
+    k_ = lambda x: np.concatenate([x[:n], x[n:] * 1.7])  # noqa: E731
+    mt = b2.Market(m.t, k_(m.o), k_(m.h), k_(m.l), k_(m.c), m.v, m.tb, m.ft, np.where(m.ft >= cut.value, m.fr * 1.7, m.fr))
+    st_t = MAT.b5.build_state(mt, dec4)
+    sig_t = g3_signals(MAT, st_t)
+    bear_t, _ = ma100_bear(mt, T4, dec4)
+    ok_t = {"long": veto_entry_ok(sig_t["long"]["side"], ~bear_t)[0], "short": veto_entry_ok(sig_t["short"]["side"], bear_t)[0]}
+    pre = T4 <= cut.value
+    tam = {"signals_prefix_equal": all(np.array_equal(sig[s]["side"][pre], sig_t[s]["side"][pre]) for s in ok),
+           "regime_prefix_equal": bool(np.array_equal(bear4[pre], bear_t[pre])),
+           "entry_ok_prefix_equal": all(np.array_equal(ok[s][pre], ok_t[s][pre]) for s in ok)}
+    trades_eq = True
+    for s in ("long", "short"):
+        ta, _ = b2.simulate(m, "state", dec4, sig[s]["side"], sig[s]["w"], 2, b2.TTL_TREND, 0.5, 0, m.N, entry_ok=ok[s])
+        tb, _ = b2.simulate(mt, "state", dec4, sig_t[s]["side"], sig_t[s]["w"], 2, b2.TTL_TREND, 0.5, 0, m.N,
+                            entry_ok=ok_t[s])
+        ca = ta[(~ta.open_at_end) & (ta.exit_idx < n)].reset_index(drop=True)
+        trades_eq &= bool(len(ca) > 0 and ca.equals(tb.iloc[:len(ca)].reset_index(drop=True)))
+    tam["closed_trades_prefix_equal"] = trades_eq
+    g2.update(veto=vstat, tamper=tam, tamper_all=bool(all(tam.values())), git_head=git("rev-parse", "HEAD"),
+              spec="G3_LONG S180/W180-P65 + G3_SHORT F180/V-ENS, each 1x, gross <= 2; MA100 (last 100 completed UTC "
+                   "daily closes) at each episode's first decision: bull allows LONG / vetoes SHORT, bear allows SHORT / "
+                   "vetoes LONG; vetoed episode refused until the target goes flat; Batch-2 simulate(entry_ok); 6 cells; "
+                   "run 2020-01-01..2025-12-31 (2020-21 warm-up), scored 2022..2025",
+              pass_=bool(g2["absolute"]["pass"] and g2["replacement"]["pass"] and all(tam.values())))
+    g2["pass"] = g2.pop("pass_")
+    dump(GD / "g3_ma100_entry_veto_r1.json", g2)
+    registry.record(REGISTRY, {"experiment": "REGIME-BIDIR-24H-r1 rescored (continuous 2022-2025, consistent gate)",
+                               "role": "evaluation", "n_trials": 0, "n_simulations": len(G_CELLS),
+                               "input_hashes": in_hash, "result_summary": {"absolute": g1["absolute"],
+                                                                           "replacement": g1["replacement"]}})
+    registry.record(REGISTRY, {"experiment": "G3-MA100-ENTRY-VETO-r1", "role": "trial", "n_trials": 1,
+                               "n_simulations": 2 * len(G_CELLS), "input_hashes": in_hash,
+                               "result_summary": {"absolute": g2["absolute"], "replacement": g2["replacement"],
+                                                  "tamper": g2["tamper_all"], "pass": g2["pass"]}})
+    log(f"gates: veto {g2['absolute']} {g2['replacement']} tamper {tam} pass {g2['pass']} {time.time() - t0:.0f}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
-                                       "regime-short", "regime-bidir", "regime-bidir-r2"))
+                                       "regime-short", "regime-bidir", "regime-bidir-r2", "gates"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -3035,6 +3244,8 @@ def main(argv=None) -> None:
         return cmd_regime_bidir(args)
     if args.command == "regime-bidir-r2":
         return cmd_regime_bidir_r2(args)
+    if args.command == "gates":
+        return cmd_gates(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)

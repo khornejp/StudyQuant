@@ -24,3 +24,5 @@ tests/rl/test_allocator_router.py text eol=lf
 btcusdt_quant/rl/regime_short.py text eol=lf
 tests/rl/test_regime_short.py text eol=lf
 btcusdt_quant/rl/dev_data.py text eol=lf
+btcusdt_quant/rl/gates.py text eol=lf
+tests/rl/test_gates.py text eol=lf
