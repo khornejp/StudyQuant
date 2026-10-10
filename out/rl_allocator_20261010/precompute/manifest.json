@@ -1,0 +1,4126 @@
+{
+  "name": "RL allocator sleeve precompute (step 2)",
+  "created_utc": "2026-10-10T11:58:25.270508+00:00",
+  "freeze_sha256": "78c5f91d1cb6571c945eb90316f1d5fed51f46fa96e5dfbb07bd185ea96ca3e4",
+  "data_cutoff": "2026-10-08 00:00:00+00:00 (exclusive)",
+  "frozen_hypothesis": "[가설] A 7-sleeve allocator choosing a per-opportunity multiplier {0,.25,.5,.75,1} and HOLD/EXIT (TIGHTEN for R0 sleeves) at a 1h cadence beats the frozen static DEV-best allocation after 4 bps maker round trip in every DEV fold and every exec cell; 4h is an ablation. Edge comes from the sleeves; the allocator only sizes/exits.",
+  "code_sha256": {
+    "script": "a9cadde82397342b827f7c66e544059289968835a0d9cfae4930b3e6e1061466",
+    "module": "7c3a1e7b48e83b0615eaa7e2cc0c102fe635bec8b725d4a5bc371e3e6dde27a9"
+  },
+  "git_head": "9d2f4c6cda21491ebcfb152d83d0a7936e1ec964",
+  "runtime_sec": 1915.9,
+  "parity": {
+    "G3_LONG|o2_p0.5": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_LONG o2_p0.5 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p0.5 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG DEV-FULL vs design 6dp",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p0.5 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG TEST vs design 6dp",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p0.5 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p0.5 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p0.5 trades == stored",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG tamper invariance at 2026-01-01 00:00:00+00:00",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG prefix invariance at 2026-01-01 00:00:00+00:00",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p0.5 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p0.5 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p0.5 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 22996.226652431786,
+      "DEV-FULL_ref": 22996.22665243179,
+      "DEV-FULL_design_ref": 22996.226652,
+      "TEST_net4": 1684.1156295756487,
+      "TEST_ref": 1684.1156295756487,
+      "TEST_design_ref": 1684.11563,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 116,
+      "orders": 122,
+      "fills": 116,
+      "closed": 115,
+      "open_at_end": 1,
+      "trades_equal_stored": true,
+      "stored_trades": 116,
+      "tamper_rows_compared": 760186,
+      "tamper_invariant": true,
+      "prefix_rows_compared": 760186,
+      "prefix_invariant": true,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 7.275957614183426e-12,
+        "exit_requests": 2756,
+        "early_exits_applied": 2756
+      }
+    },
+    "G3_LONG|o2_p1.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_LONG o2_p1.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p1.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p1.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p1.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p1.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p1.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p1.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p1.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 22877.05442639768,
+      "DEV-FULL_ref": 22877.05442639768,
+      "TEST_net4": 1668.6175634043143,
+      "TEST_ref": 1668.6175634043145,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 115,
+      "orders": 126,
+      "fills": 115,
+      "closed": 114,
+      "open_at_end": 1,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 5.4569682106375694e-12,
+        "exit_requests": 2708,
+        "early_exits_applied": 2708
+      }
+    },
+    "G3_LONG|o2_p2.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_LONG o2_p2.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p2.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p2.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p2.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p2.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p2.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p2.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o2_p2.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 22805.31476077754,
+      "DEV-FULL_ref": 22805.31476077754,
+      "TEST_net4": 1633.7954952597597,
+      "TEST_ref": 1633.7954952597595,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 115,
+      "orders": 136,
+      "fills": 115,
+      "closed": 114,
+      "open_at_end": 1,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 7.275957614183426e-12,
+        "exit_requests": 2786,
+        "early_exits_applied": 2786
+      }
+    },
+    "G3_LONG|o5_p0.5": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_LONG o5_p0.5 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p0.5 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p0.5 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p0.5 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p0.5 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p0.5 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p0.5 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p0.5 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 23092.731691416724,
+      "DEV-FULL_ref": 23092.73169141673,
+      "TEST_net4": 1730.5044576439361,
+      "TEST_ref": 1730.5044576439368,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 116,
+      "orders": 128,
+      "fills": 116,
+      "closed": 115,
+      "open_at_end": 1,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 3.637978807091713e-12,
+        "exit_requests": 2773,
+        "early_exits_applied": 2773
+      }
+    },
+    "G3_LONG|o5_p1.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_LONG o5_p1.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p1.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p1.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p1.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p1.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p1.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p1.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p1.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 23054.264971450895,
+      "DEV-FULL_ref": 23054.264971450903,
+      "TEST_net4": 1731.2909576439358,
+      "TEST_ref": 1731.2909576439367,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 116,
+      "orders": 129,
+      "fills": 116,
+      "closed": 115,
+      "open_at_end": 1,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 7.275957614183426e-12,
+        "exit_requests": 2838,
+        "early_exits_applied": 2838
+      }
+    },
+    "G3_LONG|o5_p2.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_LONG o5_p2.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p2.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p2.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p2.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p2.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p2.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p2.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_LONG o5_p2.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 23054.207673199086,
+      "DEV-FULL_ref": 23054.207673199096,
+      "TEST_net4": 1641.2312454218018,
+      "TEST_ref": 1641.2312454218024,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 111,
+      "orders": 134,
+      "fills": 111,
+      "closed": 110,
+      "open_at_end": 1,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 7.275957614183426e-12,
+        "exit_requests": 2683,
+        "early_exits_applied": 2683
+      }
+    },
+    "G3_SHORT|o2_p0.5": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_SHORT o2_p0.5 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p0.5 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT DEV-FULL vs design 6dp",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p0.5 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT TEST vs design 6dp",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p0.5 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p0.5 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p0.5 trades == stored",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT tamper invariance at 2026-01-01 00:00:00+00:00",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT prefix invariance at 2026-01-01 00:00:00+00:00",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p0.5 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p0.5 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p0.5 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 5787.7474657895655,
+      "DEV-FULL_ref": 5787.747465789568,
+      "DEV-FULL_design_ref": 5787.747466,
+      "TEST_net4": 1614.9332052882853,
+      "TEST_ref": 1614.933205288285,
+      "TEST_design_ref": 1614.933205,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 183,
+      "orders": 192,
+      "fills": 183,
+      "closed": 183,
+      "open_at_end": 0,
+      "trades_equal_stored": true,
+      "stored_trades": 183,
+      "tamper_rows_compared": 126003,
+      "tamper_invariant": true,
+      "prefix_rows_compared": 126003,
+      "prefix_invariant": true,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 1.8189894035458565e-12,
+        "exit_requests": 4460,
+        "early_exits_applied": 4460
+      }
+    },
+    "G3_SHORT|o2_p1.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_SHORT o2_p1.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p1.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p1.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p1.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p1.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p1.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p1.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p1.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 5820.289976468852,
+      "DEV-FULL_ref": 5820.289976468855,
+      "TEST_net4": 1624.2577255635279,
+      "TEST_ref": 1624.2577255635279,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 183,
+      "orders": 194,
+      "fills": 183,
+      "closed": 183,
+      "open_at_end": 0,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 1.8189894035458565e-12,
+        "exit_requests": 4299,
+        "early_exits_applied": 4299
+      }
+    },
+    "G3_SHORT|o2_p2.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_SHORT o2_p2.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p2.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p2.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p2.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p2.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p2.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p2.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o2_p2.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 5893.230835378319,
+      "DEV-FULL_ref": 5893.230835378319,
+      "TEST_net4": 1627.9748227467587,
+      "TEST_ref": 1627.9748227467587,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 176,
+      "orders": 196,
+      "fills": 176,
+      "closed": 176,
+      "open_at_end": 0,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 1.8189894035458565e-12,
+        "exit_requests": 4256,
+        "early_exits_applied": 4256
+      }
+    },
+    "G3_SHORT|o5_p0.5": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_SHORT o5_p0.5 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p0.5 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p0.5 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p0.5 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p0.5 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p0.5 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p0.5 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p0.5 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 6000.100503181968,
+      "DEV-FULL_ref": 6000.100503181964,
+      "TEST_net4": 1694.3926836656171,
+      "TEST_ref": 1694.3926836656174,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 180,
+      "orders": 197,
+      "fills": 180,
+      "closed": 180,
+      "open_at_end": 0,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 1.8189894035458565e-12,
+        "exit_requests": 4297,
+        "early_exits_applied": 4297
+      }
+    },
+    "G3_SHORT|o5_p1.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_SHORT o5_p1.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p1.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p1.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p1.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p1.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p1.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p1.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p1.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 5703.478289294855,
+      "DEV-FULL_ref": 5703.478289294853,
+      "TEST_net4": 1726.6599764348766,
+      "TEST_ref": 1726.659976434877,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 175,
+      "orders": 202,
+      "fills": 175,
+      "closed": 175,
+      "open_at_end": 0,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 1.8189894035458565e-12,
+        "exit_requests": 4198,
+        "early_exits_applied": 4198
+      }
+    },
+    "G3_SHORT|o5_p2.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "G3_SHORT o5_p2.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p2.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p2.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p2.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p2.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p2.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p2.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "G3_SHORT o5_p2.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 4850.9736636587295,
+      "DEV-FULL_ref": 4850.973663658729,
+      "TEST_net4": 1739.9818174668558,
+      "TEST_ref": 1739.9818174668558,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 172,
+      "orders": 207,
+      "fills": 172,
+      "closed": 172,
+      "open_at_end": 0,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 2.7284841053187847e-12,
+        "exit_requests": 4088,
+        "early_exits_applied": 4088
+      }
+    },
+    "LBR_FUND|o2_p0.5": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "LBR_FUND o2_p0.5 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p0.5 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND DEV-FULL vs design 6dp",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p0.5 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND TEST vs design 6dp",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p0.5 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p0.5 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p0.5 trades == stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND tamper invariance at 2026-01-01 00:00:00+00:00",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND prefix invariance at 2026-01-01 00:00:00+00:00",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p0.5 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p0.5 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p0.5 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 1724.025588601809,
+      "DEV-FULL_ref": 1724.0255886018094,
+      "DEV-FULL_design_ref": 1724.025589,
+      "TEST_net4": 1562.6749968088286,
+      "TEST_ref": 1562.6749968088288,
+      "TEST_design_ref": 1562.674997,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 175,
+      "orders": 188,
+      "fills": 175,
+      "closed": 175,
+      "open_at_end": 0,
+      "trades_equal_stored": true,
+      "stored_trades": 175,
+      "tamper_rows_compared": 64048,
+      "tamper_invariant": true,
+      "prefix_rows_compared": 64048,
+      "prefix_invariant": true,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 9.094947017729282e-13,
+        "exit_requests": 4235,
+        "early_exits_applied": 4235
+      }
+    },
+    "LBR_FUND|o2_p1.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "LBR_FUND o2_p1.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p1.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p1.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p1.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p1.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p1.0 trades == stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p1.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p1.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p1.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 1781.71158456551,
+      "DEV-FULL_ref": 1781.71158456551,
+      "TEST_net4": 1678.3350704490067,
+      "TEST_ref": 1678.335070449007,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 169,
+      "orders": 195,
+      "fills": 169,
+      "closed": 169,
+      "open_at_end": 0,
+      "trades_equal_stored": true,
+      "stored_trades": 169,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 9.094947017729282e-13,
+        "exit_requests": 3927,
+        "early_exits_applied": 3927
+      }
+    },
+    "LBR_FUND|o2_p2.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "LBR_FUND o2_p2.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p2.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p2.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p2.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p2.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p2.0 trades == stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p2.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p2.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o2_p2.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 1767.3451828288078,
+      "DEV-FULL_ref": 1767.345182828808,
+      "TEST_net4": 866.9438808611036,
+      "TEST_ref": 866.9438808611035,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 164,
+      "orders": 207,
+      "fills": 164,
+      "closed": 164,
+      "open_at_end": 0,
+      "trades_equal_stored": true,
+      "stored_trades": 164,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 9.094947017729282e-13,
+        "exit_requests": 3902,
+        "early_exits_applied": 3902
+      }
+    },
+    "LBR_FUND|o5_p0.5": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "LBR_FUND o5_p0.5 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p0.5 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p0.5 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p0.5 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p0.5 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p0.5 trades == stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p0.5 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p0.5 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p0.5 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 1160.6553551465029,
+      "DEV-FULL_ref": 1160.655355146503,
+      "TEST_net4": 1176.1728057469945,
+      "TEST_ref": 1176.1728057469945,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 170,
+      "orders": 199,
+      "fills": 170,
+      "closed": 170,
+      "open_at_end": 0,
+      "trades_equal_stored": true,
+      "stored_trades": 170,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 1.1368683772161603e-12,
+        "exit_requests": 4047,
+        "early_exits_applied": 4047
+      }
+    },
+    "LBR_FUND|o5_p1.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "LBR_FUND o5_p1.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p1.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p1.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p1.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p1.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p1.0 trades == stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p1.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p1.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p1.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 1271.6771123184938,
+      "DEV-FULL_ref": 1271.677112318494,
+      "TEST_net4": 1175.8124649730794,
+      "TEST_ref": 1175.8124649730796,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 166,
+      "orders": 204,
+      "fills": 166,
+      "closed": 166,
+      "open_at_end": 0,
+      "trades_equal_stored": true,
+      "stored_trades": 166,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 9.094947017729282e-13,
+        "exit_requests": 3922,
+        "early_exits_applied": 3922
+      }
+    },
+    "LBR_FUND|o5_p2.0": {
+      "minute_max_abs_vs_source_book": 0.0,
+      "checks": [
+        {
+          "check": "LBR_FUND o5_p2.0 minute ledger vs Book",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p2.0 DEV-FULL net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p2.0 TEST net4 vs LBR-FUND-MAT portfolio",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p2.0 daily vs stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p2.0 fills == trades",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p2.0 trades == stored",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p2.0 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p2.0 all-on replay == canonical",
+          "pass": true
+        },
+        {
+          "check": "LBR_FUND o5_p2.0 counterfactual fast vs Book",
+          "pass": true
+        }
+      ],
+      "DEV-FULL_net4": 1509.227831548956,
+      "DEV-FULL_ref": 1509.2278315489552,
+      "TEST_net4": 789.8832126936873,
+      "TEST_ref": 789.883212693687,
+      "daily_max_abs_vs_stored": 0.0,
+      "trades": 161,
+      "orders": 217,
+      "fills": 161,
+      "closed": 161,
+      "open_at_end": 0,
+      "trades_equal_stored": true,
+      "stored_trades": 161,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 5.684341886080802e-14,
+        "max_abs_total": 9.094947017729282e-13,
+        "exit_requests": 3881,
+        "early_exits_applied": 3881
+      }
+    },
+    "C1v2|native": {
+      "trades_equal_stored": true,
+      "trades_total": 1384,
+      "checks": [
+        {
+          "check": "C1v2 trades == stored R2-56 fix1",
+          "pass": true
+        },
+        {
+          "check": "C1v2 minute ledger vs r237.fast_ledger",
+          "pass": true
+        },
+        {
+          "check": "C1v2 TEST net4/trades vs R2-56 report",
+          "pass": true
+        },
+        {
+          "check": "C1v2 NATIVE_2023_2025 net4/trades vs R2-56 report",
+          "pass": true
+        },
+        {
+          "check": "C1v2 TEST vs design 6dp",
+          "pass": true
+        },
+        {
+          "check": "C1v2 tamper invariance at 2026-01-01 00:00:00+00:00",
+          "pass": true
+        },
+        {
+          "check": "C1v2 prefix invariance at 2026-01-01 00:00:00+00:00",
+          "pass": true
+        },
+        {
+          "check": "C1v2 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "C1v2 counterfactual fast vs r237.fast_ledger",
+          "pass": true
+        }
+      ],
+      "minute_max_abs_vs_source_fast_ledger": 3.552713678800501e-15,
+      "TEST_net4": 4809.605689066644,
+      "TEST_ref": 4809.605689066644,
+      "TEST_trades": 132,
+      "TEST_trades_ref": 132,
+      "NATIVE_2023_2025_net4": 17105.320528569635,
+      "NATIVE_2023_2025_ref": 17105.320528569635,
+      "NATIVE_2023_2025_trades": 556,
+      "NATIVE_2023_2025_trades_ref": 556,
+      "TEST_design_ref": 4809.605689,
+      "tamper_rows_compared": 1733177,
+      "tamper_invariant": true,
+      "prefix_rows_compared": 1733177,
+      "prefix_invariant": true,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 2.842170943040401e-14,
+        "max_abs_total": 0.0,
+        "exit_requests": 32940,
+        "early_exits_applied": 32940
+      }
+    },
+    "C4v2|native": {
+      "trades_equal_stored": true,
+      "trades_total": 3007,
+      "checks": [
+        {
+          "check": "C4v2 trades == stored R2-56 fix1",
+          "pass": true
+        },
+        {
+          "check": "C4v2 minute ledger vs r237.fast_ledger",
+          "pass": true
+        },
+        {
+          "check": "C4v2 TEST net4/trades vs R2-56 report",
+          "pass": true
+        },
+        {
+          "check": "C4v2 NATIVE_2023_2025 net4/trades vs R2-56 report",
+          "pass": true
+        },
+        {
+          "check": "C4v2 TEST vs design 6dp",
+          "pass": true
+        },
+        {
+          "check": "C4v2 tamper invariance at 2026-01-01 00:00:00+00:00",
+          "pass": true
+        },
+        {
+          "check": "C4v2 prefix invariance at 2026-01-01 00:00:00+00:00",
+          "pass": true
+        },
+        {
+          "check": "C4v2 all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "C4v2 counterfactual fast vs r237.fast_ledger",
+          "pass": true
+        }
+      ],
+      "minute_max_abs_vs_source_fast_ledger": 3.552713678800501e-15,
+      "TEST_net4": 5467.390927410839,
+      "TEST_ref": 5467.390927410839,
+      "TEST_trades": 334,
+      "TEST_trades_ref": 334,
+      "NATIVE_2023_2025_net4": 12079.908106562485,
+      "NATIVE_2023_2025_ref": 12079.908106562485,
+      "NATIVE_2023_2025_trades": 1260,
+      "NATIVE_2023_2025_trades_ref": 1260,
+      "TEST_design_ref": 5467.390927,
+      "tamper_rows_compared": 2025093,
+      "tamper_invariant": true,
+      "prefix_rows_compared": 2025092,
+      "prefix_invariant": true,
+      "all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 2.842170943040401e-14,
+        "max_abs_total": 3.637978807091713e-12,
+        "exit_requests": 71983,
+        "early_exits_applied": 71983
+      }
+    },
+    "B3_AXC0|native": {
+      "NATIVE_minute_max_abs_vs_core": 1.952515926717524e-11,
+      "checks": [
+        {
+          "check": "B3_AXC0 NATIVE minute ledger vs core",
+          "pass": true
+        },
+        {
+          "check": "B3_AXC0 TEST minute ledger vs core",
+          "pass": true
+        },
+        {
+          "check": "B3_AXC0 TEST vs R2-56 r0",
+          "pass": true
+        },
+        {
+          "check": "B3_AXC0 NATIVE vs R2-56 r0",
+          "pass": true
+        },
+        {
+          "check": "B3_AXC0 TEST vs design 6dp",
+          "pass": true
+        },
+        {
+          "check": "B3_AXC0 TEST positions == stored R2-56",
+          "pass": true
+        },
+        {
+          "check": "B3_AXC0 prefix invariance at 2026-05-01 00:00:00+00:00 (engine; table fixed)",
+          "pass": true
+        },
+        {
+          "check": "B3_AXC0 tamper invariance at 2026-05-01 00:00:00+00:00 (engine; table fixed)",
+          "pass": true
+        },
+        {
+          "check": "B3_AXC0 NATIVE all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "B3_AXC0 TEST all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "B3_AXC0 counterfactual fast vs direct log ledger",
+          "pass": true
+        }
+      ],
+      "NATIVE_net4": 3174.535118740787,
+      "NATIVE_positions": 1089,
+      "TEST_minute_max_abs_vs_core": 1.9381829474696133e-11,
+      "TEST_net4": 2347.8425517065416,
+      "TEST_positions": 468,
+      "TEST_ref": 2347.842551706386,
+      "TEST_positions_ref": 468,
+      "NATIVE_ref": 3174.5351187411397,
+      "NATIVE_positions_ref": 1089,
+      "TEST_design_ref": 2347.842552,
+      "TEST_positions_equal_stored": true,
+      "prefix_minutes_compared": 172799,
+      "prefix_invariant": true,
+      "tamper_minutes_compared": 172800,
+      "tamper_invariant": true,
+      "NATIVE_all_off_max_abs": 0.0,
+      "TEST_all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 3.552713678800501e-15,
+        "max_abs_total": 4.547473508864641e-13,
+        "exit_requests": 34855,
+        "early_exits_applied": 34855
+      }
+    },
+    "K04_AXC0|native": {
+      "NATIVE_minute_max_abs_vs_core": 1.9027002196025933e-11,
+      "checks": [
+        {
+          "check": "K04_AXC0 NATIVE minute ledger vs core",
+          "pass": true
+        },
+        {
+          "check": "K04_AXC0 TEST minute ledger vs core",
+          "pass": true
+        },
+        {
+          "check": "K04_AXC0 TEST vs R2-56 r0",
+          "pass": true
+        },
+        {
+          "check": "K04_AXC0 NATIVE vs R2-56 r0",
+          "pass": true
+        },
+        {
+          "check": "K04_AXC0 TEST vs design 6dp",
+          "pass": true
+        },
+        {
+          "check": "K04_AXC0 TEST positions == stored R2-56",
+          "pass": true
+        },
+        {
+          "check": "K04_AXC0 prefix invariance at 2026-05-01 00:00:00+00:00 (engine; table fixed)",
+          "pass": true
+        },
+        {
+          "check": "K04_AXC0 tamper invariance at 2026-05-01 00:00:00+00:00 (engine; table fixed)",
+          "pass": true
+        },
+        {
+          "check": "K04_AXC0 NATIVE all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "K04_AXC0 TEST all-off exactly 0",
+          "pass": true
+        },
+        {
+          "check": "K04_AXC0 counterfactual fast vs direct log ledger",
+          "pass": true
+        }
+      ],
+      "NATIVE_net4": 2678.629032984655,
+      "NATIVE_positions": 676,
+      "TEST_minute_max_abs_vs_core": 1.9381829474696133e-11,
+      "TEST_net4": 2587.2927197097415,
+      "TEST_positions": 214,
+      "TEST_ref": 2587.292719709675,
+      "TEST_positions_ref": 214,
+      "NATIVE_ref": 2678.6290329848025,
+      "NATIVE_positions_ref": 676,
+      "TEST_design_ref": 2587.29272,
+      "TEST_positions_equal_stored": true,
+      "prefix_minutes_compared": 172799,
+      "prefix_invariant": true,
+      "tamper_minutes_compared": 172800,
+      "tamper_invariant": true,
+      "NATIVE_all_off_max_abs": 0.0,
+      "TEST_all_off_max_abs": 0.0,
+      "counterfactual": {
+        "paths": 100,
+        "max_abs_minute": 3.552713678800501e-15,
+        "max_abs_total": 2.2737367544323206e-13,
+        "exit_requests": 17011,
+        "early_exits_applied": 17011
+      }
+    },
+    "market_C_vs_G3": {
+      "minutes_equal": true,
+      "close_max_abs": 0.0
+    },
+    "market_AX_NATIVE_vs_G3": {
+      "minutes_equal": true,
+      "o_max_abs": 0.0,
+      "h_max_abs": 0.0,
+      "l_max_abs": 0.0,
+      "c_max_abs": 0.0
+    },
+    "market_AX_TEST_vs_G3": {
+      "minutes_equal": true,
+      "o_max_abs": 0.0,
+      "h_max_abs": 0.0,
+      "l_max_abs": 0.0,
+      "c_max_abs": 0.0
+    }
+  },
+  "counterfactual": {
+    "G3_LONG|o2_p0.5": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 7.275957614183426e-12,
+      "exit_requests": 2756,
+      "early_exits_applied": 2756
+    },
+    "G3_LONG|o2_p1.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 5.4569682106375694e-12,
+      "exit_requests": 2708,
+      "early_exits_applied": 2708
+    },
+    "G3_LONG|o2_p2.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 7.275957614183426e-12,
+      "exit_requests": 2786,
+      "early_exits_applied": 2786
+    },
+    "G3_LONG|o5_p0.5": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 3.637978807091713e-12,
+      "exit_requests": 2773,
+      "early_exits_applied": 2773
+    },
+    "G3_LONG|o5_p1.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 7.275957614183426e-12,
+      "exit_requests": 2838,
+      "early_exits_applied": 2838
+    },
+    "G3_LONG|o5_p2.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 7.275957614183426e-12,
+      "exit_requests": 2683,
+      "early_exits_applied": 2683
+    },
+    "G3_SHORT|o2_p0.5": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 1.8189894035458565e-12,
+      "exit_requests": 4460,
+      "early_exits_applied": 4460
+    },
+    "G3_SHORT|o2_p1.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 1.8189894035458565e-12,
+      "exit_requests": 4299,
+      "early_exits_applied": 4299
+    },
+    "G3_SHORT|o2_p2.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 1.8189894035458565e-12,
+      "exit_requests": 4256,
+      "early_exits_applied": 4256
+    },
+    "G3_SHORT|o5_p0.5": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 1.8189894035458565e-12,
+      "exit_requests": 4297,
+      "early_exits_applied": 4297
+    },
+    "G3_SHORT|o5_p1.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 1.8189894035458565e-12,
+      "exit_requests": 4198,
+      "early_exits_applied": 4198
+    },
+    "G3_SHORT|o5_p2.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 2.7284841053187847e-12,
+      "exit_requests": 4088,
+      "early_exits_applied": 4088
+    },
+    "LBR_FUND|o2_p0.5": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 9.094947017729282e-13,
+      "exit_requests": 4235,
+      "early_exits_applied": 4235
+    },
+    "LBR_FUND|o2_p1.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 9.094947017729282e-13,
+      "exit_requests": 3927,
+      "early_exits_applied": 3927
+    },
+    "LBR_FUND|o2_p2.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 9.094947017729282e-13,
+      "exit_requests": 3902,
+      "early_exits_applied": 3902
+    },
+    "LBR_FUND|o5_p0.5": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 1.1368683772161603e-12,
+      "exit_requests": 4047,
+      "early_exits_applied": 4047
+    },
+    "LBR_FUND|o5_p1.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 9.094947017729282e-13,
+      "exit_requests": 3922,
+      "early_exits_applied": 3922
+    },
+    "LBR_FUND|o5_p2.0": {
+      "paths": 100,
+      "max_abs_minute": 5.684341886080802e-14,
+      "max_abs_total": 9.094947017729282e-13,
+      "exit_requests": 3881,
+      "early_exits_applied": 3881
+    },
+    "C1v2|native": {
+      "paths": 100,
+      "max_abs_minute": 2.842170943040401e-14,
+      "max_abs_total": 0.0,
+      "exit_requests": 32940,
+      "early_exits_applied": 32940
+    },
+    "C4v2|native": {
+      "paths": 100,
+      "max_abs_minute": 2.842170943040401e-14,
+      "max_abs_total": 3.637978807091713e-12,
+      "exit_requests": 71983,
+      "early_exits_applied": 71983
+    },
+    "B3_AXC0|native": {
+      "paths": 100,
+      "max_abs_minute": 3.552713678800501e-15,
+      "max_abs_total": 4.547473508864641e-13,
+      "exit_requests": 34855,
+      "early_exits_applied": 34855
+    },
+    "K04_AXC0|native": {
+      "paths": 100,
+      "max_abs_minute": 3.552713678800501e-15,
+      "max_abs_total": 2.2737367544323206e-13,
+      "exit_requests": 17011,
+      "early_exits_applied": 17011
+    }
+  },
+  "adaptive_stop_check": {
+    "B3_AXC0": {
+      "stop_trail_exits": 1191,
+      "level_matches": 1191,
+      "unmatched_rows": 0
+    },
+    "K04_AXC0": {
+      "stop_trail_exits": 292,
+      "level_matches": 292,
+      "unmatched_rows": 0
+    }
+  },
+  "files": {
+    "g3_family/o2_p0.5/G3_LONG": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 8738604,
+          "sha256": "5cba7e9be0cc97a68d2cd246da0a4968402c6036942375cd4aa746e6c158b1a3"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 10028235,
+          "sha256": "a7dc337886c2636905400ebf600056dbe4475ea20e68d162b243c79c8ee50ef3"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7612869,
+          "sha256": "fa4d917368fa0182162946a60a27a7aca1df0887dde60d81b3752af7dcde1879"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 8539077,
+          "sha256": "6e6a34871b4d311a8acd3d38d6301d6439f62bba13401a3c69b0e6957576cda6"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 8371281,
+          "sha256": "7f01b849b9ac1dce7f71ce1acf293f6411f8d3b37c651d8ad9832d0758d648a2"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 8058360,
+          "sha256": "a19b8ae44237d68e504f37c1466df0f554b5fc801c8a1ed8cf0bf1149a21bc01"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6401567,
+          "sha256": "f5be4effd9721e193a16eb727677eb27cd776ffbc557936d5b7db25599db4ff6"
+        }
+      },
+      "ledger": {
+        "ledger_2020.parquet": {
+          "rows": 142792,
+          "bytes": 2831931,
+          "sha256": "590cb6ec800b6c5cd6fb477b45585578ea1ad89a8cc82538827379a1aaf32fe2"
+        },
+        "ledger_2021.parquet": {
+          "rows": 175434,
+          "bytes": 4379056,
+          "sha256": "35ae084378b9c5d19a9cb5c35b7413dc45243b170b6ebba9ec700028d2cc6917"
+        },
+        "ledger_2022.parquet": {
+          "rows": 13687,
+          "bytes": 261400,
+          "sha256": "b8e4ce5c40b0135b61937c6e41aaf152b1452d98574a2a09ce3980f636667aec"
+        },
+        "ledger_2023.parquet": {
+          "rows": 213373,
+          "bytes": 3177112,
+          "sha256": "b70fc4f9d16943b69ea2f7b09cd9f337046b24a50eb14847cec71cc54423e1a8"
+        },
+        "ledger_2024.parquet": {
+          "rows": 138465,
+          "bytes": 2421560,
+          "sha256": "d1a42dc20a9c49467167f1ccdbd9ad2af35e3b564f2156718e8bab1e55ce8610"
+        },
+        "ledger_2025.parquet": {
+          "rows": 76435,
+          "bytes": 1454535,
+          "sha256": "83e5d40a01d15dddcd0143a2cecf978b596dfa9c4c6d1d382e32aa99bf24d4b5"
+        },
+        "ledger_2026.parquet": {
+          "rows": 92562,
+          "bytes": 1596844,
+          "sha256": "4364d6aa56693e9bfe4c7fc791e85c3af3763d87659bb550b1617e316f21f874"
+        }
+      },
+      "opportunities": {
+        "opportunities_2020.parquet": {
+          "rows": 13,
+          "bytes": 13459,
+          "sha256": "b6c499a16bb6578794f3f2d00123e0a070f173834d7052c6adf17fb31aa68927"
+        },
+        "opportunities_2021.parquet": {
+          "rows": 17,
+          "bytes": 13888,
+          "sha256": "3a5e8b76a2be6677010523f7346e41aeab4555816f0c84cb4e174c4d37de9286"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 9,
+          "bytes": 13052,
+          "sha256": "46b0d2f4196bad2bd39121d4f6cd7bf78b5ae8bc82f51a8e562cfb688e0a3663"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 30,
+          "bytes": 14958,
+          "sha256": "05290921c386acdad56f5820964db8777676d63b712a494026f7a180df3f5409"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 16,
+          "bytes": 13641,
+          "sha256": "22d700415e3559dd5668850672815bf367c88c935438f1e032bfc2a475f4b97b"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 20,
+          "bytes": 13931,
+          "sha256": "d2613516d57ff33fdfdffd2559d4a0bc3e75f3dde0e22f0273aac0e5c9d264f1"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 17,
+          "bytes": 13709,
+          "sha256": "143eca56c6076397b876498033c777624e04b1dafdb951e8138edace04860824"
+        }
+      },
+      "n_opportunities": 122,
+      "n_trades": 116
+    },
+    "g3_family/o2_p1.0/G3_LONG": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 8737225,
+          "sha256": "37b2311a22d547fa0258c2a997dd925c14f007a58e2b2500907a5e294a8a5dc7"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 10033268,
+          "sha256": "c0bf0312d92db22466b3140c23df5394a6ddd859c449bdb37a9f6b7c16a83ab3"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7612887,
+          "sha256": "10be5b9f3202b53b9a684fbda6fbc3f4fd3f264facbbf3f9629d3d7304fe16db"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 8539390,
+          "sha256": "89353f63e46f003f438d655974eee5c585f7e980c49cb2a29fa57bda1b2c1a8c"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 8370404,
+          "sha256": "9b8380d7a52cc9968abb95388aca2945c78bcdd0732ce2a55bb216eb09ea3af4"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 8053953,
+          "sha256": "32445421d27e6a7b867578a4580f4c8db439569eadf70820d478b3e1a41152b3"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6398343,
+          "sha256": "cbba65787d45a8d776254ab2b6ff5f1ed4336f8819ab26e072e9afbd42a9c260"
+        }
+      },
+      "ledger": {
+        "ledger_2020.parquet": {
+          "rows": 142793,
+          "bytes": 2830593,
+          "sha256": "dfb2c9eb1da9cf89f9602dd60eab7f5fa5de602384159b81f22ed898490e4c4e"
+        },
+        "ledger_2021.parquet": {
+          "rows": 175447,
+          "bytes": 4384193,
+          "sha256": "245be0c99047d3c3a3598dc4eda69632081cef3a299693de7c9a29c4f5f5c617"
+        },
+        "ledger_2022.parquet": {
+          "rows": 13690,
+          "bytes": 261491,
+          "sha256": "aff71ce3d775ae65d9d87691e0606c753db127e16ca538b63fb7f54c9045c701"
+        },
+        "ledger_2023.parquet": {
+          "rows": 213431,
+          "bytes": 3179685,
+          "sha256": "b5d4f3d8739c1b66b0d88a400a85bc732aa2b71624c92fbf2de43dfefca9ae41"
+        },
+        "ledger_2024.parquet": {
+          "rows": 138224,
+          "bytes": 2417480,
+          "sha256": "80e7eaa260398aa155d6f16d1cdc4f17e77c63fd27c58cb5d6b17c5ebc0d7b91"
+        },
+        "ledger_2025.parquet": {
+          "rows": 75717,
+          "bytes": 1441095,
+          "sha256": "ad810e66f0830e3cd1c4b0f25dfc088c4ca680f9cc1abef0b03576b0d4f07952"
+        },
+        "ledger_2026.parquet": {
+          "rows": 92380,
+          "bytes": 1590657,
+          "sha256": "9d1158696c8c68ccc0b71630dcef4f7fd5e8018b91f8906e123c6b4db3ce2219"
+        }
+      },
+      "opportunities": {
+        "opportunities_2020.parquet": {
+          "rows": 13,
+          "bytes": 13459,
+          "sha256": "413c8916c8ffcd6dd684f06a7c7f55d81b28a7fa424d80b08ee5c437b2c51203"
+        },
+        "opportunities_2021.parquet": {
+          "rows": 17,
+          "bytes": 13888,
+          "sha256": "4e2a4efaf2e344f118d5fce9ded2b3ae8d83dd2db080f03bed32b21827693d96"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 9,
+          "bytes": 13052,
+          "sha256": "92208a5af93209159ba125c84e1f33bcbc73d2b0ff4ceac73dfa402ed98af083"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 30,
+          "bytes": 14958,
+          "sha256": "e3cf871d4e0861ae629ae94f65cb8d7ac74c9aa71449009df03b4095f83d8460"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 17,
+          "bytes": 13729,
+          "sha256": "c4e18f42f15d44f028b76b2288baa831ce563db25072d6c8082b1e9b5512d4e5"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 23,
+          "bytes": 14112,
+          "sha256": "e45d98a592a019079104f2b440da2db6763ac95cf63e81f116e9c9916cb5c3f7"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 17,
+          "bytes": 13652,
+          "sha256": "eb0e9ef92a347f014ad3a745aa2cde2ff33ec7f70c4e1eb13dc0aca151d652f9"
+        }
+      },
+      "n_opportunities": 126,
+      "n_trades": 115
+    },
+    "g3_family/o2_p2.0/G3_LONG": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 8737277,
+          "sha256": "095b7c17bc1d230fa5e64d0c3d73e163c8d88a2202bf8f1bb98e2b704e96ae47"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 10034190,
+          "sha256": "dbd66e089d98001cf9d367ddef12598f3af232ec15027416a6e398d3213f6f47"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7612656,
+          "sha256": "a8bc344b90c66f77b821b86314255377f4d0e831ba7f1e170796e2c47c58a5aa"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 8531186,
+          "sha256": "83974bfa94ad280660ed859b1905336a98ec89c9c748ef5cd5bebcbfc4bb865e"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 8369899,
+          "sha256": "235f417ef603c973202041eb7bd134ab8c6af2919e2867e598dafd9e617ad1d0"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 8048464,
+          "sha256": "69efcd8dcf2f7b3c07bec79a7e459f8ef1380e27f872c3b03a0de28a3c817a87"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6400091,
+          "sha256": "ebd05bdd48c7b7110caed5f33908c685bd40c9e6b13a3926bc8aba9209b344a0"
+        }
+      },
+      "ledger": {
+        "ledger_2020.parquet": {
+          "rows": 142798,
+          "bytes": 2830692,
+          "sha256": "37f4638a8fd6edc2e60512a9ab453dfae7f9415d6939a2548e55afff94395bf7"
+        },
+        "ledger_2021.parquet": {
+          "rows": 175497,
+          "bytes": 4385539,
+          "sha256": "5c1c74ee3393e57cc7adddca9ebdb853cabb7b8f47ff09c22b81cb8f60145b5a"
+        },
+        "ledger_2022.parquet": {
+          "rows": 13596,
+          "bytes": 260165,
+          "sha256": "55e0e2b8411c35a0a89e31475d66d8ad794444d9ec214035d5dfcdf8ceb6b798"
+        },
+        "ledger_2023.parquet": {
+          "rows": 212071,
+          "bytes": 3160893,
+          "sha256": "945d50d60ccebab1e492fdf9ddbd277f044113b6bf81ac92c2a933db2321dfa6"
+        },
+        "ledger_2024.parquet": {
+          "rows": 138161,
+          "bytes": 2417055,
+          "sha256": "2e9f163c37102f4a5f1e5f482fceafdbde364c3f7f5886c44e22b8621c3df658"
+        },
+        "ledger_2025.parquet": {
+          "rows": 75032,
+          "bytes": 1426681,
+          "sha256": "dd2605ae11665ffa4a7c1b75dea203a748244fe94922a71444928843a2e84ece"
+        },
+        "ledger_2026.parquet": {
+          "rows": 92435,
+          "bytes": 1595350,
+          "sha256": "6d33f0e5e15a702d8a330c62be38eabd9d7180c3ab9595bab799f85ec21e9920"
+        }
+      },
+      "opportunities": {
+        "opportunities_2020.parquet": {
+          "rows": 13,
+          "bytes": 13459,
+          "sha256": "9f629089b8990e908f594954437f62fa332fc24afd8d831995891c20c9829bf2"
+        },
+        "opportunities_2021.parquet": {
+          "rows": 17,
+          "bytes": 13888,
+          "sha256": "1e747d2f33bc314404496e685b822aa5e11acaabd94cd6f8f20e89c2ad1d7e2a"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 10,
+          "bytes": 13082,
+          "sha256": "20debaf5aa18107cf694f8a44c241741233d24477c2a732a29cbe32fe58d65f6"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 36,
+          "bytes": 15202,
+          "sha256": "1721f98e38642e78c589b1dd752db3f6e379b6a071d260cb008a48d80e75caec"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 17,
+          "bytes": 13729,
+          "sha256": "a610a9d17ba4c78be330ad876ffd3cd8b1e35cc842ee3beb73540f2b983e5cc9"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 26,
+          "bytes": 14270,
+          "sha256": "af2767ae68980cc85c4389640401d143571d53b6fc9c7c0d12d3b2c20cae1298"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 17,
+          "bytes": 13668,
+          "sha256": "838f5b36df79f7aaa126fcc74ec6371e04e3166619ca8acbb94d1d1135b637e7"
+        }
+      },
+      "n_opportunities": 136,
+      "n_trades": 115
+    },
+    "g3_family/o5_p0.5/G3_LONG": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 8738395,
+          "sha256": "2db172d9abfd95c12bc987909032d160470a4a2382b87061488442c280a7e1fa"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 10030832,
+          "sha256": "b66bfaeb9c28fdb8e0ef7b6fe123f998b9fc861502bf81f984f0bb0949016add"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7609541,
+          "sha256": "1ae8f0cf782cce0d27dc4fc894d37828736cfecd94de050a5361378985b52cba"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 8535268,
+          "sha256": "fda139953479e1716096d59d53d50240a5c6f04f8b889ff8fdcb3b2be741e31f"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 8369077,
+          "sha256": "73ee79bf51ee2878117e7c509dad970177e9bc980523a9671b7dcfae5fe850d8"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 8057653,
+          "sha256": "f719be92f0f2a2baf3c33c49d7331ac304029a28229c52f8281246e1ddd3384e"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6401819,
+          "sha256": "2cadd195765b2f55ee0b1144a51c37fe18e6d7e5daca87b4fcdbf7db729ce737"
+        }
+      },
+      "ledger": {
+        "ledger_2020.parquet": {
+          "rows": 142761,
+          "bytes": 2831447,
+          "sha256": "19b792513a9a4ae48578f8cd534cbcae827bff6ae574515e895e72d07939ea98"
+        },
+        "ledger_2021.parquet": {
+          "rows": 175413,
+          "bytes": 4382133,
+          "sha256": "e7aa3ed28b63696c4e93cc59315bde3f20e95a6553250e5aacbaabe6433d53b2"
+        },
+        "ledger_2022.parquet": {
+          "rows": 13195,
+          "bytes": 252903,
+          "sha256": "4c515ccc49cea91c577d97e07cc1fe9eede29a9bf15c70208512393f79b975c3"
+        },
+        "ledger_2023.parquet": {
+          "rows": 212514,
+          "bytes": 3167254,
+          "sha256": "dd1658d1f1f3f2b7df7425329d03508b966ba9ed0a4f80f8e42d23e9f08b044e"
+        },
+        "ledger_2024.parquet": {
+          "rows": 138156,
+          "bytes": 2417830,
+          "sha256": "d704968a53e9d5ea2206a4300df33d5ade3be5117e956e03c79c65b807811fea"
+        },
+        "ledger_2025.parquet": {
+          "rows": 76395,
+          "bytes": 1451825,
+          "sha256": "903a3b30d23c411b68d4421be19e3552a3a3b6fcbedf561bf5dac054fe41c280"
+        },
+        "ledger_2026.parquet": {
+          "rows": 92508,
+          "bytes": 1598372,
+          "sha256": "c2f96fbb926c9fddd6054d92f1972705e3e8e9a26baf07fc55b1fc0886d790c6"
+        }
+      },
+      "opportunities": {
+        "opportunities_2020.parquet": {
+          "rows": 13,
+          "bytes": 13461,
+          "sha256": "73a6900f1edb2974b72d480fbf639a55adc60575ae9ee5f774e1c945ef0b2590"
+        },
+        "opportunities_2021.parquet": {
+          "rows": 17,
+          "bytes": 13886,
+          "sha256": "3172cffc274428f23ac2c49aa0ea1f98b2cc074be2f1754e4c6f5e980e7b0ef1"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 11,
+          "bytes": 13093,
+          "sha256": "d141bf143d2473d36389f850cf65b67e84631f2592c036a6a92d7c0019bef387"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 33,
+          "bytes": 15154,
+          "sha256": "a824831d8e2ab952ec8a53f6fff255196c3c08cb284d64ec880a7cb79bed32b7"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 17,
+          "bytes": 13724,
+          "sha256": "ad5b7860a22b62dca5f60127cb8a74a09ad339152343c61b7bedb05d96ea400f"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 20,
+          "bytes": 13922,
+          "sha256": "fa9669f21515bc4addbb5c7daf93562b0d981933e0153172164442dbf32c7841"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 17,
+          "bytes": 13703,
+          "sha256": "02f86887947aacb7a4ffead78788b1d0e603f8c6fc4e8dc285c18552df0fa902"
+        }
+      },
+      "n_opportunities": 128,
+      "n_trades": 116
+    },
+    "g3_family/o5_p1.0/G3_LONG": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 8737399,
+          "sha256": "2f42125282278df7d8d1e38b01a42d861697ee142e7d4e801680de3df1a50503"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 10025477,
+          "sha256": "71757af48e3326ca5a401143845106fa8f1cbce99a0f1c88bb993c5493d9256b"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7609582,
+          "sha256": "e57eb0331e9f611a28722696743e9a4090030bd111e8ce60863f44e2ea110415"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 8535346,
+          "sha256": "5b72da366185ee9469b62c8a2395c4faff51bc04510bd82418002710e3424c22"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 8369071,
+          "sha256": "e7ceef1444a015136f9b3beb85a922f3117c81005a17bb77d48a4669056243f8"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 8055328,
+          "sha256": "7db09487f129e083d1a83fbc88c35f59a6279c8882d7a425f452158dccf5b527"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6402100,
+          "sha256": "ca25217d0687ea18428d1a59f852baa5b131bd85e826d6c6fe6954ceb456de10"
+        }
+      },
+      "ledger": {
+        "ledger_2020.parquet": {
+          "rows": 142759,
+          "bytes": 2830422,
+          "sha256": "84145af27b20ed2c9e738dbdb613d02e3b129f0a7050b20e54ff6221c648851d"
+        },
+        "ledger_2021.parquet": {
+          "rows": 175429,
+          "bytes": 4377475,
+          "sha256": "d43d7883dab5b3964c2c64fe651fa9e9c794d5b8fead3cc4c4c9b7e526206e82"
+        },
+        "ledger_2022.parquet": {
+          "rows": 13198,
+          "bytes": 252942,
+          "sha256": "99625ccaa3830589b8009a9556031c22402cfbbe5895e54e6d0a69035dfeeb4f"
+        },
+        "ledger_2023.parquet": {
+          "rows": 212549,
+          "bytes": 3169030,
+          "sha256": "a4e762979362d8cf4b26363d242b3170fe0827e6c1224f897ab7197762b2f14a"
+        },
+        "ledger_2024.parquet": {
+          "rows": 138154,
+          "bytes": 2417176,
+          "sha256": "48eab4fe3695babedccbc3d10fb7f2979a1777648499462eca2042a41d725753"
+        },
+        "ledger_2025.parquet": {
+          "rows": 76147,
+          "bytes": 1446589,
+          "sha256": "957720d11f289f8cf7d2bedb7865f483b61973fff12ac179ed52a7ec09eadf80"
+        },
+        "ledger_2026.parquet": {
+          "rows": 92526,
+          "bytes": 1598383,
+          "sha256": "2d8a84e5a3b38c03e1fffd89ea91db4deb70d2138a98590558ffe726b14aa9b4"
+        }
+      },
+      "opportunities": {
+        "opportunities_2020.parquet": {
+          "rows": 13,
+          "bytes": 13461,
+          "sha256": "d1baa8a71d223090118d8e80c26c3774f7672b341221e2b81a45c090a1ba212e"
+        },
+        "opportunities_2021.parquet": {
+          "rows": 17,
+          "bytes": 13886,
+          "sha256": "b25998a580d2bec69b24f296ebc2ba7373e2ef59a8af33326bacb0e8cbd1dd9b"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 11,
+          "bytes": 13093,
+          "sha256": "18f5a96c1d1ae02eaa936d7fd2697b82607d59042f7a9ce18b21836fdfc8f110"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 33,
+          "bytes": 15154,
+          "sha256": "720488a6ac16cd465e9bef3a5f0e50785ff14737ce82d26f260e0c28e6dd77ef"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 17,
+          "bytes": 13724,
+          "sha256": "c7b5d1a88aebd68cfa7fa2e0fd368b380b7fa51937d5738b1debd1c4f04d92b1"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 21,
+          "bytes": 14088,
+          "sha256": "f2f3df37d97171b4cb12a0310cbcfa52b14fd3cd77c563748a950dd0fac0f28b"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 17,
+          "bytes": 13711,
+          "sha256": "441653ceea28dff135ad410400e6f8f43eebd2859c741cb76eec516123e10a81"
+        }
+      },
+      "n_opportunities": 129,
+      "n_trades": 116
+    },
+    "g3_family/o5_p2.0/G3_LONG": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 8744566,
+          "sha256": "09906d7b24a5512110ae05db5aa52ccb7199d57601b42f16c842e3641cb664bd"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 10035156,
+          "sha256": "bb42621e17380fca8495ba3f131bd5878cd90576fd7ea67ffb3990769e00eaa2"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7610440,
+          "sha256": "cffe439588e6865bb915876aea98f91e58d16ea5d8d060d5787bf880e951167d"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 8535831,
+          "sha256": "7ce0254c251dfaba42739ca5e39ab39df5bfb90ee9b1f1b55f90345dc257cf15"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 8362963,
+          "sha256": "64a439fc9b0a0be53c6cce86fd5984d97a1da85488bc7dfec7ced93e9d5096cc"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 8036489,
+          "sha256": "a05d7bf39d5fe42a81655c50677821c00699529ae852b172a1236b6723f5c521"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6397243,
+          "sha256": "c23185f1c7c8cf6f18134f79ce0dbb24de04e035d81af3f1aba57a850dcf76b1"
+        }
+      },
+      "ledger": {
+        "ledger_2020.parquet": {
+          "rows": 142757,
+          "bytes": 2837627,
+          "sha256": "dfb4368c5530a88935a4b209cadc75591d24004dbb4834ad817f3368c7c65e52"
+        },
+        "ledger_2021.parquet": {
+          "rows": 175481,
+          "bytes": 4387021,
+          "sha256": "6146cd7f8a0fce92de180f24644e227dcf1b665599aa3fd91c9808e7150b84fc"
+        },
+        "ledger_2022.parquet": {
+          "rows": 13344,
+          "bytes": 255448,
+          "sha256": "39fe75fc12e460d4a30d4f33ea064761a1b9bd2dfd1cd950bb7e38cae9cd248c"
+        },
+        "ledger_2023.parquet": {
+          "rows": 212584,
+          "bytes": 3169909,
+          "sha256": "f26159d61b4073dceee3fe17a9ccd9f065ebc5ddba266e00d97af159c63bc196"
+        },
+        "ledger_2024.parquet": {
+          "rows": 137641,
+          "bytes": 2407968,
+          "sha256": "b0d7445a2c6dc362f0bdd36d23b37208130c0c725c8cb0ca11a3fe55f529b491"
+        },
+        "ledger_2025.parquet": {
+          "rows": 74670,
+          "bytes": 1408717,
+          "sha256": "bd41f03a4d837804ecf55f5ca26e29de0161d3ad4ce06387f6654b3b597aa46f"
+        },
+        "ledger_2026.parquet": {
+          "rows": 92156,
+          "bytes": 1589113,
+          "sha256": "0e195f36bb8c0f96e4248ca935a361fb1c86023ca6f96a9b08f19d5925177822"
+        }
+      },
+      "opportunities": {
+        "opportunities_2020.parquet": {
+          "rows": 13,
+          "bytes": 13461,
+          "sha256": "1d1ee714944f34cdb0987ce00c12d6ebbcceeefb905ded7626296f015c0def57"
+        },
+        "opportunities_2021.parquet": {
+          "rows": 17,
+          "bytes": 13886,
+          "sha256": "1985cb690e7e9eb0e4eae5f62416f0ffa1c079b1974c0167dc17a8b9b4290920"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 11,
+          "bytes": 13098,
+          "sha256": "bd03fe83469b7e410310eca699b42174209f8a3d5f343c758e23a13c797d9b5a"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 33,
+          "bytes": 15150,
+          "sha256": "2adc0f91a6ae3b6fe330b5584db4b41036bb5218abc36210e1c8737120b601c2"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 18,
+          "bytes": 13714,
+          "sha256": "2b795c662aa485ff9683abd693b151414c39d9dd3c2665e71322cfe38723a21a"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 24,
+          "bytes": 13971,
+          "sha256": "387c5e6c6628579ede50c8e22f23b1847ea2f3fae930cabd9671f2f26932326e"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 18,
+          "bytes": 13670,
+          "sha256": "606412f983734ff24808b04f76621568bd530e07b82d589eff033b57a62e5c76"
+        }
+      },
+      "n_opportunities": 134,
+      "n_trades": 111
+    },
+    "g3_family/o2_p0.5/G3_SHORT": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "3d9e4e89568b06c424560ead50fb5f88e0bee7decb0f67d92054a4852e28a780"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 8114074,
+          "sha256": "f47a7a581ffe33a0cef8ccc475b0db10db18bfd944515a77ffd94e08c8af4210"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7968738,
+          "sha256": "dda73788d8fce1f66471aa4f83bb3b1da0ce14c37b39f720a08317209c1a0382"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7673594,
+          "sha256": "678c14aace9aee3940af56946f7b187481b7fda213aacbf6c0d28c6f846a9a7d"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7701113,
+          "sha256": "684c9dbeb186273e530d87cc385a168c04ae742f7feae6c2d044e7aa9d83ef36"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7918529,
+          "sha256": "15cf0b2306ffacab449989a763b490f56723d11521a1a41d52a2e965f6c49783"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6056775,
+          "sha256": "b8bd2f7af7e0f90651e2a6fee3eed3234a8038bf266003360d41dc208bde51cf"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 32330,
+          "bytes": 974138,
+          "sha256": "5842c4c3ce2022e871dc2bc2eb3dc71759a5c7b1b2cadff168012fe480d09ea5"
+        },
+        "ledger_2022.parquet": {
+          "rows": 32414,
+          "bytes": 833824,
+          "sha256": "b655ee5e8baae6c61dbcec8931c0dd4e4eb2bc170383481ea2947a47f37ee68b"
+        },
+        "ledger_2023.parquet": {
+          "rows": 16454,
+          "bytes": 353268,
+          "sha256": "d774137d62f7a920feacd25d97c2935c10e2f298b6235adaeb8c99d5bbe93b98"
+        },
+        "ledger_2024.parquet": {
+          "rows": 13740,
+          "bytes": 330173,
+          "sha256": "b964e1149731be358e08c448b3ac93e3a5e01c851c6e16df3e6d66687c2f8a94"
+        },
+        "ledger_2025.parquet": {
+          "rows": 31065,
+          "bytes": 789391,
+          "sha256": "796f00f86cf059ba9c1ecc65b0cf57a89785cc11abef7159b8729576c6359d64"
+        },
+        "ledger_2026.parquet": {
+          "rows": 14304,
+          "bytes": 352683,
+          "sha256": "87e5e5e60eadef39e67179fbbd0f268bb12198a92fbf9b57a45b3884ac54b619"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 39,
+          "bytes": 15780,
+          "sha256": "c63466a09334bf043259487eff605f3dddc7c8c20269d44b0f71134966aefe1e"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 53,
+          "bytes": 16647,
+          "sha256": "d4322984a9bf437f938a0705deef0fb7b2eb68a85a3b0f28cffe79e6cda18aa9"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 26,
+          "bytes": 14617,
+          "sha256": "acae48402d4e31aa35c9295ecafddeb9ce75ee89a2d303702f52b6f295cb7e01"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 19,
+          "bytes": 14088,
+          "sha256": "77c7a2a27d96742ea5a6adcf746194f34e092ad2f694c9bab4662b53b72fb06b"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 31,
+          "bytes": 15079,
+          "sha256": "e31c9008e674802410f5e7708a0c6fd7fb4faaa94ffeeb9c8457237fefe24990"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 24,
+          "bytes": 14409,
+          "sha256": "3f790b805461ef4c028726727243e5047cd3605ba7c6037b8839134330e491c6"
+        }
+      },
+      "n_opportunities": 192,
+      "n_trades": 183
+    },
+    "g3_family/o2_p1.0/G3_SHORT": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "ec1849e56574f3f4f8f9838470663cd4951974f119eb1443de6d3cf4600a6973"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 8114014,
+          "sha256": "8f545a88356627df875c8d9cfcb192b502043edda31f8414842e6f9d13746930"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7968280,
+          "sha256": "2acafde170a72ba048a7e6632f7ca8ee2ff03791731941785b0c27108896f169"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7672618,
+          "sha256": "4cc336a347d9db7cefea4d43d5bd2a97e2a4fb88cf176bbb87ae5949eded3217"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7701084,
+          "sha256": "8d28cba7852d0576f22b077588f3427c3f7b4fb7a7195d3bbb2306f9c401397b"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7916180,
+          "sha256": "083abadca310c4a7e2a4e769083bb4d531d64797d11fd0924a2d9277f10af064"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6057038,
+          "sha256": "053c885a920059e78c4661f3684f49acfd96c92aa3bc6fa3f12c526bd1b54021"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 32328,
+          "bytes": 974045,
+          "sha256": "c75ebcb079321baa0ac8a0c634229ed8ee215262da02c90d63cff19a995b8dfc"
+        },
+        "ledger_2022.parquet": {
+          "rows": 32511,
+          "bytes": 840672,
+          "sha256": "14a75014f8321460ed3cc2d7863f08857364b0cfbf03e5df43ac364b5625aa53"
+        },
+        "ledger_2023.parquet": {
+          "rows": 16310,
+          "bytes": 347339,
+          "sha256": "3c22b6f22a17b02579977ebe3cb9b999c54b8bcffa4ec2dc67652693ce9bd821"
+        },
+        "ledger_2024.parquet": {
+          "rows": 13734,
+          "bytes": 330059,
+          "sha256": "c5de18bfd1f2ea62cbdc1108e21336244a4d864da052370be14c5930e89ef3aa"
+        },
+        "ledger_2025.parquet": {
+          "rows": 30819,
+          "bytes": 783954,
+          "sha256": "c691fd4133f88b372287ad5b0afd614e880ec96d1106fc88d78932f5eabfee20"
+        },
+        "ledger_2026.parquet": {
+          "rows": 14329,
+          "bytes": 353291,
+          "sha256": "dbd599d4ced898a43edeef025d0e9474825df4fefeb41a59e1f732e29bfd4b2f"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 39,
+          "bytes": 15780,
+          "sha256": "de3bb05a18e911c139603ff04d9f1930ec75ed0b849de9e5acd6dcbae1728902"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 53,
+          "bytes": 16650,
+          "sha256": "44607dc0c7c9d9f9b7a61e832bb6ea8c54b25edaf5eabf6e0f5e3e2c0a35298a"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 27,
+          "bytes": 14640,
+          "sha256": "1fb146d691d8148bb53267eb7c93b4300b80e2c8effc718e99f1d1e655903f93"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 19,
+          "bytes": 14088,
+          "sha256": "fa38acda02923b6bd10e94b4de4d9db9f120dbef330d51013ad4041c6bab1a53"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 32,
+          "bytes": 15296,
+          "sha256": "3ac5fde77c13a71024a0a0fbfadc27132b0f401169010580e84acb52b037c4b0"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 24,
+          "bytes": 14417,
+          "sha256": "1e6f0b577155d31a6bd8687720ce4ef7567768343fd2d5246c886900f4bd81e3"
+        }
+      },
+      "n_opportunities": 194,
+      "n_trades": 183
+    },
+    "g3_family/o2_p2.0/G3_SHORT": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "7968792c3aa23992808ab5ce5325605f42cca96bfd15e90ecd7210bfe8751797"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 8114978,
+          "sha256": "da0d2ac1cc4d4876e3500e7bccd14e8bbd741c7a14214bb478742f6a19ecb8e5"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7963326,
+          "sha256": "4ecd77758352eddbeb8232a1038fe3b9474b64d6860382e6fd93080d109075dd"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7672518,
+          "sha256": "cff0e59b01f2d9349050245183705c665f9b44d78d90e96664102386a96e63c8"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7694217,
+          "sha256": "202704f79c6e984527680019afb7d33705b4279d4902369cc1a53b8f9561e20a"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7910894,
+          "sha256": "6b0e164d45c9ae791828d1b0fd89952c0625d1da90396f2993a76f8143f1ac3c"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6053700,
+          "sha256": "41046aba09c4f298e5a0e94de5dfceb742259ba4925099d1786b969d14666b1e"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 32471,
+          "bytes": 976728,
+          "sha256": "d1d5460828858ac8d2f0149bf64242971877c070e20cec8c8ac71d713ce6a8a9"
+        },
+        "ledger_2022.parquet": {
+          "rows": 32050,
+          "bytes": 821217,
+          "sha256": "0b270b39cbc058561e8d07bdeb4096fb68c3b3730dcd52736f53c4c27d872261"
+        },
+        "ledger_2023.parquet": {
+          "rows": 16237,
+          "bytes": 346261,
+          "sha256": "1ce091d45f497b506687a056d804219eb1594dff0f4ac49d63773ddce8dba249"
+        },
+        "ledger_2024.parquet": {
+          "rows": 13338,
+          "bytes": 318752,
+          "sha256": "39b93bb4e5c7130823ef3a358806191a072fcfd08efc0032d78992dd2ac06115"
+        },
+        "ledger_2025.parquet": {
+          "rows": 30540,
+          "bytes": 775653,
+          "sha256": "89b692e77d807632b70ef27e11a948dfb27defb67aae66cc1f807a17f14cf606"
+        },
+        "ledger_2026.parquet": {
+          "rows": 13979,
+          "bytes": 345772,
+          "sha256": "bbd336fe103a6b5ad02cc2c1f2c5792ce7dfad23ed60ba3b635faf267a5a7626"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 39,
+          "bytes": 15778,
+          "sha256": "abb32a9d33af8362dc3d65d84dc416e9f9334cf4a6f7e84b118bf87c7a0b7680"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 53,
+          "bytes": 16573,
+          "sha256": "b934d6bb5b305e8593a385632da14afb6f8dbad00260d6767da2e4919cf27519"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 28,
+          "bytes": 14667,
+          "sha256": "dd832960e60430843ae7a4893903f0cf6af244037d6285bb5d077b2b06e09703"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 19,
+          "bytes": 13986,
+          "sha256": "f7ddc9babe2f504e83af68e294afc2812748837172f0548c0a239f7e580e39f9"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 32,
+          "bytes": 15191,
+          "sha256": "388e7bd692df50c03da3216b518319291b7886e6dc7d30ad040450783e05ff9c"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 25,
+          "bytes": 14455,
+          "sha256": "eda47f547aa8ad9eaa63a316f7dfce3c164f6e4e9924c7ed25503b4a85d49899"
+        }
+      },
+      "n_opportunities": 196,
+      "n_trades": 176
+    },
+    "g3_family/o5_p0.5/G3_SHORT": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "80186177c6345c6b87a0d55bcb8e720f1d0e9e7a16dafbe49a3b12dd83be25d5"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 8113478,
+          "sha256": "3d21520ce7486658aa9a212d344314145c95836139777c1134882f3b3f4cfa1a"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7961926,
+          "sha256": "bacd69bb8bb61a81e0da0b063047a9c5865686c6e731b935c37f54b119269060"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7670561,
+          "sha256": "8db14866ca262a222af3171b9ee5103c3ba47ce36149e0a57eaf685c5fc107e8"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7692828,
+          "sha256": "2aa079c2fa073ab807338abac2286fdb0af6f5d3cc0cf10ab67a0be7a8176804"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7907682,
+          "sha256": "776c74c7d5e8cf61559e5158cb4a0389db0569c9eea021bc30201d698d6323c2"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6061439,
+          "sha256": "57611e71e312ac26a4e68d2212d35186338e0ab3f4dc46b25979e261d49cde70"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 32318,
+          "bytes": 973488,
+          "sha256": "32248e98a5bdca549bd7632f7d09249ff2447381c0141020a66e2c110c7dd43a"
+        },
+        "ledger_2022.parquet": {
+          "rows": 31887,
+          "bytes": 824867,
+          "sha256": "043c83ce639d82f78e8c99b6d4c2d9383f742306e9baa7906a716085ce0c7c7b"
+        },
+        "ledger_2023.parquet": {
+          "rows": 15737,
+          "bytes": 338698,
+          "sha256": "7383c45fa642883c7a2f7b1afece8b2a89c652af6a14aed3768cd340f6281258"
+        },
+        "ledger_2024.parquet": {
+          "rows": 13255,
+          "bytes": 316461,
+          "sha256": "d8e9d63e7d544bfd31e16f2956d7428e248e180d3e2c8e716cd3213ae1347f46"
+        },
+        "ledger_2025.parquet": {
+          "rows": 30254,
+          "bytes": 769140,
+          "sha256": "0b6a1539cd3eddee4929ee22ff614de6bd7e7319eae330504585339e4571d334"
+        },
+        "ledger_2026.parquet": {
+          "rows": 14772,
+          "bytes": 362998,
+          "sha256": "09d50b074bbe2392620c63d94e0f84d1b358ea572104ae602d93a911a9008528"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 39,
+          "bytes": 15784,
+          "sha256": "cc445608a51683795e8910b935e649101c2aad79c04dbcce16d8a89e4463f894"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 53,
+          "bytes": 16572,
+          "sha256": "7ca00fc91efdbfecb02e8ca24ec98b9d3727b45f8a68f701dba59b47831ac744"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 29,
+          "bytes": 14680,
+          "sha256": "d12e927169fea33c7e5e8c9ef11813609c17e253bff928cde12d436f67899241"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 19,
+          "bytes": 13956,
+          "sha256": "592d5033f2045b72f19e01b4ecbafecd8ae3121075f71d4a7e5cc21f4db23c79"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 34,
+          "bytes": 15412,
+          "sha256": "8112e7bceca945cd4ed1c6cb8c6f48f0856c2a62ab34e1363b514bf475bdc556"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 23,
+          "bytes": 14419,
+          "sha256": "636df1a328bc30f4b80e837247479e601322b832d35be6ecdc335ff78bb73fde"
+        }
+      },
+      "n_opportunities": 197,
+      "n_trades": 180
+    },
+    "g3_family/o5_p1.0/G3_SHORT": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "c56baada66cdbf9819dc61a2b3e74a1b56d3057cfe8900d94dbe1e3db9a30735"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 8109055,
+          "sha256": "90fe2c047c94a85df592962f5ed03e74b936ecff1009664d6c8a25d28f38f50f"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7956690,
+          "sha256": "02f22ec7c7e299fcacefc02ccd5bd7e84098d79782de5a0306ab24eacc983cb7"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7664181,
+          "sha256": "cb9f819b164d4dfb1726479c32a771baf21343270c32bc60ab10cd3b6b29d1ed"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7692594,
+          "sha256": "f2edc4aa9c9a828ab32d33cc299616ad068a97ff26d5b4f0465b6b39bb734916"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7900708,
+          "sha256": "6daae1670aac157ddc10683636cbe4587b9ab58b3931723ea1d89b3528d4818b"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6055271,
+          "sha256": "1d94e4328a1f146f0c417b4eda6d82c5e6127c0f8ee3eddf27df84474e6de416"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 32083,
+          "bytes": 966448,
+          "sha256": "bb64b86cf6b7ca27822f8523e85eda9e40fefb4085b6ad3b90d3f34e8a813428"
+        },
+        "ledger_2022.parquet": {
+          "rows": 31434,
+          "bytes": 817653,
+          "sha256": "775513d90f155b3ddc517fc04d811ca1c7547ac1279d6cb06f9f5568b7cf8942"
+        },
+        "ledger_2023.parquet": {
+          "rows": 15063,
+          "bytes": 324395,
+          "sha256": "8bbd7231bd22c15e27602c008197a5010e06420f8b2f9bc772288ae7d0d9d588"
+        },
+        "ledger_2024.parquet": {
+          "rows": 13234,
+          "bytes": 316011,
+          "sha256": "786024d1be6c9d7ef10134dc91b6fecbea8180cc57053b01579f783ed57fc0d3"
+        },
+        "ledger_2025.parquet": {
+          "rows": 29789,
+          "bytes": 756681,
+          "sha256": "3eebe97845757c05028c54fc279f0121fa3257f5247ca12811fc8d1087fb8263"
+        },
+        "ledger_2026.parquet": {
+          "rows": 14250,
+          "bytes": 350650,
+          "sha256": "ae58e44a0d1ae5d8543cccb5542f8c4faa2e32665fa86475e38a7c4ed07a81db"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 40,
+          "bytes": 15923,
+          "sha256": "1f9fd499a318234af1dc82f234660e6d65c779fd7ecc0e4c944a0616997e5fea"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 54,
+          "bytes": 16543,
+          "sha256": "ee21c0d385382374efeb4dd6cdb0423472f3e8ee72e6bf7c22834c45e061aa53"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 31,
+          "bytes": 14679,
+          "sha256": "db264c32aa011b574965ffe95da77ad32a36961c8152ab63340aff5ad6f4fb7a"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 19,
+          "bytes": 13956,
+          "sha256": "2a961a816b1331825cb1d179578529c1415eacc2c1b188dd10413f74dcb3976b"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 35,
+          "bytes": 15401,
+          "sha256": "6564634e392b2b94e6ad84ad36aa8e2ebb658c07268dfc2686f2b502d67c8ddf"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 23,
+          "bytes": 14321,
+          "sha256": "595d4c14c066241f6c7e470e854056a566cd3f5047f0553ac5ed60d28727f15e"
+        }
+      },
+      "n_opportunities": 202,
+      "n_trades": 175
+    },
+    "g3_family/o5_p2.0/G3_SHORT": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "18178ba35b2923a34cff283a9cad76488f937a143069e8e26386f0d0d52611bb"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 8107726,
+          "sha256": "882b73c4bdb1b7cc31f9eadd07478dec9df230537b91f0538007b1831d727f8e"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7958094,
+          "sha256": "3af987f4b552f8b8957c8df4ff93a9434a38400ee196b3b079eead9c4a9f8cb1"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7660611,
+          "sha256": "4a094f664e688cab20cb30f4c3ea190eff91062ff93424eab963ac1ba46b7d91"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7689554,
+          "sha256": "5595f72e6c86a7557aeec12b111f909e8baf05f888488b03c118fc4df6410cc0"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7894738,
+          "sha256": "11791981f08a22530ad1856590713074b2d9a91712beb8b7a06e80c18a7ba649"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6047219,
+          "sha256": "fe13e1679f2e374e6c98be19222cd8a6c3a8f3321ea7c7460eff099ea4705157"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 32183,
+          "bytes": 966120,
+          "sha256": "f4fd9143d8a78f1cfef125388bc10a982c47fa70ebcda5030fe327fbca1da6dc"
+        },
+        "ledger_2022.parquet": {
+          "rows": 31605,
+          "bytes": 821071,
+          "sha256": "3d6250fd858ad5018a4a9799b3252442383fd53408d21a09b5c9c30e4f142068"
+        },
+        "ledger_2023.parquet": {
+          "rows": 14847,
+          "bytes": 318531,
+          "sha256": "e5d815b7668cfe61744ddfbb02e062111e7a7260cef43119d46dbcd18d37c75b"
+        },
+        "ledger_2024.parquet": {
+          "rows": 13070,
+          "bytes": 311081,
+          "sha256": "20edc6642600388f02408fab9fa93a7d45c50ff86d7f4b59523eb60a64ddfad2"
+        },
+        "ledger_2025.parquet": {
+          "rows": 29301,
+          "bytes": 745313,
+          "sha256": "79b28f5c32820566b7a6f4b2afdd03300a2515fa7d8c3312e30d05ec1ef2ce6e"
+        },
+        "ledger_2026.parquet": {
+          "rows": 13690,
+          "bytes": 336205,
+          "sha256": "056af39b83aee1b2e849664d33dc60409acf1aab1c9b60be1700437f3e0fb029"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 40,
+          "bytes": 15921,
+          "sha256": "59b14fdf41b18f052eead0ebf600dbf8a2bc29dc78381d826263a49671387e6f"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 54,
+          "bytes": 16551,
+          "sha256": "2bb27764d92602b2d2fff50fd65c931f8af4e5f2daa7edf76f4a56188235e53f"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 31,
+          "bytes": 14621,
+          "sha256": "03df13c50babb15264879f26d9bc4b30885a8019dd6ca822e369ae97552ff295"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 19,
+          "bytes": 13914,
+          "sha256": "de7422ca6ffcb26e11144651877e7fba49529fe530b0530bdfb41bcd5783208b"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 38,
+          "bytes": 15471,
+          "sha256": "46aa98a96f9b126fcc1694aaa98586ec2a559d705f1e1802c9d1aaba21421f20"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 25,
+          "bytes": 14389,
+          "sha256": "e3031f1bb5d5fb36bb6ab53df75af08b3d0a600de31ece1e7da432460d77e068"
+        }
+      },
+      "n_opportunities": 207,
+      "n_trades": 172
+    },
+    "g3_family/o2_p0.5/LBR_FUND": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "400cebfbf576dfdb94ae3104e7e9238ea5036ad63064049f69ca8631316103f9"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 7674630,
+          "sha256": "0d985058938384ce92dd880dd9fee93aeea4829fb0be85bf916f809702d11e77"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7609428,
+          "sha256": "d7bc8bd708988e9dd10577aa3cf67b8013f571eb93dbf6eed2a8e492e1c51e56"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7690346,
+          "sha256": "454a076663f9fa746c96311329b11c78c4c87c8463cfc79748a31f6a1f64ccfd"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7749291,
+          "sha256": "fddc8362f755d62630d15f2ed6f6289ec72c7d553b0c6da7d57d0f13145a7ff4"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7758774,
+          "sha256": "cede869db65f9c6e1212f71f7d37cfd2aa3ee1925b90f321cc64ccb8695f5090"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6134617,
+          "sha256": "5307bbd45aeee2eddae2712136e759bfcc8a13135b101b2cb07122d3b57ea8bc"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 8393,
+          "bytes": 256927,
+          "sha256": "a99002f1b01e721241c68c9b38bf21858c3422425c3b004ab443145af895e9a6"
+        },
+        "ledger_2022.parquet": {
+          "rows": 8240,
+          "bytes": 195072,
+          "sha256": "bc6a5a640aa37d4c9ce9eb82d987f5562517d48b131f1d97821703a004b780be"
+        },
+        "ledger_2023.parquet": {
+          "rows": 16102,
+          "bytes": 362486,
+          "sha256": "b749d21b99fec45bddf9d45ce00d4ea2d9157c93ba35f93d73ebccd4074f453a"
+        },
+        "ledger_2024.parquet": {
+          "rows": 14347,
+          "bytes": 384485,
+          "sha256": "bf7bd0eeb82a0449b4671496364c0cb1b618b92c4b0c2dedba410d9f11cd29a2"
+        },
+        "ledger_2025.parquet": {
+          "rows": 16966,
+          "bytes": 467976,
+          "sha256": "81bd89c47f66df5c51db2d7e18c0b109b22d39e529b00f16a6b07d144c8fec3c"
+        },
+        "ledger_2026.parquet": {
+          "rows": 17841,
+          "bytes": 474254,
+          "sha256": "96464755fc1f3ed258cc27a7ec4c8199fe38c5154bdb1e8ac82170dfc6f86362"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 19,
+          "bytes": 14170,
+          "sha256": "9d4d88d8090b20eea0c859a529340bc7b62075e80c0c2a249c80922b33f88abb"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 17,
+          "bytes": 13837,
+          "sha256": "6c78d2eb766f5063ea577cefcdeaa823d46f046f2b92d018c710b10d5f626b18"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 39,
+          "bytes": 15905,
+          "sha256": "4e13beccabe98e0b1b6cf7fba9888ed8d478880780ca2e33b5e314c90632688d"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 34,
+          "bytes": 15736,
+          "sha256": "e20386984b5d91038a1aa76e6b78c5a8c1162272f00b61a386488bf76958bb47"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 39,
+          "bytes": 16113,
+          "sha256": "a9ec66dd730c3d1106bee4b7cc7c8a7afc666144b494d2968ba6814c891a113b"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 40,
+          "bytes": 16124,
+          "sha256": "29d8930d6f8914ae7b9c36f96a631decb4da0726265591adf8ae2eff433d3535"
+        }
+      },
+      "n_opportunities": 188,
+      "n_trades": 175
+    },
+    "g3_family/o2_p1.0/LBR_FUND": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "f953e186e9a5718c082fa3f72bacd16f4b4c273ed31c60a2e82d99acc08afc24"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 7674347,
+          "sha256": "890833f91e8025b096e044984312cc06a962b4862f8e1e371438f7cc19ac7629"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7609523,
+          "sha256": "ee40a51c3e36b0676a3f67310251c646bfb58b2993f9573faab7e15e17665be2"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7679200,
+          "sha256": "d99bc53f13a797ed0bbe63143fe1d1e2d73e56c123b73b6495ea355914950812"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7746006,
+          "sha256": "816f6b48903c2292a89d7ee44005398d39216f89d6f8f20dc7a32e820923bc52"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7752678,
+          "sha256": "767f68bdae0b010d60e72987e5bffb56aec9f6d5063ad5c0a219cfcb48dd6654"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6126008,
+          "sha256": "9f2c9866f4fef9197690b9a6b41e82a45f21b7f715183bd46aaabef3a9c4fb52"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 8379,
+          "bytes": 256512,
+          "sha256": "9139e9e8c225e2ec43f60e365919405477c796009963bef54eadd2d0d771f9df"
+        },
+        "ledger_2022.parquet": {
+          "rows": 8254,
+          "bytes": 195328,
+          "sha256": "0f51bdfbc4898f181a761643dd3e24e5341b2dc55d8548483107058b789657d4"
+        },
+        "ledger_2023.parquet": {
+          "rows": 14795,
+          "bytes": 336178,
+          "sha256": "2dacbc1ad314d66c46ad746d80e8c7f6254f42382a194dd98a40b92e68e17259"
+        },
+        "ledger_2024.parquet": {
+          "rows": 14039,
+          "bytes": 377537,
+          "sha256": "4f2799026388f602bf230fec64b505d14c16dc36bb4095d28a67b2f2ff76f47c"
+        },
+        "ledger_2025.parquet": {
+          "rows": 16609,
+          "bytes": 457934,
+          "sha256": "f78c3d47a1b04bb14f3b99c0ebbc767f0fd3aa75f6fa0a6a02dd39914626d08d"
+        },
+        "ledger_2026.parquet": {
+          "rows": 17230,
+          "bytes": 458595,
+          "sha256": "cbe91a5fd5a2575d9ca178421b181848b7dfebf3798616b441abd1563ece724b"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 19,
+          "bytes": 14170,
+          "sha256": "b8111cbd7c1107f3b36e2420493820e918ed90507af7d37e9df07d692e5614be"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 17,
+          "bytes": 13837,
+          "sha256": "c7fa422a526f0e4f1f9b1dce0f8bd2c0ceb6035462f3aca5adf68e46d078bbdb"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 42,
+          "bytes": 15848,
+          "sha256": "c82ad3a677fd5c76270b8c545f8c8da228c1dd0569bc372040ea27c37250d51e"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 35,
+          "bytes": 15767,
+          "sha256": "b3f94b9392fa7a7576fb4b391cd29f95f2de1fffb9304fddcfa0bfc23906fd64"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 40,
+          "bytes": 16150,
+          "sha256": "4220e45385a1ab4a5411432f7d97919684eba54b13b15a09e21bd8f0aa259b5f"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 42,
+          "bytes": 16243,
+          "sha256": "52494f5d8fe10a68c64215d84497ca211e5e89514099546e4dc4e23aef7b8ab4"
+        }
+      },
+      "n_opportunities": 195,
+      "n_trades": 169
+    },
+    "g3_family/o2_p2.0/LBR_FUND": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "6a9c87d7cadc68a07de2bbfed3d68e38fc9beef3e5d17f382841ce71338797d5"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 7669874,
+          "sha256": "5f6548d3eb41741afbdcf5809b79edee85bddaa2d1088498dd622e45680882d7"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7609193,
+          "sha256": "32c8b51c34f2dca53775bf595091ede221a19e3fd7c9cf471434847500fc3cbc"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7670451,
+          "sha256": "9ab26614a3eaec9793ececae63cf46cf4643fafe26f200c9da15dd2f6a00e2d8"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7737210,
+          "sha256": "9727d14458fb244001e44a2e1bccf7e82d051c6db477b35d9aac8ee02dd9c9ae"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7745107,
+          "sha256": "75704198d7dbccac97ffa905e425a21c66f048474523dd8fac67d5f7def08829"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6112839,
+          "sha256": "1103846aece8c8bde85f3d1ab17b056eede627bbd36184a86ff448df11836ef5"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 8139,
+          "bytes": 245932,
+          "sha256": "020935e6340970e2cec7c76dd939cb88f213d089ca4209761cf05a13a6c542c9"
+        },
+        "ledger_2022.parquet": {
+          "rows": 8242,
+          "bytes": 194876,
+          "sha256": "7a1b832e94c5315f2da4909cb78b215c6006073b58d5e0886e7851d94afca111"
+        },
+        "ledger_2023.parquet": {
+          "rows": 14331,
+          "bytes": 322225,
+          "sha256": "e4782b4151c02074e81f9e1c4d1fa2688cfb9f6f48040ffef40d47192c783539"
+        },
+        "ledger_2024.parquet": {
+          "rows": 13367,
+          "bytes": 360931,
+          "sha256": "e136c7125615dc34a5614b904fa92108fe09ae257d1e363eb0be8c9bf076dc32"
+        },
+        "ledger_2025.parquet": {
+          "rows": 15997,
+          "bytes": 440065,
+          "sha256": "c7758d6adb39e44d5a9fa9b5eda551dd68f19eed18907c6c292f8917e867cf68"
+        },
+        "ledger_2026.parquet": {
+          "rows": 16220,
+          "bytes": 430838,
+          "sha256": "6ae03576b4294c7f13ef341c7b10a2ecdc61fb607b76b9f9f0f23433c1d4a7cd"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 20,
+          "bytes": 14208,
+          "sha256": "18f3f6d289bb47a49c3d80b832532726c15536d7e4e8a8c7ab97b2df310d7479"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 17,
+          "bytes": 13837,
+          "sha256": "fb89b5760f26a68498ee21540ae2958ac119a05809b4d583887f861910a68d8d"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 45,
+          "bytes": 15784,
+          "sha256": "598a6c3525085fb167407fcccbee4fb7df489b807390180b1b4f860c8ec3c95f"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 38,
+          "bytes": 15826,
+          "sha256": "71741dd33f6ce7722649b4d48a2c7da1b1122991f9a3883427cad72b4b189027"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 43,
+          "bytes": 16304,
+          "sha256": "1eca5b578acdf17b4245825147cc30a1bf3975bf8120e00e7bf6ea80bcfd1548"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 44,
+          "bytes": 16218,
+          "sha256": "1da4d083dcbd02cbe41fe175b9bccb1b7305faa3676dc0ffea3062a67308fb8d"
+        }
+      },
+      "n_opportunities": 207,
+      "n_trades": 164
+    },
+    "g3_family/o5_p0.5/LBR_FUND": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "7bdb25895ab5118177dbf4a874026f90f411b050cd0ee43decb76120856d0e98"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 7669623,
+          "sha256": "9f179ca42c7816364c7ee7abd2f711286b62666c0e72e727ac3f818a7d49de76"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7608882,
+          "sha256": "2ea5ece13aa6e1989b50034580d677bb1ff4003c8fe014016f3f631eff2b99c2"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7680383,
+          "sha256": "893c9e5a33de039d0004c389e30aafcd0a4b7ec9884ce2ae2581777dddd2a1bd"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7738515,
+          "sha256": "9ae9942c98b0fbe3be1e1ecf3b1db36f8494fc9ed76f5011db882c1e0ca1413a"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7736540,
+          "sha256": "267bd7be154c11dabbe4b6b11afcaad7ee1c45377d2f61624b11bd22f62d86be"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6124830,
+          "sha256": "d35fbd06e008b23b577035533367623cc5992070990ec4815637afc0dd0aa463"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 8125,
+          "bytes": 245534,
+          "sha256": "1dd083d087141dc30c03d602d3a5101f80cb9c8d1c336d5c0d6487f1c5eb50ec"
+        },
+        "ledger_2022.parquet": {
+          "rows": 8166,
+          "bytes": 192208,
+          "sha256": "25ca0eb10094e09c813cf3a91b0a51c61d8c4e18cdd804d666228244d09cbd41"
+        },
+        "ledger_2023.parquet": {
+          "rows": 14976,
+          "bytes": 339657,
+          "sha256": "92f8cfcaf9db59cd11c8305a33bf75cad925f45e765ccd91bed38d8702cdd6e0"
+        },
+        "ledger_2024.parquet": {
+          "rows": 13530,
+          "bytes": 364432,
+          "sha256": "98ee265e3ffc7e81db76803e55e3852e649d8e59c0279f337170d08687ff48c1"
+        },
+        "ledger_2025.parquet": {
+          "rows": 15466,
+          "bytes": 425735,
+          "sha256": "bd6c68cb90c5a7c0fed107ce1998a8eb86d61a7413d7bde855693aa18f131de4"
+        },
+        "ledger_2026.parquet": {
+          "rows": 17188,
+          "bytes": 457021,
+          "sha256": "337a665f31668d3bc90b1c8f223ccf97a0ce3704d75ead49cbf9d8bd9f84ff7b"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 20,
+          "bytes": 14197,
+          "sha256": "3a832810f5855f5b2d63239eec979cde78c3583f8ff6cb556cea06b8306391d0"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 17,
+          "bytes": 13836,
+          "sha256": "413b3550cf4b19539ecd6b8b8e9b76b2332f26bc5931a6848ad5925916c88a53"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 41,
+          "bytes": 15928,
+          "sha256": "968e54b2a05bd965a2ae1790fd2cdfb6f1315242e2ad9c110ff6dc3aaeea9859"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 37,
+          "bytes": 15805,
+          "sha256": "6221f97c6c4f354b917d0a9475842e738c65498e04c7d99639630840be2e8c54"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 43,
+          "bytes": 16237,
+          "sha256": "3597bce200d05cac55062c547adb860565bb7a1ba45d79864b1a6026580f6d67"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 41,
+          "bytes": 16191,
+          "sha256": "3a536516a84ae78fb774c4f56229cf83014b9d3444e5e0ee25231957213b1a97"
+        }
+      },
+      "n_opportunities": 199,
+      "n_trades": 170
+    },
+    "g3_family/o5_p1.0/LBR_FUND": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "8c8ee0b7c9b743eb71887193f853bb9eff2b38824868ea773f57c57db0434285"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 7669623,
+          "sha256": "c4b6588dac11f0b8503229a20f8212a1c94a3beef933e0e048d01971dc95c582"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7608970,
+          "sha256": "9483c73e46ca9446523fecdf41368b33a1e92fdd31a6dc5c7e5faaae4470f69c"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7674337,
+          "sha256": "961239963ceea2b8c673282e50d5cf1b63737a2774ef67e46bcfd5da345c9d00"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7735234,
+          "sha256": "9489e523555a89025a1e864140920eecf94de28772a4ab465624b2307d93e023"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7730703,
+          "sha256": "825b6ace876643d29ee537a6ea53c205b812911a64f089604017efe59286120b"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6120132,
+          "sha256": "001382ae2e0bb8c1356cfceda2198a279da7ae0eda585a37e456398096ea6493"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 8125,
+          "bytes": 245534,
+          "sha256": "1dd083d087141dc30c03d602d3a5101f80cb9c8d1c336d5c0d6487f1c5eb50ec"
+        },
+        "ledger_2022.parquet": {
+          "rows": 8180,
+          "bytes": 192451,
+          "sha256": "d63963f8808d422f942e87c7962c989307bfe68501dd2a3deae0a64eb035a60f"
+        },
+        "ledger_2023.parquet": {
+          "rows": 14442,
+          "bytes": 327331,
+          "sha256": "6e64ea7009a1ee7860ad602a638896398cff49676d554c0acb70bb9cce3a1b1c"
+        },
+        "ledger_2024.parquet": {
+          "rows": 13247,
+          "bytes": 357742,
+          "sha256": "a5f72826bcacd806abf838d07b101db82940cd93e2805a51e6057f04c959d33b"
+        },
+        "ledger_2025.parquet": {
+          "rows": 15089,
+          "bytes": 415557,
+          "sha256": "dc132ed0b42e31e35c7d1aef9b306b322241bcf545796ce959cdfc3c1183ee72"
+        },
+        "ledger_2026.parquet": {
+          "rows": 16726,
+          "bytes": 447038,
+          "sha256": "5b15990da45eeb1b5fce5e404797d8a4e8f63e02e7e7983b3fde78dd202c8018"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 20,
+          "bytes": 14197,
+          "sha256": "3a832810f5855f5b2d63239eec979cde78c3583f8ff6cb556cea06b8306391d0"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 17,
+          "bytes": 13836,
+          "sha256": "a1911f9c9a35e70ae1463ada0aec7d20a7a4ec33a4a95f767cef0100ec9f1c8c"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 43,
+          "bytes": 15832,
+          "sha256": "e9b2612d06391142d9a470823c86c102d7b52b78d232ae00c3e47806fe6f89a2"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 38,
+          "bytes": 15815,
+          "sha256": "36f7a2e85574fc0df7dd04b9a7faaf9cbb9cd41e5a05566ed8f778a1882dd1e5"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 44,
+          "bytes": 16193,
+          "sha256": "831dda7036b7f20603fe6641bbae3a947df79af52b0e8e6adbd9a43aefb0e535"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 42,
+          "bytes": 16208,
+          "sha256": "066a16be06d30c93bab5d56e0d6875fc050009b15745afffa99ee2d32b14234b"
+        }
+      },
+      "n_opportunities": 204,
+      "n_trades": 166
+    },
+    "g3_family/o5_p2.0/LBR_FUND": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7532096,
+          "sha256": "920735e744d25babe641f2a6f556dcff030a116ea50c26b46af5be913d5c2ac0"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 7669662,
+          "sha256": "604f26a227d6b6897fd85267114dbff145ddc8365d9ae013c6148086abdfa6cc"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7609471,
+          "sha256": "0334e077edd3e0f47c49959ea6c0687027d4d9691c29a6a3cddf5214a989c02f"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 7660808,
+          "sha256": "f69e95f2dc5a9f45bfb31a2365fcada377f4132443113876d12d25675bece7a4"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 7728217,
+          "sha256": "a8c344b95aa6f83fd2c68e1a76ee9b05c09bbf9e0f83c17fd38ea5746bc54233"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 7722801,
+          "sha256": "3d602926f54dc1a338424915668c975b5099321668a72490a8a46f60ef121386"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 6104875,
+          "sha256": "7b6d39cd74965eedbe7a003c9746c14cc7e1e9ee6c5c648b99ae65da9f9bbcfe"
+        }
+      },
+      "ledger": {
+        "ledger_2021.parquet": {
+          "rows": 8123,
+          "bytes": 245503,
+          "sha256": "3ef3d13440ef1a7b17164a63964f330554522912f819d29ba385ab97256a6366"
+        },
+        "ledger_2022.parquet": {
+          "rows": 8249,
+          "bytes": 195245,
+          "sha256": "b66b0aeb4034921585060fab3356533d66c2378d06969325034ae52ae63be96f"
+        },
+        "ledger_2023.parquet": {
+          "rows": 13475,
+          "bytes": 302932,
+          "sha256": "1f7a1a56ecbc37f394e96e18bb383df2152933e5aa5a78e968178d06a38c6107"
+        },
+        "ledger_2024.parquet": {
+          "rows": 12803,
+          "bytes": 345621,
+          "sha256": "cdac576848a2c0abcd6393bd556677ba1fde1775e2c98c7158ea1341e44d4d91"
+        },
+        "ledger_2025.parquet": {
+          "rows": 14459,
+          "bytes": 400347,
+          "sha256": "ef057a5608325b43095eefc41e9b1507d9390d2d00e36997ffc6027736c3d495"
+        },
+        "ledger_2026.parquet": {
+          "rows": 15571,
+          "bytes": 415283,
+          "sha256": "f72d5bcdc419c39cd0fbaa581635353c92023c78b4cf0d79e53de6cf6c8af479"
+        }
+      },
+      "opportunities": {
+        "opportunities_2021.parquet": {
+          "rows": 20,
+          "bytes": 14209,
+          "sha256": "6266cf04b3c4a34bac4ea850a48f964eafa65cfa0c0263acac3eacd6fc759411"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 17,
+          "bytes": 13836,
+          "sha256": "d65e3b29fa48ba0c6fb1fc9df664d705023e013eb89c5b015f6a0f6757d39131"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 48,
+          "bytes": 15771,
+          "sha256": "6f483493166c744fd943d050008f7323dcedeb0852a96135466e63cf5cc37032"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 39,
+          "bytes": 15787,
+          "sha256": "01a418106638569500f53609b3b720fe0dc8e7443387cc8907b65718b6c845aa"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 45,
+          "bytes": 16158,
+          "sha256": "653679a4b5b6403ba9f0cc879360d8c12d736394bd54a5b1e0a0ce8cb6f89f51"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 48,
+          "bytes": 16371,
+          "sha256": "e8050bead25e9d0ff08c08f92efbe4700c5599c8fd66766faa4b9e6f6f3405ee"
+        }
+      },
+      "n_opportunities": 217,
+      "n_trades": 161
+    },
+    "common/market": {
+      "market_2020.parquet": {
+        "rows": 527040,
+        "bytes": 11276449,
+        "sha256": "b3cd8c989e333d46481efe4af67151dfd0c381a7b821960478bf6c97931f4cc1"
+      },
+      "market_2021.parquet": {
+        "rows": 525600,
+        "bytes": 12288706,
+        "sha256": "5ec90c487197a5e1d4c88de834c1f6b0df70282fbe98dcc15b623213b31da79d"
+      },
+      "market_2022.parquet": {
+        "rows": 525600,
+        "bytes": 10518103,
+        "sha256": "eb200c37a20aeb7f77e84f92750668e7efc106e2b61967b0e279d3d4470031c2"
+      },
+      "market_2023.parquet": {
+        "rows": 525600,
+        "bytes": 9545877,
+        "sha256": "80760e86de202bb5e46ddb8f677fa2d036b6a0344fced03dfb492ca9479205a7"
+      },
+      "market_2024.parquet": {
+        "rows": 527040,
+        "bytes": 10427880,
+        "sha256": "e8fea8a7f8d6c1a288d01c839daa0ea242cf0da17f60c6a857a1904fb1fd0be4"
+      },
+      "market_2025.parquet": {
+        "rows": 525600,
+        "bytes": 10507146,
+        "sha256": "cbad4e6ea8a454ce8a3ba1910252bfc8ce080770960981d77faeea3ac4f8a074"
+      },
+      "market_2026.parquet": {
+        "rows": 403200,
+        "bytes": 8215359,
+        "sha256": "80a10bc382d420b17df8dd7cc2a542d742c52fe5b3ec62401d219db8fcc3c62e"
+      }
+    },
+    "common/funding_g3": {
+      "funding_g3_2020.parquet": {
+        "rows": 1098,
+        "bytes": 15984,
+        "sha256": "a09fa4b11800603806fb2d18fef63a4f278879098b7f9fef02c09aca1b210bb0"
+      },
+      "funding_g3_2021.parquet": {
+        "rows": 1095,
+        "bytes": 16891,
+        "sha256": "f73bb4f38c23d5744c5f03b1bc6bb2b41174645d555c12675e18813f72ab4e64"
+      },
+      "funding_g3_2022.parquet": {
+        "rows": 1095,
+        "bytes": 17991,
+        "sha256": "6e692aa14661ad17396bf6138a8e00f4ae1f6fdc5a5c246751792bb260df41a2"
+      },
+      "funding_g3_2023.parquet": {
+        "rows": 1095,
+        "bytes": 16735,
+        "sha256": "96d1152182bc28a5318c78633b954e8a161ddf7d4c41292f9402c85e78ff3117"
+      },
+      "funding_g3_2024.parquet": {
+        "rows": 1098,
+        "bytes": 16471,
+        "sha256": "25119465be85d7530f64a015caf8b977021c65c19e1db8989c9a21581e16ea50"
+      },
+      "funding_g3_2025.parquet": {
+        "rows": 1095,
+        "bytes": 18553,
+        "sha256": "f1155a4073488dfb382735d0cab46f9303188138e4c5f42042e9dd3908059322"
+      },
+      "funding_g3_2026.parquet": {
+        "rows": 840,
+        "bytes": 15395,
+        "sha256": "d03f414be4d66831309167676777cfb4810694cf1e07f9393f80dd3cd9d56a9b"
+      }
+    },
+    "common/C1v2": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 14290206,
+          "sha256": "225b2432f2966ac16876c7e27032ea0f04facd868ffabb2476534308f818472c"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 12698351,
+          "sha256": "8d4459be556cd29cb236aa3a43862b61026ce430cca6e9f61018beae953dabeb"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 11597323,
+          "sha256": "c9f415e4e127c1c3aa2af7c6d42fca683e88ed2b2bfdc2cd6d61e54cda08373a"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 11578833,
+          "sha256": "a42507627aece02faad2a9bb4c4460f61c2cfeba8377f29832e25505a65a44d3"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 11709231,
+          "sha256": "691db4e25504a09eb8f31635591414d31ef04b75a06351d86a68e535f78329a8"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 11996887,
+          "sha256": "e5cfc15ec6f8258540ddbe6adb7a92351e5d1199fd9f95f91e752f0507fc7429"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 9041853,
+          "sha256": "000f2599a9d4edfc3f17b2d692d46e65b3263ce3b6a55ecf6f37722f0a6a09f1"
+        }
+      },
+      "ledger": {
+        "ledger_2020.parquet": {
+          "rows": 420094,
+          "bytes": 10463147,
+          "sha256": "1107e1754f54bfaeed14998c17e48b82b60f257ee124fd4470c0df52263a00a1"
+        },
+        "ledger_2021.parquet": {
+          "rows": 310935,
+          "bytes": 8110697,
+          "sha256": "65a3d2da997b088871b1715fe74749a61f3ab0c62b08484a679fcbb8537ad16d"
+        },
+        "ledger_2022.parquet": {
+          "rows": 240447,
+          "bytes": 6478318,
+          "sha256": "bf8b45ece5b0d6a357799029ba5312ac972448df67e8a93be4915ce9e713f35e"
+        },
+        "ledger_2023.parquet": {
+          "rows": 243319,
+          "bytes": 6478736,
+          "sha256": "f0b933066d70357e305e17f20067b082fda561cdad629de21bef6339865465a8"
+        },
+        "ledger_2024.parquet": {
+          "rows": 247251,
+          "bytes": 6615087,
+          "sha256": "043ea464f3e42e1498379b0c8664bd964dad4bb00c9445e39cf108c449e259de"
+        },
+        "ledger_2025.parquet": {
+          "rows": 271131,
+          "bytes": 7128066,
+          "sha256": "83847b2c1b2d189bd1d3e997547db9acdd6aaf52f81900317432b0d5c180e22e"
+        },
+        "ledger_2026.parquet": {
+          "rows": 181092,
+          "bytes": 5103892,
+          "sha256": "6543346f8ed71cb6401aa01f078ebeea122b020d9bdadc15d9ff18d5838d3643"
+        }
+      },
+      "opportunities": {
+        "opportunities_2020.parquet": {
+          "rows": 300,
+          "bytes": 34418,
+          "sha256": "6a97b259c56dc7da59ab90b6515f5b612cccce6a542fcbb71f12add233cc26d1"
+        },
+        "opportunities_2021.parquet": {
+          "rows": 223,
+          "bytes": 29164,
+          "sha256": "11ce9b0a27ce2ec6b27ae5bb014fbb8c379f4913f903854c39bd3a8080967c88"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 173,
+          "bytes": 25468,
+          "sha256": "2511a15f61768664091ef07f6688f073de3f9fe9d4ca9fbeb0d5a18b4fe085be"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 180,
+          "bytes": 25766,
+          "sha256": "99a4b431621512b3b06c31ab404fc7e4caa6102e6947c33bf30d2f578fb590e0"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 181,
+          "bytes": 25696,
+          "sha256": "94448adea621a407d0104794f83caa814f0a2f4899b11653e4aad584fb30ce3e"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 195,
+          "bytes": 27070,
+          "sha256": "0ea2839bda7ad44406f196a91f4905acf34bb22d0cbab8984a021ef2060611b2"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 132,
+          "bytes": 22551,
+          "sha256": "d2ca330e801f012e54114184ebf73080352eadc7b70097ad8c24ff1406d3f6d8"
+        }
+      },
+      "n_opportunities": 1384
+    },
+    "common/C4v2": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 14613412,
+          "sha256": "e3b4deda85df75a9285d72d2ab8a3b61a26dc897f75ac35427c1277343cb4245"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 12884786,
+          "sha256": "4ee137f6f10f392e2860b99973fc2f2c00380e9175da052523de59e5979bd10c"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 12310708,
+          "sha256": "94d4d39b7e1e6c1719898e9f8c328dd7ea9c53adefe7a6609de0450854d0a317"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 12917760,
+          "sha256": "7d89af8f9a04c6fa20b25ea8021c7829945358a76d7686fdddc1f5fc80d9f773"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 12991823,
+          "sha256": "f6bbd2ce9a667d0f8b6e42d125ef254670ed7a7e84915b3891f6549e39d3949c"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 12434425,
+          "sha256": "e096e6e531fa2beafb59e84e27f029edb6502006c0fdb3f608bb94b09d80cebc"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 10109974,
+          "sha256": "2029c8b73e78f0a446536742ff589beb1dcec7cc27cbdc9073c56499cd575817"
+        }
+      },
+      "ledger": {
+        "ledger_2020.parquet": {
+          "rows": 441898,
+          "bytes": 10903193,
+          "sha256": "ca990464adfc02d5098bbc3c126822209399437d23247daeb13327ee685044f1"
+        },
+        "ledger_2021.parquet": {
+          "rows": 322962,
+          "bytes": 8386221,
+          "sha256": "d1aecd75bf36a48900c516ff6911614649d67867509d2011901b5edfa83393b9"
+        },
+        "ledger_2022.parquet": {
+          "rows": 289914,
+          "bytes": 7569452,
+          "sha256": "cac3a1535c45aa66ed0c2f0d96c488b023c85217868ca47642991466803c7e52"
+        },
+        "ledger_2023.parquet": {
+          "rows": 336200,
+          "bytes": 8458990,
+          "sha256": "201b591f3f0985696fee522623e059390ad3aea0fcdbf4757c4e4fe2d225f332"
+        },
+        "ledger_2024.parquet": {
+          "rows": 333195,
+          "bytes": 8447118,
+          "sha256": "84cf86be5b60360bed143c0ec56a7fc1e31bcc614343cddfb0b5940e8bdd2233"
+        },
+        "ledger_2025.parquet": {
+          "rows": 300924,
+          "bytes": 7795508,
+          "sha256": "3c636fa209dd7e0e0e6a01cc740112e1ca732ea2909cb05f49f8a82a9ea2acc3"
+        },
+        "ledger_2026.parquet": {
+          "rows": 255213,
+          "bytes": 6634441,
+          "sha256": "31fdd3fdf13b73a7c3c39f7bae68ed53d1ba3a4c9c3023749b7961ec6133be1c"
+        }
+      },
+      "opportunities": {
+        "opportunities_2020.parquet": {
+          "rows": 599,
+          "bytes": 56270,
+          "sha256": "a4193d43b47bceea8c8d45977a52d550d2d70f45b96211014eeb6445ba025bf3"
+        },
+        "opportunities_2021.parquet": {
+          "rows": 435,
+          "bytes": 44687,
+          "sha256": "c4cadca8ff975c8aaab030b7bd89231da82b7e47d9c7de0ab77b85a52fa10fa2"
+        },
+        "opportunities_2022.parquet": {
+          "rows": 381,
+          "bytes": 40620,
+          "sha256": "1b10df54dfdb580c077f816f024c120bb6ef7b0299f09106a758e2057342fdd2"
+        },
+        "opportunities_2023.parquet": {
+          "rows": 440,
+          "bytes": 44460,
+          "sha256": "b03a5f88b96d14a63cc4cf8debd6511ca150393d821bb25167c5ce54bab80ce6"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 435,
+          "bytes": 44315,
+          "sha256": "5f7d67b7866bad4631822d9d5bb4f54406067bce37fd65bb7d2d998ea1e341d9"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 384,
+          "bytes": 40985,
+          "sha256": "c9d788680fe4d9db5e7919456a4b1351fef85e2f3c8ecc607e1a82d2b40ce588"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 333,
+          "bytes": 37392,
+          "sha256": "3ee2984e47e1a1dc1e6e33a4eed359ae460904d3dc0a210ee0bde6407220ac22"
+        }
+      },
+      "n_opportunities": 3007
+    },
+    "common/funding_c": {
+      "funding_c_2020.parquet": {
+        "rows": 1098,
+        "bytes": 15527,
+        "sha256": "7d830e8a8a6142b496e4297ea37fd2106816b3bca4147b25da18b4d3647d9cd9"
+      },
+      "funding_c_2021.parquet": {
+        "rows": 1095,
+        "bytes": 16121,
+        "sha256": "90b999f4012fdccd93597874d67dd281d836481534caa71deb79c3655ad90e04"
+      },
+      "funding_c_2022.parquet": {
+        "rows": 1095,
+        "bytes": 17193,
+        "sha256": "b5d2c30c5897895a3b193b81484cce2e640bd67803248cba607e0f59db9096d4"
+      },
+      "funding_c_2023.parquet": {
+        "rows": 1095,
+        "bytes": 16238,
+        "sha256": "7aeb1f820b62c57bfcebf810e6afa6253c95eb366108e23a2e17043ea00b6bd6"
+      },
+      "funding_c_2024.parquet": {
+        "rows": 1098,
+        "bytes": 16243,
+        "sha256": "0e4825d5e144d3dd828c30d704be2a7531a36c7c2a57b8f9b1e14d368967526c"
+      },
+      "funding_c_2025.parquet": {
+        "rows": 1095,
+        "bytes": 18015,
+        "sha256": "92faec3756e7f1d53d9472cc910e9ac7948799cdcdaa8265eb3db6f28e21011b"
+      },
+      "funding_c_2026.parquet": {
+        "rows": 840,
+        "bytes": 14909,
+        "sha256": "356cd74a22d4f939973f1f5522c45deae250af8588ab04332e8b085b0de5042b"
+      }
+    },
+    "common/B3_AXC0": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7522004,
+          "sha256": "cc3629a4e885c2415407702ce006b936c0cf6cad132080d52a7346db330d5e47"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 7508248,
+          "sha256": "01918d6b0912fad4f8ec021af381597004e705f776e73783d29d8bd8477acb97"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7501725,
+          "sha256": "d6494f0b98b275ad3165bcc3b3df5df3d94e24700de10b1bb3bb7008e8770931"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 8985489,
+          "sha256": "77dfa792e36df714b56066edddac636bc456670657b072a4811e2e1270287701"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 12115862,
+          "sha256": "0c9c243ce6c396a1af74eb1b8ba0eed18e13bf9fc2b0562d9dcf8fe547cf3186"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 11892040,
+          "sha256": "522b8d236ddac397e983ab28ad726c1516f29b587d1dbb12590fb61336a1dda2"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 8982905,
+          "sha256": "4cd8c51de3d2bd244e7edeb097da1ef7e43ea9bc27be67164d4f5f63812435ac"
+        }
+      },
+      "ledger": {
+        "ledger_2023.parquet": {
+          "rows": 80126,
+          "bytes": 2399214,
+          "sha256": "1505b3d435d4dbc010c0a24c4062201a5b525ce1f396102df51ebe7ce4554b15"
+        },
+        "ledger_2024.parquet": {
+          "rows": 270473,
+          "bytes": 7141570,
+          "sha256": "26461734c21c14ea5ac93d070b487b16a661080ffc4e7e5d289855b4f7600a09"
+        },
+        "ledger_2025.parquet": {
+          "rows": 259849,
+          "bytes": 6849170,
+          "sha256": "efd91464e39b353fe99c460785f60e9610279cf0d5a680349b0710b6d4333cd8"
+        },
+        "ledger_2026.parquet": {
+          "rows": 174450,
+          "bytes": 4924182,
+          "sha256": "78e2111815159c97739a2a9a89ac4a896af4cc60c5e698d7d0bb5f019d40e372"
+        }
+      },
+      "opportunities": {
+        "opportunities_2023.parquet": {
+          "rows": 116,
+          "bytes": 23018,
+          "sha256": "4f1b2c27ca7f25f1e0deb4b02f55b2adae7d70d2f42b53572fbcddd9886e620b"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 421,
+          "bytes": 46081,
+          "sha256": "79ca6c47ae5c5f6d6841528824bc9b5e9df319c3affcfe58a4cfc6033c3d9697"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 552,
+          "bytes": 56300,
+          "sha256": "3e6898f6966968e0faddefac1135121f7f0b13de09d8e5c7f004f0d1d71cfe31"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 468,
+          "bytes": 49727,
+          "sha256": "c5d8f53a47a0c4651308aedd69b7adb05077024edd5a73f11a47d6474c1abba4"
+        }
+      },
+      "n_opportunities": 1557
+    },
+    "common/K04_AXC0": {
+      "grid": {
+        "grid_2020.parquet": {
+          "rows": 527040,
+          "bytes": 7522004,
+          "sha256": "1befa30423f145a27d63fab90d6cd98cb00b9b09f86e315f4d02e3d74d1dfa84"
+        },
+        "grid_2021.parquet": {
+          "rows": 525600,
+          "bytes": 7508248,
+          "sha256": "5a66a1af4d10ee1e12329ee8cefb87cac2f1d9df4950034a97df4899185bcf5e"
+        },
+        "grid_2022.parquet": {
+          "rows": 525600,
+          "bytes": 7501725,
+          "sha256": "1424079279de21cdae4627120169f034a635e8fb3ab577e6a1fe3bb5886e2f29"
+        },
+        "grid_2023.parquet": {
+          "rows": 525600,
+          "bytes": 8207467,
+          "sha256": "9b3ae25390b2070a11acd798a5fb1465c47ebdfd1984a4e1e89c359a37ef84c3"
+        },
+        "grid_2024.parquet": {
+          "rows": 527040,
+          "bytes": 8999016,
+          "sha256": "05ef668004f13743d1211bac13e9917f05fba2552584f609842a3aec1de624c2"
+        },
+        "grid_2025.parquet": {
+          "rows": 525600,
+          "bytes": 8676304,
+          "sha256": "5c716c73c1f9d9d829f134b234a62891ea6a21898e97d18afb8fb6ac64e3e2f0"
+        },
+        "grid_2026.parquet": {
+          "rows": 403200,
+          "bytes": 7306944,
+          "sha256": "622ec1c7dc49c621a8b732998fd71927e33f59e06a89e53370458e89e4cae706"
+        }
+      },
+      "ledger": {
+        "ledger_2023.parquet": {
+          "rows": 37648,
+          "bytes": 1130211,
+          "sha256": "f84b5d9d286e0f873aa90ddc839e4ac570bbe0e11a4e87bb50e1c51e4083d73f"
+        },
+        "ledger_2024.parquet": {
+          "rows": 77945,
+          "bytes": 2370806,
+          "sha256": "52c9b22e70e6deaba1439db3bc89e089bb6e7f6ffa0679e3ad96890571df82bb"
+        },
+        "ledger_2025.parquet": {
+          "rows": 63522,
+          "bytes": 1912073,
+          "sha256": "064f9be5866ca39c7cf554b443b5244da56e6689e14c792d7022a07c469e5925"
+        },
+        "ledger_2026.parquet": {
+          "rows": 77303,
+          "bytes": 2328912,
+          "sha256": "58f852bd810d7d7aac296f679e0ada5d971e8f597ef04e438702560fe1abc841"
+        }
+      },
+      "opportunities": {
+        "opportunities_2023.parquet": {
+          "rows": 104,
+          "bytes": 21853,
+          "sha256": "ac76d570b4f6451ea81c1f10be077b18694e3bc9bd98bab3d5a1d4b21a4ad341"
+        },
+        "opportunities_2024.parquet": {
+          "rows": 293,
+          "bytes": 35844,
+          "sha256": "7d7ef007c62b219ddf427f8c7ca461e704bf2b37caaa1994815c6646a8e6a6d7"
+        },
+        "opportunities_2025.parquet": {
+          "rows": 279,
+          "bytes": 34894,
+          "sha256": "c16c2c5870a98dba8ba4da94eea12b21b72bf3ff1424bbefac1d35483298c5c6"
+        },
+        "opportunities_2026.parquet": {
+          "rows": 214,
+          "bytes": 29932,
+          "sha256": "782a0066cd8e4e92f572148c8b59408761d204f1a5df595c4e4db3636e40643e"
+        }
+      },
+      "n_opportunities": 890
+    },
+    "common/funding_ax_NATIVE": {
+      "funding_ax_NATIVE_2020.parquet": {
+        "rows": 1098,
+        "bytes": 15527,
+        "sha256": "7d830e8a8a6142b496e4297ea37fd2106816b3bca4147b25da18b4d3647d9cd9"
+      },
+      "funding_ax_NATIVE_2021.parquet": {
+        "rows": 1095,
+        "bytes": 16121,
+        "sha256": "90b999f4012fdccd93597874d67dd281d836481534caa71deb79c3655ad90e04"
+      },
+      "funding_ax_NATIVE_2022.parquet": {
+        "rows": 1095,
+        "bytes": 17193,
+        "sha256": "b5d2c30c5897895a3b193b81484cce2e640bd67803248cba607e0f59db9096d4"
+      },
+      "funding_ax_NATIVE_2023.parquet": {
+        "rows": 1095,
+        "bytes": 16238,
+        "sha256": "7aeb1f820b62c57bfcebf810e6afa6253c95eb366108e23a2e17043ea00b6bd6"
+      },
+      "funding_ax_NATIVE_2024.parquet": {
+        "rows": 1098,
+        "bytes": 16243,
+        "sha256": "0e4825d5e144d3dd828c30d704be2a7531a36c7c2a57b8f9b1e14d368967526c"
+      },
+      "funding_ax_NATIVE_2025.parquet": {
+        "rows": 1095,
+        "bytes": 18015,
+        "sha256": "92faec3756e7f1d53d9472cc910e9ac7948799cdcdaa8265eb3db6f28e21011b"
+      },
+      "funding_ax_NATIVE_2026.parquet": {
+        "rows": 543,
+        "bytes": 10566,
+        "sha256": "d1780367655f0ce4195abc49c3ed42064fb9b939647b98410f58c58824c1a1b6"
+      }
+    },
+    "common/funding_ax_TEST": {
+      "funding_ax_TEST_2020.parquet": {
+        "rows": 1098,
+        "bytes": 15527,
+        "sha256": "7d830e8a8a6142b496e4297ea37fd2106816b3bca4147b25da18b4d3647d9cd9"
+      },
+      "funding_ax_TEST_2021.parquet": {
+        "rows": 1095,
+        "bytes": 16121,
+        "sha256": "90b999f4012fdccd93597874d67dd281d836481534caa71deb79c3655ad90e04"
+      },
+      "funding_ax_TEST_2022.parquet": {
+        "rows": 1095,
+        "bytes": 17193,
+        "sha256": "b5d2c30c5897895a3b193b81484cce2e640bd67803248cba607e0f59db9096d4"
+      },
+      "funding_ax_TEST_2023.parquet": {
+        "rows": 1095,
+        "bytes": 16238,
+        "sha256": "7aeb1f820b62c57bfcebf810e6afa6253c95eb366108e23a2e17043ea00b6bd6"
+      },
+      "funding_ax_TEST_2024.parquet": {
+        "rows": 1098,
+        "bytes": 16243,
+        "sha256": "0e4825d5e144d3dd828c30d704be2a7531a36c7c2a57b8f9b1e14d368967526c"
+      },
+      "funding_ax_TEST_2025.parquet": {
+        "rows": 1095,
+        "bytes": 18015,
+        "sha256": "92faec3756e7f1d53d9472cc910e9ac7948799cdcdaa8265eb3db6f28e21011b"
+      },
+      "funding_ax_TEST_2026.parquet": {
+        "rows": 840,
+        "bytes": 14909,
+        "sha256": "356cd74a22d4f939973f1f5522c45deae250af8588ab04332e8b085b0de5042b"
+      }
+    }
+  },
+  "total_bytes": 1611468988,
+  "layout": {
+    "common/<sleeve>": "B3_AXC0, K04_AXC0, C1v2, C4v2 (native fill, one cell)",
+    "g3_family/<cell>/<sleeve>": "G3_LONG, G3_SHORT, LBR_FUND x 6 cells",
+    "grid_<year>": "per minute state + canonical P&L (float64 P&L, float32 state)",
+    "ledger_<year>": "per (minute, opportunity) canonical rows: fast counterfactual replay input",
+    "opportunities_<year>": "canonical entry opportunity schedule (env-only: realized exit fields are future information and must never enter observations)",
+    "observation_cache_1h": "placeholder (step 3)"
+  },
+  "test_guard": "read_partitioned refuses *_2026 partitions without allow_test=True",
+  "notes": [
+    "G3/LBR grid minutes 2020-01-01..2026-10-07; B3/K04 available 2023-09-01..2026-10-07 in two segments (native rolling-k ends with a data_end close at 2025-12-31 23:59; TEST restarts flat)",
+    "base_exit_sched_time: LBR exit decision bar close (activation + 2 bars), C max_hold expiry; G3 and B3/K04 have no scheduled exit (-1)"
+  ]
+}
