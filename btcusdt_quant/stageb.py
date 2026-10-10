@@ -60,6 +60,14 @@ def amendment(ident: str) -> dict:
     return next(a for a in freeze()["amendments"] if a["id"] == ident)
 
 
+def a5_suspended() -> bool:
+    """A6 suspends A5 (R2-52B, five-k grid): the primary keeps R2-52A and k in {1.0, 1.5, 2.0} with A1-A4."""
+    ids = [a["id"] for a in freeze()["amendments"]]
+    if "A5" not in ids:
+        return True
+    return "A6" in ids and "A5" in amendment("A6")["field"] and "suspended" in amendment("A6")["new"]
+
+
 def parse_interval(text: str) -> tuple[pd.Timestamp, pd.Timestamp]:
     a, b = text.strip("[)").split(",")
     return pd.Timestamp(a.strip()), pd.Timestamp(b.strip())
@@ -100,6 +108,7 @@ def check_freeze() -> None:
           and f["bootstrap"]["replicates"] == 10000 and f["bootstrap"]["seed"] == 20261008)
     n_trials()
     ok = ok and amendment("A4")["freeze_sha256_before"] == "710cb08b8f60c3c3c142ed5fd398122751eb891918df3aa8b2f8f930fad034a6"
+    ok = ok and a5_suspended()
     if not ok:
         raise ValueError("stageb constants differ from the freeze")
 

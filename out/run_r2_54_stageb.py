@@ -32,7 +32,7 @@ BASE = ROOT / "out/k45_rl_r2_48_20261007/r2_54"
 OUT = BASE / "stageb"
 SNAPSHOT = BASE / "stageb_snapshot"
 SNAPSHOT_SHA = "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069"     # Task 3 FINAL snapshot
-FREEZE_SHA = "e1f848ee8091e295dbc75861ffd9135a00236b45121c3b0054467e34ce4845a3"       # on-disk freeze incl. A4
+FREEZE_SHA = "136cb62de7609c62e3192349f0886386e00cdbcffa4f31181ad59b890fca1a88"       # on-disk freeze incl. A6
 SNAPSHOT_FREEZE_SHA = "710cb08b8f60c3c3c142ed5fd398122751eb891918df3aa8b2f8f930fad034a6"  # freeze (A3) the snapshot used
 REGISTRY = ROOT / "out/sim_registry.jsonl"
 CONFIRM = "R2-54-STAGEB-ONE-SHOT"
@@ -162,6 +162,14 @@ def source_provenance() -> dict:
     out["stage_a"] = {"source": "R2-44 w730_raw walk-forward folds (local generation, no URL)",
                       "local": rel(data.PREDICTIONS_DIR), **_mtimes(folds)}
     return out
+
+
+def r2_54_registered(path: Path) -> int:
+    """Trials registered by the R2-54 Stage-B validation (rows written by `run`)."""
+    if not path.exists():
+        return 0
+    rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    return sum(int(r.get("n_trials", 0)) for r in rows if str(r.get("experiment", "")).startswith("R2-54 Stage-B validation"))
 
 
 def stage_a_pre2026() -> list:
@@ -598,7 +606,10 @@ def run(args) -> None:
         reasons = {"manifest_round0.json": "fix round 1: ledgers book actual fundingTime events (minute bucketing only "
                                            "inside the simulator); V4 availability in the causality gate; code changed",
                    "manifest_round1.json": "amendment A4: 8 bps report-only in the validation economic gate and removed "
-                                           "from the rank keys; repeatable logged final test; code changed"}
+                                           "from the rank keys; repeatable logged final test; code changed",
+                   "manifest_round2.json": "amendment A6 (A5 suspended; R2-52A, k grid 1.0/1.5/2.0, A1-A4); engine "
+                                           "commit 0a82f5a added exit_policy R2_52B (R2_52A path byte-identical), so "
+                                           "the code hash changed; candidate rows must be identical"}
         manifest["validation_rerun"] = {
             "previous_manifests": [{"path": rel(r), "sha256": sha(r), "superseded_because": reasons.get(r.name)}
                                    for r in rounds],
@@ -729,8 +740,11 @@ def run(args) -> None:
                                                       for s in sb.SIDES}})
     after = registry.cumulative_trials(REGISTRY)
     manifest["registry"].update({"prior_cumulative": prior if not done else t["registry_base"],
-                                 "cumulative_after": after, "registered_now": not done,
-                                 "registered_ok": after == t["registry_after"]})
+                                 "cumulative_after_r2_54": t["registry_base"] + r2_54_registered(REGISTRY),
+                                 "registry_total_now": after, "registered_now": not done,
+                                 "registered_ok": r2_54_registered(REGISTRY) == t["new_trials"],
+                                 "a6_note": "A5 (207 trials) suspended and not run; later experiments (R2-52B 145, "
+                                            "K01_FLIP R2-52B 5) are registered separately, total now " + str(after)})
 
     # final refit of each gate-passing side on all causally eligible pre-test data (test stays LOCKED)
     manifest["final_fit"] = {}
@@ -744,7 +758,10 @@ def run(args) -> None:
             manifest["final_fit"][side] = {"opened": False, "reason": "validation selection or gates failed; no test"}
     manifest["opened_sides"] = [s for s in sb.SIDES if selection[s].get("pass")]
     manifest["bootstrap_plan"] = {**sb.freeze()["bootstrap"], "implementation": "stageb.bootstrap_ic + stageb.holm"}
-    manifest["test_runs"] = []
+    old = json.loads((OUT / "manifest.json").read_text(encoding="utf-8")) if (OUT / "manifest.json").exists() else {}
+    manifest["test_runs"] = old.get("test_runs", [])          # A4 run log is append-only across validation re-freezes
+    if TEST_RUNS.exists():
+        manifest["test_runs_log"] = {"path": rel(TEST_RUNS), "sha256": sha(TEST_RUNS)}
     manifest["runtime_seconds"] = round(time.time() - started, 1)
     dump(OUT / "manifest.json", manifest)
     print(json.dumps({"selection": {s: (selection[s].get("selected") or {}) and

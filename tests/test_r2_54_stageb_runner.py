@@ -133,3 +133,14 @@ def test_test_runs_are_appended_and_counted(tmp_path):
 
 def test_snapshot_freeze_chain_through_a4():
     assert run.SNAPSHOT_FREEZE_SHA == run.sb.amendment("A4")["freeze_sha256_before"]
+
+
+def test_a6_suspends_a5_and_the_r2_54_registry_count_is_127():
+    assert run.sb.a5_suspended() and run.FREEZE_SHA == run.sha(run.sb.FREEZE_PATH)
+    run.sb.check_freeze()
+    assert run.r2_54_registered(run.REGISTRY) == 127
+
+
+def test_validation_refreeze_keeps_the_test_run_log():
+    src = Path(run.__file__).read_text(encoding="utf-8")
+    assert 'manifest["test_runs"] = old.get("test_runs", [])' in src and 'manifest["test_runs"] = []' not in src

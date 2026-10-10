@@ -1,31 +1,33 @@
 {
   "kind": "R2-54 Stage-B validation selection",
-  "created_utc": "2026-10-09T15:08:26.101875+00:00",
+  "created_utc": "2026-10-10T01:50:41.118747+00:00",
   "freeze": {
     "path": "out\\k45_rl_r2_48_20261007\\r2_54_stageb_freeze.json",
-    "sha256": "e1f848ee8091e295dbc75861ffd9135a00236b45121c3b0054467e34ce4845a3",
+    "sha256": "136cb62de7609c62e3192349f0886386e00cdbcffa4f31181ad59b890fca1a88",
     "created_utc": "2026-10-08T10:30:00Z",
     "frozen_utc": "2026-10-09T01:35:00Z",
     "amendments": [
       "A1",
       "A2",
       "A3",
-      "A4"
+      "A4",
+      "A5",
+      "A6"
     ]
   },
   "git": {
-    "commit": "f66dded49a0adb1af599c29e422b8cbc3ae3e4f5",
-    "dirty_diff_sha256": "d5ae80d202b45a25f23bc35822dd961905ee1a80d2be9bf1efb2b3a74aaf62fd",
-    "dirty_diff_bytes": 21466,
-    "untracked_or_modified": 65
+    "commit": "b321f990c4884ec187aaf7a39bab2e63280ca36e",
+    "dirty_diff_sha256": "be3a1d88a2e1a2f0c8adddb90fbd6bf5aa701bd44b42c5b2552301e4fc3526ce",
+    "dirty_diff_bytes": 7481,
+    "untracked_or_modified": 68
   },
   "code_sha256": {
-    "out\\run_r2_54_stageb.py": "6eb609abd546609e14ddd5fd5c5904100781a2abf94612c5599089b70e8d55ff",
-    "btcusdt_quant\\stageb.py": "5fea7638187ed74a138b1433fd7d5d45be685a271d007996d41ed00382649145",
+    "out\\run_r2_54_stageb.py": "8fe0509ea196fc9eb51f3099f3a4308855919b537bb2b575e50a4e0ba2780702",
+    "btcusdt_quant\\stageb.py": "660d7797c38f81c4bce3fd0abceb3df5555d5ba3c6a0945bdd5dbbac5af4d246",
     "btcusdt_quant\\rl\\state.py": "bfeff94d112ab8b738b37d84fb1e5ad826bc1061e065edf35153c0f14bab7967",
-    "scripts\\sim_adaptive_exit.py": "df2b7cac2978bd1dc2246187aab15b6cb7a10bfbc23859a89723b23264ab1f50",
-    "btcusdt_quant\\sim\\core.py": "b8b58f8dfb1baeaf298e3c2e3d967520fafb556771b7e10040bba697f4d00993",
-    "btcusdt_quant\\sim\\reference.py": "a8adf769daa488c9a609795e679c0d801aa8410a7a0f880e566f5f5092ce80f2",
+    "scripts\\sim_adaptive_exit.py": "74b1b41e6c1c0dd55cc1e3e2b038638502d1feb6cecb632e0246947c5f1219af",
+    "btcusdt_quant\\sim\\core.py": "a3cfc0d39d4e5865a0e452b759a0426ed499cac39e17ae3e735408f4cdca5ea9",
+    "btcusdt_quant\\sim\\reference.py": "fa89ab012dd983524380ae2e404fc5d843a96d71457fcb1d2aabc82b6727448b",
     "btcusdt_quant\\sim\\regime.py": "23acdd66917fd4e77c8ce43e665854e281cd7af4e34ecc792fa2a0aa64e74af3",
     "btcusdt_quant\\sim\\costs.py": "53a7271a21101124f358f3c41ed6d2b9ba2e2883cd01a49193b59125ee0eba7f",
     "btcusdt_quant/sim/strategies": "2e534dad6b3466921fc61400e936d730d5497c2dea003f086a1b7bad6fac8160"
@@ -43,9 +45,11 @@
     "registry_after": 5544,
     "note": "amendment A2 supersedes the body 5413/5540",
     "prior_cumulative": 5417,
-    "cumulative_after": 5544,
+    "cumulative_after_r2_54": 5544,
+    "registry_total_now": 5694,
     "registered_now": false,
-    "registered_ok": true
+    "registered_ok": true,
+    "a6_note": "A5 (207 trials) suspended and not run; later experiments (R2-52B 145, K01_FLIP R2-52B 5) are registered separately, total now 5694"
   },
   "intervals": {
     "development": "[2022-03-01T00:00:00Z, 2026-01-01T00:00:00Z)",
@@ -558,7 +562,7 @@
       "DEV_BACK"
     ],
     "predictions": "6a42115a058401350e67cdf3ea589d4f1774c53bb6b71c6a74c28a4677702ed0",
-    "code": "98431e4f317d223f88c5b1b491cb68898cccf107f9e2967893cdfc53746188e3"
+    "code": "2ff85ebe5824464355e40e1dbd3599d8d06d865b7eb089afec408a42f3ebd20b"
   },
   "stage_a": {
     "pre_2026": [
@@ -2575,7 +2579,7 @@
     ],
     "2026": "snapshot.stage_a_2026_folds"
   },
-  "test_status": "HOLD (test run 1 aborted before any outcome; coordinator hold pending stop-width redesign)",
+  "test_status": "LOCKED",
   "artifacts": {
     "features": {
       "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb\\features\\features_pre2026.parquet",
@@ -2643,6 +2647,11 @@
         "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb\\manifest_round1.json",
         "sha256": "c01c7601b6195e4de9cbab8ee4eae0677e99fb9a720d17fad2d3785b82104df8",
         "superseded_because": "amendment A4: 8 bps report-only in the validation economic gate and removed from the rank keys; repeatable logged final test; code changed"
+      },
+      {
+        "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb\\manifest_round2.json",
+        "sha256": "28074c5f4eb9e4f906dc7bf79c1b93bc15000852b35dcba0e28f86b2ae5dd14c",
+        "superseded_because": "amendment A6 (A5 suspended; R2-52A, k grid 1.0/1.5/2.0, A1-A4); engine commit 0a82f5a added exit_policy R2_52B (R2_52A path byte-identical), so the code hash changed; candidate rows must be identical"
       }
     ],
     "fold_fits": "reused: feature frame sha256 identical to round 0 (marker folds/_features_frame_sha256.txt)",
@@ -5045,7 +5054,7 @@
       },
       "retrain_time": "2026-01-01 00:00:00+00:00",
       "publication_time_logical": "2026-01-01 00:00:00+00:00",
-      "written_at": "2026-10-09T15:13:25.023583+00:00",
+      "written_at": "2026-10-10T01:55:54.411063+00:00",
       "train_rows": 133520,
       "train_first": "2022-03-01 00:00:00+00:00",
       "train_last": "2025-12-31 19:45:00+00:00",
@@ -5058,7 +5067,7 @@
         "sha256": "521aae3b0a9bb09f5c14cce75603daf6e365e0538805dd63c8eb0399bf7f3ef4",
         "bytes": 490122
       },
-      "seconds": 12.1
+      "seconds": 15.3
     },
     "short": {
       "structure": {
@@ -5069,7 +5078,7 @@
       },
       "retrain_time": "2026-01-01 00:00:00+00:00",
       "publication_time_logical": "2026-01-01 00:00:00+00:00",
-      "written_at": "2026-10-09T15:13:36.968903+00:00",
+      "written_at": "2026-10-10T01:56:09.726016+00:00",
       "train_rows": 133520,
       "train_first": "2022-03-01 00:00:00+00:00",
       "train_last": "2025-12-31 19:45:00+00:00",
@@ -5082,7 +5091,7 @@
         "sha256": "521aae3b0a9bb09f5c14cce75603daf6e365e0538805dd63c8eb0399bf7f3ef4",
         "bytes": 490122
       },
-      "seconds": 11.9
+      "seconds": 15.2
     }
   },
   "opened_sides": [
@@ -5119,5 +5128,9 @@
       "aborted_utc": "2026-10-09T15:24:58.009666+00:00"
     }
   ],
-  "runtime_seconds": 310.9
+  "test_runs_log": {
+    "path": "out\\k45_rl_r2_48_20261007\\r2_54\\stageb\\test_runs.jsonl",
+    "sha256": "a76df3cd0f5f2b731c56ee278217540ff23990f2989f3b59a3922e9c0e132147"
+  },
+  "runtime_seconds": 328.6
 }
