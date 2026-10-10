@@ -84,5 +84,21 @@
       "tests/rl/test_allocator_env.py": "3b4b24aeacdb7ffdd9544f5dd701df6ecdab7aaf"
     },
     "chain": "precompute c85e46a -> state/signals d3e4493 -> env 26be5e2; sleeve_precompute.py unchanged since c85e46a"
+  },
+  "state_current": {
+    "sha256": "765ccc611b331e19c999c07b4119694a6b73265d8dc53b81c8ebe8c03d17dee1",
+    "normalizers_sha256": "111e6ec9edb49b03c30205f8b8241ce45fbf4fcd9d98d0c6b25d4fde403aed0e",
+    "code_commit": "ba555829c71178b6bf5d40ad65fd55ec00000667",
+    "amendment": "A2r1 49d467c414eef249f51baa71e27480637cf4c5de4d64c9b12a458061a137e465"
+  },
+  "amendment_A2": {
+    "superseded": {
+      "path": "freeze_amendment_A2.json",
+      "sha256": "28fef9f07c199b7afe2cd368450a70c4173dbe45071930e4c3e4cd338440f4e2"
+    },
+    "final": {
+      "path": "freeze_amendment_A2r1.json",
+      "sha256": "49d467c414eef249f51baa71e27480637cf4c5de4d64c9b12a458061a137e465"
+    }
   }
 }

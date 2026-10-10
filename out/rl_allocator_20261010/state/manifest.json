@@ -264,6 +264,178 @@
     "diff_cols": [],
     "cols_changed_after_cut": 216
   },
+  "usable_from": "2021-01-30",
+  "folds": {
+    "F1": {
+      "train": [
+        "2021-01-30",
+        "2022-01-01"
+      ],
+      "val": [
+        "2022-01-01",
+        "2023-01-01"
+      ]
+    },
+    "F2": {
+      "train": [
+        "2021-01-30",
+        "2023-01-01"
+      ],
+      "val": [
+        "2023-01-01",
+        "2024-01-01"
+      ]
+    },
+    "F3": {
+      "train": [
+        "2021-01-30",
+        "2024-01-01"
+      ],
+      "val": [
+        "2024-01-01",
+        "2025-01-01"
+      ]
+    },
+    "F4": {
+      "train": [
+        "2021-01-30",
+        "2025-01-01"
+      ],
+      "val": [
+        "2025-01-01",
+        "2026-01-01"
+      ]
+    }
+  },
+  "rows_before_usable_1h": 56874,
+  "availability_A2_1h": {
+    "G3_LONG": {
+      "F1_train_available_pct": 100.0,
+      "F1_train_open_pct": 30.258,
+      "F1_val_available_pct": 100.0,
+      "F1_val_open_pct": 2.603,
+      "F2_train_available_pct": 100.0,
+      "F2_train_open_pct": 15.858,
+      "F2_val_available_pct": 100.0,
+      "F2_val_open_pct": 40.594,
+      "F3_train_available_pct": 100.0,
+      "F3_train_open_pct": 24.328,
+      "F3_val_available_pct": 100.0,
+      "F3_val_open_pct": 26.264,
+      "F4_train_available_pct": 100.0,
+      "F4_train_open_pct": 24.823,
+      "F4_val_available_pct": 100.0,
+      "F4_val_open_pct": 14.545
+    },
+    "G3_SHORT": {
+      "F1_train_available_pct": 99.901,
+      "F1_train_open_pct": 6.659,
+      "F1_val_available_pct": 100.0,
+      "F1_val_open_pct": 6.142,
+      "F2_train_available_pct": 99.952,
+      "F2_train_open_pct": 6.39,
+      "F2_val_available_pct": 100.0,
+      "F2_val_open_pct": 3.139,
+      "F3_train_available_pct": 99.969,
+      "F3_train_open_pct": 5.277,
+      "F3_val_available_pct": 100.0,
+      "F3_val_open_pct": 2.596,
+      "F4_train_available_pct": 99.977,
+      "F4_train_open_pct": 4.591,
+      "F4_val_available_pct": 100.0,
+      "F4_val_open_pct": 5.903
+    },
+    "LBR_FUND": {
+      "F1_train_available_pct": 62.996,
+      "F1_train_open_pct": 1.538,
+      "F1_val_available_pct": 40.0,
+      "F1_val_open_pct": 1.564,
+      "F2_train_available_pct": 51.022,
+      "F2_train_open_pct": 1.551,
+      "F2_val_available_pct": 74.429,
+      "F2_val_open_pct": 3.048,
+      "F3_train_available_pct": 59.037,
+      "F3_train_open_pct": 2.064,
+      "F3_val_available_pct": 63.707,
+      "F3_val_open_pct": 2.709,
+      "F4_train_available_pct": 60.23,
+      "F4_train_open_pct": 2.229,
+      "F4_val_available_pct": 86.345,
+      "F4_val_open_pct": 3.208
+    },
+    "B3_AXC0": {
+      "F1_train_available_pct": 0.0,
+      "F1_train_open_pct": 0.0,
+      "F1_val_available_pct": 0.0,
+      "F1_val_open_pct": 0.0,
+      "F2_train_available_pct": 0.0,
+      "F2_train_open_pct": 0.0,
+      "F2_val_available_pct": 33.425,
+      "F2_val_open_pct": 15.103,
+      "F3_train_available_pct": 11.445,
+      "F3_train_open_pct": 5.171,
+      "F3_val_available_pct": 100.0,
+      "F3_val_open_pct": 50.888,
+      "F4_train_available_pct": 34.078,
+      "F4_train_open_pct": 16.856,
+      "F4_val_available_pct": 100.0,
+      "F4_val_open_pct": 48.43
+    },
+    "K04_AXC0": {
+      "F1_train_available_pct": 0.0,
+      "F1_train_open_pct": 0.0,
+      "F1_val_available_pct": 0.0,
+      "F1_val_open_pct": 0.0,
+      "F2_train_available_pct": 0.0,
+      "F2_train_open_pct": 0.0,
+      "F2_val_available_pct": 33.425,
+      "F2_val_open_pct": 7.078,
+      "F3_train_available_pct": 11.445,
+      "F3_train_open_pct": 2.423,
+      "F3_val_available_pct": 100.0,
+      "F3_val_open_pct": 14.777,
+      "F4_train_available_pct": 34.078,
+      "F4_train_open_pct": 5.581,
+      "F4_val_available_pct": 100.0,
+      "F4_val_open_pct": 11.965
+    },
+    "C1v2": {
+      "F1_train_available_pct": 100.0,
+      "F1_train_open_pct": 58.147,
+      "F1_val_available_pct": 100.0,
+      "F1_val_open_pct": 45.708,
+      "F2_train_available_pct": 100.0,
+      "F2_train_open_pct": 51.67,
+      "F2_val_available_pct": 100.0,
+      "F2_val_open_pct": 46.29,
+      "F3_train_available_pct": 100.0,
+      "F3_train_open_pct": 49.828,
+      "F3_val_available_pct": 100.0,
+      "F3_val_open_pct": 46.926,
+      "F4_train_available_pct": 100.0,
+      "F4_train_open_pct": 49.086,
+      "F4_val_available_pct": 100.0,
+      "F4_val_open_pct": 51.558
+    },
+    "C4v2": {
+      "F1_train_available_pct": 100.0,
+      "F1_train_open_pct": 60.293,
+      "F1_val_available_pct": 100.0,
+      "F1_val_open_pct": 55.08,
+      "F2_train_available_pct": 100.0,
+      "F2_train_open_pct": 57.578,
+      "F2_val_available_pct": 100.0,
+      "F2_val_open_pct": 63.893,
+      "F3_train_available_pct": 100.0,
+      "F3_train_open_pct": 59.74,
+      "F3_val_available_pct": 100.0,
+      "F3_val_open_pct": 63.16,
+      "F4_train_available_pct": 100.0,
+      "F4_train_open_pct": 60.615,
+      "F4_val_available_pct": 100.0,
+      "F4_val_open_pct": 57.21
+    }
+  },
   "contaminated_unavailable_rows": {
     "G3_LONG": 0,
     "G3_SHORT": 0,
@@ -304,8 +476,8 @@
   "test_rows_1h": 40326,
   "files": {
     "normalizers.json": {
-      "bytes": 182060,
-      "sha256": "3d887127f46bdc7f6d156d3eabeb1ffd6b8ce493b3e34419be9d97de22e069ea"
+      "bytes": 152759,
+      "sha256": "111e6ec9edb49b03c30205f8b8241ce45fbf4fcd9d98d0c6b25d4fde403aed0e"
     },
     "state_1h.parquet": {
       "bytes": 56297371,
@@ -324,15 +496,15 @@
       "sha256": "1c7050eddc7c29f4b0b5fff4677b26949510d0c53d2ccfec8337885b47bedb4b"
     }
   },
-  "created_utc": "2026-10-10T13:40:01.676817+00:00",
-  "git_head": "d3e4493d90a98a090d0bdc9b3f702c5402bd475f",
+  "created_utc": "2026-10-10T14:42:50.667334+00:00",
+  "git_head": "ba555829c71178b6bf5d40ad65fd55ec00000667",
   "code_sha256": {
-    "script": "de3f5f491a879ad2da23f848ea8afb9a96da93cee2d160ef4614238dd7a81f57",
+    "script": "6fd258e297a34c4a0d33c5170437e94edb9621991431b4f36d20454ec4448653",
     "allocator_state": "54d5366c43acd64b1cb54c0307faa5eb29843de61be577c453f40408f7d46e20",
     "sleeve_precompute": "33c78335fcd4ae8c04e5e926283a978ea23721169f28dc06250bbdea400ebffe"
   },
   "precompute_manifest_sha256": "f09649710970ea12c8648c489a049c7ddd394997792ce2b6b553a7e25bd77553",
-  "runtime_sec": 134.6,
+  "runtime_sec": 189.1,
   "rules": {
     "market": "minute_time + 1m <= T (minute-T row excluded)",
     "grid/ledger/signals": "available_time <= T",
