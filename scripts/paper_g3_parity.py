@@ -169,7 +169,7 @@ def compare(rep: dict, ref: dict, m, st, lo: int, k: pd.DataFrame, f: pd.DataFra
             if len(tt) == len(rn) else None
         # 1m P&L of the stored ledger (Book over klines_1m from the start day) vs research
         with PaperStore(rep["path"]) as store:
-            bk, mm, _ = g3.book_of(g3.closed_trades(store.connection, book), s, k, f, start, end)
+            bk, mm, _ = g3.book_of(g3.closed_trades(store.connection, book, start.value), s, k, f, start, end)
         p_paper, p_ref = bk.pnl[:mm.N], bk_ref.pnl[a:]
         r["pnl_1m_max_abs_diff"] = float(np.max(np.abs(p_paper - p_ref))) if len(p_paper) == len(p_ref) else None
         a_t, b_t = wb["TEST"]

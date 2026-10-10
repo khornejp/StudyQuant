@@ -36,9 +36,10 @@ MIN = 60_000_000_000
 H4 = 240 * MIN
 STALE_MIN = 5
 TABLES = (
-    "CREATE TABLE IF NOT EXISTS g3_events (book TEXT NOT NULL, event_time TEXT NOT NULL, event_type TEXT NOT NULL, "
-    "payload TEXT NOT NULL, code_hash TEXT NOT NULL, config_hash TEXT NOT NULL, observed_at TEXT NOT NULL, "
-    "PRIMARY KEY(book, event_time, event_type))",
+    # epoch = the sleeve's book start (ns); a --reset opens a new epoch, earlier epochs stay as the record
+    "CREATE TABLE IF NOT EXISTS g3_events (book TEXT NOT NULL, epoch INTEGER NOT NULL, event_time TEXT NOT NULL, "
+    "event_type TEXT NOT NULL, payload TEXT NOT NULL, code_hash TEXT NOT NULL, config_hash TEXT NOT NULL, "
+    "observed_at TEXT NOT NULL, PRIMARY KEY(book, epoch, event_time, event_type))",
     "CREATE TABLE IF NOT EXISTS g3_state (book TEXT PRIMARY KEY, state TEXT NOT NULL, last_bar TEXT NOT NULL, "
     "updated_at TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS g3_health (book TEXT PRIMARY KEY, last_success TEXT, last_error TEXT, "
@@ -330,9 +331,10 @@ class BehaviorMismatch(RuntimeError):
     (scripts/paper_g3_migrate.py is the explicit path)."""
 
 
-def closed_trades(connection, book: str) -> list[dict]:
-    rows = connection.execute("SELECT payload FROM g3_events WHERE book=? AND event_type='EXIT_FILL' "
-                              "ORDER BY event_time", (book,)).fetchall()
+def closed_trades(connection, book: str, epoch: int) -> list[dict]:
+    """Closed trades of the current epoch only (earlier epochs are record, never re-counted)."""
+    rows = connection.execute("SELECT payload FROM g3_events WHERE book=? AND epoch=? AND event_type='EXIT_FILL' "
+                              "ORDER BY event_time", (book, int(epoch))).fetchall()
     return [json.loads(r[0]) for r in rows]
 
 
@@ -405,7 +407,8 @@ def run_cycle(store, starts: dict[str, pd.Timestamp], minutes: pd.DataFrame, fun
         try:
             with store.transaction() as connection:
                 state, events, error = advance(connection, book, start, minutes, sig_fn, end, behavior)
-                trades = closed_trades(connection, book) + [p for _, kind, p in events if kind == "EXIT_FILL"]
+                trades = closed_trades(connection, book, state["start"]) + [p for _, kind, p in events
+                                                                             if kind == "EXIT_FILL"]
                 done_to = pd.Timestamp(state["last_bar"] + MIN, tz="UTC")     # accounting only over processed bars
                 if done_to > pd.Timestamp(start).floor("D"):
                     bk, m, tr = book_of(trades, state, minutes, funding, start, done_to)
@@ -413,8 +416,9 @@ def run_cycle(store, starts: dict[str, pd.Timestamp], minutes: pd.DataFrame, fun
                     bk = m = None
                     tr = pd.DataFrame({"open_at_end": []})
                 for t_, kind, payload in events:
-                    connection.execute("INSERT OR IGNORE INTO g3_events VALUES (?,?,?,?,?,?,?)",
-                                       (book, _iso(t_), kind, json.dumps(payload), behavior, config_hash, now))
+                    # plain INSERT: a duplicate (book, epoch, time, type) is a bug and aborts the cycle loudly
+                    connection.execute("INSERT INTO g3_events VALUES (?,?,?,?,?,?,?,?)", (
+                        book, int(state["start"]), _iso(t_), kind, json.dumps(payload), behavior, config_hash, now))
                 for k in np.flatnonzero(~tr.open_at_end.to_numpy(bool)):
                     r = trades[k]
                     connection.execute(

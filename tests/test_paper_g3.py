@@ -493,18 +493,96 @@ def test_start_change_needs_an_explicit_flat_reset(synthetic, tmp_path, monkeypa
     e1 = START + pd.Timedelta(days=2)
     with PaperStore(path) as store:
         g3.run_cycle(store, {book: START}, minutes, s.fund, e1, "cfg")
-        early, later = START + pd.Timedelta(hours=8), e1 + pd.Timedelta(hours=2)
+        early, later = e1, e1.floor("D") + pd.Timedelta(days=1, hours=4)     # e1 = last bar + 1m
         assert g3.run_cycle(store, {book: later}, minutes, s.fund, e1 + pd.Timedelta(days=1), "cfg") == 0
         with pytest.raises(SystemExit, match="--reset"):
             paper_g3_migrate.migrate(store, book, later, "cfg", "t", apply=True)
-        with pytest.raises(SystemExit, match="after the last processed bar"):
+        with pytest.raises(SystemExit, match="UTC day after the last processed bar"):
             paper_g3_migrate.migrate(store, book, early, "cfg", "t", reset=True)
         assert paper_g3_migrate.migrate(store, book, later, "cfg", "t", reset=True)["applied"] == "RESET"
         state = json.loads(store.connection.execute("SELECT state FROM g3_state").fetchone()[0])
         assert state["status"] == "FLAT" and state["start"] == later.value
-        assert g3.run_cycle(store, {book: later}, minutes, s.fund, e1 + pd.Timedelta(days=1), "cfg") == 1
+        assert g3.run_cycle(store, {book: later}, minutes, s.fund, later + pd.Timedelta(days=1), "cfg") == 1
     ev = _events(path)
     reset = ev.loc[ev.event_type == "RESET"]
     assert len(reset) == 1 and "old_state" in json.loads(reset.payload.iloc[0])
     new = ev.loc[ev.event_type == "DECISION", "event_time"]
     assert new.max() > later.isoformat() and not new.between(e1.isoformat(), later.isoformat(), inclusive="left").any()
+
+
+# ---------------------------------------------------------------- fix round 4: reset epochs, loud duplicates
+def _alternating(sig: dict) -> dict:
+    """Target on / off every other 4h decision for both sleeves: many short trades."""
+    return {T: ({"G3_LONG": (1, 0.8), "G3_SHORT": (-1, 0.6)} if (T // g3.H4) % 2 == 0 else
+                {"G3_LONG": (0, 0.0), "G3_SHORT": (0, 0.0)}) for T in sig}
+
+
+def _table(path, sql) -> pd.DataFrame:
+    c = sqlite3.connect(path)
+    try:
+        return pd.read_sql_query(sql, c)
+    finally:
+        c.close()
+
+
+@needs_engine
+def test_reset_opens_a_new_epoch_and_keeps_the_old_record(synthetic, tmp_path, monkeypatch) -> None:
+    s = synthetic
+    monkeypatch.setattr(g3, "signals", lambda minutes, funding, end, live_from=None: _alternating(s.sig))
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import paper_g3_migrate
+    minutes = _cycle_inputs(s, days=12)
+    path = tmp_path / "p.sqlite"
+    e1 = START + pd.Timedelta(days=3)
+    with PaperStore(path) as store:
+        assert g3.run_cycle(store, {b: START for b in g3.BOOKS}, minutes, s.fund, e1, "cfg") == 2
+    old_trades, old_daily = _table(path, "SELECT * FROM trades"), _table(path, "SELECT * FROM daily_pnl")
+    assert old_trades.groupby("book").size().min() >= 2
+    last = e1 - MIN
+    with PaperStore(path) as store:
+        for bad in (last + MIN, last + 2 * MIN, last + pd.Timedelta(hours=6)):      # same UTC day / overlap
+            with pytest.raises(SystemExit, match="UTC day after"):
+                paper_g3_migrate.migrate(store, "G3_LONG", bad, "cfg", "t", reset=True)
+        new = last.floor("D") + pd.Timedelta(days=1)                               # next UTC day 00:00
+        for b in g3.BOOKS:
+            assert paper_g3_migrate.migrate(store, b, new, "cfg", "t", reset=True)["applied"] == "RESET"
+        e2 = new + pd.Timedelta(days=4)
+        assert g3.run_cycle(store, {b: new for b in g3.BOOKS}, minutes, s.fund, e2, "cfg") == 2
+        states = {b: json.loads(x) for b, x in store.connection.execute("SELECT book, state FROM g3_state")}
+        for b in g3.BOOKS:                     # stored daily rows of the new epoch == Book over the new epoch only
+            epoch = g3.closed_trades(store.connection, b, new.value)
+            bk, m, _ = g3.book_of(epoch, states[b], minutes, s.fund, new, e2)
+            rows = pd.DataFrame(g3.daily_rows(b, bk, m), columns=old_daily.columns)
+            got = _table(path, f"SELECT * FROM daily_pnl WHERE book='{b}' AND date >= '{new:%Y-%m-%d}' ORDER BY date")
+            assert np.allclose(got.net_bps, rows.net_bps, atol=1e-9) and len(epoch) >= 2
+            assert all(t["entry_time"] >= new.value for t in epoch)
+    trades, daily = _table(path, "SELECT * FROM trades"), _table(path, "SELECT * FROM daily_pnl")
+    keep = trades.entry_time < new.isoformat()
+    assert trades.loc[keep].drop(columns="id").reset_index(drop=True).equals(
+        old_trades.drop(columns="id").reset_index(drop=True))                       # old epoch trades untouched
+    assert daily.loc[daily.date < f"{new:%Y-%m-%d}"].reset_index(drop=True).equals(old_daily)
+    ev = _table(path, "SELECT epoch, event_type FROM g3_events")
+    assert set(ev.epoch) == {START.value, new.value} and (ev.event_type == "RESET").sum() == 2
+
+
+@needs_engine
+def test_duplicate_event_aborts_the_cycle_loudly(synthetic, tmp_path, monkeypatch) -> None:
+    s = synthetic
+    monkeypatch.setattr(g3, "signals", lambda minutes, funding, end, live_from=None: _alternating(s.sig))
+    minutes = _cycle_inputs(s, days=3)
+    path, starts = tmp_path / "p.sqlite", {b: START for b in g3.BOOKS}
+    e1 = START + pd.Timedelta(days=1)
+    with PaperStore(path) as store:
+        g3.run_cycle(store, starts, minutes, s.fund, e1, "cfg")
+        rewound = {}
+        for b, x in store.connection.execute("SELECT book, state FROM g3_state").fetchall():
+            st = json.loads(x)
+            rewound[b] = {**st, "last_bar": st["last_bar"] - g3.H4}                # a bug that re-emits a decision
+        with store.transaction() as c:
+            for b, st in rewound.items():
+                c.execute("UPDATE g3_state SET state=? WHERE book=?", (json.dumps(st), b))
+        before = _table(path, "SELECT COUNT(*) AS n FROM g3_events").n.iloc[0]
+        assert g3.run_cycle(store, starts, minutes, s.fund, e1 + pd.Timedelta(hours=1), "cfg") == 0
+    h = _health(path)
+    assert h.last_error.str.contains("IntegrityError").all()
+    assert _table(path, "SELECT COUNT(*) AS n FROM g3_events").n.iloc[0] == before

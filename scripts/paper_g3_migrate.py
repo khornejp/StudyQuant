@@ -10,7 +10,9 @@ last_error behavior_hash_mismatch, stale 1). After reviewing the change, run wit
             with the new hash; position, orders and history unchanged. A changed book start is rejected.
   --reset   book start changed: append a RESET event (old hash, old start, the whole old state incl. any open
             position, which is abandoned) and replace the state with a FLAT one at the new start (new hash). The new
-            start must be after the old state's last processed bar; earlier events and trades stay as the record.
+            start must lie on a later UTC day than the old state's last processed bar (so no bar is processed twice
+            and no daily_pnl day is shared); it opens a new epoch: ledger, Book and daily_pnl count only the new
+            epoch, earlier events, trades and daily rows stay as the record.
 """
 from __future__ import annotations
 import argparse, json, sys
@@ -39,9 +41,9 @@ def migrate(store: PaperStore, book: str, start: pd.Timestamp, config_hash: str,
     if moved and not reset:
         raise SystemExit(f"{book}: book start changed ({utc_text(pd.Timestamp(state['start'], tz='UTC'))} -> "
                          f"{utc_text(start)}): --apply refused, use --reset (flat at the new start)")
-    if reset and start.value <= state["last_bar"]:
-        raise SystemExit(f"{book}: --reset needs a start after the last processed bar "
-                         f"{utc_text(pd.Timestamp(state['last_bar'], tz='UTC'))}")
+    last = pd.Timestamp(state["last_bar"], tz="UTC")
+    if reset and not (start - pd.Timedelta(minutes=1) > last and start >= last.floor("D") + pd.Timedelta(days=1)):
+        raise SystemExit(f"{book}: --reset needs a start on a UTC day after the last processed bar {utc_text(last)}")
     now = utc_text(pd.Timestamp.now(tz="UTC"))
     if reset:
         kind, payload, state = "RESET", {"old": out["stored"], "new": new, "reason": reason, "old_state": state}, \
@@ -50,8 +52,8 @@ def migrate(store: PaperStore, book: str, start: pd.Timestamp, config_hash: str,
         kind, payload, state = "MIGRATION", {"old": out["stored"], "new": new, "reason": reason}, \
             {**state, "behavior_hash": new}
     with store.transaction() as connection:
-        connection.execute("INSERT INTO g3_events VALUES (?,?,?,?,?,?,?)",
-                           (book, now, kind, json.dumps(payload), new, config_hash, now))
+        connection.execute("INSERT INTO g3_events VALUES (?,?,?,?,?,?,?,?)",
+                           (book, int(state["start"]), now, kind, json.dumps(payload), new, config_hash, now))
         connection.execute("UPDATE g3_state SET state=?, last_bar=?, updated_at=? WHERE book=?",
                            (json.dumps(state), utc_text(pd.Timestamp(state["last_bar"], tz="UTC")), now, book))
     return {**out, "applied": kind}

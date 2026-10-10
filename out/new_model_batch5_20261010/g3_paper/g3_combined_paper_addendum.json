@@ -67,11 +67,11 @@
   "state_machines": "two independent sleeves, each an incremental state machine over closed 1m bars (FLAT -> ENTRY_PENDING -> OPEN -> EXIT_PENDING -> FLAT) = minute-by-minute batch-2 simulate(kind='state'); flat start at the book start, no inherited position",
   "paper_implementation": {
     "module": "btcusdt_quant/paper/g3.py",
-    "module_sha256": "91cd6440b72edf702e172f23b89ee91a3e0daabd3aa248ee7858c0dc9fa67e73",
+    "module_sha256": "02815823e751bf0022eafdf854f36777ece6bfe52739f72eadc2a5ae4d0c7ced",
     "engine": "out/run_new_model_batch5_20261010.py (+ batch4/3/2/1) imported unchanged (sha256 c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428); build_state / core_signal only",
     "signal_inputs": "4h decision-bar closes since 2020-01-01 (DEV artifacts/btcusdt_2020_2026h1.parquet < 2026-01-01 + R2-54 FINAL snapshot [2026-01-01, 2026-10-08) cached as ~15k floats; live klines_1m >= 2026-10-08) + all funding events (DEV archive < 2026-01-01, live funding table >= 2026-01-01, < data end); identical to the research inputs, so signals are bit-exact; computed only on cycles that contain a 4h decision bar",
     "storage": {
-      "g3_events": "append-only (INSERT OR IGNORE, PK book/event_time/event_type): DECISION, ENTRY_ORDER, ENTRY_FILL, ENTRY_EXPIRED, EXIT_ORDER, EXIT_REQUOTE, EXIT_FILL; payload + code_hash + config_hash + observed_at",
+      "g3_events": "append-only, PK (book, epoch, event_time, event_type), epoch = sleeve book start ns; plain INSERT: a duplicate aborts the cycle (IntegrityError in g3_health), never silently dropped. Types: DECISION, ENTRY_ORDER, ENTRY_FILL, ENTRY_EXPIRED, EXIT_ORDER, EXIT_REQUOTE, EXIT_FILL, MIGRATION, RESET; payload + behavior hash + config_hash + observed_at",
       "g3_state": "resume point per sleeve book (state machine + last processed bar), written in the same transaction as its events",
       "trades": "closed trades appended once (INSERT OR IGNORE), PESS, candidate = config id, exit_reason TARGET_CHANGE; batch-2 Book net4",
       "daily_pnl": "derived from the stored ledger (batch-2 Book 1m MTM net4 incl. open trade + reserved 2 bps exit fee), upsert per UTC day since the start day; never deleted",
@@ -96,7 +96,7 @@
     ],
     "code_hash": "ebf6af09b128dc1717d52a45834e117a7bdd9b79c854d394b76ff33bdf64352a",
     "behavior_hash": "sha256(json{code_hash, verified input hashes, book, sleeve params, execution params, book start}); stored in g3_state.state.behavior_hash and in every g3_events.code_hash",
-    "migration": "scripts/paper_g3_migrate.py --book G3_LONG|G3_SHORT: --apply (same start only; MIGRATION event, state re-stamped) or --reset (changed start; RESET event with the old state, flat at the new start, start must be after the old last bar) (sha256 054605d357d9d71be27528fc99c24cd788ff77b1ad27fa579d843709ed360143)",
+    "migration": "scripts/paper_g3_migrate.py --book G3_LONG|G3_SHORT: --apply (same start only; MIGRATION event, state re-stamped) or --reset (changed start; RESET event with the old state, flat at the new start, new epoch; new start must be on a UTC day after the old last bar) (sha256 7f2f0178f29f440433e2d44c59d7fc779ca4b5ed8269442ac9462b89735600a0)",
     "input_verification": {
       "manifest": "out/new_model_batch5_20261010/NM-B5-20261010T080025Z-c55285f2/manifest.json",
       "verified_once_per_process": {
@@ -106,11 +106,12 @@
       },
       "in_behavior_hash": true
     },
-    "code_hash_line_endings": "CRLF normalised to LF before hashing"
+    "code_hash_line_endings": "CRLF normalised to LF before hashing",
+    "epochs": "ledger, Book, trades and daily_pnl use only the current epoch's EXIT_FILL events; a --reset epoch starts on a later UTC day than the old last bar, so no bar is processed twice and no daily_pnl day is shared; earlier epochs stay as the record"
   },
   "parity": {
     "script": "scripts/paper_g3_parity.py",
-    "script_sha256": "f3cd448a5a13671e4b8fa70286e5488f1769dc555a10020892e03851a836480c",
+    "script_sha256": "9d069ff043cb3a17657fdff3d812794f633da3544e4249d4f32ead8e463f2b08",
     "report": "out/new_model_batch5_20261010/g3_paper/paper_g3_parity.json",
     "match": true,
     "python": "venv_btcusdt (pandas 2.3.3, numpy 1.26.4)",
@@ -234,5 +235,6 @@
   "observed_through": "2026-10-08 (snapshot); live dry run to 2026-10-10T09:23Z ok",
   "fix_round_1": "Codex review of 0aec612 (live apply NO, 3 P1): flat start + incremental append-only state machine, per-sleeve books (no UNIQUE collision), 4h-only signal history (memory), g3_health",
   "fix_round_2": "Codex re-review of e4577d9: behavior hash over the full dependency chain + sleeve / execution params + book start, stored in g3_state at first start; resume mismatch fails closed (g3_health last_error behavior_hash_mismatch, stale 1); explicit migration scripts/paper_g3_migrate.py (MIGRATION event); health written in the state transaction on success; accounting only over processed bars (a gap stops the sleeve before it)",
-  "fix_round_3": "Codex re-review of f6667be: fixed signal inputs verified against the NM-B5 manifest and in the behavior hash; CRLF-independent code hash; start-change migration rejected, explicit --reset; gap wording corrected"
+  "fix_round_3": "Codex re-review of f6667be: fixed signal inputs verified against the NM-B5 manifest and in the behavior hash; CRLF-independent code hash; start-change migration rejected, explicit --reset; gap wording corrected",
+  "fix_round_4": "Codex re-review of 1bb4382: reset epochs (ledger / Book / daily from the current epoch only), strict reset start (later UTC day, > last bar + 1m), loud duplicate events (epoch in PK, plain INSERT)"
 }
