@@ -136,5 +136,11 @@
     "code_commit": "e145385c47702010ea2887350a1ef10b273abcb3",
     "report_sha256": "e6aa4f7601176d5935a01bed33c71968c9a82aa46ba846fc10324b4385f8eccf",
     "pilot_pass": false
+  },
+  "round9_pilot_e2": {
+    "code_commit": "87dfdbdefc1b3c51e5f03b307023eb6f98810349",
+    "report_sha256": "17df5cfd6fd0f82dca5580b968ea62bb786603ee3a31c7223657ef2c6b05ff90",
+    "pilot_pass": false,
+    "U_star": 40
   }
 }
