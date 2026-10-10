@@ -1,0 +1,11 @@
+{
+  "applied_utc": "2026-10-10T15:27Z",
+  "change": "commit 7a365d2: trades.trade_id '<book>-<YYYYMMDD>-<HHMMSS>-<mmm>' (shared by PESS/OPT), UNIQUE(trade_id, boundary), AFTER INSERT trigger, view trades_pess",
+  "stopped": "paper_catalog + paper_run supervisors then children 15:26:56Z; dashboard/tunnel kept running",
+  "db_backup": "artifacts/live/live.pre_trade_id.sqlite (sqlite backup API, integrity ok, 1152 trades)",
+  "migration": {"backfilled": 1152, "null": 0, "dup": 0, "trades_pess": 576, "pess": 576, "pess_opt_id_mismatch": 0, "integrity": "ok"},
+  "post_check_15_31Z": {"catalog_last_run": "15:31:14Z", "g3_health": "both stale 0, no error, last_bar 15:30", "config_hash": "91dbfdda", "dashboard_http": 200, "task_log_errors": 0},
+  "g3_behavior_hash": "unchanged (store.py/g3.py bytes unchanged); no migrate step",
+  "codex_review": "live apply safe, 0 blockers (non-blocking: OR IGNORE derived-id collision could leave NULL id; 30s lock timeout exits process; no down-migration)",
+  "rollback": "stop catalog/run; restore live.pre_trade_id.sqlite; restart"
+}
