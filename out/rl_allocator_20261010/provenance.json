@@ -154,5 +154,11 @@
     "code_commit": "27962962648d4418044ff6e38beca600e600eb12",
     "report_sha256": "c5c7ebd3531636d9d904de60147a23a0d9cf8f7fa2ec5514c896df29df640f55",
     "pass": false
+  },
+  "round12_regime": {
+    "code_commit": "ca65e57",
+    "short_devloader_sha256": "e7bfc91070a85c67bde4af32b200757e348d905cb7b94f4af0ffdbf00b2a9fdb",
+    "bidir_sha256": "8dc12a8ef13b14b10aac0fa63a6bbd1087838cc8567757fedfca27cef506e8a1",
+    "note": "previous regime_short_report.json used b2.load_all (opened the TEST snapshot then filtered); DEV-loader rerun identical"
   }
 }
