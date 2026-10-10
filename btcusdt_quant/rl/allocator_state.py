@@ -12,7 +12,6 @@ fold's train rows only (`fit_normalizer`). Private outcome tables never enter (s
 """
 from __future__ import annotations
 import numpy as np, pandas as pd
-from numpy.lib.stride_tricks import sliding_window_view
 from . import sleeve_precompute as sp
 
 MIN = sp.MIN
@@ -141,9 +140,19 @@ def _run_start(key: np.ndarray) -> np.ndarray:
     return np.maximum.accumulate(np.where(chg, np.arange(len(key)), 0))
 
 
+def _sum_from(cs: np.ndarray, i: np.ndarray, lo: np.ndarray) -> np.ndarray:
+    """Sum of x[lo .. i] from a leading-zero cumulative sum (0 when lo > i)."""
+    return cs[np.maximum(i + 1, 0)] - cs[np.minimum(np.maximum(lo, 0), np.maximum(i + 1, 0))]
+
+
+SLEEVE_FLAGS = ("available", "signal_active", "pending", "open", "exit_pending", "trail_armed")
+
+
 def sleeve_channels(name: str, grid: pd.DataFrame, ledger: pd.DataFrame, c: np.ndarray, T: np.ndarray) -> pd.DataFrame:
-    """Per-sleeve state at T from its observation-safe grid and ledger (both already cut at available_time <= T is
-    not required: only rows with minute_time + 1m <= T are ever indexed)."""
+    """Per-sleeve state at T from its observation-safe grid and ledger; only minutes with minute_time + 1m <= T are
+    indexed. Availability (Codex fix round 2): while the sleeve is unavailable every channel is neutral (flags 0,
+    numbers NaN -> masked); P&L-derived statistics (MTM, vol, drawdown, closed-trade stats, unrealized) only use the
+    current availability epoch (reset at each epoch start; trades opened before it are not counted)."""
     sp.obs_columns("grid", grid.columns)
     sp.obs_columns("ledger", ledger.columns)
     t = grid.minute_time.to_numpy(np.int64)
@@ -151,78 +160,93 @@ def sleeve_channels(name: str, grid: pd.DataFrame, ledger: pd.DataFrame, c: np.n
     ok = i >= 0
     ii = np.maximum(i, 0)
     g = lambda col: grid[col].to_numpy()  # noqa: E731
+    av = g("available").astype(bool)
+    on = ok & av[ii]                                        # sleeve observable at T
+    ep = np.where(av, _run_start(av.astype(np.int8)), -1)   # epoch start minute (valid where av)
+    e0 = np.where(on, ep[ii], 0)
     side, opp, openm, pend = g("base_side").astype(np.int64), g("entry_opportunity_id"), g("open"), g("pending")
     out = {}
     pre = f"{name}_"
-    for col in ("available", "signal_active", "pending", "open", "exit_pending", "trail_armed"):
-        out[pre + col] = np.where(ok, g(col)[ii], 0).astype(np.float32)
-    out[pre + "base_side"] = np.where(ok, side[ii], 0).astype(np.float32)
-    out[pre + "base_weight"] = np.where(ok, g("base_weight")[ii], 0).astype(np.float32)
-    s_age = ii - _run_start(side)[ii]
-    out[pre + "signal_age_h"] = np.where(ok & (side[ii] != 0), (s_age + 1) / 60, 0.0)
+    for col in SLEEVE_FLAGS:
+        out[pre + col] = np.where(on, g(col)[ii], 0).astype(np.float32)
+    out[pre + "base_side"] = np.where(on, side[ii], 0).astype(np.float32)
+    out[pre + "base_weight"] = np.where(on, g("base_weight")[ii], 0).astype(np.float32)
+    s_age = ii - np.maximum(_run_start(side)[ii], e0)
+    out[pre + "signal_age_h"] = np.where(on & (side[ii] != 0), (s_age + 1) / 60, 0.0)
     key_p = np.where(pend, opp, -1)
-    out[pre + "pending_age_h"] = np.where(ok & pend[ii], (ii - _run_start(key_p)[ii] + 1) / 60, 0.0)
+    out[pre + "pending_age_h"] = np.where(on & pend[ii], (ii - _run_start(key_p)[ii] + 1) / 60, 0.0)
     key_o = np.where(openm, opp, -1)
-    out[pre + "hold_age_h"] = np.where(ok & openm[ii], (ii - _run_start(key_o)[ii] + 1) / 60, 0.0)
+    o_start = _run_start(key_o)[ii]
+    open_now = on & openm[ii]
+    own = open_now & (o_start >= e0)                        # opened inside the current epoch
+    out[pre + "hold_age_h"] = np.where(open_now, (ii - o_start + 1) / 60, 0.0)
     mand = g("base_mandatory_exit_time")[ii]
-    out[pre + "to_mandatory_exit_h"] = np.where(ok & (mand > 0), (mand - T) / HOUR, np.nan)
+    out[pre + "to_mandatory_exit_h"] = np.where(on & (mand > 0), (mand - T) / HOUR, np.nan)
     R0, Rt, lvl = g("R0_bps")[ii].astype(float), g("R_t_bps")[ii].astype(float), g("stop_level")[ii].astype(float)
-    open_now = ok & openm[ii]
     out[pre + "R0_bps"] = np.where(open_now, R0, np.nan)
     out[pre + "Rt_over_R0"] = np.where(open_now & (R0 > 0), Rt / np.where(R0 > 0, R0, 1), np.nan)
     sd = side[ii] * np.log(np.asarray(c, float)[ii] / lvl) * 1e4
     out[pre + "stop_dist_bps"] = np.where(open_now & np.isfinite(lvl), sd, np.nan)
-    # realized canonical P&L (unit allocation) from the grid: minutes < T
-    net = g("net4").astype(float)
+    # realized canonical P&L (unit allocation), available minutes of the current epoch only
+    net = np.where(av, g("net4").astype(float), 0.0)
     cs = _cum(net)
-    for nm, w in (("24h", 1440), ("7d", 10080), ("30d", 43200)):
-        out[pre + f"mtm_{nm}"] = _window_sum(cs, i, w)
-    out[pre + "net4_1h"] = _window_sum(cs, i, 60)
+    for nm, w in (("24h", 1440), ("7d", 10080), ("30d", 43200), ("1h", 60)):
+        col = pre + (f"mtm_{nm}" if nm != "1h" else "net4_1h")
+        out[col] = np.where(on, _sum_from(cs, i, np.maximum(i - w + 1, e0)), np.nan)
     edges = t[0] + HOUR * np.arange((t[-1] + MIN - t[0]) // HOUR + 1, dtype=np.int64) if len(t) else np.zeros(0, np.int64)
     hourly = np.diff(cs[np.searchsorted(t, edges)]) if len(t) else np.zeros(0)
     hcs, hcs2 = _cum(hourly), _cum(hourly ** 2)
-    hi = (i + 1) // 60 - 1                         # last full hour fully closed by T (grid starts on an hour)
+    hi = (i + 1) // 60 - 1                                  # last full hour closed by T (grid starts on an hour)
+    h0 = -(-e0 // 60)                                       # first full hour inside the epoch
     for nm, w in (("24h", 24), ("7d", 168)):
-        n_ = np.minimum(hi + 1, w)
-        m1 = _window_sum(hcs, hi, w) / np.maximum(n_, 1)
-        m2 = _window_sum(hcs2, hi, w) / np.maximum(n_, 1)
-        out[pre + f"vol_{nm}"] = np.where(n_ >= 2, np.sqrt(np.maximum(m2 - m1 ** 2, 0)), np.nan)
-    eq = cs[1:]
-    peak = np.maximum.accumulate(eq)
-    out[pre + "drawdown"] = np.where(ok, (peak - eq)[ii], np.nan)
-    out[pre + "mdd_to_date"] = np.where(ok, np.maximum.accumulate(peak - eq)[ii], np.nan)
-    # open trade unrealized / MAE / MFE and last-20 closed trades from the ledger (minute_time + 1m <= T)
+        lo = np.maximum(hi - w + 1, h0)
+        n_ = np.maximum(hi - lo + 1, 0)
+        m1 = _sum_from(hcs, hi, lo) / np.maximum(n_, 1)
+        m2 = _sum_from(hcs2, hi, lo) / np.maximum(n_, 1)
+        out[pre + f"vol_{nm}"] = np.where(on & (n_ >= 2), np.sqrt(np.maximum(m2 - m1 ** 2, 0)), np.nan)
+    E = cs[1:] - cs[np.maximum(ep, 0)]                      # equity since the epoch start
+    epoch_id = np.where(av, ep, -1)
+    peak = pd.Series(np.maximum(E, 0)).groupby(epoch_id).cummax().to_numpy()
+    dd = peak - E
+    mdd = pd.Series(dd).groupby(epoch_id).cummax().to_numpy()
+    out[pre + "drawdown"] = np.where(on, dd[ii], np.nan)
+    out[pre + "mdd_to_date"] = np.where(on, mdd[ii], np.nan)
+    # open trade unrealized / MFE / MAE (trades opened in the current epoch)
     lm = ledger.minute_idx.to_numpy(np.int64)
-    lo = ledger.entry_opportunity_id.to_numpy(np.int64)
+    lo_ = ledger.entry_opportunity_id.to_numpy(np.int64)
     ln = ledger.net4.to_numpy(float)
-    order = np.lexsort((lm, lo))
-    lm, lo, ln = lm[order], lo[order], ln[order]
-    cum = pd.Series(ln).groupby(lo).cumsum().to_numpy()
-    cmax = pd.Series(cum).groupby(lo).cummax().to_numpy()
-    cmin = pd.Series(cum).groupby(lo).cummin().to_numpy()
-    cur = np.where(open_now, opp[ii], -1)
+    order = np.lexsort((lm, lo_))
+    lm, lo_, ln = lm[order], lo_[order], ln[order]
+    cum = pd.Series(ln).groupby(lo_).cumsum().to_numpy()
+    cmax = pd.Series(cum).groupby(lo_).cummax().to_numpy()
+    cmin = pd.Series(cum).groupby(lo_).cummin().to_numpy()
+    cur = np.where(own, opp[ii], -1)
     unr, mfe, mae = (np.full(len(T), np.nan) for _ in range(3))
-    starts = np.searchsorted(lo, cur, "left")
-    ends = np.searchsorted(lo, cur, "right")
+    starts, ends = np.searchsorted(lo_, cur, "left"), np.searchsorted(lo_, cur, "right")
     for q in np.flatnonzero(cur >= 0):
         a, b = starts[q], ends[q]
         k = a + np.searchsorted(lm[a:b], i[q], "right") - 1
         if k >= a:
             unr[q], mfe[q], mae[q] = cum[k], cmax[k], cmin[k]
     out[pre + "unrealized_net4"], out[pre + "mfe"], out[pre + "mae"] = unr, mfe, mae
-    # closed trades: exit fill minute (grid closed_opp_id, known at that minute's close) <= i
+    # closed trades of the current epoch: exit fill minute (grid closed_opp_id) <= i and entry inside the epoch
     cl = g("closed_opp_id").astype(np.int64)
     em = np.flatnonzero(cl >= 0)
     ids = cl[em]
-    tot_by = pd.Series(ln).groupby(lo).sum()
-    tot = tot_by.reindex(ids).to_numpy(float)
+    first = pd.Series(lm).groupby(lo_).min()
+    st_min = first.reindex(ids).to_numpy(float)
+    keep = av[em] & (st_min >= ep[em])
+    em, ids = em[keep], ids[keep]
+    tot = pd.Series(ln).groupby(lo_).sum().reindex(ids).to_numpy(float)
     k_end = np.searchsorted(em, i, "right")
-    win = _cum(tot > 0)
-    s_tot = _cum(tot)
-    n_c = np.minimum(k_end, CLOSED_N)
-    out[pre + "closed20_win"] = np.where(n_c > 0, (win[k_end] - win[k_end - n_c]) / np.maximum(n_c, 1), np.nan)
-    out[pre + "closed20_mean"] = np.where(n_c > 0, (s_tot[k_end] - s_tot[k_end - n_c]) / np.maximum(n_c, 1), np.nan)
-    out[pre + "closed_n"] = k_end.astype(float)
+    k_lo = np.searchsorted(em, e0, "left")
+    win, s_tot = _cum(tot > 0), _cum(tot)
+    n_all = np.maximum(k_end - k_lo, 0)
+    n_c = np.minimum(n_all, CLOSED_N)
+    a_ = k_end - n_c
+    out[pre + "closed20_win"] = np.where(on & (n_c > 0), (win[k_end] - win[a_]) / np.maximum(n_c, 1), np.nan)
+    out[pre + "closed20_mean"] = np.where(on & (n_c > 0), (s_tot[k_end] - s_tot[a_]) / np.maximum(n_c, 1), np.nan)
+    out[pre + "closed_n"] = np.where(on, n_all, np.nan).astype(float)
     return pd.DataFrame(out)
 
 
@@ -260,19 +284,41 @@ def ax_table_features(tab: pd.DataFrame, T: np.ndarray, prefix: str) -> pd.DataF
 
 
 # ---------------------------------------------------------------- history / normalizer
-def history(frame: pd.DataFrame, cols, n: int = SEQ_LEN) -> np.ndarray:
-    """[rows, n, len(cols)] float32 windows over consecutive 1h rows (oldest first, last = row T); NaN-padded."""
-    x = frame[list(cols)].to_numpy(np.float32)
-    pad = np.vstack([np.full((n - 1, x.shape[1]), np.nan, np.float32), x])
-    return sliding_window_view(pad, n, axis=0).transpose(0, 2, 1)
+def history(frame: pd.DataFrame, cols, n: int = SEQ_LEN, query: pd.DataFrame | None = None,
+            boundaries=()) -> np.ndarray:
+    """[len(query), n, len(cols)] float32 windows of 1h rows (oldest first, last = the row at the query T) taken per
+    exec_cell from `frame` (the 1h store). A window never crosses an exec_cell, a gap in the strict 1h sequence, or a
+    boundary time b (rows with T < b are cut off for queries with T >= b: episode/fold starts); NaN-padded on the left.
+    4h decisions query the 1h store, so they also get 32 x 1h."""
+    query = frame if query is None else query
+    out = np.full((len(query), n, len(cols)), np.nan, np.float32)
+    bnd = np.sort(np.asarray(list(boundaries), np.int64))
+    for cell, qi in query.groupby("exec_cell", sort=False).indices.items():
+        f = frame[frame.exec_cell == cell].sort_values("T", kind="stable")
+        Tc = f["T"].to_numpy(np.int64)
+        x = f[list(cols)].to_numpy(np.float32)
+        brk = np.r_[True, np.diff(Tc) != HOUR]
+        if len(bnd):
+            bi = np.searchsorted(bnd, Tc, "right")
+            brk |= np.r_[True, bi[1:] != bi[:-1]]
+        seg0 = np.maximum.accumulate(np.where(brk, np.arange(len(Tc)), 0))
+        Tq = query["T"].to_numpy(np.int64)[qi]
+        j = np.searchsorted(Tc, Tq)
+        if np.any(j >= len(Tc)) or np.any(Tc[np.minimum(j, len(Tc) - 1)] != Tq):
+            raise ValueError(f"query T missing from the 1h store ({cell})")
+        idx = j[:, None] - np.arange(n - 1, -1, -1)[None, :]
+        valid = idx >= seg0[j][:, None]
+        out[qi] = np.where(valid[..., None], x[np.maximum(idx, 0)], np.nan)
+    return out
 
 
 def is_scaled(col: str) -> bool:
-    return col not in ("T", "exec_cell") and not col.endswith(_NO_SCALE) and not any(s in col for s in ("lbr_armed",))
+    return col not in ("T", "exec_cell") and not col.endswith(_NO_SCALE) and not col.endswith("__nan")
 
 
 def fit_normalizer(frame: pd.DataFrame, train_start, train_end) -> dict:
-    """Median / IQR per scaled column from train rows only (T in [train_start, train_end))."""
+    """Median / IQR per scaled column from train rows only (T in [train_start, train_end)). Keys follow the frame's
+    column order, which is part of the feature-order contract."""
     T = frame["T"].to_numpy(np.int64)
     ts = lambda x: (pd.Timestamp(x) if pd.Timestamp(x).tzinfo else pd.Timestamp(x, tz="UTC")).value  # noqa: E731
     m = (T >= ts(train_start)) & (T < ts(train_end))
@@ -292,13 +338,31 @@ def fit_normalizer(frame: pd.DataFrame, train_start, train_end) -> dict:
     return out
 
 
-def apply_normalizer(frame: pd.DataFrame, norm: dict) -> pd.DataFrame:
-    """Scaled copy plus `<col>__nan` masks; NaN -> 0 after masking; clipped to +-10."""
-    out = frame.copy()
+def feature_order(frame_columns, norm: dict) -> list[str]:
+    """Frozen observation column order: scaled features (normalizer order), one NaN mask per scaled feature (always
+    present), then unscaled flags / sin-cos in frame order."""
+    scaled = list(norm)
+    rest = [c for c in frame_columns if c not in norm and c not in ("T", "exec_cell") and not c.endswith("__nan")]
+    return scaled + [c + "__nan" for c in scaled] + rest
+
+
+def apply_normalizer(frame: pd.DataFrame, norm: dict, order: list[str] | None = None) -> pd.DataFrame:
+    """Scaled copy with a `<col>__nan` mask for EVERY scaled feature (schema does not depend on the window); NaN -> 0
+    after masking; clipped to +-10. With `order`, returns exactly those columns in that order (missing -> error)."""
+    cols = {}
     for c, (med, sc) in norm.items():
-        x = out[c].to_numpy(float)
+        x = frame[c].to_numpy(float)
         nan = ~np.isfinite(x)
-        out[c] = np.clip(np.where(nan, 0.0, (x - med) / sc), -10, 10).astype(np.float32)
-        if nan.any():
-            out[c + "__nan"] = nan.astype(np.float32)
+        cols[c] = np.clip(np.where(nan, 0.0, (x - med) / sc), -10, 10).astype(np.float32)
+        cols[c + "__nan"] = nan.astype(np.float32)
+    for c in frame.columns:
+        if c not in norm and c not in ("T", "exec_cell") and not c.endswith("__nan"):
+            cols[c] = np.nan_to_num(frame[c].to_numpy(float)).astype(np.float32)
+    keys = pd.DataFrame({k: frame[k].to_numpy() for k in ("T", "exec_cell") if k in frame}, index=frame.index)
+    out = pd.concat([keys, pd.DataFrame(cols, index=frame.index)], axis=1)
+    if order is not None:
+        miss = [c for c in order if c not in out]
+        if miss:
+            raise KeyError(f"feature-order contract violated, missing {miss[:5]}")
+        out = out[["T", "exec_cell"] + list(order)] if "exec_cell" in out else out[["T"] + list(order)]
     return out

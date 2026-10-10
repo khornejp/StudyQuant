@@ -1135,6 +1135,9 @@ def g3_signal_files(G) -> tuple[dict, dict]:
 STATE = OUT / "state"
 NATIVE_DIRS = {s: ("common", s) for s in NATIVE}
 G3_SIG_COLS = ("score_F", "score_S", "svi42", "svi180", "sigma_ann", "w_W180_P65", "w_V_ENS", "funding_z90")
+AX_FAST_COLS = ("M", "L", "e1_volume_z", "e1_breakout_bps", "a2_breakout_hi_bps", "a2_breakout_lo_bps", "f3_ls_pos",
+                "f3w_ls_pos")
+SEQ_COLUMNS = ("ret_1h", "range_1h", "logvol_1h", "taker_share_1h") + tuple(f"{s}_net4_1h" for s in SLEEVES)
 LBR_SIG_COLS = ("zr4", "ztaker", "zprem", "zfund", "w", "armed", "armed_age_bars")
 
 
@@ -1208,6 +1211,12 @@ def build_state_frames(inp: dict, T: np.ndarray, allow_test: bool, T_max: int, c
         parts.append(ast.ax_table_features(tab, T, f"{s}_"))
     for s in ("C1v2", "C4v2"):
         parts.append(ast.asof_features(tam(_sig(f"{s}_F", allow_test, T_max), ("side",)), T, ("side",), f"{s}_F_"))
+        lv = tam(_sig(f"{s}_F_levels", allow_test, T_max), ("ls", "ls_pos"))
+        parts.append(ast.asof_features(lv, T, ("ls_pos",), f"{s}_Flv_").drop(columns=f"{s}_Flv_age_h"))
+    e1 = tam(_sig("C_E1", allow_test, T_max), ("volume_z", "breakout_bps"))
+    parts.append(ast.asof_features(e1, T, ("volume_z", "breakout_bps"), "c_e1_").drop(columns="c_e1_age_h"))
+    axf = tam(_sig("AX_fast", allow_test, T_max), AX_FAST_COLS)
+    parts.append(ast.asof_features(axf, T, AX_FAST_COLS, "ax_"))
     gcols_t = [c for c in sp.OBS_COLUMNS["grid"] if c not in ("minute_time", "available_time", "sleeve_id", "exec_cell")]
     lcols_t = ("gross_pnl", "fee", "funding", "net4")
     for s in NATIVE:
@@ -1215,7 +1224,7 @@ def build_state_frames(inp: dict, T: np.ndarray, allow_test: bool, T_max: int, c
         g, led = tam(g, gcols_t), tam(led, lcols_t)
         parts.append(drop_na_channels(s, ast.sleeve_channels(s, g, led, mk["c"], T)))
         log(f"state {s}")
-    base = pd.concat(parts, axis=1)
+    base = neutralize(pd.concat(parts, axis=1), NATIVE)
     out = []
     for tag in cells:
         cp = []
@@ -1223,11 +1232,37 @@ def build_state_frames(inp: dict, T: np.ndarray, allow_test: bool, T_max: int, c
             g, led = _sleeve_inputs(PRE / "g3_family" / tag / s, T_max, allow_test)
             g, led = tam(g, gcols_t), tam(led, lcols_t)
             cp.append(drop_na_channels(s, ast.sleeve_channels(s, g, led, mk["c"], T)))
-        f = pd.concat([base] + cp, axis=1)
+        f = neutralize(pd.concat([base] + cp, axis=1), G3_FAMILY)
         f.insert(1, "exec_cell", tag)
         out.append(f)
         log(f"state cell {tag}")
     return pd.concat(out, ignore_index=True)
+
+
+def neutralize(f: pd.DataFrame, sleeves) -> pd.DataFrame:
+    """Unavailable sleeve: every `<sleeve>_*` channel (incl. its source signal snapshot) is neutral: flags/ages 0,
+    other numbers NaN (masked downstream)."""
+    from btcusdt_quant.rl import allocator_state as ast
+    zero = tuple(ast.SLEEVE_FLAGS) + ("base_side", "base_weight", "signal_age_h", "pending_age_h", "hold_age_h")
+    for s in sleeves:
+        off = f[f"{s}_available"].to_numpy() == 0
+        for c in f.columns:
+            if c.startswith(s + "_") and c != f"{s}_available":
+                x = f[c].to_numpy(float).copy()
+                x[off] = 0.0 if c[len(s) + 1:] in zero else np.nan
+                f[c] = x
+    return f
+
+
+def contamination(f: pd.DataFrame) -> dict:
+    """Rows where a sleeve is unavailable but any of its channels is non-neutral (flag != 0 or finite number)."""
+    out = {}
+    for s in SLEEVES:
+        av = f[f"{s}_available"].to_numpy() == 0
+        cols = [c for c in f.columns if c.startswith(s + "_") and c != f"{s}_available"]
+        x = f.loc[av, cols].to_numpy(float)
+        out[s] = int(((np.isfinite(x)) & (x != 0)).any(axis=1).sum())
+    return out
 
 
 def drop_na_channels(s: str, f: pd.DataFrame) -> pd.DataFrame:
@@ -1279,12 +1314,24 @@ def cmd_state(args) -> None:
     if not eq:
         raise SystemExit(f"STATE TAMPER FAIL {bad}")
     log(f"tamper ok {rep['tamper']}")
+    rep["contaminated_unavailable_rows"] = contamination(dev)
+    if any(rep["contaminated_unavailable_rows"].values()):
+        raise SystemExit(f"STATE CONTAMINATION {rep['contaminated_unavailable_rows']}")
+    h = ast.history(dev, SEQ_COLUMNS, ast.SEQ_LEN, query=dev.groupby("exec_cell").head(1))
+    rep["history_first_row_per_cell_nonnan_steps"] = int(np.isfinite(h[:, :-1, :]).sum())
+    rep["seq_columns"] = list(SEQ_COLUMNS)
     dev.to_parquet(STATE / "state_1h.parquet", index=False, compression="zstd")
     dev4 = dev[dev["T"].to_numpy() % (4 * ast.HOUR) == 0].reset_index(drop=True)
     dev4.to_parquet(STATE / "state_4h.parquet", index=False, compression="zstd")
     norms = {}
     for nm, fr_ in (("1h", dev), ("4h", dev4)):
         norms[nm] = {f: ast.fit_normalizer(fr_, *FOLDS[f][0]) for f in FOLDS}
+        orders = {f: ast.feature_order(fr_.columns, n_) for f, n_ in norms[nm].items()}
+        if len({tuple(o) for o in orders.values()}) != 1:
+            raise SystemExit(f"feature order differs across folds ({nm})")
+        norms[nm]["feature_order"] = orders["F1"]
+        rep[f"features_{nm}"] = {"scaled": len(norms[nm]["F1"]), "masks": len(norms[nm]["F1"]),
+                                 "observation_columns": len(orders["F1"])}
     dump(STATE / "normalizers.json", norms)
     if args.allow_test_parity:
         sp.require_unlock(True, "TEST state rows")
@@ -1393,9 +1440,168 @@ def cmd_amend(_args) -> None:
     log(f"amendment written sha256 {sha(AMEND)}; archived {sum('archive' in v for v in inputs.values())} files")
 
 
+# ================================================================ design section 2 signal features (fix round 2)
+def cmd_signals(args) -> None:
+    """Causal decision-time features of the native sleeves (design section 2), each verified to reproduce the source
+    side exactly before it is written. Adds files under precompute/signals/; precompute ledgers/parity untouched."""
+    sp.require_unlock(args.allow_test_parity, "signal snapshots (rows through 2026-10-07)")
+    t0 = time.time()
+    rep: dict = {}
+    files: dict = {}
+    # ---------------- C1v2 / C4v2: F-leg LS quantile position, E1/V1a volume z and breakout distance
+    F = load("sim_r2_56_fix1_sig", "scripts/sim_r2_56_fix1.py")
+    r237 = F.r237
+    F.verify_inputs()
+    rows_ls, _ = F.ls_rows()
+    market, features, *_ = F.inputs(rows_ls)
+    bars = r237.hourly_bars(market)
+    full = {**r237.build_f3_signals(market, features, bars)[1], **r237.build_e1_signals(market, bars)[1]}
+    fl = c_f_levels(market, features, bars)
+    for s, key in C_LEGS.items():
+        lv = fl[key]
+        ref_t, ref_s = full[key]
+        ok = np.array_equal(pd.DatetimeIndex(ref_t).as_unit("ns").asi8, lv["decision_time"]) and \
+            np.array_equal(np.asarray(ref_s), lv["side"])
+        rep[f"{s}_F_side_reproduced"] = bool(ok)
+        if not ok:
+            raise SystemExit(f"{s} F-leg level copy does not reproduce the source side")
+        f = pd.DataFrame(lv)
+        f["available_time"] = f.decision_time
+        files[f"signals/{s}_F_levels"] = write_part(f, PRE / "signals", f"{s}_F_levels", "decision_time")
+    e1 = c_e1_features(market, bars)
+    ref_t, ref_s = full[("E1", "V1a")]
+    ok = np.array_equal(pd.DatetimeIndex(ref_t).as_unit("ns").asi8, e1["decision_time"]) and \
+        np.array_equal(np.asarray(ref_s), e1["side"])
+    rep["C_E1_side_reproduced"] = bool(ok)
+    if not ok:
+        raise SystemExit("E1/V1a feature copy does not reproduce the source side")
+    f = pd.DataFrame(e1)
+    f["available_time"] = f.decision_time
+    files["signals/C_E1"] = write_part(f, PRE / "signals", "C_E1", "decision_time")
+    log("C features ok")
+    # ---------------- B3 / K04: legacy.fast_signals indicators + M/L regime at each 15 m decision
+    r255 = load("sim_r2_55_sig", "scripts/sim_r2_55.py")
+    from btcusdt_quant.sim import regime as regime_mod, rolling
+    from btcusdt_quant.sim.strategies import Context, legacy
+    run = r255.stageb_runner()
+    run.verify_snapshot(read_frames=False)
+    ctx, _, _ = run.test_context()
+    nctx = Context.load(end=rolling.END)
+    segs = (("NATIVE", nctx, pd.Timestamp("2023-09-01", tz="UTC"), sp.TEST_START),
+            ("TEST", ctx, sp.TEST_START, sp.DATA_END))
+    parts = []
+    for seg, c_, a, b in segs:
+        fast = legacy.fast_signals(c_)
+        times = pd.DatetimeIndex(fast.decision_time)
+        M = regime_mod._asof(c_.regime, times, "M", pd.Timedelta(0))
+        Lr = regime_mod._asof(c_.regime, times, "L", pd.Timedelta(0))
+        w = ((times >= a) & (times < b))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out = pd.DataFrame({
+                "decision_time": times.as_unit("ns").asi8[w], "segment": seg, "M": M[w], "L": Lr[w],
+                "e1_volume_z": fast.ind_E1_volume_z.to_numpy(float)[w],
+                "e1_breakout_bps": (np.log(fast.ind_E1_close / fast.ind_E1_high20) * 1e4).to_numpy(float)[w],
+                "a2_breakout_hi_bps": (np.log(fast.ind_A2_close / fast.ind_A2_high55) * 1e4).to_numpy(float)[w],
+                "a2_breakout_lo_bps": (np.log(fast.ind_A2_close / fast.ind_A2_low55) * 1e4).to_numpy(float)[w],
+                "f3_ls_pos": ((fast.ind_F3_ls - fast.ind_F3_q10) / (fast.ind_F3_q90 - fast.ind_F3_q10)).to_numpy(float)[w],
+                "f3w_ls_pos": ((fast.ind_F3_ls - fast.ind_F3W_q20) / (fast.ind_F3W_q80 - fast.ind_F3W_q20)).to_numpy(float)[w]})
+        # verification: the K04 table side and the B3 M/L gate are exactly these inputs
+        for i_ in ("K04", "B3"):
+            tb = r255.ax_table(c_, i_, True)
+            dt = pd.DatetimeIndex(tb.decision_time)
+            sel = (dt >= a) & (dt < b)
+            ml = pd.DataFrame({"decision_time": times.as_unit("ns").asi8, "M": M, "L": Lr,
+                               "e1": fast["E1-15"].to_numpy()}).set_index("decision_time")
+            j = ml.reindex(dt.as_unit("ns").asi8[sel])
+            if i_ == "K04":
+                okk = np.array_equal(tb.side.to_numpy()[sel], j.e1.to_numpy())
+            else:
+                fp = tb.component.isin([legacy.A2_30, legacy.E1_15]).to_numpy()[sel]
+                with np.errstate(invalid="ignore"):
+                    high = j.M.to_numpy() >= 2 / 3
+                    low = (j.M.to_numpy() <= 1 / 3) & (j.L.to_numpy() < 2 / 3)
+                okk = np.array_equal(tb.allow_entry.to_numpy(bool)[sel], np.where(fp, high, low))
+            rep[f"{i_}_{seg}_inputs_reproduce_table"] = bool(okk)
+            if not okk:
+                raise SystemExit(f"{i_} {seg}: fast-signal/regime inputs do not reproduce the source table")
+        parts.append(out)
+        log(f"AX features {seg} ok")
+    f = pd.concat(parts, ignore_index=True)
+    f["available_time"] = f.decision_time
+    files["signals/AX_fast"] = write_part(f, PRE / "signals", "AX_fast", "decision_time")
+    dump(PRE / "signals" / "manifest.json", {
+        "created_utc": datetime.now(timezone.utc).isoformat(), "git_head": git("rev-parse", "HEAD"),
+        "code_sha256": sha(Path(__file__)), "checks": rep, "files": files, "runtime_sec": round(time.time() - t0, 1),
+        "rule": "every row: available_time = decision_time (source decision clock); state reads available_time <= T"})
+    log(f"signals done {rep}")
+
+
+def c_f_levels(market, features, bars) -> dict:
+    """Copy of R2-37 build_f3_signals level arithmetic (verified against the source sides): per F-leg decision the LS
+    value and its quantile band."""
+    feature_times = pd.DatetimeIndex(features.open_time).as_unit("ns").asi8
+    decisions = pd.DatetimeIndex(bars.decision_time)
+    positions = np.searchsorted(feature_times + pd.Timedelta(minutes=5).value, decisions.as_unit("ns").asi8,
+                                side="left") - 1
+    hourly_ls = pd.Series(features.global_ls_account.to_numpy(float)[positions])
+    create_mask = features.open_time.dt.minute.mod(5).eq(0)
+    events = features.loc[create_mask, ["open_time", "global_ls_account"]].copy()
+    events["available_time"] = events.open_time + pd.Timedelta(minutes=5)
+    event_values = events.global_ls_account.reset_index(drop=True)
+    out = {}
+    for strategy, (window, minimum, ql, qh) in {"F3": (2_160, 720, .10, .90), "F3-w30": (720, 720, .20, .80)}.items():
+        roll = hourly_ls.rolling(window, min_periods=minimum)
+        lo, hi = roll.quantile(ql), roll.quantile(qh)
+        out[(strategy, "V0")] = {"decision_time": decisions.as_unit("ns").asi8, "ls": hourly_ls.to_numpy(float),
+                                 "q_lo": lo.to_numpy(float), "q_hi": hi.to_numpy(float),
+                                 "side": c_sides(hourly_ls, lo, hi)}
+        levels = pd.DataFrame({"decision_time": decisions, "lower": lo.to_numpy(float), "upper": hi.to_numpy(float)})
+        fixed = pd.merge_asof(events[["available_time"]].sort_values("available_time"),
+                              levels.sort_values("decision_time"), left_on="available_time", right_on="decision_time",
+                              direction="backward")
+        out[(strategy, "V5")] = {"decision_time": pd.DatetimeIndex(events.available_time).as_unit("ns").asi8,
+                                 "ls": event_values.to_numpy(float), "q_lo": fixed.lower.to_numpy(float),
+                                 "q_hi": fixed.upper.to_numpy(float),
+                                 "side": c_sides(event_values, fixed.lower, fixed.upper)}
+    for v in out.values():
+        with np.errstate(invalid="ignore", divide="ignore"):
+            v["ls_pos"] = (v["ls"] - v["q_lo"]) / (v["q_hi"] - v["q_lo"])
+    return out
+
+
+def c_sides(values, lower, upper) -> np.ndarray:
+    result = np.zeros(len(values), np.int8)
+    result[pd.Series(values).ge(pd.Series(np.asarray(upper, float))).fillna(False).to_numpy()] = -1
+    result[pd.Series(values).le(pd.Series(np.asarray(lower, float))).fillna(False).to_numpy()] = 1
+    return result
+
+
+def c_e1_features(market, bars) -> dict:
+    """Copy of R2-37 build_e1_signals V1a arithmetic (verified against the source side): partial-hour volume z and
+    close vs the prior-20-bar high, per minute decision (minute open + 1 m)."""
+    bar_index = bars.set_index("bar_start")
+    hour_key = market.open_time.dt.floor("h")
+    partial_volume = market.volume.groupby(hour_key, sort=False).cumsum().to_numpy(float)
+    prior19_sum = bars.volume.shift().rolling(19).sum()
+    prior19_sq = bars.volume.pow(2).shift().rolling(19).sum()
+    prior_high = bars.high.rolling(20).max().shift()
+    mapped_sum = hour_key.map(pd.Series(prior19_sum.to_numpy(), index=bar_index.index)).to_numpy(float)
+    mapped_sq = hour_key.map(pd.Series(prior19_sq.to_numpy(), index=bar_index.index)).to_numpy(float)
+    mapped_high = hour_key.map(pd.Series(prior_high.to_numpy(), index=bar_index.index)).to_numpy(float)
+    mean_a = (mapped_sum + partial_volume) / 20
+    variance_a = (mapped_sq + partial_volume ** 2) / 20 - mean_a ** 2
+    with np.errstate(invalid="ignore", divide="ignore"):
+        z_a = (partial_volume - mean_a) / np.sqrt(np.maximum(variance_a, 0))
+        close = market.close.to_numpy(float)
+        side = ((z_a > 3) & (close > mapped_high)).astype(np.int8)
+        brk = np.log(close / mapped_high) * 1e4
+    t = (pd.DatetimeIndex(market.open_time) + pd.Timedelta(minutes=1)).as_unit("ns").asi8
+    return {"decision_time": t, "side": side, "volume_z": z_a, "breakout_bps": brk}
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=("freeze", "amend", "precompute", "state"))
+    ap.add_argument("command", choices=("freeze", "amend", "precompute", "signals", "state"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--only", default="g3,c,ax")
     ap.add_argument("--no-registry", action="store_true")
@@ -1407,6 +1613,8 @@ def main(argv=None) -> None:
         return cmd_freeze(args)
     if args.command == "amend":
         return cmd_amend(args)
+    if args.command == "signals":
+        return cmd_signals(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)

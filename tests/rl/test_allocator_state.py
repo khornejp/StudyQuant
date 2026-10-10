@@ -131,10 +131,12 @@ def test_availability_and_sleeve_values():
     s = ast.sleeve_channels("S", grid, led, mk["c"], T)
     assert s.S_available.tolist() == [0, 1, 1, 1]          # unavailable during the first day
     assert s.S_open.tolist() == [0, 0, 1, 0]
-    assert s.S_closed_n.tolist() == [1, 1, 1, 2]
+    # opp 0 (opened before the availability epoch at minute 1440) never counts; unavailable row fully neutral
+    assert np.isnan(s.S_closed_n[0]) and s.S_closed_n[1:].tolist() == [0, 0, 1]
     ln = led.set_index("minute_idx").net4
     assert np.isclose(s.S_unrealized_net4[2], ln.loc[2000:4999].sum())
-    assert np.isclose(s.S_closed20_mean[3], (ln.loc[100:400].sum() + ln.loc[2000:9000].sum()) / 2)
+    assert np.isclose(s.S_closed20_mean[3], ln.loc[2000:9000].sum())
+    assert np.isclose(s.S_mtm_30d[3], ln.loc[2000:9000].sum())          # pre-epoch P&L (opp 0) reset
     assert s.S_hold_age_h[2] == (4999 - 2000 + 1) / 60
 
 
@@ -174,11 +176,54 @@ def test_train_only_normalizer():
     assert "hour_sin" not in n1 and np.isfinite(a.rv_1h).all()
 
 
-def test_history_window():
-    f = pd.DataFrame({"a": np.arange(40, dtype=float), "b": -np.arange(40, dtype=float)})
-    h = ast.history(f, ["a", "b"], 32)
-    assert h.shape == (40, 32, 2)
-    assert h[35, -1, 0] == 35 and h[35, 0, 0] == 4 and np.isnan(h[0, 0, 0]) and h[0, -1, 1] == 0
+def test_history_cells_gaps_boundaries_and_4h():
+    T = T0 + HOUR * np.arange(1, 81, dtype=np.int64)
+    f = pd.concat([pd.DataFrame({"T": T, "exec_cell": c, "a": np.arange(80, dtype=float) + 1000 * k})
+                   for k, c in enumerate(("c0", "c1"))], ignore_index=True)
+    f = f.drop(index=40 + 80).reset_index(drop=True)                    # c1 loses one hour: strict 1h break
+    h = ast.history(f, ["a"], 32, boundaries=[int(T[60])])
+    r = f.index[(f.exec_cell == "c1") & (f["T"] == T[0])][0]
+    assert np.isnan(h[r, :-1, 0]).all() and h[r, -1, 0] == 1000         # first c1 row never sees c0
+    r = f.index[(f.exec_cell == "c1") & (f["T"] == T[45])][0]
+    assert h[r, -1, 0] == 1045 and np.isnan(h[r, :-5, 0]).all() and h[r, -5, 0] == 1041   # 1040 missing
+    r = f.index[(f.exec_cell == "c0") & (f["T"] == T[62])][0]
+    assert h[r, -3, 0] == 60 and np.isnan(h[r, -4, 0])                  # fold/episode boundary at T[60]
+    q = f[(f["T"] % (4 * HOUR) == 0) & (f.exec_cell == "c0")]
+    h4 = ast.history(f, ["a"], 32, query=q)
+    k = np.flatnonzero(q["T"].to_numpy() == T[79])[0] if (T[79] % (4 * HOUR) == 0) else len(q) - 1
+    last = q["T"].to_numpy()[k]
+    assert h4.shape == (len(q), 32, 1) and np.all(np.diff(h4[k, :, 0]) == 1)   # 32 consecutive 1h rows
+    assert h4[k, -1, 0] == np.flatnonzero(T == last)[0]
+
+
+def test_mask_schema_fixed_across_windows():
+    mk, met, prem, ft, fr, grid, led = world()
+    f = build(mk, met, prem, ft, fr, grid, led, T_GRID)
+    n1 = ast.fit_normalizer(f, pd.Timestamp(int(T_GRID[0]), tz="UTC"), pd.Timestamp(int(T_GRID[300]), tz="UTC"))
+    n2 = ast.fit_normalizer(f, pd.Timestamp(int(T_GRID[400]), tz="UTC"), pd.Timestamp(int(T_GRID[800]), tz="UTC"))
+    assert list(n1) == list(n2)
+    order = ast.feature_order(f.columns, n1)
+    a = ast.apply_normalizer(f.iloc[:50], n1, order)
+    b = ast.apply_normalizer(f.iloc[500:550].fillna(0.0), n2, order)    # window without any NaN
+    assert list(a.columns) == list(b.columns) == ["T"] + order
+    assert all(c + "__nan" in a for c in n1) and (b[[c + "__nan" for c in n1]].to_numpy() == 0).all()
+    with pytest.raises(KeyError):
+        ast.apply_normalizer(f.drop(columns=["rv_1h"]), {k: v for k, v in n1.items() if k != "rv_1h"}, order)
+
+
+def test_unavailable_sleeve_is_neutral_and_epoch_resets():
+    mk, met, prem, ft, fr, grid, led = world()
+    g = grid.copy()
+    g["available"] = g.minute_time >= T0 + 10000 * MIN                  # trade 1 [2000, 9000] fully unavailable
+    T = np.array([T0 + 5000 * MIN, T0 + 9500 * MIN, T0 + 10060 * MIN, T0 + 20600 * MIN], np.int64)
+    s = ast.sleeve_channels("S", g, led, mk["c"], T)
+    flags = [c for c in s if c.endswith(tuple(ast.SLEEVE_FLAGS)) or c.endswith(("base_side", "base_weight"))]
+    assert (s.loc[:1, flags].to_numpy() == 0).all()
+    num = [c for c in s if c not in flags and not c.endswith(("_age_h",))]
+    assert s.loc[:1, num].isna().all().all()                              # no MTM/DD/closed/unrealized exposure
+    assert s.S_mtm_30d[2] == 0 and s.S_closed_n[2] == 0 and s.S_drawdown[2] == 0
+    ln = led.set_index("minute_idx").net4
+    assert np.isclose(s.S_closed20_mean[3], ln.loc[20000:20500].sum()) and s.S_closed_n[3] == 1
 
 
 def test_precompute_refuses_without_test_unlock():
