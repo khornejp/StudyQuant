@@ -41,7 +41,7 @@ def test_sleeve_masks_unavailable_and_no_widening():
 # ---------------------------------------------------------------- real-data env (DEV only)
 @pytest.fixture(scope="module")
 def cell():
-    return E.load_cell("o2_p1.0", allow_test=False)
+    return E.load_cell("o2_p1.0", fold="F4", allow_test=False)
 
 
 def run(env, policy):
@@ -80,13 +80,13 @@ def test_load_fail_closed(tmp_path):
     p = root / "state/manifest.json"
     p.write_bytes(p.read_bytes().replace(b'"runtime_sec"', b'"runtime_sec_"'))
     with pytest.raises(E.SchemaError, match="hash"):
-        E.load_cell("o2_p0.5", root=root)
+        E.load_cell("o2_p0.5", fold="F4", root=root)
     shutil.copyfile(OUT / "state/manifest.json", p)
     n = json.loads((root / "state/normalizers.json").read_text())
     n["1h"]["feature_order"] = n["1h"]["feature_order"][::-1]
     (root / "state/normalizers.json").write_text(json.dumps(n))
     with pytest.raises(E.SchemaError):                                      # hash and order both guarded
-        E.load_cell("o2_p0.5", root=root)
+        E.load_cell("o2_p0.5", fold="F4", root=root)
 
 
 @real
@@ -100,7 +100,7 @@ def test_fixed_schema_and_cell_history(cell):
     for _ in range(40):
         o, *_ = env.step(C.Action.hold())
     assert o["seq_pad"].sum() == 0
-    other = E.load_cell("o5_p2.0", allow_test=False)
+    other = E.load_cell("o5_p2.0", fold="F4", allow_test=False)
     assert other.static.shape[1] == cell.static.shape[1] == C.N_STATIC and other.feature_order == cell.feature_order
     e4 = E.AllocatorEnv(cell, cadence_h=4)
     o4 = e4.reset(TS("2024-03-01"), TS("2024-03-11"))
@@ -237,7 +237,7 @@ def test_missing_partition_fails_closed(tmp_path):
     shutil.copytree(OUT / "precompute/common/market", root / "precompute/common/market")
     (root / "precompute/common/market/market_2021.parquet").unlink()
     with pytest.raises(E.SchemaError, match="partition set mismatch"):
-        E.load_cell("o2_p0.5", root=root)
+        E.load_cell("o2_p0.5", fold="F4", root=root)
 
 
 @real
@@ -257,3 +257,12 @@ def test_vec_env_matches_scalar_env(cell):
     v.reset(np.array([TS("2023-01-01"), TS("2023-02-01")]), 24)
     with pytest.raises(ValueError):
         v.step(np.zeros((2, 7)), np.zeros((2, 7), int), np.zeros((2, 7), int))   # float actions rejected
+
+
+@real
+def test_fold_is_required_and_checked(cell):
+    with pytest.raises(TypeError):
+        E.load_cell("o2_p0.5")                                              # no default fold
+    with pytest.raises(E.SchemaError, match="unknown fold"):
+        E.load_cell("o2_p0.5", fold="F5")                                   # A1 fold no longer exists
+    assert cell.fold == "F4" and cell.identity["fold_windows"]["train"][0] == "2021-01-30"

@@ -132,6 +132,9 @@ class CellData:
     seq_norm: dict                   # col -> (median, scale)
     avail_T: np.ndarray              # [len(T1h), 7] sleeve availability seen at T
     feature_order: list
+    fold: str = ""
+    cadence_h: int = 1
+    identity: dict = field(default_factory=dict)
     usable_from: int = 0             # amendment A2 r1: first usable decision time (ns), 2021-01-30
 
     @property
@@ -503,9 +506,10 @@ def _read_cols(directory: Path, stem: str, allow_test: bool, tcol: str, years, c
     return frame
 
 
-def load_cell(cell: str, cadence_h: int = 1, fold: str = "F1", allow_test: bool = False, root: Path = OUT,
+def load_cell(cell: str, *, fold: str, cadence_h: int = 1, allow_test: bool = False, root: Path = OUT,
               verify_hashes: bool = True) -> CellData:
-    """Load one execution cell; any hash / schema / feature-order mismatch raises SchemaError (fail closed)."""
+    """Load one execution cell with the normalizer of `fold` (required, no default) at `cadence_h`; any hash / schema /
+    feature-order / fold mismatch raises SchemaError (fail closed)."""
     pre, st = root / "precompute", root / "state"
     prov = json.loads((root / "provenance.json").read_text(encoding="utf-8"))
     sm_path = st / "manifest.json"
@@ -520,6 +524,8 @@ def load_cell(cell: str, cadence_h: int = 1, fold: str = "F1", allow_test: bool 
     if list(C.SEQ_COLUMNS) != smf["seq_columns"]:
         raise SchemaError("SEQ_COLUMNS contract != state manifest")
     norms = json.loads((st / "normalizers.json").read_text(encoding="utf-8"))[f"{cadence_h}h"]
+    if fold not in norms or fold not in smf.get("folds", {}):
+        raise SchemaError(f"unknown fold {fold!r} (state folds {sorted(smf.get('folds', {}))})")
     order = norms["feature_order"]
     norm = {k: tuple(v) for k, v in norms[fold].items()}
     if len(order) != C.N_STATIC or order != ast.feature_order(smf["columns"], norm):
@@ -581,5 +587,10 @@ def load_cell(cell: str, cadence_h: int = 1, fold: str = "F1", allow_test: bool 
     seq_norm = {c: norm[c] for c in C.SEQ_COLUMNS}
     return CellData(cell=cell, t=t, o=mk.o.to_numpy(float), h=mk.h.to_numpy(float), l=mk.l.to_numpy(float),
                     c=mk.c.to_numpy(float), sleeves=sleeves, T1h=sf["T"].to_numpy(np.int64), static=static,
-                    seq_raw=seq_raw, seq_norm=seq_norm, avail_T=avail_T, feature_order=order,
-                    usable_from=pd.Timestamp(smf["usable_from"], tz="UTC").value)
+                    seq_raw=seq_raw, seq_norm=seq_norm, avail_T=avail_T, feature_order=order, fold=fold,
+                    cadence_h=cadence_h, usable_from=pd.Timestamp(smf["usable_from"], tz="UTC").value,
+                    identity={"cell": cell, "fold": fold, "cadence_h": cadence_h, "allow_test": allow_test,
+                              "fold_windows": smf["folds"][fold], "state_manifest_sha256": r2["sha256"],
+                              "normalizers_sha256": r2["normalizers_sha256"],
+                              "precompute_manifest_sha256": smf["precompute_manifest_sha256"],
+                              "feature_order_sha256": hashlib.sha256("|".join(order).encode()).hexdigest()})

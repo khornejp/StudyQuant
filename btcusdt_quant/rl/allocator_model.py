@@ -9,15 +9,17 @@ from torch import nn
 from . import allocator_contracts as C
 
 NS, NL, NO = len(C.SLEEVES), len(C.LEVELS), len(C.OPEN_ACTIONS)
-BIAS = 2.0                       # static-policy initialisation strength (logit gap of the argmax action)
+ENTRY_BIAS, OPEN_BIAS = 4.0, 4.0  # static-policy initialisation strength (logit of the static / HOLD action)
 
 
 class AllocatorActorCritic(nn.Module):
     def __init__(self, k_seq: int = len(C.SEQ_COLUMNS), k_static: int = C.N_STATIC,
-                 k_account: int = NS * len(C.ACCOUNT_CHANNELS), hidden: int = 64, static_weights=None):
+                 k_account: int = NS * len(C.ACCOUNT_CHANNELS), hidden: int = 64, static_weights=None,
+                 entry_bias: float = ENTRY_BIAS, open_bias: float = OPEN_BIAS):
         super().__init__()
         self.model_args = {"k_seq": k_seq, "k_static": k_static, "k_account": k_account, "hidden": hidden,
-                           "static_weights": None if static_weights is None else [float(x) for x in static_weights]}
+                           "static_weights": None if static_weights is None else [float(x) for x in static_weights],
+                           "entry_bias": float(entry_bias), "open_bias": float(open_bias)}
         c_in = 2 * k_seq + 1
         self.enc = nn.Sequential(nn.Conv1d(c_in, hidden, 3), nn.ReLU(), nn.Conv1d(hidden, hidden, 3), nn.ReLU(),
                                  nn.Flatten())
@@ -34,8 +36,8 @@ class AllocatorActorCritic(nn.Module):
             if static_weights is not None:      # argmax reproduces the static baseline: reward exactly 0
                 b = self.entry.bias.view(NS, NL)
                 for k, w in enumerate(static_weights):
-                    b[k, C.LEVELS.index(float(w))] = BIAS
-            self.open.bias.view(NS, NO)[:, 0] = BIAS          # HOLD
+                    b[k, C.LEVELS.index(float(w))] = entry_bias
+            self.open.bias.view(NS, NO)[:, 0] = open_bias     # HOLD
 
     def forward(self, seq, seq_nan, seq_pad, static, account, m_entry, m_open):
         """seq/seq_nan [B,32,k], seq_pad [B,32], static [B,453], account [B,28], masks bool [B,7,5] / [B,7,4]

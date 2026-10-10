@@ -1734,7 +1734,7 @@ def cmd_env_check(args) -> None:
     worst_tot = worst_min = 0.0
     for cell in [CELL_TAG[c] for c in CELLS]:
         tl = time.time()
-        cd = AE.load_cell(cell, allow_test=True)
+        cd = AE.load_cell(cell, fold="F4", allow_test=True)
         rep.setdefault("load_sec", {})[cell] = round(time.time() - tl, 2)
         for si, s in enumerate(AC.SLEEVES):
             if s not in G3_FAMILY and cell != CELL_TAG[PRIMARY]:
@@ -1821,7 +1821,7 @@ def cmd_env_check(args) -> None:
         rep["static"][cell] = {"nonzero_reward_steps": nz, "sum_abs_reward": rs}
         log(f"env-check {cell}: random {rr} static {rep['static'][cell]}")
     # 4h ablation throughput (uses 32 x 1h history from the 1h store)
-    cd = AE.load_cell(CELL_TAG[PRIMARY], cadence_h=4, allow_test=True)
+    cd = AE.load_cell(CELL_TAG[PRIMARY], fold="F4", cadence_h=4, allow_test=True)
     env = AE.AllocatorEnv(cd, cadence_h=4)
     obs = env.reset(ts("2024-01-01"), ts("2025-01-01"))
     t1, n4 = time.time(), 0
@@ -1970,21 +1970,21 @@ def cmd_vec_check(args) -> None:
     rep: dict = {"parity": {}, "bench_1h": {}, "bench_4h": {}}
     H = 3600 * 10**9
     for cell in [CELL_TAG[c] for c in CELLS]:
-        cd = AE.load_cell(cell, allow_test=False)
+        cd = AE.load_cell(cell, fold="F4", allow_test=False)
         rng = np.random.default_rng(SEED + len(rep["parity"]))
         days = rng.choice(np.arange(0, (pd.Timestamp("2025-11-01", tz="UTC").value - cd.usable_from) // (24 * H)),
                           16, replace=False)
         starts = cd.usable_from + 24 * H * days
         rep["parity"][cell] = vec_parity(cd, 16, 720, starts, rng, [0.25, 0.25, 0.25, 0.5, 0.25, 0.25, 0.25])
         log(f"vec parity {cell} {rep['parity'][cell]}")
-    cd = AE.load_cell(CELL_TAG[PRIMARY], cadence_h=4, allow_test=False)
+    cd = AE.load_cell(CELL_TAG[PRIMARY], fold="F4", cadence_h=4, allow_test=False)
     rng = np.random.default_rng(SEED)
     starts4 = cd.usable_from + 4 * H * rng.choice(np.arange(0, 6000), 8, replace=False)
     rep["parity_4h"] = vec_parity(cd, 8, 540, starts4, rng, [0.25] * 7, cadence_h=4)
-    cd = AE.load_cell(CELL_TAG[PRIMARY], allow_test=False)
+    cd = AE.load_cell(CELL_TAG[PRIMARY], fold="F4", allow_test=False)
     for n in (32, 128, 256):
         rep["bench_1h"][str(n)] = round(vec_bench(cd, n, 2160, np.random.default_rng(n)), 1)
-    cd4 = AE.load_cell(CELL_TAG[PRIMARY], cadence_h=4, allow_test=False)
+    cd4 = AE.load_cell(CELL_TAG[PRIMARY], fold="F4", cadence_h=4, allow_test=False)
     rep["bench_4h"]["128"] = round(vec_bench(cd4, 128, 540, np.random.default_rng(4), cadence_h=4), 1)
     P = list(rep["parity"].values()) + [rep["parity_4h"]]
     rep["gates"] = {"mask_mismatch==0": all(p["mask_mismatch"] == 0 for p in P),
@@ -2042,7 +2042,7 @@ def cmd_baselines(args) -> None:
     PW = np.vstack([W[sample], np.vstack(list(named.values()))])          # 48 grid + 2 named = 50 vectors
     parity["vectors"] = len(PW)
     for cell in cells:
-        cd = AE.load_cell(cell, allow_test=False)
+        cd = AE.load_cell(cell, fold="F4", allow_test=False)
         for f, (tr, va) in FOLDS_A2.items():
             for nm, (a, b) in (("train", tr), ("val", va)):
                 net, turn, day = unit_series(cd, ts(a), ts(b))
@@ -2100,104 +2100,170 @@ SMOKE_COUNTS = {"o2_p0.5": 22, "o2_p1.0": 22, "o2_p2.0": 21, "o5_p0.5": 21, "o5_
 
 
 def cmd_smoke(args) -> None:
+    """Smoke r2 (Codex smoke review): F4 seed 0, 30 updates with validation at 0/10/20/30 (batched B=6), split-resume
+    exactness (3 + 4 updates vs the first 7 of the main run), batched vs serial validation parity and timing, CPU
+    inference timing, fold-mismatch refusal, 4h construction check."""
     import torch
     from btcusdt_quant.rl import allocator_env as AE, allocator_ppo as AP
     t0 = time.time()
     SD = OUT / "smoke"
     SD.mkdir(parents=True, exist_ok=True)
-    sel = json.loads((OUT / "baselines/static_selection.json").read_text(encoding="utf-8"))["selection"]["F4"]
-    static_w = np.array([sel["weights"][s] for s in SLEEVES])
+    selj = json.loads((OUT / "baselines/static_selection.json").read_text(encoding="utf-8"))["selection"]["F4"]
+    static_w = np.array([selj["weights"][s] for s in SLEEVES])
     if not np.array_equal(static_w, [0, 0, 0, 0, 0, 1, 1]):
         raise SystemExit(f"F4 static weights changed: {static_w}")
-    train, val = FOLDS_A2["F4"]
-    cells = {c: AE.load_cell(c, allow_test=False) for c in SMOKE_COUNTS}
-    cfg = AP.AllocPPOConfig()
-    n_updates = 7
-    log(f"smoke: cells loaded {time.time() - t0:.0f}s; train {train} val {val}")
+    g3_val = {c: v["net4"] for c, v in selj["named"]["G3_ONLY"]["val"].items()}
+    eq_val = {c: v["net4"] for c, v in selj["named"]["STATIC_EQUAL_2_7"]["val"].items()}
+    fold = "F4"
+    train, val = FOLDS_A2[fold]
+    cells = {c: AE.load_cell(c, fold=fold, allow_test=False) for c in SMOKE_COUNTS}
+    n_up = int(getattr(args, "updates", 30) or 30)
+    cfg = AP.AllocPPOConfig(total_updates=n_up)
+    log(f"smoke r2: cells loaded {time.time() - t0:.0f}s; fold {fold} train {train} val {val}; cfg {cfg}")
 
     def trainer():
-        return AP.Trainer(cells, SMOKE_COUNTS, static_w, train, val, cfg, seed=0)
+        return AP.Trainer(cells, SMOKE_COUNTS, static_w, train, val, cfg, seed=0, fold=fold)
 
-    # A: uninterrupted 7 updates, validation at 0 and 7
+    rep: dict = {"spec": {"fold": fold, "seed": 0, "train": list(train), "val": list(val), "counts": SMOKE_COUNTS,
+                          "cfg": dataclasses_asdict(cfg), "updates": n_up, "static_weights": static_w.tolist()},
+                 "updates": [], "val": {}}
+    try:                                                              # fold mismatch must fail closed
+        AP.Trainer(cells, SMOKE_COUNTS, static_w, FOLDS_A2["F3"][0], FOLDS_A2["F3"][1], cfg, seed=0, fold="F3")
+        rep["fold_mismatch_refused"] = False
+    except ValueError as e:
+        rep["fold_mismatch_refused"] = True
+        rep["fold_mismatch_error"] = str(e)[:200]
+
+    def val_summary(v):
+        out = {"worst_cell_excess": v["worst_cell_excess"], "flat_cells": v["flat_cells"], "cells": {}}
+        for c, r in v["cells"].items():
+            best_static = max(r["net_static"], g3_val[c])
+            out["cells"][c] = {k: r[k] for k in ("net_rl", "net_static", "excess", "reward", "dd_pen", "to_pen",
+                                                 "trades", "mdd_rl", "mdd_static", "entry_deviation_ratio",
+                                                 "open_nonhold_ratio", "identity_err", "gross_reserved_max")}
+            out["cells"][c].update(g3_only_net=g3_val[c], equal_2_7_net=eq_val[c],
+                                   excess_vs_max_static_g3=r["net_rl"] - best_static)
+        return out
+
     tr = trainer()
-    rep: dict = {"spec": {"fold": "F4", "seed": 0, "train": list(train), "val": list(val), "counts": SMOKE_COUNTS,
-                          "cfg": dataclasses_asdict(cfg), "updates": n_updates, "static_weights": static_w.tolist(),
-                          "device": str(tr.device)}, "updates": []}
     t1 = time.time()
-    rep["val_0"] = tr.validate()
-    best = {"key": rep["val_0"]["worst_cell_excess"], "update": 0} if not rep["val_0"]["all_flat"] else \
-        {"key": -math.inf, "update": -1}
+    v = tr.validate()
+    rep["val"]["0"] = val_summary(v)
+    rep["val_sec"] = {"0": round(time.time() - t1, 1)}
+    best = {"key": v["worst_cell_excess"], "update": 0} if not v["all_flat"] else {"key": -math.inf, "update": -1}
     if best["update"] == 0:
-        torch.save({"model": tr.model.state_dict(), "update": 0, "key": best["key"], "model_args": tr.model.model_args},
-                   SD / "best.pt")
-    for _ in range(n_updates):
+        torch.save({"model": tr.model.state_dict(), "update": 0, "key": best["key"], "identity": tr.identity}, SD / "best.pt")
+    state7 = None
+    tt = time.time()
+    for u in range(1, n_up + 1):
         tu = time.time()
         rec = tr.run_update()
         rec["sec"] = round(time.time() - tu, 2)
         rep["updates"].append(rec)
-        log(f"smoke update {rec['update']}: reward {rec['reward']:.1f} ent {rec['entropy_active_heads']:.3f} "
-            f"nonzero {rec['nonzero_entry_ratio']} new_alloc {rec['new_alloc']} kl {rec['approx_kl']:.4f} {rec['sec']}s")
-    rep["val_7"] = tr.validate()
-    if not rep["val_7"]["all_flat"] and rep["val_7"]["worst_cell_excess"] > best["key"]:
-        best = {"key": rep["val_7"]["worst_cell_excess"], "update": n_updates}
-        torch.save({"model": tr.model.state_dict(), "update": n_updates, "key": best["key"],
-                    "model_args": tr.model.model_args}, SD / "best.pt")
+        log(f"u{u}: reward {rec['reward']:.0f} excess {rec['net_excess']:.0f} ent {rec['entropy_active_heads']:.3f} "
+            f"entc {rec['ent_coef']:.5f} kl {rec['approx_kl']:.4f} max {rec['approx_kl_max']:.4f} "
+            f"stop {rec['kl_early_stop']} steps {rec['grad_steps']} {rec['sec']}s")
+        if u == 7:
+            state7 = tr.state_dict()
+        if u % 10 == 0:
+            tv = time.time()
+            v = tr.validate()
+            rep["val"][str(u)] = val_summary(v)
+            rep["val_sec"][str(u)] = round(time.time() - tv, 1)
+            if not v["all_flat"] and v["worst_cell_excess"] > best["key"]:
+                best = {"key": v["worst_cell_excess"], "update": u}
+                torch.save({"model": tr.model.state_dict(), "update": u, "key": best["key"], "identity": tr.identity},
+                           SD / "best.pt")
+            if u == 10:                                               # batched vs serial parity + timings
+                ts_ = time.time()
+                vs = tr.validate(batched=False)
+                t_serial = time.time() - ts_
+                tc_ = time.time()
+                vc = tr.validate(device="cpu")
+                t_cpu = time.time() - tc_
+                same = all(len(v["_actions"][c]) == len(vs["_actions"][c]) and all(
+                    np.array_equal(x[0], y[0]) and np.array_equal(x[1], y[1])
+                    for x, y in zip(v["_actions"][c], vs["_actions"][c])) for c in v["cells"])
+                num = max(abs(v["cells"][c][k] - vs["cells"][c][k]) for c in v["cells"] for k in ("net_rl", "mdd_rl"))
+                same_cpu = all(all(np.array_equal(x[0], y[0]) and np.array_equal(x[1], y[1])
+                                   for x, y in zip(v["_actions"][c], vc["_actions"][c])) for c in v["cells"])
+                rep["val_parity"] = {"actions_equal_batched_vs_serial": same, "net_mdd_max_abs": num,
+                                     "actions_equal_gpu_vs_cpu": same_cpu,
+                                     "sec_batched_gpu": rep["val_sec"]["10"], "sec_serial_gpu": round(t_serial, 1),
+                                     "sec_batched_cpu": round(t_cpu, 1)}
+                log(f"val parity {rep['val_parity']}")
+    rep["train_sec"] = round(time.time() - tt, 1)
     rep["best"] = best
-    rep["train_sec_uninterrupted"] = round(time.time() - t1, 1)
-    final_a = tr.state_dict()
-    torch.save(final_a, SD / "last.pt")
-    # B: split run (3 updates, checkpoint to disk, fresh trainer, 4 updates) must equal A exactly
+    torch.save(tr.state_dict(), SD / "last.pt")
+    # split resume: 3 updates, checkpoint to disk, fresh trainer, 4 updates == main run state at update 7
     tb = trainer()
-    vb0 = tb.validate()
-    recs_b = [tb.run_update() for _ in range(3)]
+    for _ in range(3):
+        tb.run_update()
     torch.save(tb.state_dict(), SD / "split_u3.pt")
     del tb
     tc = trainer()
     tc.load_state_dict(torch.load(SD / "split_u3.pt", map_location="cpu", weights_only=False))
-    recs_b += [tc.run_update() for _ in range(4)]
-    vb7 = tc.validate()
-    final_b = tc.state_dict()
-    strip = lambda r: {k: v for k, v in r.items() if k != "sec"}  # noqa: E731
-    rep["split_resume"] = {
-        "model_equal": AP.tensors_equal(final_a["model"], final_b["model"]),
-        "optimizer_equal": AP.tensors_equal(final_a["opt"], final_b["opt"]),
-        "env_equal": AP.tensors_equal(final_a["env"], final_b["env"]),
-        "torch_rng_equal": AP.tensors_equal(final_a["torch_rng"], final_b["torch_rng"]),
-        "cuda_rng_equal": AP.tensors_equal(final_a["cuda_rng"], final_b["cuda_rng"]),
-        "update_logs_equal": AP.tensors_equal([strip(r) for r in rep["updates"]], [strip(r) for r in recs_b]),
-        "val_equal": AP.tensors_equal(rep["val_0"], vb0) and AP.tensors_equal(rep["val_7"], vb7)}
+    for _ in range(4):
+        tc.run_update()
+    s7 = tc.state_dict()
+    rep["split_resume"] = {k: AP.tensors_equal(state7[k], s7[k])
+                           for k in ("model", "opt", "env", "torch_rng", "cuda_rng", "update", "identity")}
+    bad = dict(s7, identity=dict(s7["identity"], static_weights=[0.0] * 7))
+    try:
+        tc.load_state_dict(bad)
+        rep["split_resume"]["identity_mismatch_refused"] = False
+    except ValueError:
+        rep["split_resume"]["identity_mismatch_refused"] = True
+    # 4h construction / one update on two cells (540-step episodes, 32 x 1h history)
+    c4 = {c: AE.load_cell(c, fold=fold, cadence_h=4, allow_test=False) for c in ("o2_p0.5", "o5_p2.0")}
+    cfg4 = AP.AllocPPOConfig(cadence_h=4, n_steps=32, total_updates=1)
+    t4 = AP.Trainer(c4, {"o2_p0.5": 8, "o5_p2.0": 8}, static_w, train, val, cfg4, seed=0, fold=fold)
+    r4 = t4.run_update()
+    rep["cadence_4h"] = {"episode_steps": cfg4.episode_steps, "illegal": r4["illegal"], "nonfinite": r4["nonfinite"],
+                         "identity_err": r4["identity_err"], "gross_reserved_max": r4["gross_reserved_max"],
+                         "env_L": t4.env.envs["o2_p0.5"].L}
     U = rep["updates"]
-    v0, v7 = rep["val_0"], rep["val_7"]
+    vals = [x for x in rep["val"].values()]
     rep["contracts"] = {
         "illegal_actions==0": sum(u["illegal"] for u in U) == 0,
         "nan_inf==0": sum(u["nonfinite"] for u in U) == 0,
         "reward_identity<=1e-6": max(u["identity_err"] for u in U) <= 1e-6
-        and max(c["identity_err"] for v in (v0, v7) for c in v["cells"].values()) <= 1e-6,
+        and max(c["identity_err"] for v_ in vals for c in v_["cells"].values()) <= 1e-6,
         "gross_reserved<=2": max(u["gross_reserved_max"] for u in U) <= C_GROSS + 1e-12
-        and max(c["gross_reserved_max"] for v in (v0, v7) for c in v["cells"].values()) <= C_GROSS + 1e-12,
-        "update0_val_reward==0": all(c["reward"] == 0.0 and c["excess"] == 0.0 for c in v0["cells"].values()),
-        "split_resume_exact": all(rep["split_resume"].values())}
-    rep["activity"] = {"rollout_nonzero_entry": all((u["nonzero_entry_ratio"] or 0) > 0 for u in U),
-                       "rollout_new_alloc": sum(u["new_alloc"] for u in U),
-                       "final_flat_cells": v7["flat_cells"]}
+        and max(c["gross_reserved_max"] for v_ in vals for c in v_["cells"].values()) <= C_GROSS + 1e-12,
+        "update0_val_reward==0": all(c["reward"] == 0.0 and c["excess"] == 0.0 for c in rep["val"]["0"]["cells"].values()),
+        "split_resume_exact": all(rep["split_resume"].values()),
+        "fold_mismatch_refused": rep["fold_mismatch_refused"],
+        "val_batched==serial": rep["val_parity"]["actions_equal_batched_vs_serial"]
+        and rep["val_parity"]["net_mdd_max_abs"] == 0.0,
+        "cadence_4h_ok": rep["cadence_4h"]["episode_steps"] == 540 and rep["cadence_4h"]["env_L"] == 540
+        and rep["cadence_4h"]["illegal"] == 0 and rep["cadence_4h"]["nonfinite"] == 0}
+    last = rep["val"][str(n_up)]
+    rep["activity"] = {"rollout_new_alloc": sum(u["new_alloc"] for u in U),
+                       "rollout_nonzero_entry": all((u["nonzero_entry_ratio"] or 0) > 0 for u in U),
+                       "final_flat_cells": last["flat_cells"], "kl_early_stops": sum(u["kl_early_stop"] for u in U)}
     rep["smoke_pass"] = bool(all(rep["contracts"].values()) and rep["activity"]["rollout_new_alloc"] > 0
-                             and rep["activity"]["rollout_nonzero_entry"] and v7["flat_cells"] == 0)
+                             and rep["activity"]["rollout_nonzero_entry"] and last["flat_cells"] == 0)
+    sec_u = float(np.mean([u["sec"] for u in U]))
+    n_full = math.ceil(2_000_000 / (cfg.n_steps * 128))
+    rep["budget"] = {"sec_per_update_mean": round(sec_u, 2), "val_sec_batched_gpu": rep["val_parity"]["sec_batched_gpu"],
+                     "updates_for_2M_transitions": n_full,
+                     "est_run_sec_val_every_10": round(n_full * sec_u + (n_full // 10 + 1) * rep["val_parity"]["sec_batched_gpu"], 0),
+                     "throughput_transitions_per_sec": round(cfg.n_steps * 128 / sec_u, 1)}
     rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
                runtime_sec=round(time.time() - t0, 1),
                code_sha256={k: sha(ROOT / f"btcusdt_quant/rl/{k}.py") for k in
                             ("allocator_model", "allocator_ppo", "allocator_vec_env", "allocator_env")},
-               note="positive excess is not a smoke criterion; TEST never accessed",
-               throughput_transitions_per_sec=round(sum(cfg.n_steps * 128 for _ in U)
-                                                    / sum(u["sec"] for u in U), 1))
-    dump(SD / "smoke_report.json", rep)
-    registry.record(REGISTRY, {"experiment": "RL allocator PPO smoke (F4 seed 0, 7 updates)", "role": "smoke",
+               note="positive excess is not a smoke criterion; TEST never accessed")
+    dump(SD / "smoke_report_r2.json", rep)
+    registry.record(REGISTRY, {"experiment": f"RL allocator PPO smoke r2 (F4 seed 0, {n_up} updates)", "role": "smoke",
                                "n_trials": 0, "n_simulations": 0,
-                               "config": {"fold": "F4", "seed": 0, "updates": n_updates, "cfg": dataclasses_asdict(cfg),
+                               "config": {"fold": fold, "seed": 0, "updates": n_up, "cfg": dataclasses_asdict(cfg),
                                           "static_weights": static_w.tolist()},
-                               "result_summary": {"smoke_pass": rep["smoke_pass"], "val_0": v0["worst_cell_excess"],
-                                                  "val_7": v7["worst_cell_excess"]}})
-    log(f"smoke {'PASS' if rep['smoke_pass'] else 'FAIL'} contracts {rep['contracts']} activity {rep['activity']} "
-        f"val7 worst excess {v7['worst_cell_excess']:.1f}")
+                               "result_summary": {"smoke_pass": rep["smoke_pass"],
+                                                  "val_worst_excess": {k: v_["worst_cell_excess"] for k, v_ in rep["val"].items()}}})
+    log(f"smoke r2 {'PASS' if rep['smoke_pass'] else 'FAIL'} contracts {rep['contracts']} activity {rep['activity']} "
+        f"budget {rep['budget']}")
     if not rep["smoke_pass"]:
         raise SystemExit("SMOKE FAIL")
 
@@ -2215,6 +2281,7 @@ def main(argv=None) -> None:
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke"))
     ap.add_argument("--paths", type=int, default=100)
+    ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--only", default="g3,c,ax")
     ap.add_argument("--no-registry", action="store_true")
     ap.add_argument("--allow-test-parity", action="store_true",

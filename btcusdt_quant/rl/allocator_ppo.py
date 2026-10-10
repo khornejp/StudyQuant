@@ -1,15 +1,19 @@
-"""Vector-action PPO for the RL allocator (Codex design section 5, Step 5). Uses ppo.compute_gae unchanged; the old
-single-head ppo.ppo_update/train stay as they are for their existing callers.
+"""Vector-action PPO for the RL allocator (Codex design section 5, Step 5 + smoke review fixes). Uses ppo.compute_gae
+unchanged; the old single-head ppo.ppo_update/train stay as they are for their existing callers.
 
-  * PooledEnv: one VecAllocatorEnv per execution cell (envs split across cells), random contiguous episodes inside
-    the fold train window, synchronous auto-reset; state_dict covers env books, episode RNG and the last observation.
-  * rollout -> GAE (reward_scale 0.01, bps -> percent for the learner) -> clipped PPO with value clipping over the
-    joint log-prob of the active heads; entropy = mean over active heads.
-  * validate(): deterministic argmax, one continuous episode per cell over the validation window, static baseline =
-    the fold's frozen static weights; key = worst-cell validation excess (net_rl - net_static); an all-flat policy is
-    never promoted.
-Everything that evolves (model, optimizer, env, numpy/torch/CUDA RNG, progress) is in Trainer.state_dict, so a split
-run resumed from a checkpoint equals an uninterrupted run exactly."""
+  * PooledEnv: one VecAllocatorEnv per execution cell (envs split across cells), random contiguous episodes of
+    `episode_days` inside the fold train window on the cadence grid (1h: 2,160 steps, 4h: 540), synchronous
+    auto-reset; state_dict covers env books, episode RNG and the last observation.
+  * rollout -> GAE (reward_scale 0.01, bps -> percent) -> advantages normalized ONCE per rollout (global mean / std,
+    unbiased=False) -> clipped PPO with value clipping over the joint log-prob of the active heads; entropy = mean over
+    active heads, coefficient ent_coef decayed linearly to 0 at ent_decay_frac of total_updates; early stop of the
+    remaining epochs when a minibatch approx-KL exceeds 1.5 x target_kl (0.015 for 0.01).
+  * validate(): deterministic argmax, one continuous episode per cell over the validation window; all cells advance
+    together and share one batched forward (B = cells); key = worst-cell validation excess; all-flat never promoted.
+  * identity: fold, cadence, normalizer / state / precompute hashes, cell counts, windows, static weights, model biases;
+    a checkpoint with a different identity is refused (fail closed).
+Trainer.state_dict holds model, optimizer, env, numpy/torch/CUDA RNG and progress: a split run resumed from a
+checkpoint equals an uninterrupted run exactly."""
 from __future__ import annotations
 import copy, math, os
 from dataclasses import asdict, dataclass
@@ -25,6 +29,7 @@ from .ppo import compute_gae
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 HOUR = 3600 * 10**9
 OBS_KEYS = ("seq", "seq_nan", "seq_pad", "static", "account")
+COUNTERS = ("cap_scaled", "new_alloc", "alloc_sum")
 
 
 @dataclass(frozen=True)
@@ -37,13 +42,28 @@ class AllocPPOConfig:
     minibatch: int = 2048
     epochs: int = 4
     vf_coef: float = 0.5
-    ent_coef: float = 0.01
+    ent_coef: float = 0.001
+    ent_decay_frac: float = 0.5          # ent_coef -> 0 linearly by this fraction of total_updates
+    total_updates: int = 30
+    target_kl: float = 0.01              # stop remaining epochs when a minibatch approx-KL > 1.5 x target_kl
     max_grad_norm: float = 0.5
     weight_decay: float = 1e-4
     lr: float = 3e-4
     hidden: int = 64
     reward_scale: float = 0.01
-    episode_steps: int = 2160
+    cadence_h: int = 1
+    episode_days: int = 90
+    entry_bias: float = 4.0
+    open_bias: float = 4.0
+
+    @property
+    def episode_steps(self) -> int:
+        return self.episode_days * 24 // self.cadence_h
+
+    def ent_coef_at(self, update: int) -> float:
+        """Entropy coefficient for the update about to run (0-based)."""
+        end = self.ent_decay_frac * self.total_updates
+        return self.ent_coef * max(0.0, 1.0 - update / end) if end > 0 else 0.0
 
 
 def reward_parts(info: dict):
@@ -56,7 +76,9 @@ class PooledEnv:
     def __init__(self, cells: dict, counts: dict, static_w, train: tuple, cfg: AllocPPOConfig, seed: int):
         self.order = list(counts)
         self.counts = counts
-        self.envs = {c: AV.VecAllocatorEnv(cells[c], counts[c], static_weights=static_w) for c in self.order}
+        self.cad = cfg.cadence_h
+        self.envs = {c: AV.VecAllocatorEnv(cells[c], counts[c], cadence_h=cfg.cadence_h, static_weights=static_w)
+                     for c in self.order}
         self.a, self.b = (pd.Timestamp(x, tz="UTC").value for x in train)
         self.L = cfg.episode_steps
         self.rng = np.random.default_rng(seed)
@@ -64,15 +86,16 @@ class PooledEnv:
         self.obs = {c: self._reset(c) for c in self.order}
 
     def _reset(self, c):
-        hi = (self.b - self.a) // HOUR - self.L                    # last start so the episode ends <= train end
-        starts = self.a + HOUR * self.rng.integers(0, hi + 1, self.counts[c])
+        step = self.cad * HOUR
+        lo = -(-self.a // step) * step                               # first start on the cadence grid
+        hi = (self.b - lo) // step - self.L                          # episode ends <= train end
+        starts = lo + step * self.rng.integers(0, hi + 1, self.counts[c])
         return self.envs[c].reset(starts, self.L)
 
     def observation(self) -> dict:
         o = {k: np.concatenate([self.obs[c][k] for c in self.order]) for k in OBS_KEYS}
         o["m_entry"] = np.concatenate([self.obs[c]["masks"][0] for c in self.order])
         o["m_open"] = np.concatenate([self.obs[c]["masks"][2] for c in self.order])
-        o["m_pending"] = np.concatenate([self.obs[c]["masks"][1] for c in self.order])
         return o
 
     def step(self, entry, open_):
@@ -88,9 +111,12 @@ class PooledEnv:
         info = {k: np.concatenate([x[k] for x in infos]) for k in infos[0]}
         return np.concatenate(rew), np.concatenate(done), info
 
+    def counters(self) -> dict:
+        return {k: np.concatenate([getattr(e.rl, k) for e in self.envs.values()]) for k in COUNTERS}
+
     def state_dict(self) -> dict:
-        return {"envs": {c: e.state_dict() for c, e in self.envs.items()}, "rng": copy.deepcopy(self.rng.bit_generator.state),
-                "obs": copy.deepcopy(self.obs)}
+        return {"envs": {c: e.state_dict() for c, e in self.envs.items()},
+                "rng": copy.deepcopy(self.rng.bit_generator.state), "obs": copy.deepcopy(self.obs)}
 
     def load_state_dict(self, st: dict) -> None:
         for c, e in self.envs.items():
@@ -110,36 +136,49 @@ def forward(model, t: dict):
     return model(t["seq"], t["seq_nan"], t["seq_pad"], t["static"], t["account"], t["m_entry"], t["m_open"])
 
 
-def sample(logits: torch.Tensor, gen: torch.Generator | None = None) -> torch.Tensor:
+def sample(logits: torch.Tensor) -> torch.Tensor:
     p = torch.softmax(logits, -1).flatten(0, 1)
-    return torch.multinomial(p, 1, generator=gen).view(logits.shape[:2])
+    return torch.multinomial(p, 1).view(logits.shape[:2])
 
 
 class Trainer:
     def __init__(self, cells: dict, counts: dict, static_w, train: tuple, val: tuple, cfg: AllocPPOConfig,
-                 seed: int, device: str | None = None):
+                 seed: int, fold: str, device: str | None = None, env=None):
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         torch.use_deterministic_algorithms(True, warn_only=True)
         torch.backends.cudnn.benchmark = False
         torch.manual_seed(seed)
         if self.device.type == "cuda":
             torch.cuda.manual_seed(seed)
-        self.cfg, self.seed, self.cells, self.static_w, self.val_win = cfg, seed, cells, np.asarray(static_w, float), val
-        self.env = PooledEnv(cells, counts, static_w, train, cfg, seed)
-        self.model = AllocatorActorCritic(hidden=cfg.hidden, static_weights=static_w).to(self.device)
+        for c, cd in cells.items():                                   # fold / cadence / windows must agree
+            if cd.fold != fold or cd.cadence_h != cfg.cadence_h:
+                raise ValueError(f"{c}: loaded for fold {cd.fold} / {cd.cadence_h}h, trainer {fold} / {cfg.cadence_h}h")
+            fw = cd.identity["fold_windows"]
+            if (fw["train"][0], fw["train"][1]) != tuple(train) or (fw["val"][0], fw["val"][1]) != tuple(val):
+                raise ValueError(f"{c}: train/val windows differ from fold {fold}: {fw}")
+        self.cfg, self.seed, self.fold, self.cells = cfg, seed, fold, cells
+        self.static_w, self.val_win = np.asarray(static_w, float), val
+        self.env = env if env is not None else PooledEnv(cells, counts, static_w, train, cfg, seed)
+        self.model = AllocatorActorCritic(hidden=cfg.hidden, static_weights=static_w, entry_bias=cfg.entry_bias,
+                                          open_bias=cfg.open_bias).to(self.device)
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
         self.update = 0
+        self.identity = {"fold": fold, "cadence_h": cfg.cadence_h, "counts": dict(counts), "train": list(train),
+                         "val": list(val), "static_weights": [float(x) for x in static_w], "seed": seed,
+                         "cfg": asdict(cfg), "cells": {c: cd.identity for c, cd in sorted(cells.items())}}
 
     # ---------------------------------------------------------------- state
     def state_dict(self) -> dict:
         return {"model": copy.deepcopy(self.model.state_dict()), "opt": copy.deepcopy(self.opt.state_dict()),
                 "env": self.env.state_dict(), "update": self.update, "torch_rng": torch.get_rng_state(),
                 "cuda_rng": torch.cuda.get_rng_state(self.device) if self.device.type == "cuda" else None,
-                "cfg": asdict(self.cfg), "seed": self.seed, "model_args": self.model.model_args}
+                "identity": copy.deepcopy(self.identity), "model_args": self.model.model_args}
 
     def load_state_dict(self, st: dict) -> None:
-        if st["cfg"] != asdict(self.cfg) or st["seed"] != self.seed:
-            raise ValueError("checkpoint config/seed mismatch")
+        if st.get("identity") != self.identity:
+            diff = sorted(k for k in set(self.identity) | set(st.get("identity", {}))
+                          if self.identity.get(k) != st.get("identity", {}).get(k))
+            raise ValueError(f"checkpoint identity mismatch: {diff}")
         self.model.load_state_dict(st["model"])
         self.opt.load_state_dict(st["opt"])
         self.env.load_state_dict(st["env"])
@@ -155,9 +194,8 @@ class Trainer:
         buf = {k: [] for k in keys + ("ae", "ao", "logp", "values", "rewards", "dones")}
         log = {"illegal": 0, "nonfinite": 0, "gross_open_max": 0.0, "gross_reserved_max": 0.0, "identity_err": 0.0,
                "net_rl": 0.0, "net_static": 0.0, "net_excess": 0.0, "dd_pen": 0.0, "to_pen": 0.0, "reward": 0.0,
-               "turnover_rl": 0.0, "cap_scaled": 0, "new_alloc": 0, "alloc_sum": 0.0}
-        before = {k: np.concatenate([getattr(e.rl, k) for e in env.envs.values()]) for k in ("cap_scaled", "new_alloc",
-                                                                                            "alloc_sum")}
+               "turnover_rl": 0.0}
+        before = env.counters()
         with torch.no_grad():
             for _ in range(cfg.n_steps):
                 o = env.observation()
@@ -186,16 +224,20 @@ class Trainer:
                 buf["rewards"].append(torch.as_tensor(rew, dtype=torch.float32, device=dev))
                 buf["dones"].append(torch.as_tensor(done, dtype=torch.float32, device=dev))
             last_v = forward(self.model, to_t(env.observation(), dev))[2]
-        after = {k: np.concatenate([getattr(e.rl, k) for e in env.envs.values()]) for k in before}
-        for k in before:
+        after = env.counters()
+        for k in COUNTERS:
             d = after[k] - before[k]
             log[k] = float(np.where(d >= 0, d, after[k]).sum())       # an episode reset restarts the counters
         b = {k: torch.stack(x) for k, x in buf.items()}
         adv, ret = compute_gae(b["rewards"] * cfg.reward_scale, b["values"], b["dones"], last_v, cfg.gamma, cfg.lam)
         flat = {k: b[k].flatten(0, 1) for k in keys + ("ae", "ao", "logp", "values")}
-        flat["adv"], flat["ret"] = adv.flatten(), ret.flatten()
+        a = adv.flatten()
+        flat["adv"] = (a - a.mean()) / (a.std(unbiased=False) + 1e-8)          # once per rollout
+        flat["ret"] = ret.flatten()
+        log["reward_rms_scaled"] = float((b["rewards"] * cfg.reward_scale).pow(2).mean().sqrt())
         log.update(self._policy_stats(flat))
-        log.update(self._ppo(flat))
+        log["ent_coef"] = cfg.ent_coef_at(self.update)
+        log.update(self._ppo(flat, log["ent_coef"]))
         self.update += 1
         log["update"] = self.update
         log["transitions"] = self.update * cfg.n_steps * env.n
@@ -232,12 +274,12 @@ class Trainer:
         out["nonzero_entry_ratio"] = float((act_e > 0).float().mean()) if len(act_e) else None
         return out
 
-    def _ppo(self, f: dict) -> dict:
+    def _ppo(self, f: dict, ent_coef: float) -> dict:
         cfg = self.cfg
         n = len(f["ae"])
         mb = min(cfg.minibatch, n)
         stats = torch.zeros(6, device=self.device)
-        k = 0
+        k, stopped, kl_max = 0, False, 0.0
         for _ in range(cfg.epochs):
             perm = torch.randperm(n, device=self.device)
             for i in range(0, n - mb + 1, mb):
@@ -248,68 +290,93 @@ class Trainer:
                 ent = ((ene * ace).sum() + (eno * aco).sum()) / (ace.sum() + aco.sum()).clamp(min=1)
                 log_ratio = logp - f["logp"][idx]
                 ratio = log_ratio.exp()
+                approx_kl = ((ratio - 1) - log_ratio).mean()
+                kl_max = max(kl_max, float(approx_kl.detach()))
+                if cfg.target_kl and float(approx_kl.detach()) > 1.5 * cfg.target_kl:
+                    stopped = True                                    # skip this and all remaining minibatches
+                    break
                 adv = f["adv"][idx]
-                adv = (adv - adv.mean()) / (adv.std() + 1e-8)
                 pg = -torch.min(ratio * adv, ratio.clamp(1 - cfg.clip, 1 + cfg.clip) * adv).mean()
                 v_old, ret = f["values"][idx], f["ret"][idx]
                 v_clip = v_old + (v - v_old).clamp(-cfg.vclip, cfg.vclip)
                 vl = 0.5 * torch.max((v - ret) ** 2, (v_clip - ret) ** 2).mean()
-                loss = pg + cfg.vf_coef * vl - cfg.ent_coef * ent
+                loss = pg + cfg.vf_coef * vl - ent_coef * ent
                 self.opt.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
                 self.opt.step()
                 with torch.no_grad():
-                    stats += torch.stack([pg, vl, ent, loss, ((ratio - 1) - log_ratio).mean(),
-                                          ((ratio - 1).abs() > cfg.clip).float().mean()])
+                    stats += torch.stack([pg, vl, ent, loss, approx_kl, ((ratio - 1).abs() > cfg.clip).float().mean()])
                 k += 1
-        out = dict(zip(("policy_loss", "value_loss", "entropy_loss_term", "loss", "approx_kl", "clip_frac"),
+            if stopped:
+                break
+        out = dict(zip(("policy_loss", "value_loss", "entropy", "loss", "approx_kl", "clip_frac"),
                        (stats / max(k, 1)).tolist()))
         out["explained_var"] = float(1 - (f["ret"] - f["values"]).var() / f["ret"].var())
-        out["grad_steps"] = k
+        out.update(grad_steps=k, kl_early_stop=stopped, approx_kl_max=kl_max)
         return out
 
     # ---------------------------------------------------------------- validation
-    def validate(self) -> dict:
-        """Deterministic argmax over the full validation window, one continuous episode per cell."""
+    def validate(self, batched: bool = True, device=None) -> dict:
+        """Deterministic argmax over the full validation window, one continuous episode per cell. batched: all cells
+        advance together and share one forward per step (B = number of cells); otherwise B = 1 per cell."""
+        device = torch.device(device) if device is not None else self.device
+        model = self.model if device == self.device else copy.deepcopy(self.model).to(device)
+        cad = self.cfg.cadence_h
         a, b = (pd.Timestamp(x, tz="UTC").value for x in self.val_win)
-        L = (b - a) // HOUR
-        res = {}
+        L = (b - a) // (cad * HOUR)
+        names = list(self.cells)
+        envs = {c: AV.VecAllocatorEnv(self.cells[c], 1, cadence_h=cad, static_weights=self.static_w) for c in names}
+        obs = {c: envs[c].reset(np.array([a]), L) for c in names}
+        acc = {c: {"net_rl": 0.0, "net_static": 0.0, "reward": 0.0, "dd_pen": 0.0, "to_pen": 0.0,
+                   "nonzero_entries": 0, "active_entries": 0, "deviate_entries": 0, "nonhold_open": 0,
+                   "active_open": 0, "gross_reserved_max": 0.0, "identity_err": 0.0} for c in names}
+        actions = {c: [] for c in names}
+        static_idx = torch.as_tensor([C.LEVELS.index(float(w)) for w in self.static_w], device=device)
+        groups = [names] if batched else [[c] for c in names]
         with torch.no_grad():
-            for c, cd in self.cells.items():
-                v = AV.VecAllocatorEnv(cd, 1, static_weights=self.static_w)
-                o = v.reset(np.array([a]), L)
-                acc = {"net_rl": 0.0, "net_static": 0.0, "reward": 0.0, "dd_pen": 0.0, "to_pen": 0.0,
-                       "nonzero_entries": 0, "active_entries": 0, "gross_reserved_max": 0.0, "identity_err": 0.0}
-                while True:
-                    oo = {k: o[k] for k in OBS_KEYS}
-                    oo["m_entry"], oo["m_open"] = o["masks"][0], o["masks"][2]
-                    t = to_t(oo, self.device)
-                    le, lo, _ = forward(self.model, t)
+            for _ in range(L):
+                for grp in groups:
+                    oo = {k: np.concatenate([obs[c][k] for c in grp]) for k in OBS_KEYS}
+                    oo["m_entry"] = np.concatenate([obs[c]["masks"][0] for c in grp])
+                    oo["m_open"] = np.concatenate([obs[c]["masks"][2] for c in grp])
+                    t = to_t(oo, device)
+                    le, lo, _ = forward(model, t)
                     ae, ao = le.argmax(-1), lo.argmax(-1)
-                    act = t["m_entry"].sum(-1) >= 2
-                    acc["active_entries"] += int(act.sum())
-                    acc["nonzero_entries"] += int(((ae > 0) & act).sum())
-                    o, r, done, info = v.step(ae.cpu().numpy().astype(np.int64), np.zeros((1, 7), np.int64),
-                                              ao.cpu().numpy().astype(np.int64))
-                    ex, dd, to = reward_parts(info)
-                    acc["identity_err"] = max(acc["identity_err"], float(np.abs(r - (ex - dd - to)).max()))
-                    acc["net_rl"] += float(info["net_rl"][0])
-                    acc["net_static"] += float(info["net_st"][0])
-                    acc["reward"] += float(r[0])
-                    acc["dd_pen"] += float(dd[0])
-                    acc["to_pen"] += float(to[0])
-                    acc["gross_reserved_max"] = max(acc["gross_reserved_max"], float(info["gross_reserved"][0]))
-                    if done:
-                        break
-                acc["excess"] = acc["net_rl"] - acc["net_static"]
-                acc["trades"] = int(v.rl.new_alloc[0])
-                acc["mdd_rl"], acc["mdd_static"] = float(v.rl.mdd[0]), float(v.st.mdd[0])
-                acc["all_flat"] = acc["trades"] == 0
-                res[c] = acc
-        key = min(r["excess"] for r in res.values())
-        return {"cells": res, "worst_cell_excess": key, "all_flat": all(r["all_flat"] for r in res.values()),
-                "flat_cells": int(sum(r["all_flat"] for r in res.values()))}
+                    act_e = t["m_entry"].sum(-1) >= 2
+                    act_o = t["m_open"].sum(-1) >= 2
+                    ae_n, ao_n = ae.cpu().numpy().astype(np.int64), ao.cpu().numpy().astype(np.int64)
+                    for j, c in enumerate(grp):
+                        r_ = acc[c]
+                        r_["active_entries"] += int(act_e[j].sum())
+                        r_["nonzero_entries"] += int(((ae[j] > 0) & act_e[j]).sum())
+                        r_["deviate_entries"] += int(((ae[j] != static_idx) & act_e[j]).sum())
+                        r_["active_open"] += int(act_o[j].sum())
+                        r_["nonhold_open"] += int(((ao[j] > 0) & act_o[j]).sum())
+                        actions[c].append((ae_n[j].copy(), ao_n[j].copy()))
+                        o, r, done, info = envs[c].step(ae_n[j:j + 1], np.zeros((1, 7), np.int64), ao_n[j:j + 1])
+                        ex, dd, to = reward_parts(info)
+                        r_["identity_err"] = max(r_["identity_err"], float(np.abs(r - (ex - dd - to)).max()))
+                        r_["net_rl"] += float(info["net_rl"][0])
+                        r_["net_static"] += float(info["net_st"][0])
+                        r_["reward"] += float(r[0])
+                        r_["dd_pen"] += float(dd[0])
+                        r_["to_pen"] += float(to[0])
+                        r_["gross_reserved_max"] = max(r_["gross_reserved_max"], float(info["gross_reserved"][0]))
+                        obs[c] = o
+        res = {}
+        for c in names:
+            r_ = acc[c]
+            r_["excess"] = r_["net_rl"] - r_["net_static"]
+            r_["trades"] = int(envs[c].rl.new_alloc[0])
+            r_["mdd_rl"], r_["mdd_static"] = float(envs[c].rl.mdd[0]), float(envs[c].st.mdd[0])
+            r_["all_flat"] = r_["trades"] == 0
+            r_["entry_deviation_ratio"] = r_["deviate_entries"] / max(r_["active_entries"], 1)
+            r_["open_nonhold_ratio"] = r_["nonhold_open"] / max(r_["active_open"], 1)
+            res[c] = r_
+        return {"cells": res, "worst_cell_excess": min(r["excess"] for r in res.values()),
+                "all_flat": all(r["all_flat"] for r in res.values()),
+                "flat_cells": int(sum(r["all_flat"] for r in res.values())), "_actions": actions}
 
 
 def tensors_equal(a, b) -> bool:
