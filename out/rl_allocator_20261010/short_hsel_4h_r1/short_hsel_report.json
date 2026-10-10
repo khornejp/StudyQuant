@@ -1,0 +1,1554 @@
+{
+  "spec": {
+    "side": "short only",
+    "features": [
+      "ret_1h",
+      "ret_4h",
+      "ret_24h",
+      "ret_7d",
+      "rv_1h",
+      "rv_4h",
+      "rv_24h",
+      "rv_7d",
+      "funding_z90",
+      "funding_age_h",
+      "oi_chg_1h",
+      "oi_chg_4h",
+      "oi_chg_24h",
+      "oi_z",
+      "global_ls_z",
+      "top_ls_z",
+      "taker_lsr_z",
+      "premium_z"
+    ],
+    "lambdas": [
+      1.0,
+      10.0,
+      100.0
+    ],
+    "horizons_min": [
+      240,
+      480,
+      720,
+      1440
+    ],
+    "selection": "train-internal blocked CV (years, quarters if one year); rank worst block x cell net4 desc -> min-cell boot60 desc -> max-cell MDD asc -> shorter horizon",
+    "label": "short net4 over the horizon (4 bps + funding received)",
+    "embargo": "= horizon",
+    "entry": "pred > 0",
+    "hold": "selected horizon",
+    "cadence": "4h",
+    "weight": 1.0,
+    "execution": "Batch-2 maker rules (event kind), one continuous 2022..2025 run with a per-decision hold (btcusdt_quant/rl/event_sim.py)",
+    "cells": 6,
+    "portfolio": {
+      "G3_LONG": 0.8,
+      "G3_SHORT": 0.8,
+      "NEW_SHORT": 0.4
+    },
+    "folds": {
+      "F1": [
+        [
+          "2021-01-30",
+          "2022-01-01"
+        ],
+        [
+          "2022-01-01",
+          "2023-01-01"
+        ]
+      ],
+      "F2": [
+        [
+          "2021-01-30",
+          "2023-01-01"
+        ],
+        [
+          "2023-01-01",
+          "2024-01-01"
+        ]
+      ],
+      "F3": [
+        [
+          "2021-01-30",
+          "2024-01-01"
+        ],
+        [
+          "2024-01-01",
+          "2025-01-01"
+        ]
+      ],
+      "F4": [
+        [
+          "2021-01-30",
+          "2025-01-01"
+        ],
+        [
+          "2025-01-01",
+          "2026-01-01"
+        ]
+      ]
+    },
+    "input_sha256": {
+      "market": {
+        "path": "artifacts/btcusdt_2020_2026h1.parquet",
+        "dev_slice_sha256": "564fab0b4dd33561fe5eb51b4aa72284df897c31c658ce0fc8b4a4436dc0f0f3",
+        "rows": 3156480,
+        "last": "2025-12-31 23:59:00+00:00",
+        "note": "hash of the decoded DEV rows only (file bytes not hashed). The mixed parquet has 4 row groups; the last one spans 2025-12-24 12:48 .. 2026-06-30 23:59, so the open_time < 2026-01-01 predicate still decodes its 2026 rows before dropping them"
+      },
+      "funding": {
+        "BTCUSDT-fundingRate-2020-01.zip": "7f81b2f3694d13779e7e896b69d60cd61e9444d7b9f9e90df761935e1c1b76e2",
+        "BTCUSDT-fundingRate-2020-02.zip": "6599466d108d120c64a078824326c063ed2d4335b3292e52c5e572f79166533a",
+        "BTCUSDT-fundingRate-2020-03.zip": "eee845fde6336e29d25889563cba3d2cff2d4d640e51fb1f82ae9b28cedaee77",
+        "BTCUSDT-fundingRate-2020-04.zip": "d009ce034d08c3dcf3e7f874b0f8b0ec76ba507bc6bb4e007e541df537bafbce",
+        "BTCUSDT-fundingRate-2020-05.zip": "3f2b56dd6b9a42457009bb367d0adadd3cf7e2216cd325172d0089e3883125a8",
+        "BTCUSDT-fundingRate-2020-06.zip": "30b3470ff98576578973d75e3c157a5cbf1778b11e4c26b4b4ff70a3cbb348ec",
+        "BTCUSDT-fundingRate-2020-07.zip": "18dae7b11075fc0fba79ad47df46683415cba5d027caa69c66bc2a5c9d9b459a",
+        "BTCUSDT-fundingRate-2020-08.zip": "e6f6d1749f674c85d4766e0eb36af6ea40d91a0674234d30df80eb9876b094e3",
+        "BTCUSDT-fundingRate-2020-09.zip": "7ae9a3b6afb2dc06e46080582908ec8c27063b707a14c7f1e679dc991ff48032",
+        "BTCUSDT-fundingRate-2020-10.zip": "4c55b191c101f39c7fb193a6529665dd9e83302ca21876521e4c93b3902e9fb1",
+        "BTCUSDT-fundingRate-2020-11.zip": "676356a2d075caa51b4f8ada026e9430dc320ffd23d2343b13b7aa25324ed6d1",
+        "BTCUSDT-fundingRate-2020-12.zip": "d7390f90edf54cc4ad9bbe78e2f6b291ae06ad9539f591a2d0fce445873bbd63",
+        "BTCUSDT-fundingRate-2021-01.zip": "cff916dc4b638ec3de97828e8911cd91cf7d7a3d0836ec0175869c374e66823d",
+        "BTCUSDT-fundingRate-2021-02.zip": "819a7b107443686adb313fc5fc223302a29f3981e1d1bd9828ad0ade65a8a8af",
+        "BTCUSDT-fundingRate-2021-03.zip": "2125fd300848938c7b992b8f7b7b5007d5b277a4ff1ebda7da083b40242729da",
+        "BTCUSDT-fundingRate-2021-04.zip": "9cd888e3b0a1954813d0062c2e60426fdc8e34a7f258f6838371ec67f535b028",
+        "BTCUSDT-fundingRate-2021-05.zip": "ed934afb9cf84df6ecae742e755147333a84244836a66b51523abc66dd5f63af",
+        "BTCUSDT-fundingRate-2021-06.zip": "7b8d9bfb8816636b800764dafb2aa2307d19166c695bfa245adbf7d01d61f766",
+        "BTCUSDT-fundingRate-2021-07.zip": "8ab3df641d3bcf40527491f8e26d046ad2b662d1950ead9555ad32975571b7fe",
+        "BTCUSDT-fundingRate-2021-08.zip": "7eb681cc45b94176f4b9192a62c3a1925d79031ba001cea2d8dec6ff6e5b9c35",
+        "BTCUSDT-fundingRate-2021-09.zip": "03f25a7c25eef18d5f5b5b7bb0b664cab7a210b409f37e95a54e141808a0752d",
+        "BTCUSDT-fundingRate-2021-10.zip": "f25820d6add687addbca3ef43bee58f70853a6da53832a0c1bc22d00dc8ec64a",
+        "BTCUSDT-fundingRate-2021-11.zip": "e2e6b2d7218607e7e4a38137d50f553c2cfb901275c19edf567024c1cc6de85f",
+        "BTCUSDT-fundingRate-2021-12.zip": "bf3ce484faf41d7dccfd38c5cc3d8de34d8297df30ab10784e874cc10fd1b310",
+        "BTCUSDT-fundingRate-2022-01.zip": "22ee19079b620f5c6d820e7d7f8bafa7fde866d89bd664863b8bd527749c12cb",
+        "BTCUSDT-fundingRate-2022-02.zip": "fa95088258a905c79ab79e8984d2f6f66933ec2e814dbab4ef9da89b01ab484a",
+        "BTCUSDT-fundingRate-2022-03.zip": "4cf0883bc07f4ed4cdd3b0d8c0d166b4d15d21e666ab752f9f44401af4d6172f",
+        "BTCUSDT-fundingRate-2022-04.zip": "57e2776cc68b3169fc9f8632dad67278f470cd453407a8ebe6c87963c8a31357",
+        "BTCUSDT-fundingRate-2022-05.zip": "bced8a5013d09742b96682e6fd01ad4456213515a03d7586ec2b1f2689af5255",
+        "BTCUSDT-fundingRate-2022-06.zip": "0cd0708f8903829eb46f98cf60f4b2516c986e1ccddf6620a5912b48e16baf93",
+        "BTCUSDT-fundingRate-2022-07.zip": "29d58cce0cd45f74c6a112039835c6d9ee5a7e60e7c38c2503beb7930453a4fe",
+        "BTCUSDT-fundingRate-2022-08.zip": "6f4f0c6c84c05694b4b4a5c085776730fd4059723eecd98ee6ffeb3fde4da811",
+        "BTCUSDT-fundingRate-2022-09.zip": "d62cd4e13009de37add446dc4f63ead4c56dcc4955a1e60f6726bcadc5a68fa9",
+        "BTCUSDT-fundingRate-2022-10.zip": "ad9efed10d4ca1567b865d7a158790977cec1b925395634217069df6696c8bc9",
+        "BTCUSDT-fundingRate-2022-11.zip": "8febe5bec1a029e993bbf27490761f8c47c32849bf7dd13441b2b2f6ec1ffb51",
+        "BTCUSDT-fundingRate-2022-12.zip": "4218c78331bcc4dbeb5768fa112242a880971c1f2cfd1d3f32aaa26ca34069af",
+        "BTCUSDT-fundingRate-2023-01.zip": "05e3df32f28d0d50f4c5a280adee9368b4a66fc68c6ddca1b3277087ac0d19f5",
+        "BTCUSDT-fundingRate-2023-02.zip": "5227accd9aaa59f71f5e682abffb58be5f99573ed208ab968b1704c81ac11345",
+        "BTCUSDT-fundingRate-2023-03.zip": "ab022adff9b853d2f33cf80154e77c770f57c3392f0bbc36564b2e2cdbd0e872",
+        "BTCUSDT-fundingRate-2023-04.zip": "2931039d26818edc65d4faefba84945fd1ba52989dd58fb127dc3cd7a12c7fbf",
+        "BTCUSDT-fundingRate-2023-05.zip": "5d026fece46df86293054c8c56c2c8de575d30161b82979b11831831217a246e",
+        "BTCUSDT-fundingRate-2023-06.zip": "3ffdde6f1dc9c3c065d77ae43f3ba64d19d4cb76512d4bc1d541933d4fb2e6f7",
+        "BTCUSDT-fundingRate-2023-07.zip": "0304baed9fd407293a8a8040b30a1b68bd344803b630d33530375b421733a930",
+        "BTCUSDT-fundingRate-2023-08.zip": "516a8f50631c6ede6a9642f6d1590b6a22c33ba09935501d2ace8dc1396501fd",
+        "BTCUSDT-fundingRate-2023-09.zip": "3fd9df6fd1eef33cf5fe625c27012359bc6d64a68c109305d7b44a0354f533c2",
+        "BTCUSDT-fundingRate-2023-10.zip": "03105cc140150bffca834bcccbddc6cfee245e079d2df1759653243bd6e92448",
+        "BTCUSDT-fundingRate-2023-11.zip": "8015d2997f8d5e757ff3707ee87800ca30a74da0129daa747b64117f07bcc186",
+        "BTCUSDT-fundingRate-2023-12.zip": "8f02fdd2a2da261bbf13ab301c74bdb57fae005f19d5088e9ece5f8824c1a2a7",
+        "BTCUSDT-fundingRate-2024-01.zip": "3e0d30870672aa8f0f937881056e3cfd55913ae5c780cd50b33f2763aa0ba58e",
+        "BTCUSDT-fundingRate-2024-02.zip": "daf1e4901e3d6436d82ad60f90d007eb5300be8047cfef121007203a7212cde6",
+        "BTCUSDT-fundingRate-2024-03.zip": "711dcaf2a341aedfd06447b4117b540f60adb0784c5e64a313c718e4cf092bc3",
+        "BTCUSDT-fundingRate-2024-04.zip": "6d220b8e2815362a11d294d35dbca28568370d8295351937eceec10f2b359b85",
+        "BTCUSDT-fundingRate-2024-05.zip": "aef8c5fdce1493fd570b5829a72f2f17c7e459483390f25544d16c2a30be592e",
+        "BTCUSDT-fundingRate-2024-06.zip": "43fc4473820d1fb4fe340d1b1951a87555f6841aa352e684fa95d6adffce04c6",
+        "BTCUSDT-fundingRate-2024-07.zip": "acab0593c1452660ce74a6c239fb215c1192b0a9c6e8c1689e6495de40a0174b",
+        "BTCUSDT-fundingRate-2024-08.zip": "7003d29a43dd5f9357f838da8766834954939e22c1d80af682d9f33984f67b71",
+        "BTCUSDT-fundingRate-2024-09.zip": "6ef23b02392b481ef9c3855434bf3644289fb6e228b4f7d9a0dfc6d3cdff1116",
+        "BTCUSDT-fundingRate-2024-10.zip": "26db65ac8020d80ece35df79c254c5f7e24427529bcceeb2972748c4fe2d2707",
+        "BTCUSDT-fundingRate-2024-11.zip": "e1b19cccfe2cdcba48b022790789b7b01edd86c075f39bc152e44c267d43bd51",
+        "BTCUSDT-fundingRate-2024-12.zip": "069409f525ebf6370ee1c7defe475167de4b97284c5ac8e68768652968cd3dc9",
+        "BTCUSDT-fundingRate-2025-01.zip": "df725010d55458866eb5a47e9ee708c6796c9d7e77b14c38342cea11f381815e",
+        "BTCUSDT-fundingRate-2025-02.zip": "e918b90fb33df3a3317feea13807a892047f1ec86eeac100bdb7b3dd83285d46",
+        "BTCUSDT-fundingRate-2025-03.zip": "a3b95cfb315641fbfddc61eb32adf2a2588afb7a3973a61f464aca007ad43e3f",
+        "BTCUSDT-fundingRate-2025-04.zip": "01dbb7bd0135f98bd63bdde6b943cde1accc1770cabf92f68a1ec0653ced3888",
+        "BTCUSDT-fundingRate-2025-05.zip": "e7355e2775b88009c984db1783bb8ed6b5f24ede2b52bb764151b5722d6a5e42",
+        "BTCUSDT-fundingRate-2025-06.zip": "a1f4a40953740fa83ee9ad97776ff8325d1958654a67f1325614071a983819d4",
+        "BTCUSDT-fundingRate-2025-07.zip": "b097dff828f6e43fece23db0d3cb98042a9d7bc19693b8cbfd051d88eb973b7b",
+        "BTCUSDT-fundingRate-2025-08.zip": "1180129860b6e196e8d70bb9719e81573aa6b4acb423ba5ee7f82f10c836f7ab",
+        "BTCUSDT-fundingRate-2025-09.zip": "21dc6570fc6bffad0e7b5f9e99211b82ad07c95ab4f18c3a2daa3b95ec98344c",
+        "BTCUSDT-fundingRate-2025-10.zip": "9ecdedab6344fc4cdb154763266b8e09627a71c3cc5574cf868158b541c259c2",
+        "BTCUSDT-fundingRate-2025-11.zip": "23735400405627d610123e3a43db3e98ae7addb93459cd670e65a7659a5f081b",
+        "BTCUSDT-fundingRate-2025-12.zip": "35318b789f020b0e04c9043112480743855554e52e1d188437cbdaa67246d51d"
+      },
+      "funding_rows": 6576,
+      "state_1h": "b166202220608baab77625ecd9fca1960fa3126a93fd2165778e47d4b7801fdf"
+    },
+    "data": "DEV loader (< 2026-01-01), state_1h DEV"
+  },
+  "folds": {
+    "F1": {
+      "train": [
+        "2021-01-30",
+        "2022-01-01"
+      ],
+      "val": [
+        "2022-01-01",
+        "2023-01-01"
+      ],
+      "selected": {
+        "horizon": 240,
+        "lambda": 10.0
+      },
+      "cv_table": [
+        {
+          "horizon": 240,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -2066.9331567228433,
+          "blocks": 4,
+          "boot60_min_cell": -18.14951426425919,
+          "mdd_max_cell": 3997.0615996033225,
+          "net4_mean_cell": 184.40866121642844
+        },
+        {
+          "horizon": 240,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -1538.6559534867115,
+          "blocks": 4,
+          "boot60_min_cell": -17.624216556636714,
+          "mdd_max_cell": 3928.864145209546,
+          "net4_mean_cell": 439.21978919750956
+        },
+        {
+          "horizon": 240,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -2304.534063527623,
+          "blocks": 4,
+          "boot60_min_cell": -14.414445544448972,
+          "mdd_max_cell": 4153.523777511604,
+          "net4_mean_cell": 294.4216290798819
+        },
+        {
+          "horizon": 480,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -4750.25690228073,
+          "blocks": 4,
+          "boot60_min_cell": -24.211575154205214,
+          "mdd_max_cell": 4895.546497201084,
+          "net4_mean_cell": 141.36855077348955
+        },
+        {
+          "horizon": 480,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -3843.1406681156827,
+          "blocks": 4,
+          "boot60_min_cell": -18.650723129073654,
+          "mdd_max_cell": 4306.8149754651095,
+          "net4_mean_cell": 880.8556249706563
+        },
+        {
+          "horizon": 480,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -3107.3569534563135,
+          "blocks": 4,
+          "boot60_min_cell": -11.833273581541293,
+          "mdd_max_cell": 3682.2086528387463,
+          "net4_mean_cell": 1969.7207160897144
+        },
+        {
+          "horizon": 720,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -5013.432469709126,
+          "blocks": 4,
+          "boot60_min_cell": -20.138391676458724,
+          "mdd_max_cell": 5129.352338284654,
+          "net4_mean_cell": 1326.5047529322107
+        },
+        {
+          "horizon": 720,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -5897.240621522638,
+          "blocks": 4,
+          "boot60_min_cell": -27.536834153422383,
+          "mdd_max_cell": 6932.694454600684,
+          "net4_mean_cell": 588.7252797991838
+        },
+        {
+          "horizon": 720,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -4684.72132458144,
+          "blocks": 4,
+          "boot60_min_cell": -21.356204082439387,
+          "mdd_max_cell": 6450.4635601580885,
+          "net4_mean_cell": 1244.0531475401801
+        },
+        {
+          "horizon": 1440,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -3310.51601009823,
+          "blocks": 4,
+          "boot60_min_cell": -27.90689045713253,
+          "mdd_max_cell": 6051.983653874783,
+          "net4_mean_cell": -3014.9903251660267
+        },
+        {
+          "horizon": 1440,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -5208.297152102372,
+          "blocks": 4,
+          "boot60_min_cell": -30.066032341265576,
+          "mdd_max_cell": 6914.395967905562,
+          "net4_mean_cell": -2396.164860951163
+        },
+        {
+          "horizon": 1440,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -6005.070738262086,
+          "blocks": 4,
+          "boot60_min_cell": -34.476747383447275,
+          "mdd_max_cell": 7688.67314953439,
+          "net4_mean_cell": -2787.5410007368555
+        }
+      ],
+      "train_rows": 2015,
+      "short_share_val": 0.4191780821917808,
+      "coef_top": {
+        "global_ls_z": 47.565339526855624,
+        "rv_24h": -17.727400665511286,
+        "top_ls_z": -14.246590266226653,
+        "rv_4h": 14.151942959347783,
+        "ret_1h": 12.831916162375771,
+        "ret_24h": 12.381900584169626,
+        "rv_7d": 11.0923717800701,
+        "oi_chg_4h": 7.834207054249159
+      },
+      "intercept": -6.587191816840308,
+      "tamper": {
+        "train_labels_equal": true,
+        "model_equal": true,
+        "pred_before_cut_equal": true
+      }
+    },
+    "F2": {
+      "train": [
+        "2021-01-30",
+        "2023-01-01"
+      ],
+      "val": [
+        "2023-01-01",
+        "2024-01-01"
+      ],
+      "selected": {
+        "horizon": 1440,
+        "lambda": 100.0
+      },
+      "cv_table": [
+        {
+          "horizon": 240,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -2093.985436655507,
+          "blocks": 2,
+          "boot60_min_cell": -10.077392811941502,
+          "mdd_max_cell": 5270.837832232565,
+          "net4_mean_cell": 3745.687756430418
+        },
+        {
+          "horizon": 240,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -1081.0310517471025,
+          "blocks": 2,
+          "boot60_min_cell": -8.463146014659495,
+          "mdd_max_cell": 4731.852384004955,
+          "net4_mean_cell": 4951.576929382972
+        },
+        {
+          "horizon": 240,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -746.2103086897752,
+          "blocks": 2,
+          "boot60_min_cell": -6.698433592066746,
+          "mdd_max_cell": 3780.0134764881736,
+          "net4_mean_cell": 6106.99993266922
+        },
+        {
+          "horizon": 480,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -7107.882321385726,
+          "blocks": 2,
+          "boot60_min_cell": -17.708007151684875,
+          "mdd_max_cell": 7503.640510307329,
+          "net4_mean_cell": 2254.984249063267
+        },
+        {
+          "horizon": 480,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -6566.883025643212,
+          "blocks": 2,
+          "boot60_min_cell": -16.85268742259377,
+          "mdd_max_cell": 7069.668707116266,
+          "net4_mean_cell": 3114.366536512298
+        },
+        {
+          "horizon": 480,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -5810.760918975748,
+          "blocks": 2,
+          "boot60_min_cell": -20.274191974327202,
+          "mdd_max_cell": 7069.668707116266,
+          "net4_mean_cell": 823.6516570106397
+        },
+        {
+          "horizon": 720,
+          "lambda": 1.0,
+          "worst_block_cell_net4": 2314.275725109312,
+          "blocks": 2,
+          "boot60_min_cell": 1.3626629425488552,
+          "mdd_max_cell": 4063.3783160190847,
+          "net4_mean_cell": 11033.33397066745
+        },
+        {
+          "horizon": 720,
+          "lambda": 10.0,
+          "worst_block_cell_net4": 2012.7644043445407,
+          "blocks": 2,
+          "boot60_min_cell": -0.8041986339030343,
+          "mdd_max_cell": 4364.889636783857,
+          "net4_mean_cell": 9505.499189003302
+        },
+        {
+          "horizon": 720,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -54.54407832750803,
+          "blocks": 2,
+          "boot60_min_cell": -8.466152886581748,
+          "mdd_max_cell": 4430.560204297293,
+          "net4_mean_cell": 4923.519974041131
+        },
+        {
+          "horizon": 1440,
+          "lambda": 1.0,
+          "worst_block_cell_net4": 1256.211003816018,
+          "blocks": 2,
+          "boot60_min_cell": -10.587873399510974,
+          "mdd_max_cell": 6844.1737033231075,
+          "net4_mean_cell": 6704.453343681314
+        },
+        {
+          "horizon": 1440,
+          "lambda": 10.0,
+          "worst_block_cell_net4": 73.07136160249547,
+          "blocks": 2,
+          "boot60_min_cell": -14.47938327996362,
+          "mdd_max_cell": 6844.173703323109,
+          "net4_mean_cell": 3828.191364424068
+        },
+        {
+          "horizon": 1440,
+          "lambda": 100.0,
+          "worst_block_cell_net4": 2654.612974976615,
+          "blocks": 2,
+          "boot60_min_cell": -6.432584498297855,
+          "mdd_max_cell": 5932.065280717876,
+          "net4_mean_cell": 8617.743260924215
+        }
+      ],
+      "train_rows": 4195,
+      "short_share_val": 0.5968036529680365,
+      "coef_top": {
+        "global_ls_z": 45.753711498308014,
+        "ret_24h": 33.89767916257382,
+        "top_ls_z": 30.596945310951156,
+        "premium_z": 16.574005362346583,
+        "ret_7d": -11.585276085555824,
+        "taker_lsr_z": -9.74849385110832,
+        "rv_1h": -8.888206116815445,
+        "rv_4h": -8.734752782547117
+      },
+      "intercept": 8.077947993588932,
+      "tamper": {
+        "train_labels_equal": true,
+        "model_equal": true,
+        "pred_before_cut_equal": true
+      }
+    },
+    "F3": {
+      "train": [
+        "2021-01-30",
+        "2024-01-01"
+      ],
+      "val": [
+        "2024-01-01",
+        "2025-01-01"
+      ],
+      "selected": {
+        "horizon": 1440,
+        "lambda": 1.0
+      },
+      "cv_table": [
+        {
+          "horizon": 240,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -5145.721045185669,
+          "blocks": 3,
+          "boot60_min_cell": -8.008248344326109,
+          "mdd_max_cell": 6150.906169915722,
+          "net4_mean_cell": 4476.970371523206
+        },
+        {
+          "horizon": 240,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -4380.266770575434,
+          "blocks": 3,
+          "boot60_min_cell": -6.312721694396046,
+          "mdd_max_cell": 5737.21311150475,
+          "net4_mean_cell": 5351.6273573089775
+        },
+        {
+          "horizon": 240,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -4507.779498245891,
+          "blocks": 3,
+          "boot60_min_cell": -7.029156584065087,
+          "mdd_max_cell": 5881.172677894215,
+          "net4_mean_cell": 4855.626595052685
+        },
+        {
+          "horizon": 480,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -4731.834192053634,
+          "blocks": 3,
+          "boot60_min_cell": -13.190169823451736,
+          "mdd_max_cell": 6457.790087702153,
+          "net4_mean_cell": 3075.148077227884
+        },
+        {
+          "horizon": 480,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -4731.834192053634,
+          "blocks": 3,
+          "boot60_min_cell": -13.73888653932852,
+          "mdd_max_cell": 6674.877208469981,
+          "net4_mean_cell": 2688.911114351102
+        },
+        {
+          "horizon": 480,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -4700.677226114888,
+          "blocks": 3,
+          "boot60_min_cell": -15.250806758649869,
+          "mdd_max_cell": 6640.138983482204,
+          "net4_mean_cell": 186.93848688319494
+        },
+        {
+          "horizon": 720,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -6875.4216867887435,
+          "blocks": 3,
+          "boot60_min_cell": -6.8720590921045375,
+          "mdd_max_cell": 7551.417439787255,
+          "net4_mean_cell": 9626.180149219563
+        },
+        {
+          "horizon": 720,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -6875.4216867887435,
+          "blocks": 3,
+          "boot60_min_cell": -6.62933669060542,
+          "mdd_max_cell": 7594.1403101506285,
+          "net4_mean_cell": 9098.981813400307
+        },
+        {
+          "horizon": 720,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -5868.803310812528,
+          "blocks": 3,
+          "boot60_min_cell": -6.476473430163832,
+          "mdd_max_cell": 6703.5026158551045,
+          "net4_mean_cell": 8017.519795465225
+        },
+        {
+          "horizon": 1440,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -3584.1292239303903,
+          "blocks": 3,
+          "boot60_min_cell": -4.928174341156117,
+          "mdd_max_cell": 5393.013750024391,
+          "net4_mean_cell": 9555.1758886581
+        },
+        {
+          "horizon": 1440,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -3622.6419660690867,
+          "blocks": 3,
+          "boot60_min_cell": -5.1586982241471,
+          "mdd_max_cell": 5393.013750024391,
+          "net4_mean_cell": 9173.59467306457
+        },
+        {
+          "horizon": 1440,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -4099.771023580725,
+          "blocks": 3,
+          "boot60_min_cell": -4.95841192578452,
+          "mdd_max_cell": 6164.189265067071,
+          "net4_mean_cell": 10649.38488040133
+        }
+      ],
+      "train_rows": 6385,
+      "short_share_val": 0.46584699453551914,
+      "coef_top": {
+        "global_ls_z": 43.91642312549712,
+        "top_ls_z": 30.45221038661009,
+        "ret_24h": 23.289435372109093,
+        "rv_7d": 19.833115397512294,
+        "premium_z": 18.321544990961186,
+        "oi_z": 12.042784115908361,
+        "rv_1h": -11.505170857841788,
+        "rv_4h": -8.309924124215907
+      },
+      "intercept": -4.3891490057038105,
+      "tamper": {
+        "train_labels_equal": true,
+        "model_equal": true,
+        "pred_before_cut_equal": true
+      }
+    },
+    "F4": {
+      "train": [
+        "2021-01-30",
+        "2025-01-01"
+      ],
+      "val": [
+        "2025-01-01",
+        "2026-01-01"
+      ],
+      "selected": {
+        "horizon": 480,
+        "lambda": 1.0
+      },
+      "cv_table": [
+        {
+          "horizon": 240,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -4871.457408565195,
+          "blocks": 4,
+          "boot60_min_cell": -15.043806122903305,
+          "mdd_max_cell": 13940.614972178391,
+          "net4_mean_cell": -5697.470852478463
+        },
+        {
+          "horizon": 240,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -4801.071184775312,
+          "blocks": 4,
+          "boot60_min_cell": -15.484378776666079,
+          "mdd_max_cell": 13951.412801853105,
+          "net4_mean_cell": -6215.599315501887
+        },
+        {
+          "horizon": 240,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -4842.452620881516,
+          "blocks": 4,
+          "boot60_min_cell": -13.118793044733726,
+          "mdd_max_cell": 11253.433824661119,
+          "net4_mean_cell": -2395.1457534546535
+        },
+        {
+          "horizon": 480,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -3658.2811187579437,
+          "blocks": 4,
+          "boot60_min_cell": -7.96279102872976,
+          "mdd_max_cell": 7239.864444026052,
+          "net4_mean_cell": 5202.274457307422
+        },
+        {
+          "horizon": 480,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -3700.571891310743,
+          "blocks": 4,
+          "boot60_min_cell": -8.225565823129589,
+          "mdd_max_cell": 7299.637485047107,
+          "net4_mean_cell": 5350.023547905675
+        },
+        {
+          "horizon": 480,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -3884.1751798697337,
+          "blocks": 4,
+          "boot60_min_cell": -9.792026824044228,
+          "mdd_max_cell": 8492.626464968644,
+          "net4_mean_cell": 959.7681610987464
+        },
+        {
+          "horizon": 720,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -4566.13270260512,
+          "blocks": 4,
+          "boot60_min_cell": -7.600676469379567,
+          "mdd_max_cell": 9074.468264726624,
+          "net4_mean_cell": 6239.808838731088
+        },
+        {
+          "horizon": 720,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -4566.13270260512,
+          "blocks": 4,
+          "boot60_min_cell": -7.923453159698663,
+          "mdd_max_cell": 9074.468264726624,
+          "net4_mean_cell": 6031.3779750265485
+        },
+        {
+          "horizon": 720,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -4622.978169635049,
+          "blocks": 4,
+          "boot60_min_cell": -8.71302661764621,
+          "mdd_max_cell": 8989.44522001982,
+          "net4_mean_cell": 3368.530482914503
+        },
+        {
+          "horizon": 1440,
+          "lambda": 1.0,
+          "worst_block_cell_net4": -6683.89830601062,
+          "blocks": 4,
+          "boot60_min_cell": -10.306074710245849,
+          "mdd_max_cell": 9979.601391901071,
+          "net4_mean_cell": 4602.91117124766
+        },
+        {
+          "horizon": 1440,
+          "lambda": 10.0,
+          "worst_block_cell_net4": -6683.89830601062,
+          "blocks": 4,
+          "boot60_min_cell": -10.841750456919286,
+          "mdd_max_cell": 9979.601391901064,
+          "net4_mean_cell": 3593.9917636708105
+        },
+        {
+          "horizon": 1440,
+          "lambda": 100.0,
+          "worst_block_cell_net4": -6339.777533360164,
+          "blocks": 4,
+          "boot60_min_cell": -10.808770924200367,
+          "mdd_max_cell": 9635.480619250604,
+          "net4_mean_cell": 3765.0427413036855
+        }
+      ],
+      "train_rows": 8589,
+      "short_share_val": 0.3187214611872146,
+      "coef_top": {
+        "global_ls_z": 20.03777113116,
+        "rv_24h": -11.697762212690966,
+        "rv_7d": 9.910600667206673,
+        "ret_24h": 9.593728856552413,
+        "rv_4h": 9.2687867169101,
+        "top_ls_z": 8.85398241825148,
+        "oi_z": 8.697736571264715,
+        "rv_1h": -7.424377311666509
+      },
+      "intercept": -5.141455470008605,
+      "tamper": {
+        "train_labels_equal": true,
+        "model_equal": true,
+        "pred_before_cut_equal": true
+      }
+    }
+  },
+  "new_short": {
+    "cells": {
+      "o2_p0.5": {
+        "pooled_net4": -6898.747195048198,
+        "pooled_boot_p05": {
+          "20": -10.823776183558138,
+          "60": -10.654286472776517,
+          "120": -10.450202006725723
+        },
+        "mdd": 10803.081271545285,
+        "top2_month_share": null,
+        "years": {
+          "2022": {
+            "net4": 912.3623350113764,
+            "closed": 517,
+            "boot_p05": {
+              "20": -8.554684629324532,
+              "60": -8.33831689516477,
+              "120": -7.056869944593066
+            },
+            "net8_report_only": -1155.6376649886238
+          },
+          "2023": {
+            "net4": -2981.9239242682265,
+            "closed": 218,
+            "boot_p05": {
+              "20": -19.78571288112325,
+              "60": -18.007106561575405,
+              "120": -16.221093047422244
+            },
+            "net8_report_only": -3853.9239242682265
+          },
+          "2024": {
+            "net4": -5759.485486447467,
+            "closed": 182,
+            "boot_p05": {
+              "20": -30.235121663878957,
+              "60": -30.592652062891506,
+              "120": -29.645295567071994
+            },
+            "net8_report_only": -6489.485486447467
+          },
+          "2025": {
+            "net4": 930.2998806561188,
+            "closed": 259,
+            "boot_p05": {
+              "20": -5.908890497033866,
+              "60": -4.1858236328265015,
+              "120": -2.79088267868547
+            },
+            "net8_report_only": -107.70011934388162
+          }
+        },
+        "pooled_net8_report_only": -11606.7471950482
+      },
+      "o2_p1.0": {
+        "pooled_net4": -8735.659401947512,
+        "pooled_boot_p05": {
+          "20": -12.266985566378796,
+          "60": -12.130884068743688,
+          "120": -12.094985211349956
+        },
+        "mdd": 12344.272037136165,
+        "top2_month_share": null,
+        "years": {
+          "2022": {
+            "net4": 780.574668770685,
+            "closed": 510,
+            "boot_p05": {
+              "20": -8.346275581774025,
+              "60": -8.095586998440591,
+              "120": -6.956414443959259
+            },
+            "net8_report_only": -1259.4253312293154
+          },
+          "2023": {
+            "net4": -4138.531200800837,
+            "closed": 211,
+            "boot_p05": {
+              "20": -23.590740618306498,
+              "60": -22.464401872881893,
+              "120": -20.61115818477526
+            },
+            "net8_report_only": -4982.531200800837
+          },
+          "2024": {
+            "net4": -6094.941571578223,
+            "closed": 180,
+            "boot_p05": {
+              "20": -31.512163284332594,
+              "60": -31.0914706459472,
+              "120": -29.795286563321316
+            },
+            "net8_report_only": -6816.941571578223
+          },
+          "2025": {
+            "net4": 717.2387016608639,
+            "closed": 254,
+            "boot_p05": {
+              "20": -6.485986361532125,
+              "60": -4.860377752645143,
+              "120": -3.6264601628900635
+            },
+            "net8_report_only": -300.76129833913615
+          }
+        },
+        "pooled_net8_report_only": -13359.659401947512
+      },
+      "o2_p2.0": {
+        "pooled_net4": -11340.729520918328,
+        "pooled_boot_p05": {
+          "20": -13.838665136794402,
+          "60": -13.794987875217556,
+          "120": -13.533241177031611
+        },
+        "mdd": 13671.227739633443,
+        "top2_month_share": null,
+        "years": {
+          "2022": {
+            "net4": -1083.3777001105796,
+            "closed": 491,
+            "boot_p05": {
+              "20": -13.913205145695335,
+              "60": -13.127003835290015,
+              "120": -11.962517654291986
+            },
+            "net8_report_only": -3047.37770011058
+          },
+          "2023": {
+            "net4": -4024.343074785123,
+            "closed": 202,
+            "boot_p05": {
+              "20": -22.2831399512174,
+              "60": -21.376220301752447,
+              "120": -19.740067989447493
+            },
+            "net8_report_only": -4832.3430747851235
+          },
+          "2024": {
+            "net4": -6591.384953602408,
+            "closed": 179,
+            "boot_p05": {
+              "20": -32.669313458783385,
+              "60": -32.39053868775749,
+              "120": -31.183056439944245
+            },
+            "net8_report_only": -7309.384953602409
+          },
+          "2025": {
+            "net4": 358.37620757978414,
+            "closed": 239,
+            "boot_p05": {
+              "20": -7.127018322359983,
+              "60": -5.709672696795472,
+              "120": -4.447259680261096
+            },
+            "net8_report_only": -599.6237924202158
+          }
+        },
+        "pooled_net8_report_only": -15788.729520918328
+      },
+      "o5_p0.5": {
+        "pooled_net4": -4134.489239547376,
+        "pooled_boot_p05": {
+          "20": -8.964653986942224,
+          "60": -8.599938581382427,
+          "120": -7.88013182857481
+        },
+        "mdd": 7675.236551990982,
+        "top2_month_share": null,
+        "years": {
+          "2022": {
+            "net4": 1075.978048609394,
+            "closed": 500,
+            "boot_p05": {
+              "20": -9.128464035492247,
+              "60": -8.797169497497627,
+              "120": -7.586398372678847
+            },
+            "net8_report_only": -924.0219513906059
+          },
+          "2023": {
+            "net4": -2418.7727557880667,
+            "closed": 212,
+            "boot_p05": {
+              "20": -18.837772377523837,
+              "60": -18.00951925457101,
+              "120": -16.21641621554574
+            },
+            "net8_report_only": -3268.772755788067
+          },
+          "2024": {
+            "net4": -3071.069493969043,
+            "closed": 180,
+            "boot_p05": {
+              "20": -24.065976168884163,
+              "60": -23.140458104636203,
+              "120": -20.87569448303198
+            },
+            "net8_report_only": -3791.069493969043
+          },
+          "2025": {
+            "net4": 279.37496160033925,
+            "closed": 248,
+            "boot_p05": {
+              "20": -6.746438966681549,
+              "60": -5.813662800908051,
+              "120": -4.860680401719097
+            },
+            "net8_report_only": -714.6250383996609
+          }
+        },
+        "pooled_net8_report_only": -8698.489239547376
+      },
+      "o5_p1.0": {
+        "pooled_net4": -1656.8100804670107,
+        "pooled_boot_p05": {
+          "20": -6.945108340686714,
+          "60": -6.580319123851388,
+          "120": -5.86724475451041
+        },
+        "mdd": 5923.041334821668,
+        "top2_month_share": null,
+        "years": {
+          "2022": {
+            "net4": 1119.907723096774,
+            "closed": 494,
+            "boot_p05": {
+              "20": -7.823885192736365,
+              "60": -7.163519684142957,
+              "120": -6.087761500112215
+            },
+            "net8_report_only": -856.092276903226
+          },
+          "2023": {
+            "net4": -1883.1451322502319,
+            "closed": 209,
+            "boot_p05": {
+              "20": -17.141711216536784,
+              "60": -16.62036010809471,
+              "120": -15.085967548663445
+            },
+            "net8_report_only": -2721.145132250232
+          },
+          "2024": {
+            "net4": -2005.1206169797838,
+            "closed": 178,
+            "boot_p05": {
+              "20": -20.16903762771019,
+              "60": -19.31373993816651,
+              "120": -17.77268502436811
+            },
+            "net8_report_only": -2717.1206169797847
+          },
+          "2025": {
+            "net4": 1111.5479456662295,
+            "closed": 243,
+            "boot_p05": {
+              "20": -3.7706337153646,
+              "60": -2.672569496330775,
+              "120": -1.6670645849445636
+            },
+            "net8_report_only": 137.5479456662291
+          }
+        },
+        "pooled_net8_report_only": -6156.810080467012
+      },
+      "o5_p2.0": {
+        "pooled_net4": -6096.744330019297,
+        "pooled_boot_p05": {
+          "20": -10.481217181116467,
+          "60": -10.049379336943158,
+          "120": -9.515141407985857
+        },
+        "mdd": 9611.107822125512,
+        "top2_month_share": null,
+        "years": {
+          "2022": {
+            "net4": 228.68236944902264,
+            "closed": 474,
+            "boot_p05": {
+              "20": -12.064435612659166,
+              "60": -11.654959794679975,
+              "120": -10.281415191862735
+            },
+            "net8_report_only": -1667.3176305509771
+          },
+          "2023": {
+            "net4": -2146.1379413208706,
+            "closed": 191,
+            "boot_p05": {
+              "20": -17.000825064630334,
+              "60": -15.845203516932582,
+              "120": -14.260830279057563
+            },
+            "net8_report_only": -2912.1379413208715
+          },
+          "2024": {
+            "net4": -5441.397809766154,
+            "closed": 173,
+            "boot_p05": {
+              "20": -31.01531982271981,
+              "60": -30.460155243091517,
+              "120": -29.120466541581628
+            },
+            "net8_report_only": -6131.397809766155
+          },
+          "2025": {
+            "net4": 1262.1090516187037,
+            "closed": 229,
+            "boot_p05": {
+              "20": -3.8964866710756523,
+              "60": -2.6730702114803297,
+              "120": -1.911961112142302
+            },
+            "net8_report_only": 342.1090516187038
+          }
+        },
+        "pooled_net8_report_only": -10368.744330019297
+      }
+    },
+    "absolute": {
+      "year_cell_net4>0": "11/24",
+      "year_cell_closed>=30": "24/24",
+      "pooled_boot60_p05>0": "0/6",
+      "pass": false
+    },
+    "diagnostics": {
+      "year_cell_block_boot_p05>0": "0/72"
+    }
+  },
+  "portfolio": {
+    "cells": {
+      "o2_p0.5": {
+        "pooled_net4": 10702.3597963613,
+        "pooled_boot_p05": {
+          "20": 2.404764551696645,
+          "60": 3.306219383295614,
+          "120": 3.9595808623746427
+        },
+        "mdd": 2205.766790821028,
+        "top2_month_share": 0.3305580255023881,
+        "years": {
+          "2022": {
+            "net4": 928.2216989894721,
+            "closed": 576,
+            "boot_p05": {
+              "20": -4.708364982484333,
+              "60": -3.560855253550298,
+              "120": -2.726711301803712
+            }
+          },
+          "2023": {
+            "net4": 4795.870458982145,
+            "closed": 270,
+            "boot_p05": {
+              "20": 1.0811974017229264,
+              "60": 3.0697576428119904,
+              "120": 4.379638463649274
+            }
+          },
+          "2024": {
+            "net4": 3023.3526628485315,
+            "closed": 216,
+            "boot_p05": {
+              "20": -3.086641766384239,
+              "60": -0.5287615321171426,
+              "120": 1.1848107622467117
+            }
+          },
+          "2025": {
+            "net4": 1954.9149755411518,
+            "closed": 310,
+            "boot_p05": {
+              "20": -1.5010188205703292,
+              "60": 0.059494701678132006,
+              "120": 1.0473266041281415
+            }
+          }
+        },
+        "paired_excess": {
+          "net4": -6124.963546614425,
+          "boot_p05": {
+            "20": -7.374783435376037,
+            "60": -7.397838867113529,
+            "120": -7.247493638473819
+          }
+        }
+      },
+      "o2_p1.0": {
+        "pooled_net4": 9890.811061317716,
+        "pooled_boot_p05": {
+          "20": 1.9087252720785444,
+          "60": 2.7610076949218523,
+          "120": 3.465574708785952
+        },
+        "mdd": 2051.4283500695155,
+        "top2_month_share": 0.3305690794184855,
+        "years": {
+          "2022": {
+            "net4": 895.3085321268973,
+            "closed": 569,
+            "boot_p05": {
+              "20": -4.559349149096443,
+              "60": -3.299626411949089,
+              "120": -2.554909064876187
+            }
+          },
+          "2023": {
+            "net4": 4341.321265671416,
+            "closed": 263,
+            "boot_p05": {
+              "20": -0.3535274786829193,
+              "60": 1.5968852690140276,
+              "120": 2.822205659346966
+            }
+          },
+          "2024": {
+            "net4": 2819.4155107189526,
+            "closed": 214,
+            "boot_p05": {
+              "20": -2.983507600660282,
+              "60": -0.4227268871606149,
+              "120": 1.2249839101852602
+            }
+          },
+          "2025": {
+            "net4": 1834.7657528004493,
+            "closed": 305,
+            "boot_p05": {
+              "20": -2.192568137313734,
+              "60": -0.8406674645341954,
+              "120": 0.09130343754296132
+            }
+          }
+        },
+        "paired_excess": {
+          "net4": -6840.532466303184,
+          "boot_p05": {
+            "20": -8.000390670543144,
+            "60": -8.010113698226212,
+            "120": -7.927348765732663
+          }
+        }
+      },
+      "o2_p2.0": {
+        "pooled_net4": 9037.521951717024,
+        "pooled_boot_p05": {
+          "20": 1.3198812743187174,
+          "60": 2.1816424092250384,
+          "120": 2.8202967618595505
+        },
+        "mdd": 2145.028540405606,
+        "top2_month_share": 0.3614832393713724,
+        "years": {
+          "2022": {
+            "net4": 135.46063407384372,
+            "closed": 548,
+            "boot_p05": {
+              "20": -6.780618040950681,
+              "60": -5.347076922063992,
+              "120": -4.331038665915925
+            }
+          },
+          "2023": {
+            "net4": 4485.80068020454,
+            "closed": 254,
+            "boot_p05": {
+              "20": 0.48895246305397444,
+              "60": 2.3897082411573676,
+              "120": 3.529482334119414
+            }
+          },
+          "2024": {
+            "net4": 2632.9282520583884,
+            "closed": 211,
+            "boot_p05": {
+              "20": -3.965268711461658,
+              "60": -1.333610291614128,
+              "120": 0.2770719085755478
+            }
+          },
+          "2025": {
+            "net4": 1783.3323853802526,
+            "closed": 288,
+            "boot_p05": {
+              "20": -1.8471561353318804,
+              "60": -0.4372640372190378,
+              "120": 0.4418844206352951
+            }
+          }
+        },
+        "paired_excess": {
+          "net4": -7929.745248388419,
+          "boot_p05": {
+            "20": -8.631417860593173,
+            "60": -8.669469817045215,
+            "120": -8.491226365240557
+          }
+        }
+      },
+      "o5_p0.5": {
+        "pooled_net4": 11899.177957403359,
+        "pooled_boot_p05": {
+          "20": 3.3422535085971066,
+          "60": 3.987792746174899,
+          "120": 4.4913703360128885
+        },
+        "mdd": 1820.3693197001594,
+        "top2_month_share": 0.2825427730146748,
+        "years": {
+          "2022": {
+            "net4": 1130.6803204088378,
+            "closed": 557,
+            "boot_p05": {
+              "20": -4.379916767572578,
+              "60": -3.020025673043076,
+              "120": -2.0130806450499863
+            }
+          },
+          "2023": {
+            "net4": 4970.81023556939,
+            "closed": 264,
+            "boot_p05": {
+              "20": 2.0863545989112575,
+              "60": 3.9228108863750526,
+              "120": 5.1125362864386155
+            }
+          },
+          "2024": {
+            "net4": 4099.204110930698,
+            "closed": 212,
+            "boot_p05": {
+              "20": 0.62338184741581,
+              "60": 3.3442422022048865,
+              "120": 5.018506377886731
+            }
+          },
+          "2025": {
+            "net4": 1698.4832904944337,
+            "closed": 299,
+            "boot_p05": {
+              "20": -2.541727743356335,
+              "60": -1.109009599656711,
+              "120": -0.10610316386360231
+            }
+          }
+        },
+        "paired_excess": {
+          "net4": -5042.039109124527,
+          "boot_p05": {
+            "20": -6.759551761528711,
+            "60": -6.581503566139479,
+            "120": -6.205252194055987
+          }
+        }
+      },
+      "o5_p1.0": {
+        "pooled_net4": 12741.284673492262,
+        "pooled_boot_p05": {
+          "20": 3.9070375136741173,
+          "60": 4.581885820615646,
+          "120": 5.091036000069537
+        },
+        "mdd": 1819.6805799206322,
+        "top2_month_share": 0.26934412173914524,
+        "years": {
+          "2022": {
+            "net4": 1206.9353843779295,
+            "closed": 550,
+            "boot_p05": {
+              "20": -3.916198156009095,
+              "60": -2.397721981188411,
+              "120": -1.4484586379802515
+            }
+          },
+          "2023": {
+            "net4": 4968.052487613761,
+            "closed": 260,
+            "boot_p05": {
+              "20": 2.0007577272891144,
+              "60": 3.567185417514759,
+              "120": 4.751071058811985
+            }
+          },
+          "2024": {
+            "net4": 4525.583661726402,
+            "closed": 210,
+            "boot_p05": {
+              "20": 1.651930005002872,
+              "60": 4.152576366871162,
+              "120": 5.773472377319813
+            }
+          },
+          "2025": {
+            "net4": 2040.71313977417,
+            "closed": 293,
+            "boot_p05": {
+              "20": -1.2764696551520152,
+              "60": -0.008829986691906582,
+              "120": 0.9031701238917675
+            }
+          }
+        },
+        "paired_excess": {
+          "net4": -4013.7262086065703,
+          "boot_p05": {
+            "20": -5.979706419069456,
+            "60": -5.768713828933053,
+            "120": -5.4084255030133175
+          }
+        }
+      },
+      "o5_p2.0": {
+        "pooled_net4": 10470.164041084448,
+        "pooled_boot_p05": {
+          "20": 2.2189060551937883,
+          "60": 2.8737593021507597,
+          "120": 3.432489810520283
+        },
+        "mdd": 2028.748360566322,
+        "top2_month_share": 0.3263263784545076,
+        "years": {
+          "2022": {
+            "net4": 861.0701238395756,
+            "closed": 530,
+            "boot_p05": {
+              "20": -5.29619762332829,
+              "60": -3.878098544177272,
+              "120": -2.9028376534155953
+            }
+          },
+          "2023": {
+            "net4": 4993.106385785652,
+            "closed": 241,
+            "boot_p05": {
+              "20": 2.1958914000526937,
+              "60": 3.5523721380533915,
+              "120": 4.724584887141357
+            }
+          },
+          "2024": {
+            "net4": 3160.5395252739045,
+            "closed": 203,
+            "boot_p05": {
+              "20": -1.9793458374968138,
+              "60": 0.3340478560407017,
+              "120": 1.9060449477078711
+            }
+          },
+          "2025": {
+            "net4": 1455.4480061853158,
+            "closed": 276,
+            "boot_p05": {
+              "20": -4.375052618757544,
+              "60": -3.4884060599057864,
+              "120": -2.5332282773370878
+            }
+          }
+        },
+        "paired_excess": {
+          "net4": -5665.913175280761,
+          "boot_p05": {
+            "20": -7.2219609314679,
+            "60": -7.0367220923557126,
+            "120": -6.788339954052573
+          }
+        }
+      }
+    },
+    "absolute": {
+      "year_cell_net4>0": "24/24",
+      "year_cell_closed>=30": "24/24",
+      "pooled_boot60_p05>0": "6/6",
+      "pass": true
+    },
+    "replacement": {
+      "paired_excess_boot60_p05>0": "0/6",
+      "pass": false
+    },
+    "diagnostics": {
+      "year_cell_block_boot_p05>0": "33/72"
+    }
+  },
+  "corr_new_vs_g3": {
+    "o2_p0.5": -0.15169605757446972,
+    "o2_p1.0": -0.14913169114597194,
+    "o2_p2.0": -0.16852622374362328,
+    "o5_p0.5": -0.17739644859391626,
+    "o5_p1.0": -0.1733090912970677,
+    "o5_p2.0": -0.17103016077610128
+  },
+  "monthly_new": {
+    "o2_p0.5": {
+      "2022-01": 688.9058973320953,
+      "2022-02": 1061.6734918476104,
+      "2022-03": -506.875566592248,
+      "2022-04": -342.3478218170116,
+      "2022-05": 543.6073382586743,
+      "2022-06": 115.66611691320956,
+      "2022-07": -792.5539759686465,
+      "2022-08": -843.2389226692691,
+      "2022-09": 113.5355972331689,
+      "2022-10": -704.4535280358018,
+      "2022-11": 1355.5413897771705,
+      "2022-12": 222.90231873242337,
+      "2023-01": 288.228042328541,
+      "2023-02": 266.35190139586285,
+      "2023-03": -922.7217817070268,
+      "2023-04": -1273.696942177537,
+      "2023-05": 565.8277868867756,
+      "2023-06": 143.1905459315957,
+      "2023-07": 69.98531905779485,
+      "2023-08": 651.7900023668863,
+      "2023-09": -494.5894919333165,
+      "2023-10": -943.8977939651783,
+      "2023-11": -837.1749650619633,
+      "2023-12": -495.2165473906614,
+      "2024-01": -564.4613019346651,
+      "2024-02": -108.23566862965569,
+      "2024-03": -2279.1935393870494,
+      "2024-04": 210.94405147616402,
+      "2024-05": -91.80190987583327,
+      "2024-06": 93.94688770151333,
+      "2024-07": 635.7382014971201,
+      "2024-08": -94.6112473050066,
+      "2024-09": 353.8182238993455,
+      "2024-10": -855.8898465869785,
+      "2024-11": -1925.4003921041076,
+      "2024-12": -1134.3389451983137,
+      "2025-01": 298.571408955336,
+      "2025-02": 1054.7502976517221,
+      "2025-03": 68.02084554268728,
+      "2025-04": -457.0258226324367,
+      "2025-05": -190.4098087587043,
+      "2025-06": 149.24179491648292,
+      "2025-07": 688.2225678985235,
+      "2025-08": 690.2150487786749,
+      "2025-09": -593.0872837335904,
+      "2025-10": 106.21922487656273,
+      "2025-11": -292.2963074810467,
+      "2025-12": -592.1220853580928
+    },
+    "o5_p2.0": {
+      "2022-01": 555.0370026404914,
+      "2022-02": 1172.1562010695973,
+      "2022-03": -667.6792024427285,
+      "2022-04": -696.5879248383364,
+      "2022-05": 401.9001720885927,
+      "2022-06": 91.13918296151516,
+      "2022-07": -699.8413084651379,
+      "2022-08": -762.3363215351883,
+      "2022-09": -624.05062489001,
+      "2022-10": -75.22087287538614,
+      "2022-11": 1356.160960951566,
+      "2022-12": 178.0051047840472,
+      "2023-01": 108.23602864431574,
+      "2023-02": 446.2446326072008,
+      "2023-03": -982.3034067730595,
+      "2023-04": -320.8150007093406,
+      "2023-05": -85.0959609089655,
+      "2023-06": 583.3895096663277,
+      "2023-07": -24.472433302584896,
+      "2023-08": 673.9562879588741,
+      "2023-09": -372.8081418035115,
+      "2023-10": -620.2195181582382,
+      "2023-11": -1186.5946535334967,
+      "2023-12": -365.6552850083922,
+      "2024-01": 401.17446129005515,
+      "2024-02": -1233.6319099542704,
+      "2024-03": -795.6626454555238,
+      "2024-04": -266.35381504732436,
+      "2024-05": 69.44421805721821,
+      "2024-06": 282.6745211021613,
+      "2024-07": 715.657185007876,
+      "2024-08": -771.0090306148869,
+      "2024-09": 442.51019820496634,
+      "2024-10": -726.3273951808435,
+      "2024-11": -2112.0661645264495,
+      "2024-12": -1447.8074326491328,
+      "2025-01": 341.3982396755168,
+      "2025-02": 1351.7936993748608,
+      "2025-03": -197.128736752338,
+      "2025-04": 143.7120412755909,
+      "2025-05": -138.0084881887682,
+      "2025-06": -260.5634463172575,
+      "2025-07": 87.14545277304882,
+      "2025-08": 182.5001141406301,
+      "2025-09": -509.1270609687348,
+      "2025-10": -109.11180494219292,
+      "2025-11": 910.2008246742844,
+      "2025-12": -540.7017831259363
+    }
+  },
+  "tamper_all": true,
+  "pass": false,
+  "git_head": "49cc6429cfa19f7bd28c2ad83f870b80b86b8afe",
+  "created_utc": "2026-10-10T23:39:44.470150+00:00",
+  "runtime_sec": 150.0,
+  "test_accessed": false,
+  "code_sha256": {
+    "regime_short": "6cbb38fc147484fad17a70a09d4e385b22794662d4e85c662ef1f9a2293ec819",
+    "event_sim": "1aa686f6af666fd5a08a5b62887509b0740b986191ce19bf6b5e96bcd92cd877",
+    "gates": "6bb46bec6b80f170f8500e1c23d3b6ce098619a2b609c6fa6dde2ac8a335f36a",
+    "dev_data": "7798149123622e2ff8b5f70f5470babfd17a44b77499df23666e492940b38488"
+  }
+}
