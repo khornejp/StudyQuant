@@ -11,12 +11,15 @@ AX_BOOKS = ("C1_AX", "B1_AX", "B2_AX", "B3_AX", "K02_AX", "K03_AX", "K04_AX", "K
 
 
 def test_live_config_is_the_committed_r2_52a_ax_switch() -> None:
-    # config/paper.toml: the 27 R2-52A AX books (1ca5dd2), then C1_FLIP_AX appended at its own start time
+    # config/paper.toml: the 27 R2-52A AX books (1ca5dd2), then C1_FLIP_AX appended at its own start time, then
+    # (after the live apply of config/paper.axc0_staged.toml) B3_AXC0 + K04_AXC0
     config = load_config("config/paper.toml")
     books = AX_BOOKS + ("C1_FLIP_AX",)
+    assert config.books[28:] in ((), ("B3_AXC0", "K04_AXC0"))
+    books += config.books[28:]
     assert config.books == books
     assert config.leverage_books == books and config.comparison_books == books[1:]
-    assert config.telegram_books[-1] == "C1_FLIP_AX_x3"
+    assert config.telegram_books == tuple(f"{b}_x3" for b in books)
     assert set(config.book_start_times) == set(books)
     assert {config.book_start_times[b] for b in AX_BOOKS} == {"2026-10-09T01:24:00Z"}
     assert config.book_start_times["C1_FLIP_AX"] == "2026-10-09T15:08:00Z"

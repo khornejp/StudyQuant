@@ -36,7 +36,8 @@ HEADS = ("30m", "1h", "4h", "12h", "24h")
 @needs_out
 def test_ax_books_are_exactly_the_frozen_27_sources() -> None:
     assert tuple(catalog.BOOKS)[:27] == tuple(ROLLOUT["new_books"]) == NEW_BOOKS and len(NEW_BOOKS) == 27
-    assert tuple(catalog.BOOKS)[27:] == catalog.FLIP_BOOKS          # C1_FLIP_AX: post-freeze, config-enabled only
+    # post-freeze, config-enabled only: C1_FLIP_AX, then B3_AXC0 + K04_AXC0 (user 2026-10-10)
+    assert tuple(catalog.BOOKS)[27:] == catalog.FLIP_BOOKS + catalog.AXC0_BOOKS
     assert catalog.BOOKS["C1_AX"] == ("K01", False, "NATIVE")
     assert all(catalog.BOOKS[n] == (n[:-3], False, "NATIVE") for n in NEW_BOOKS if n != "C1_AX")
     assert catalog.X3_BOOKS == X3

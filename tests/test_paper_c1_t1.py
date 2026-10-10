@@ -29,7 +29,8 @@ def test_live_config_retired_c1_t1_with_the_r2_52a_switch() -> None:
     config = load_config("config/paper.toml")
     assert "C1_T1" not in config.books and "C1_T1" not in config.comparison_books
     assert "C1_T1" not in config.leverage_books and "C1_T1" not in config.book_start_times
-    assert len(config.books) == 28 and all(name.endswith("_AX") for name in config.books)   # 27 AX + C1_FLIP_AX
+    assert len(config.books) in (28, 30)                    # 27 AX + C1_FLIP_AX (+ B3_AXC0, K04_AXC0 once applied)
+    assert all(name.endswith("_AX") for name in config.books[:28]) and config.books[28:] in ((), ("B3_AXC0", "K04_AXC0"))
     assert BOOKS["C1_T1"] == (rules.F3, rules.E1)            # the engine still knows the retired book
 
 

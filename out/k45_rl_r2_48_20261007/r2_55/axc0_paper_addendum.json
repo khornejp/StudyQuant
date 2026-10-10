@@ -1,0 +1,132 @@
+{
+  "experiment": "B3_AXC0 + K04_AXC0 paper operational addendum (user order 2026-10-10)",
+  "created_utc": "2026-10-10T05:54:52+00:00",
+  "post_selection_operational_freeze": true,
+  "research_claims_excluded": true,
+  "parent_freeze": {
+    "path": "out/k45_rl_r2_48_20261007/r2_55_k0607_c0_freeze.json",
+    "sha256": "93da69ce3175b9bf6cca59fb2f46b43d06ac0b81d226346b04bc09141696379d"
+  },
+  "grandparent_freeze": {
+    "path": "out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json",
+    "sha256": "d1d56efa3b35465059e24f30380b7f413a029a4384da2ed45056977327a0eced"
+  },
+  "base_commit": "9cfd84f",
+  "data_cutoff": "2026-01-01 (k from W10 validation 2025-09-01..2025-12-01)",
+  "rule": "R2-55 AXC0 tables: build_variant(ax=True, axc0=True) = R2-52A AX table with the E1-15 component exiting at the fixed entry breakout level (prior-20-bar 15m high/low stored at fill, never updated; long exits when a later completed 15m close <= stored high, short >= stored low), E1 rolling-edge AX flags dropped; other components unchanged. SimConfig(exit_policy=R2_52A, causal_guard=True). Maker flat 4 bps round trip, no slippage.",
+  "books": {
+    "B3_AXC0": {
+      "research_id": "B3",
+      "paper_k": 1.0,
+      "name_ko": "단기 변동 확대 때 돌파, 단기 변동 축소·장기 변동 상위권 제외 때 롱숏비율 반전 · 돌파선 이탈 청산",
+      "x3_overlay": "B3_AXC0_x3",
+      "selected_k_W01_W10": [
+        2.0,
+        2.0,
+        1.5,
+        1.5,
+        2.0,
+        2.0,
+        1.0,
+        1.0,
+        1.5,
+        1.0
+      ]
+    },
+    "K04_AXC0": {
+      "research_id": "K04",
+      "paper_k": 2.0,
+      "name_ko": "거래량 급증 돌파 (15분) · 돌파선 이탈 청산",
+      "x3_overlay": "K04_AXC0_x3",
+      "selected_k_W01_W10": [
+        2.0,
+        2.0,
+        2.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        2.0,
+        2.0
+      ]
+    }
+  },
+  "selected_k": {
+    "path": "out/k45_rl_r2_48_20261007/r2_55/selection/selected_k.csv",
+    "sha256": "0d252ef39b0db049bfaf7b411ede8de57528c129b5f6f4f1a49c45d96bf246d9"
+  },
+  "T_add": "__T_ADD__",
+  "config": {
+    "live_path": "config/paper.toml",
+    "live_hash_before": "9f05d167127a6ade43c33001bccd081742aa8de0f7f7576998c9887c91c9be9b",
+    "live_file_sha256_before": "0472f4747597221732dd11a3408675e890f8b104b70b92fd93f3a530f6156cbc",
+    "staged_path": "config/paper.axc0_staged.toml",
+    "staged_file_sha256": "02d0bedf9930d65b335cfd550699917dde52804e5587b5fda083ab370c8e27c8",
+    "hash_after": "__AFTER__ (PaperConfig.hash of the staged file with __T_ADD__ filled; recorded at apply)"
+  },
+  "parity": {
+    "path": "out/k45_rl_r2_48_20261007/r2_56/paper_axc0_parity.json",
+    "sha256": "c0bccc04b089911cbcc88425356b1254e857b0258897c83c528317110b7ca8a6",
+    "match": true,
+    "window": [
+      "2026-10-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ],
+    "books": {
+      "B3_AXC0": {
+        "k": 1.0,
+        "paper_vs_ref": {
+          "n": [
+            6,
+            6
+          ],
+          "times_sides_match": true,
+          "max_abs_net_diff_bps": 2.2026824808563106e-13,
+          "match": true
+        },
+        "sim_vs_ref": {
+          "n": [
+            6,
+            6
+          ],
+          "times_sides_match": true,
+          "max_abs_net_diff_bps": 0.0,
+          "match": true
+        },
+        "open_position_match": true,
+        "live_plus_1min_diagnostic": {
+          "positions": 5,
+          "net_4bps_closed": -156.52774204077576
+        }
+      },
+      "K04_AXC0": {
+        "k": 2.0,
+        "paper_vs_ref": {
+          "n": [
+            6,
+            6
+          ],
+          "times_sides_match": true,
+          "max_abs_net_diff_bps": 3.659295089164516e-13,
+          "match": true
+        },
+        "sim_vs_ref": {
+          "n": [
+            6,
+            6
+          ],
+          "times_sides_match": true,
+          "max_abs_net_diff_bps": 0.0,
+          "match": true
+        },
+        "open_position_match": true,
+        "live_plus_1min_diagnostic": {
+          "positions": 6,
+          "net_4bps_closed": 103.39986981691631
+        }
+      }
+    }
+  },
+  "note": "R2-55 historical test: E1 family FAIL on final gates (worst-position/MDD/stat); added to paper by user order, paper-only, no research claim. Live entries are >= 1 min later than the sim (decision at prediction availability), as for every AX book."
+}

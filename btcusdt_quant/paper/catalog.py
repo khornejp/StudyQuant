@@ -8,6 +8,7 @@ retired: its rows stay in the database as the record and are never processed aga
 from __future__ import annotations
 import json
 import sys
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 import numpy as np, pandas as pd
@@ -35,6 +36,14 @@ FLIP_X3_BOOKS = tuple(f"{name}_x3" for name in FLIP_BOOKS)
 BOOKS["C1_FLIP_AX"] = ("K01_FLIP", False, "NATIVE")
 FLIP_NAMES = {"C1_FLIP_AX": "롱숏비율 극단 방향 추종 + 거래량 급증 상단 돌파 · 추세추종"}
 K_SOURCES = {"K01_FLIP": FLIP_SELECTED_K}       # research id -> its selected_k.csv (default SELECTED_K)
+# B3_AXC0 / K04_AXC0 (user 2026-10-10): R2-55 AXC0 tables (E1 exit at the fixed entry breakout level, Spec.axc0),
+# SimConfig(causal_guard=True), k from the R2-55 AXC0 selection (last pre-cutoff window), as scripts/sim_r2_55.py.
+AXC0_SELECTED_K = ROOT / "out/k45_rl_r2_48_20261007/r2_55/selection/selected_k.csv"
+AXC0_BOOKS = ("B3_AXC0", "K04_AXC0")
+AXC0_X3_BOOKS = tuple(f"{name}_x3" for name in AXC0_BOOKS)
+BOOKS.update({"B3_AXC0": ("B3", False, "NATIVE"), "K04_AXC0": ("K04", False, "NATIVE")})
+AXC0_NAMES = {"B3_AXC0": "단기 변동 확대 때 돌파, 단기 변동 축소·장기 변동 상위권 제외 때 롱숏비율 반전 · 돌파선 이탈 청산",
+              "K04_AXC0": "거래량 급증 돌파 (15분) · 돌파선 이탈 청산"}
 # presentation_addendum_2026-10-08.name_list (verbatim): the visible x3 book's plain Korean label
 NAMES = {
     "C1_AX": "롱숏비율 역추세 + 거래량 급증 돌파",
@@ -83,7 +92,7 @@ def source_of(name: str) -> str:
 def label(name: str) -> str:
     """Plain Korean label of a visible x3 book (or its hidden source); no internal code, no 3x suffix."""
     source = source_of(name)
-    return NAMES[source] if source in NAMES else FLIP_NAMES[source]
+    return {**NAMES, **FLIP_NAMES, **AXC0_NAMES}[source]
 
 
 @lru_cache(maxsize=4)
@@ -98,27 +107,28 @@ def paper_k(path: Path = SELECTED_K) -> dict[str, float]:
     return {row.id: float(row.k) for row in last.itertuples(index=False)}
 
 
-def book_k(spec_id: str) -> float:
-    """Paper k of a research id, read from that id's own selection file (K_SOURCES, else SELECTED_K)."""
-    return paper_k(K_SOURCES.get(spec_id, SELECTED_K))[spec_id]
+def book_k(spec_id: str, axc0: bool = False) -> float:
+    """Paper k of a research id, read from that id's own selection file (AXC0_SELECTED_K, K_SOURCES, else
+    SELECTED_K)."""
+    return paper_k(AXC0_SELECTED_K if axc0 else K_SOURCES.get(spec_id, SELECTED_K))[spec_id]
 
 
 def needs_model(name: str) -> bool:
     return name in BOOKS        # AX needs E for every entry: always model-dependent
 
 
-_TABLES: dict[str, tuple[Context, pd.DataFrame]] = {}
+_TABLES: dict[tuple[str, bool], tuple[Context, pd.DataFrame]] = {}
 
 
 def raw_table(name: str, ctx: Context) -> pd.DataFrame:
     """AX signal rows at their signal time T (before any live decision shift); one build per context."""
-    spec_id = BOOKS[name][0]
-    cached = _TABLES.get(spec_id)
+    spec_id, axc0 = BOOKS[name][0], name in AXC0_BOOKS
+    cached = _TABLES.get((spec_id, axc0))
     if cached is None or cached[0] is not ctx:
-        table, _ = build_variant(ctx, spec_id, False, "NATIVE", ax=True)
+        table, _ = build_variant(ctx, spec_id, False, "NATIVE", ax=True, axc0=axc0)
         table["decision_time"] = pd.to_datetime(table.decision_time, utc=True)
         cached = (ctx, table)
-        _TABLES[spec_id] = cached
+        _TABLES[(spec_id, axc0)] = cached
     return cached[1].copy()
 
 
@@ -406,7 +416,7 @@ def ax_table(name: str, ctx: Context, decisions: pd.DataFrame | None, book_start
     table = live_table(raw_table(name, ctx), decisions if decisions is not None else pd.DataFrame())
     table = schema.validate(table.loc[table.decision_time >= book_start].reset_index(drop=True))
     return table.assign(e0_bps=row_e0(table, e_frame(ctx), spec_id),
-                        e_col=_adaptive().e_cols(table, spec_id).astype(float), k=book_k(spec_id))
+                        e_col=_adaptive().e_cols(table, spec_id).astype(float), k=book_k(spec_id, name in AXC0_BOOKS))
 
 
 def run_book(name: str, ctx: Context, funding: pd.DataFrame, book_start: pd.Timestamp, end: pd.Timestamp,
@@ -417,7 +427,8 @@ def run_book(name: str, ctx: Context, funding: pd.DataFrame, book_start: pd.Time
     spec_id = BOOKS[name][0]
     table = ax_table(name, ctx, decisions, book_start)
     e, e_min = _e_inputs(e_frame(ctx), ctx.minutes, spec_id)
-    result = core.simulate(table, ctx.minutes, book_start, end, CONFIG, e_bps=e, e_min_bps=e_min)
+    config = replace(CONFIG, causal_guard=True) if name in AXC0_BOOKS else CONFIG
+    result = core.simulate(table, ctx.minutes, book_start, end, config, e_bps=e, e_min_bps=e_min)
     legs = result.trades
     fills = (legs[["decision_time", "entry_time", "side", "entry_price"]].drop_duplicates().copy()
              if len(legs) else pd.DataFrame(columns=["decision_time", "entry_time", "side", "entry_price"]))
@@ -488,5 +499,5 @@ def ax_state(name: str, held: dict, ctx: Context, end: pd.Timestamp) -> dict:
             "anchor_lower": clean(held.get("anchor_lower")), "updated_at": pd.Timestamp(end).isoformat()}
 
 
-__all__ = ["AX_BOOKS", "BOOKS", "FLIP_BOOKS", "FLIP_NAMES", "FLIP_X3_BOOKS", "NAMES", "X3_BOOKS", "ax_state",
+__all__ = ["AX_BOOKS", "AXC0_BOOKS", "AXC0_NAMES", "AXC0_X3_BOOKS", "BOOKS", "FLIP_BOOKS", "FLIP_NAMES", "FLIP_X3_BOOKS", "NAMES", "X3_BOOKS", "ax_state",
            "book_k", "fill_rows", "label", "live_context", "paper_k", "run_book"]
