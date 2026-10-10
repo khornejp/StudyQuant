@@ -30,7 +30,8 @@ _NO_SCALE = ("_sin", "_cos", "_available", "_signal_active", "_pending", "_open"
 def hour_grid(start: pd.Timestamp, end: pd.Timestamp, step_h: int = 1) -> np.ndarray:
     """Decision times T in (start, end] on UTC hour (step_h) boundaries."""
     a = (start.value // (step_h * HOUR) + 1) * step_h * HOUR
-    return np.arange(a, end.value + 1, step_h * HOUR, dtype=np.int64)
+    n = (end.value - a) // (step_h * HOUR) + 1            # integer count: float arange drops the endpoint at ~1e18
+    return a + step_h * HOUR * np.arange(max(n, 0), dtype=np.int64)
 
 
 def last_minute(t: np.ndarray, T: np.ndarray) -> np.ndarray:

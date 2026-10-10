@@ -207,3 +207,9 @@ def test_native_signal_timelines():
     c = mod.c_signal(t, full, "C1v2")
     assert c["side"][4] == 0 and c["side"][5] == -1 and c["side"][10] == 1 and c["side"][55] == -1
     assert c["side"][60] == 0 and not c["pending"].any() and c["snap"][49] == 0 and c["aux"][61] == 1
+
+
+def test_hour_grid_includes_endpoint():
+    T = ast.hour_grid(pd.Timestamp("2020-01-01", tz="UTC"), pd.Timestamp("2025-12-31 23:00", tz="UTC"))
+    assert len(T) == 52607 and T[-1] == pd.Timestamp("2025-12-31 23:00", tz="UTC").value
+    assert len(ast.hour_grid(pd.Timestamp("2020-01-01", tz="UTC"), pd.Timestamp("2020-01-02", tz="UTC"), 4)) == 6
