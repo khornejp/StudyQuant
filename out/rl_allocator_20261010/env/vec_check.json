@@ -1,0 +1,99 @@
+{
+  "parity": {
+    "o2_p0.5": {
+      "envs": 16,
+      "steps": 720,
+      "mask_mismatch": 0,
+      "obs_max_abs": 0.0,
+      "net_max_abs": 3.552713678800501e-15,
+      "reward_max_abs": 3.552713678800501e-15,
+      "events": 443,
+      "equity_max_abs": 0.0
+    },
+    "o2_p1.0": {
+      "envs": 16,
+      "steps": 720,
+      "mask_mismatch": 0,
+      "obs_max_abs": 0.0,
+      "net_max_abs": 2.842170943040401e-14,
+      "reward_max_abs": 2.842170943040401e-14,
+      "events": 614,
+      "equity_max_abs": 0.0
+    },
+    "o2_p2.0": {
+      "envs": 16,
+      "steps": 720,
+      "mask_mismatch": 0,
+      "obs_max_abs": 0.0,
+      "net_max_abs": 1.4210854715202004e-14,
+      "reward_max_abs": 1.4210854715202004e-14,
+      "events": 751,
+      "equity_max_abs": 0.0
+    },
+    "o5_p0.5": {
+      "envs": 16,
+      "steps": 720,
+      "mask_mismatch": 0,
+      "obs_max_abs": 0.0,
+      "net_max_abs": 3.552713678800501e-15,
+      "reward_max_abs": 3.552713678800501e-15,
+      "events": 577,
+      "equity_max_abs": 0.0
+    },
+    "o5_p1.0": {
+      "envs": 16,
+      "steps": 720,
+      "mask_mismatch": 0,
+      "obs_max_abs": 0.0,
+      "net_max_abs": 5.684341886080802e-14,
+      "reward_max_abs": 5.684341886080802e-14,
+      "events": 674,
+      "equity_max_abs": 9.094947017729282e-13
+    },
+    "o5_p2.0": {
+      "envs": 16,
+      "steps": 720,
+      "mask_mismatch": 0,
+      "obs_max_abs": 0.0,
+      "net_max_abs": 5.684341886080802e-14,
+      "reward_max_abs": 5.684341886080802e-14,
+      "events": 583,
+      "equity_max_abs": 0.0
+    }
+  },
+  "bench_1h": {
+    "32": 10418.1,
+    "128": 25279.2,
+    "256": 31554.6
+  },
+  "bench_4h": {
+    "128": 19609.7
+  },
+  "parity_4h": {
+    "envs": 8,
+    "steps": 540,
+    "mask_mismatch": 0,
+    "obs_max_abs": 0.0,
+    "net_max_abs": 5.684341886080802e-14,
+    "reward_max_abs": 5.684341886080802e-14,
+    "events": 187,
+    "equity_max_abs": 2.2737367544323206e-13
+  },
+  "gates": {
+    "mask_mismatch==0": true,
+    "obs<=1e-6": true,
+    "net<=1e-9": true,
+    "reward<=1e-9": true,
+    "equity<=1e-9": true,
+    "bench128_1h>=4630": true,
+    "bench128_1h>=9804_target": true
+  },
+  "policy": "random legal (entry uniform over legal levels, EXIT 5%, TIGHTEN 15%, CANCEL 20%)",
+  "record_minutes": "off (vectorized env never records minutes)",
+  "git_head": "447f215070083dee3de1d3a3b109b0776a5623bb",
+  "code_sha256": {
+    "allocator_vec_env": "9c0e4a1e01541c52a2e9b6ee54dfed75c427f1fc55d340c0ebc736f3fcac4dda"
+  },
+  "created_utc": "2026-10-10T14:48:24.264524+00:00",
+  "runtime_sec": 90.9
+}

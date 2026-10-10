@@ -100,5 +100,23 @@
       "path": "freeze_amendment_A2r1.json",
       "sha256": "49d467c414eef249f51baa71e27480637cf4c5de4d64c9b12a458061a137e465"
     }
+  },
+  "round5": {
+    "env_fixes_commit": "3075aa2",
+    "vec_env_commit": "447f215",
+    "baselines_commit": "55d1517",
+    "env_check": {
+      "sha256": "d0a1edcd07e6a07f60b5d6d061e037fe2f40255273eb160519fc8973b684d33d",
+      "git_head": "55d151748e3563fdf2731da113633d86bbe9dbd1"
+    },
+    "vec_check": {
+      "sha256": "bcff0b19cf4c1264ea12e47f174e33f76200331c97794017d598b8ac09449c7d",
+      "git_head": "447f215070083dee3de1d3a3b109b0776a5623bb"
+    },
+    "static_selection": {
+      "sha256": "f53e7187f0f81f92d51804daba314110773bcbc35ebf8d4282d624ec83567ee2",
+      "git_head": "341d2bb920313b010c96e8bc533cb4f8c4238257",
+      "note": "run head 341d2bb = 55d1517 + unrelated commit by another agent; rl code identical"
+    }
   }
 }
