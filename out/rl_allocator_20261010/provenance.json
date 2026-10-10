@@ -124,5 +124,12 @@
     "report_sha256": "92f4512059ce6b61db084e5fdb07b7de0ba2e2e4939ec5ab9fc287f84d3c16ca",
     "git_head": "c3282b92b60425ff819194126f7adad413d8790a",
     "smoke_pass": true
+  },
+  "round7_smoke_r2": {
+    "code_commit": "a77d0a9",
+    "report_sha256": "6274ae9ff2b28abde950ae4504e9cd37e03e23da649e064926b2d2165dc6fdcd",
+    "git_head": "a77d0a96ba7288a704639163acd4625b84dcacd2",
+    "smoke_pass": true,
+    "note": "round6 smoke used the F1 normalizer (load_cell default) - superseded by r2"
   }
 }
