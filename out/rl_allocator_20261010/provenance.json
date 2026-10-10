@@ -1,0 +1,41 @@
+{
+  "precompute": {
+    "manifest": "out/rl_allocator_20261010/precompute/manifest.json",
+    "sha256": "f09649710970ea12c8648c489a049c7ddd394997792ce2b6b553a7e25bd77553",
+    "code_commit": "c85e46a8d4b01d0d6505807c3b2d9dc2ac7ca09e",
+    "dirty_own_files": "",
+    "code_sha256_lf": {
+      "script": "bcde63e8d8a5b0f44c30829e0871d4b5feb8cc35d3e9102bd2c4fa94fbe01a35",
+      "module": "33c78335fcd4ae8c04e5e926283a978ea23721169f28dc06250bbdea400ebffe"
+    }
+  },
+  "state": {
+    "manifest": "out/rl_allocator_20261010/state/manifest.json",
+    "sha256": "c16c06e8b9fa85b7a2c335a231b35b04b02e517ea6c05a68d8e762726d96d0a0",
+    "code_commit": "e6dd0228e5da5eed9a3f1d2702ce77116171d280",
+    "code_sha256_lf": {
+      "script": "bcde63e8d8a5b0f44c30829e0871d4b5feb8cc35d3e9102bd2c4fa94fbe01a35",
+      "allocator_state": "e4d10d4a1052d926d7b1a1cb536a0ba830afa3251527ba64f6bf628aacfd38e9",
+      "sleeve_precompute": "33c78335fcd4ae8c04e5e926283a978ea23721169f28dc06250bbdea400ebffe"
+    },
+    "normalizers_sha256": "cf7663fbbe267906e2ff42f559bd51a88acabf5c358da77c033d64ad7e314308",
+    "note": "state code differs from precompute commit only in allocator_state.py (hour_grid/hourly-edge integer fixes, 9be9293, e6dd022); sleeve_precompute.py and the script are byte-identical"
+  },
+  "freeze": {
+    "sha256_lf": "ad6a6550f10fa244000c63cb01639ae812095208226245caec1dcdb6adb98fe3",
+    "commit": "3c14ff6"
+  },
+  "amendment_A1": {
+    "sha256": "d8335ca8b21dddb2c5611e67a347012dca32dd0aa97e8f07c382400a2968fffb",
+    "commit": "c85e46a"
+  },
+  "code_blobs_at_HEAD": {
+    "btcusdt_quant/rl/sleeve_precompute.py": "ce610fc7be6e3db75cd56804a2b6d0f8b724748f",
+    "btcusdt_quant/rl/allocator_state.py": "228c0b8df1a9d55e4f89f0a46f5cd634c5cc8fcc",
+    "scripts/precompute_rl_allocator.py": "f7bb39cfe2f85a196685ea771654c046a4bc7ef8",
+    "tests/rl/test_sleeve_precompute.py": "380663d3890c45d9472defccd583fc1fc6dd7892",
+    "tests/rl/test_allocator_state.py": "87aaeedaae2cf705576bcde32c3adaef4e83a020"
+  },
+  "head_at_write": "e6dd0228e5da5eed9a3f1d2702ce77116171d280",
+  "verify": "git checkout <code_commit>; sha256 of each LF file == code_sha256_lf; out/ artifacts regenerate with precompute --allow-test-parity / state --allow-test-parity"
+}

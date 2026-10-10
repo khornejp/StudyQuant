@@ -1,15 +1,17 @@
 {
-  "name": "RL allocator sleeve precompute (step 2)",
-  "created_utc": "2026-10-10T11:58:25.270508+00:00",
-  "freeze_sha256": "78c5f91d1cb6571c945eb90316f1d5fed51f46fa96e5dfbb07bd185ea96ca3e4",
+  "name": "RL allocator sleeve precompute (step 2, fix round 1)",
+  "created_utc": "2026-10-10T13:07:38.363549+00:00",
+  "freeze_sha256": "ad6a6550f10fa244000c63cb01639ae812095208226245caec1dcdb6adb98fe3",
   "data_cutoff": "2026-10-08 00:00:00+00:00 (exclusive)",
   "frozen_hypothesis": "[가설] A 7-sleeve allocator choosing a per-opportunity multiplier {0,.25,.5,.75,1} and HOLD/EXIT (TIGHTEN for R0 sleeves) at a 1h cadence beats the frozen static DEV-best allocation after 4 bps maker round trip in every DEV fold and every exec cell; 4h is an ablation. Edge comes from the sleeves; the allocator only sizes/exits.",
   "code_sha256": {
-    "script": "a9cadde82397342b827f7c66e544059289968835a0d9cfae4930b3e6e1061466",
-    "module": "7c3a1e7b48e83b0615eaa7e2cc0c102fe635bec8b725d4a5bc371e3e6dde27a9"
+    "script": "bcde63e8d8a5b0f44c30829e0871d4b5feb8cc35d3e9102bd2c4fa94fbe01a35",
+    "module": "33c78335fcd4ae8c04e5e926283a978ea23721169f28dc06250bbdea400ebffe"
   },
-  "git_head": "9d2f4c6cda21491ebcfb152d83d0a7936e1ec964",
-  "runtime_sec": 1915.9,
+  "git_head": "c85e46a8d4b01d0d6505807c3b2d9dc2ac7ca09e",
+  "git_dirty_own_files": "",
+  "test_unlock": "--allow-test-parity (integrity parity only)",
+  "runtime_sec": 1572.7,
   "parity": {
     "G3_LONG|o2_p0.5": {
       "minute_max_abs_vs_source_book": 0.0,
@@ -1576,1992 +1578,2790 @@
       "unmatched_rows": 0
     }
   },
+  "availability": {
+    "G3_LONG": {
+      "first_available": "2020-07-29 08:00:00+00:00",
+      "available_minutes": 3256800,
+      "grid_minutes": 3559680,
+      "open_while_unavailable_minutes": 0,
+      "F1_train_available_pct": 42.532,
+      "F1_train_exposure_pct": 27.093,
+      "F1_val_available_pct": 100.0,
+      "F1_val_exposure_pct": 33.378,
+      "F2_train_available_pct": 71.227,
+      "F2_train_exposure_pct": 30.231,
+      "F2_val_available_pct": 100.0,
+      "F2_val_exposure_pct": 2.604,
+      "F3_train_available_pct": 80.809,
+      "F3_train_exposure_pct": 21.031,
+      "F3_val_available_pct": 100.0,
+      "F3_val_exposure_pct": 40.596,
+      "F4_train_available_pct": 85.603,
+      "F4_train_exposure_pct": 25.919,
+      "F4_val_available_pct": 100.0,
+      "F4_val_exposure_pct": 26.272,
+      "F5_train_available_pct": 88.488,
+      "F5_train_exposure_pct": 25.989,
+      "F5_val_available_pct": 100.0,
+      "F5_val_exposure_pct": 14.542,
+      "TEST_available_pct": 100.0,
+      "TEST_exposure_pct": 22.957
+    },
+    "G3_SHORT": {
+      "first_available": "2021-01-30 08:00:00+00:00",
+      "available_minutes": 2990400,
+      "grid_minutes": 3559680,
+      "open_while_unavailable_minutes": 0,
+      "F1_train_available_pct": 0.0,
+      "F1_train_exposure_pct": 0.0,
+      "F1_val_available_pct": 91.963,
+      "F1_val_exposure_pct": 6.151,
+      "F2_train_available_pct": 45.919,
+      "F2_train_exposure_pct": 3.071,
+      "F2_val_available_pct": 100.0,
+      "F2_val_exposure_pct": 6.167,
+      "F3_train_available_pct": 63.929,
+      "F3_train_exposure_pct": 4.102,
+      "F3_val_available_pct": 100.0,
+      "F3_val_exposure_pct": 3.131,
+      "F4_train_available_pct": 72.941,
+      "F4_train_exposure_pct": 3.86,
+      "F4_val_available_pct": 100.0,
+      "F4_val_exposure_pct": 2.607,
+      "F5_train_available_pct": 78.362,
+      "F5_train_exposure_pct": 3.609,
+      "F5_val_available_pct": 100.0,
+      "F5_val_exposure_pct": 5.91,
+      "TEST_available_pct": 100.0,
+      "TEST_exposure_pct": 3.548
+    },
+    "LBR_FUND": {
+      "first_available": "2020-11-30 12:00:00+00:00",
+      "available_minutes": 2137200,
+      "grid_minutes": 3559680,
+      "open_while_unavailable_minutes": 0,
+      "F1_train_available_pct": 0.091,
+      "F1_train_exposure_pct": 0.0,
+      "F1_val_available_pct": 65.16,
+      "F1_val_exposure_pct": 1.597,
+      "F2_train_available_pct": 32.581,
+      "F2_train_exposure_pct": 0.797,
+      "F2_val_available_pct": 40.0,
+      "F2_val_exposure_pct": 1.568,
+      "F3_train_available_pct": 35.052,
+      "F3_train_exposure_pct": 1.054,
+      "F3_val_available_pct": 74.429,
+      "F3_val_exposure_pct": 3.064,
+      "F4_train_available_pct": 44.889,
+      "F4_train_exposure_pct": 1.556,
+      "F4_val_available_pct": 63.707,
+      "F4_val_exposure_pct": 2.722,
+      "F5_train_available_pct": 48.659,
+      "F5_train_exposure_pct": 1.79,
+      "F5_val_available_pct": 86.347,
+      "F5_val_exposure_pct": 3.228,
+      "TEST_available_pct": 100.0,
+      "TEST_exposure_pct": 4.425
+    },
+    "C1v2": {
+      "first_available": "2020-10-01 00:00:00+00:00",
+      "available_minutes": 3165120,
+      "grid_minutes": 3559680,
+      "open_while_unavailable_minutes": 346343,
+      "F1_train_available_pct": 25.137,
+      "F1_train_exposure_pct": 79.661,
+      "F1_val_available_pct": 100.0,
+      "F1_val_exposure_pct": 59.134,
+      "F2_train_available_pct": 62.517,
+      "F2_train_exposure_pct": 69.411,
+      "F2_val_available_pct": 100.0,
+      "F2_val_exposure_pct": 45.733,
+      "F3_train_available_pct": 75.0,
+      "F3_train_exposure_pct": 61.526,
+      "F3_val_available_pct": 100.0,
+      "F3_val_exposure_pct": 46.282,
+      "F4_train_available_pct": 81.246,
+      "F4_train_exposure_pct": 57.718,
+      "F4_val_available_pct": 100.0,
+      "F4_val_exposure_pct": 46.899,
+      "F5_train_available_pct": 85.003,
+      "F5_train_exposure_pct": 55.55,
+      "F5_val_available_pct": 100.0,
+      "F5_val_exposure_pct": 51.566,
+      "TEST_available_pct": 100.0,
+      "TEST_exposure_pct": 44.9,
+      "signal_active_ne_open_minutes": 697606,
+      "pending_minutes": 0,
+      "distinct_snapshots": 711935
+    },
+    "C4v2": {
+      "first_available": "2020-10-01 00:00:00+00:00",
+      "available_minutes": 3165120,
+      "grid_minutes": 3559680,
+      "open_while_unavailable_minutes": 345442,
+      "F1_train_available_pct": 25.137,
+      "F1_train_exposure_pct": 83.743,
+      "F1_val_available_pct": 100.0,
+      "F1_val_exposure_pct": 61.394,
+      "F2_train_available_pct": 62.517,
+      "F2_train_exposure_pct": 72.583,
+      "F2_val_available_pct": 100.0,
+      "F2_val_exposure_pct": 55.112,
+      "F3_train_available_pct": 75.0,
+      "F3_train_exposure_pct": 66.765,
+      "F3_val_available_pct": 100.0,
+      "F3_val_exposure_pct": 63.905,
+      "F4_train_available_pct": 81.246,
+      "F4_train_exposure_pct": 66.05,
+      "F4_val_available_pct": 100.0,
+      "F4_val_exposure_pct": 63.162,
+      "F5_train_available_pct": 85.003,
+      "F5_train_exposure_pct": 65.472,
+      "F5_val_available_pct": 100.0,
+      "F5_val_exposure_pct": 57.206,
+      "TEST_available_pct": 100.0,
+      "TEST_exposure_pct": 63.239,
+      "signal_active_ne_open_minutes": 511912,
+      "pending_minutes": 0,
+      "distinct_snapshots": 59327
+    },
+    "B3_AXC0": {
+      "first_available": "2023-09-01 00:00:00+00:00",
+      "available_minutes": 1631520,
+      "grid_minutes": 3559680,
+      "open_while_unavailable_minutes": 0,
+      "F1_train_available_pct": 0.0,
+      "F1_train_exposure_pct": 0.0,
+      "F1_val_available_pct": 0.0,
+      "F1_val_exposure_pct": 0.0,
+      "F2_train_available_pct": 0.0,
+      "F2_train_exposure_pct": 0.0,
+      "F2_val_available_pct": 0.0,
+      "F2_val_exposure_pct": 0.0,
+      "F3_train_available_pct": 0.0,
+      "F3_train_exposure_pct": 0.0,
+      "F3_val_available_pct": 33.425,
+      "F3_val_exposure_pct": 15.245,
+      "F4_train_available_pct": 8.35,
+      "F4_train_exposure_pct": 3.809,
+      "F4_val_available_pct": 100.0,
+      "F4_val_exposure_pct": 51.319,
+      "F5_train_available_pct": 26.71,
+      "F5_train_exposure_pct": 13.326,
+      "F5_val_available_pct": 100.0,
+      "F5_val_exposure_pct": 49.439,
+      "TEST_available_pct": 100.0,
+      "TEST_exposure_pct": 43.266,
+      "signal_active_ne_open_minutes": 620297,
+      "pending_minutes": 1533,
+      "distinct_snapshots": 108768
+    },
+    "K04_AXC0": {
+      "first_available": "2023-09-01 00:00:00+00:00",
+      "available_minutes": 1631520,
+      "grid_minutes": 3559680,
+      "open_while_unavailable_minutes": 0,
+      "F1_train_available_pct": 0.0,
+      "F1_train_exposure_pct": 0.0,
+      "F1_val_available_pct": 0.0,
+      "F1_val_exposure_pct": 0.0,
+      "F2_train_available_pct": 0.0,
+      "F2_train_exposure_pct": 0.0,
+      "F2_val_available_pct": 0.0,
+      "F2_val_exposure_pct": 0.0,
+      "F3_train_available_pct": 0.0,
+      "F3_train_exposure_pct": 0.0,
+      "F3_val_available_pct": 33.425,
+      "F3_val_exposure_pct": 7.163,
+      "F4_train_available_pct": 8.35,
+      "F4_train_exposure_pct": 1.789,
+      "F4_val_available_pct": 100.0,
+      "F4_val_exposure_pct": 14.789,
+      "F5_train_available_pct": 26.71,
+      "F5_train_exposure_pct": 4.394,
+      "F5_val_available_pct": 100.0,
+      "F5_val_exposure_pct": 12.086,
+      "TEST_available_pct": 100.0,
+      "TEST_exposure_pct": 19.172,
+      "signal_active_ne_open_minutes": 240323,
+      "pending_minutes": 887,
+      "distinct_snapshots": 108768
+    }
+  },
   "files": {
     "g3_family/o2_p0.5/G3_LONG": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 8738604,
-          "sha256": "5cba7e9be0cc97a68d2cd246da0a4968402c6036942375cd4aa746e6c158b1a3"
+          "bytes": 8743651,
+          "sha256": "ce72c1305859dc76cc3462b5d309068e021ba820a3db56cb046799ae487585f4"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 10028235,
-          "sha256": "a7dc337886c2636905400ebf600056dbe4475ea20e68d162b243c79c8ee50ef3"
+          "bytes": 10033345,
+          "sha256": "8c5627b6c26c414395a5d9f8227c69084cf7486ec094bc07ee21d6ff6925b0d8"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7612869,
-          "sha256": "fa4d917368fa0182162946a60a27a7aca1df0887dde60d81b3752af7dcde1879"
+          "bytes": 7617878,
+          "sha256": "ee09b8ef84e570e8b62ec8c9726eee927e8fb4c69282f98784fe23fe933b9398"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 8539077,
-          "sha256": "6e6a34871b4d311a8acd3d38d6301d6439f62bba13401a3c69b0e6957576cda6"
+          "bytes": 8544279,
+          "sha256": "c45a50c5b4f9b1718161a6ba5a8ae292604233dfb22d1da1d7fe327bd7c2ca7c"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 8371281,
-          "sha256": "7f01b849b9ac1dce7f71ce1acf293f6411f8d3b37c651d8ad9832d0758d648a2"
+          "bytes": 8376366,
+          "sha256": "af335e0a387ade41f0b0c6c75e2fdafb35506fb5020cbc120a871813fbc76933"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 8058360,
-          "sha256": "a19b8ae44237d68e504f37c1466df0f554b5fc801c8a1ed8cf0bf1149a21bc01"
+          "bytes": 8063487,
+          "sha256": "fe3f452817ec0cff07161e9297fb6a23b240b542cee7a529a796c5de3d23d814"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6401567,
-          "sha256": "f5be4effd9721e193a16eb727677eb27cd776ffbc557936d5b7db25599db4ff6"
+          "bytes": 6405802,
+          "sha256": "40b4ed915068656a8da3afd96a20a8f81267788ed99cbf306a8be64849ab020a"
         }
       },
       "ledger": {
         "ledger_2020.parquet": {
           "rows": 142792,
-          "bytes": 2831931,
-          "sha256": "590cb6ec800b6c5cd6fb477b45585578ea1ad89a8cc82538827379a1aaf32fe2"
+          "bytes": 4035339,
+          "sha256": "9e4f74a8ad7fb7e8d4f62117068a7a4558c147fa65613d9ba13b54a1ce341ab7"
         },
         "ledger_2021.parquet": {
           "rows": 175434,
-          "bytes": 4379056,
-          "sha256": "35ae084378b9c5d19a9cb5c35b7413dc45243b170b6ebba9ec700028d2cc6917"
+          "bytes": 5796603,
+          "sha256": "7c4d3205f8c9ce1cf9c33dbc38de4353d8f2b7726f4d00a7e12358ecd48a49ca"
         },
         "ledger_2022.parquet": {
           "rows": 13687,
-          "bytes": 261400,
-          "sha256": "b8e4ce5c40b0135b61937c6e41aaf152b1452d98574a2a09ce3980f636667aec"
+          "bytes": 377993,
+          "sha256": "b14294bf7978bfb4928efcce68075c6120dd71dc6b4395a353b4cc4fe5e890b0"
         },
         "ledger_2023.parquet": {
           "rows": 213373,
-          "bytes": 3177112,
-          "sha256": "b70fc4f9d16943b69ea2f7b09cd9f337046b24a50eb14847cec71cc54423e1a8"
+          "bytes": 4845219,
+          "sha256": "99bd1aaa1f1dfa3bef041a37b8cb2dc78678d6dc97d68ba604da0144536805ba"
         },
         "ledger_2024.parquet": {
           "rows": 138465,
-          "bytes": 2421560,
-          "sha256": "d1a42dc20a9c49467167f1ccdbd9ad2af35e3b564f2156718e8bab1e55ce8610"
+          "bytes": 3594509,
+          "sha256": "6b81c24801da8a0244936b2b6994fe86cffaa213dcd86a9b9a4299899131f5af"
         },
         "ledger_2025.parquet": {
           "rows": 76435,
-          "bytes": 1454535,
-          "sha256": "83e5d40a01d15dddcd0143a2cecf978b596dfa9c4c6d1d382e32aa99bf24d4b5"
+          "bytes": 2107579,
+          "sha256": "eb7e954364490c37f4a885bbc82b8f8d82eb028c5f26ad832b4184bff5f02c51"
         },
         "ledger_2026.parquet": {
           "rows": 92562,
-          "bytes": 1596844,
-          "sha256": "4364d6aa56693e9bfe4c7fc791e85c3af3763d87659bb550b1617e316f21f874"
+          "bytes": 2386497,
+          "sha256": "c597a84341df58a5dc0a1531c0c1f1c8ca2824b833c6c48b83f1b37316e11140"
         }
       },
-      "opportunities": {
-        "opportunities_2020.parquet": {
+      "decisions": {
+        "decisions_2020.parquet": {
           "rows": 13,
-          "bytes": 13459,
-          "sha256": "b6c499a16bb6578794f3f2d00123e0a070f173834d7052c6adf17fb31aa68927"
+          "bytes": 5875,
+          "sha256": "a7181ab83f817cbacf8b54d14afdba2594b7a7c447c21b47027a1ffc2219e3ed"
         },
-        "opportunities_2021.parquet": {
+        "decisions_2021.parquet": {
           "rows": 17,
-          "bytes": 13888,
-          "sha256": "3a5e8b76a2be6677010523f7346e41aeab4555816f0c84cb4e174c4d37de9286"
+          "bytes": 5982,
+          "sha256": "e0d456350612330690c3e9e8529823b067438556c5dd0c467dda6058fff14c71"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 9,
-          "bytes": 13052,
-          "sha256": "46b0d2f4196bad2bd39121d4f6cd7bf78b5ae8bc82f51a8e562cfb688e0a3663"
+          "bytes": 5743,
+          "sha256": "db749a602f0ce882e7bbbbfded922cb4f8c14c57c59e5d7dbcf0dd3818fd6432"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 30,
-          "bytes": 14958,
-          "sha256": "05290921c386acdad56f5820964db8777676d63b712a494026f7a180df3f5409"
+          "bytes": 6265,
+          "sha256": "95091a86418258b63a0d14bc5a36c42ac0029d251c1531d2ee0dc145256c7ef4"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 16,
-          "bytes": 13641,
-          "sha256": "22d700415e3559dd5668850672815bf367c88c935438f1e032bfc2a475f4b97b"
+          "bytes": 5902,
+          "sha256": "868bcecba7896bc2a30b282dc124278fb470c6fd6392b123f316e6d9167c3b3c"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 20,
-          "bytes": 13931,
-          "sha256": "d2613516d57ff33fdfdffd2559d4a0bc3e75f3dde0e22f0273aac0e5c9d264f1"
+          "bytes": 5978,
+          "sha256": "f6e5495424f53e89eb48d11b424a2fd0d646a5261f7558abe56a6ad24fc3dd9b"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 17,
-          "bytes": 13709,
-          "sha256": "143eca56c6076397b876498033c777624e04b1dafdb951e8138edace04860824"
+          "bytes": 5943,
+          "sha256": "60a1b3f99eb99fb9b1f0fdc9133e3fa1579d1c55f4fa099e5a20aaf8cc712b09"
         }
       },
-      "n_opportunities": 122,
-      "n_trades": 116
+      "outcomes": {
+        "outcomes_2020.parquet": {
+          "rows": 13,
+          "bytes": 10220,
+          "sha256": "689481c01d9a2f0fc6042cbcdb54b9d21675d921463a125004422befc26f4502"
+        },
+        "outcomes_2021.parquet": {
+          "rows": 17,
+          "bytes": 10568,
+          "sha256": "8b0019a1a6fe88562b91b7cfc56776aacb9b1a7cba085f9a010d090281e417cf"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 9,
+          "bytes": 9896,
+          "sha256": "ce2145c43375c4f91a7d048ccca8be1af01cd4c0a3081ee265a3e86aca4d5532"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 30,
+          "bytes": 11475,
+          "sha256": "7ce3cd96f37886f970be0dc5fd2e03b37100980a76e7b78392344a93eb04051f"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 16,
+          "bytes": 10381,
+          "sha256": "1df12802731f620501fccef48e79270c5bef5e44e97820f804c4b7b2aa2f50a7"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 20,
+          "bytes": 10651,
+          "sha256": "303c58c3fc7734925e32cc72ef5728ccbbe9969fa641725870fd2b6d8c00a1b3"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 17,
+          "bytes": 10435,
+          "sha256": "de51b8ebad5834d803bbb551e87cac110341d443dabf3285f6986f2ab4dc74f7"
+        }
+      },
+      "n_opportunities": 122
     },
     "g3_family/o2_p1.0/G3_LONG": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 8737225,
-          "sha256": "37b2311a22d547fa0258c2a997dd925c14f007a58e2b2500907a5e294a8a5dc7"
+          "bytes": 8742272,
+          "sha256": "6ed377add920402a60c12a41d53b922d6c7784879743451735023f247340b362"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 10033268,
-          "sha256": "c0bf0312d92db22466b3140c23df5394a6ddd859c449bdb37a9f6b7c16a83ab3"
+          "bytes": 10038378,
+          "sha256": "5555c0b4283e03cace7625cd961cd64206d997b3766660506394c810f8cca0ad"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7612887,
-          "sha256": "10be5b9f3202b53b9a684fbda6fbc3f4fd3f264facbbf3f9629d3d7304fe16db"
+          "bytes": 7617896,
+          "sha256": "22f5b7738ff32f9a98feab1f89cfcdc2bd812e339b6e1c0c7f9e5b9c25405e63"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 8539390,
-          "sha256": "89353f63e46f003f438d655974eee5c585f7e980c49cb2a29fa57bda1b2c1a8c"
+          "bytes": 8544592,
+          "sha256": "9c36979b15dd1b292eaa939c556a1a830b83558f2ee41d6cdb1aaa351c4638c3"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 8370404,
-          "sha256": "9b8380d7a52cc9968abb95388aca2945c78bcdd0732ce2a55bb216eb09ea3af4"
+          "bytes": 8375489,
+          "sha256": "847fec49db75b8d3380877376f597ca1de1a5d7992c5b99c2139542abec25fbc"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 8053953,
-          "sha256": "32445421d27e6a7b867578a4580f4c8db439569eadf70820d478b3e1a41152b3"
+          "bytes": 8059080,
+          "sha256": "725f8e64ca3e44fa42f78f711dd51fda20f3ba16afc5ed7e126a6c26f6d022ce"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6398343,
-          "sha256": "cbba65787d45a8d776254ab2b6ff5f1ed4336f8819ab26e072e9afbd42a9c260"
+          "bytes": 6402566,
+          "sha256": "3e93884d5e5a688279299ba5c9a7484eff602a14f4af9f99bdcb72770761f86f"
         }
       },
       "ledger": {
         "ledger_2020.parquet": {
           "rows": 142793,
-          "bytes": 2830593,
-          "sha256": "dfb2c9eb1da9cf89f9602dd60eab7f5fa5de602384159b81f22ed898490e4c4e"
+          "bytes": 4034008,
+          "sha256": "df8a1902b5a5603890e0fe39f2a39b6f7dfb26834fcfc830a434889da1bf5b9f"
         },
         "ledger_2021.parquet": {
           "rows": 175447,
-          "bytes": 4384193,
-          "sha256": "245be0c99047d3c3a3598dc4eda69632081cef3a299693de7c9a29c4f5f5c617"
+          "bytes": 5801831,
+          "sha256": "03dc5a2ef914bc50031c983126908566229ac3a53fd99ad0c2ca4f50be4b04e6"
         },
         "ledger_2022.parquet": {
           "rows": 13690,
-          "bytes": 261491,
-          "sha256": "aff71ce3d775ae65d9d87691e0606c753db127e16ca538b63fb7f54c9045c701"
+          "bytes": 378117,
+          "sha256": "286911a79d3c2d814b61f230f874302b591ac3d267e625fd138f7744dd8bcb70"
         },
         "ledger_2023.parquet": {
           "rows": 213431,
-          "bytes": 3179685,
-          "sha256": "b5d4f3d8739c1b66b0d88a400a85bc732aa2b71624c92fbf2de43dfefca9ae41"
+          "bytes": 4849435,
+          "sha256": "5a31e23456d87c3e4e8333158b94a0394d2f6deea0dace52a38aa5e649a069a7"
         },
         "ledger_2024.parquet": {
           "rows": 138224,
-          "bytes": 2417480,
-          "sha256": "80e7eaa260398aa155d6f16d1cdc4f17e77c63fd27c58cb5d6b17c5ebc0d7b91"
+          "bytes": 3590097,
+          "sha256": "6ab83180d4bd687e1c30423bc80adc36d5737eb6cc093966143c55355b2063be"
         },
         "ledger_2025.parquet": {
           "rows": 75717,
-          "bytes": 1441095,
-          "sha256": "ad810e66f0830e3cd1c4b0f25dfc088c4ca680f9cc1abef0b03576b0d4f07952"
+          "bytes": 2087567,
+          "sha256": "5a657dbae72429265d0494cb931445ec8d0de853e6164bc07fdf595707d5631e"
         },
         "ledger_2026.parquet": {
           "rows": 92380,
-          "bytes": 1590657,
-          "sha256": "9d1158696c8c68ccc0b71630dcef4f7fd5e8018b91f8906e123c6b4db3ce2219"
+          "bytes": 2378505,
+          "sha256": "1fda78016daf7581efa555e08c3822f427765350baca27963c0048051205eed6"
         }
       },
-      "opportunities": {
-        "opportunities_2020.parquet": {
+      "decisions": {
+        "decisions_2020.parquet": {
           "rows": 13,
-          "bytes": 13459,
-          "sha256": "413c8916c8ffcd6dd684f06a7c7f55d81b28a7fa424d80b08ee5c437b2c51203"
+          "bytes": 5875,
+          "sha256": "a7181ab83f817cbacf8b54d14afdba2594b7a7c447c21b47027a1ffc2219e3ed"
         },
-        "opportunities_2021.parquet": {
+        "decisions_2021.parquet": {
           "rows": 17,
-          "bytes": 13888,
-          "sha256": "4e2a4efaf2e344f118d5fce9ded2b3ae8d83dd2db080f03bed32b21827693d96"
+          "bytes": 5982,
+          "sha256": "e0d456350612330690c3e9e8529823b067438556c5dd0c467dda6058fff14c71"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 9,
-          "bytes": 13052,
-          "sha256": "92208a5af93209159ba125c84e1f33bcbc73d2b0ff4ceac73dfa402ed98af083"
+          "bytes": 5743,
+          "sha256": "db749a602f0ce882e7bbbbfded922cb4f8c14c57c59e5d7dbcf0dd3818fd6432"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 30,
-          "bytes": 14958,
-          "sha256": "e3cf871d4e0861ae629ae94f65cb8d7ac74c9aa71449009df03b4095f83d8460"
+          "bytes": 6265,
+          "sha256": "95091a86418258b63a0d14bc5a36c42ac0029d251c1531d2ee0dc145256c7ef4"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 17,
-          "bytes": 13729,
-          "sha256": "c4e18f42f15d44f028b76b2288baa831ce563db25072d6c8082b1e9b5512d4e5"
+          "bytes": 5954,
+          "sha256": "be9a2e37eb913daf92d142d686fcc9e74e8cea705702f79c59c82a6fc2e96b93"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 23,
-          "bytes": 14112,
-          "sha256": "e45d98a592a019079104f2b440da2db6763ac95cf63e81f116e9c9916cb5c3f7"
+          "bytes": 6039,
+          "sha256": "390ce1527316381afd12f844386415765af7774c6e7f2f2aa78633de6161886c"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 17,
-          "bytes": 13652,
-          "sha256": "eb0e9ef92a347f014ad3a745aa2cde2ff33ec7f70c4e1eb13dc0aca151d652f9"
+          "bytes": 5943,
+          "sha256": "91fb5c29713e75477798bd228df91e2c0e914f2b9a9cd109f09c0978dd6ba1f7"
         }
       },
-      "n_opportunities": 126,
-      "n_trades": 115
+      "outcomes": {
+        "outcomes_2020.parquet": {
+          "rows": 13,
+          "bytes": 10220,
+          "sha256": "d8188c8a29b0eacf1ce101a65cb8d80039377e7494f0e0af9669cb1740db8235"
+        },
+        "outcomes_2021.parquet": {
+          "rows": 17,
+          "bytes": 10568,
+          "sha256": "589f62c6f2e3d217b5227ed84f2bab709ca23fdfccc731d0a9033386d52be7b5"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 9,
+          "bytes": 9896,
+          "sha256": "e09e52c3cb0a67860b6a43cff758fdb3c2df7e32b9bf51e4e6003cd143662bd0"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 30,
+          "bytes": 11475,
+          "sha256": "63fdad4786ca6611cececd92dd4641e620d3f68f180b3c4918d7005df0bd1fea"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 17,
+          "bytes": 10442,
+          "sha256": "90d8808bf271a6269351f5ce16e2cd39a777e9dfd74178660ad281dea94eb938"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 23,
+          "bytes": 10801,
+          "sha256": "234c034837e3e208803b2fbc29082b07f9d32dde8a0a7a9e6a687538b7b5355f"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 17,
+          "bytes": 10378,
+          "sha256": "fc86f33f61dba46d397e8a4e926a333cde80e131bc5e1ad2dd5d3696028ce71c"
+        }
+      },
+      "n_opportunities": 126
     },
     "g3_family/o2_p2.0/G3_LONG": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 8737277,
-          "sha256": "095b7c17bc1d230fa5e64d0c3d73e163c8d88a2202bf8f1bb98e2b704e96ae47"
+          "bytes": 8742324,
+          "sha256": "e4f50b8b5bea9d30c8eb295d66e35e9824efc97a641613a9f86d66406fa8d05c"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 10034190,
-          "sha256": "dbd66e089d98001cf9d367ddef12598f3af232ec15027416a6e398d3213f6f47"
+          "bytes": 10039300,
+          "sha256": "b485d35b687e440097e2ca4b327aa1f67da1dc1e1e93eda312649df1443bbcf5"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7612656,
-          "sha256": "a8bc344b90c66f77b821b86314255377f4d0e831ba7f1e170796e2c47c58a5aa"
+          "bytes": 7617665,
+          "sha256": "9d62f3a9b667db326d7142403352de146241da5fa9c22dcdbf0ac899097e8b3d"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 8531186,
-          "sha256": "83974bfa94ad280660ed859b1905336a98ec89c9c748ef5cd5bebcbfc4bb865e"
+          "bytes": 8536390,
+          "sha256": "00884622102bdd23b552a026a9c94ce00e0e761924ee41cef4e9b2e0f93f6a70"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 8369899,
-          "sha256": "235f417ef603c973202041eb7bd134ab8c6af2919e2867e598dafd9e617ad1d0"
+          "bytes": 8374983,
+          "sha256": "9400a3e035bbae5c463b4b8bd02646245f6f04346be91d9752e8d119b78b3e1f"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 8048464,
-          "sha256": "69efcd8dcf2f7b3c07bec79a7e459f8ef1380e27f872c3b03a0de28a3c817a87"
+          "bytes": 8053591,
+          "sha256": "f329b9a93202e671afabf1d9dffacccab011098d5c8589859b8a4fd4fe176f00"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6400091,
-          "sha256": "ebd05bdd48c7b7110caed5f33908c685bd40c9e6b13a3926bc8aba9209b344a0"
+          "bytes": 6404314,
+          "sha256": "69bc37ddf2b014ee968dbef50cf2988f60c55e3ad6b44eb739701f4e92d61c89"
         }
       },
       "ledger": {
         "ledger_2020.parquet": {
           "rows": 142798,
-          "bytes": 2830692,
-          "sha256": "37f4638a8fd6edc2e60512a9ab453dfae7f9415d6939a2548e55afff94395bf7"
+          "bytes": 4034138,
+          "sha256": "4951f7ccd6fb11490ac387595f15dfb03da4e7eac120d30f034ddcbe2ecf3ca7"
         },
         "ledger_2021.parquet": {
           "rows": 175497,
-          "bytes": 4385539,
-          "sha256": "5c1c74ee3393e57cc7adddca9ebdb853cabb7b8f47ff09c22b81cb8f60145b5a"
+          "bytes": 5803525,
+          "sha256": "6a6301ff68b23b9b88cd4f8c5baac8db81a41bdf73b3470fc9eac85c7d4cac8c"
         },
         "ledger_2022.parquet": {
           "rows": 13596,
-          "bytes": 260165,
-          "sha256": "55e0e2b8411c35a0a89e31475d66d8ad794444d9ec214035d5dfcdf8ceb6b798"
+          "bytes": 375989,
+          "sha256": "3db0f798248a7e6d83657b9f8f9b123513c936dfaab58ede6216f26a2ff7ef7d"
         },
         "ledger_2023.parquet": {
           "rows": 212071,
-          "bytes": 3160893,
-          "sha256": "945d50d60ccebab1e492fdf9ddbd277f044113b6bf81ac92c2a933db2321dfa6"
+          "bytes": 4821443,
+          "sha256": "e78e484a58bc5595c812335ea7bbe45ec92bb30f3af8f986307e1e6866e79a64"
         },
         "ledger_2024.parquet": {
           "rows": 138161,
-          "bytes": 2417055,
-          "sha256": "2e9f163c37102f4a5f1e5f482fceafdbde364c3f7f5886c44e22b8621c3df658"
+          "bytes": 3587885,
+          "sha256": "942e3fcefe2b43a09aa568287b04da51f3cdc9888c4c28f555d00143528dad3f"
         },
         "ledger_2025.parquet": {
           "rows": 75032,
-          "bytes": 1426681,
-          "sha256": "dd2605ae11665ffa4a7c1b75dea203a748244fe94922a71444928843a2e84ece"
+          "bytes": 2066715,
+          "sha256": "f5a50bbeae2bcdd7bdf3279d72d59d8e246a5edf8845144d0aa965a1dfa4c8de"
         },
         "ledger_2026.parquet": {
           "rows": 92435,
-          "bytes": 1595350,
-          "sha256": "6d33f0e5e15a702d8a330c62be38eabd9d7180c3ab9595bab799f85ec21e9920"
+          "bytes": 2385387,
+          "sha256": "ffa3bcaa1502832784f8938d209bb5f4778efb44aa9809664ec51ef76441438e"
         }
       },
-      "opportunities": {
-        "opportunities_2020.parquet": {
+      "decisions": {
+        "decisions_2020.parquet": {
           "rows": 13,
-          "bytes": 13459,
-          "sha256": "9f629089b8990e908f594954437f62fa332fc24afd8d831995891c20c9829bf2"
+          "bytes": 5875,
+          "sha256": "a7181ab83f817cbacf8b54d14afdba2594b7a7c447c21b47027a1ffc2219e3ed"
         },
-        "opportunities_2021.parquet": {
+        "decisions_2021.parquet": {
           "rows": 17,
-          "bytes": 13888,
-          "sha256": "1e747d2f33bc314404496e685b822aa5e11acaabd94cd6f8f20e89c2ad1d7e2a"
+          "bytes": 5982,
+          "sha256": "e0d456350612330690c3e9e8529823b067438556c5dd0c467dda6058fff14c71"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 10,
-          "bytes": 13082,
-          "sha256": "20debaf5aa18107cf694f8a44c241741233d24477c2a732a29cbe32fe58d65f6"
+          "bytes": 5768,
+          "sha256": "9d33b573b99af0c959e3aae53badb080f7510ec4516a82bf267135319101e52b"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 36,
-          "bytes": 15202,
-          "sha256": "1721f98e38642e78c589b1dd752db3f6e379b6a071d260cb008a48d80e75caec"
+          "bytes": 6443,
+          "sha256": "d51d7fbcdd2e77578e46bab7598fc69a1248d0c18025237fff45f1a46bd11079"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 17,
-          "bytes": 13729,
-          "sha256": "a610a9d17ba4c78be330ad876ffd3cd8b1e35cc842ee3beb73540f2b983e5cc9"
+          "bytes": 5954,
+          "sha256": "788786aa87c730351aa95b22cf12aaf3f53de035001398b5a27de112acb06173"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 26,
-          "bytes": 14270,
-          "sha256": "af2767ae68980cc85c4389640401d143571d53b6fc9c7c0d12d3b2c20cae1298"
+          "bytes": 6115,
+          "sha256": "ff6d8d1a634a76af0912b9c9a64775de122e6a028390ee2d79e14a5530caaa27"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 17,
-          "bytes": 13668,
-          "sha256": "838f5b36df79f7aaa126fcc74ec6371e04e3166619ca8acbb94d1d1135b637e7"
+          "bytes": 5943,
+          "sha256": "accc00d1c74599a0ae7a07f3116abba4e020e832982180fadbf5ebe38365109b"
         }
       },
-      "n_opportunities": 136,
-      "n_trades": 115
+      "outcomes": {
+        "outcomes_2020.parquet": {
+          "rows": 13,
+          "bytes": 10220,
+          "sha256": "cbb19cfa6609bad6f8f10716703e9f6fd281602e8152cb6d4aff0ecb87e9c9fe"
+        },
+        "outcomes_2021.parquet": {
+          "rows": 17,
+          "bytes": 10568,
+          "sha256": "9fcc9d479baf2ed50428b234a7ba07933e21cd4700bde97870e17567fa8a2980"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 10,
+          "bytes": 9914,
+          "sha256": "bf2a42016cfb6959da0bf0563a2e126e2fa01f2c82cb14f9b0621ff16b08f727"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 36,
+          "bytes": 11620,
+          "sha256": "e82c49a82b89876fa960d324897b138487bee9f2ed4cd4b69513dcfc92a78eca"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 17,
+          "bytes": 10442,
+          "sha256": "35e10203a670ca2f6f1979a9f519a33ad824b9bc91014c3927a09967d99565af"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 26,
+          "bytes": 10928,
+          "sha256": "8dfbb0e12bb8f76d87fc8e75d25a5c9c36f96f43732fcf43b2102f0c24db64df"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 17,
+          "bytes": 10394,
+          "sha256": "60f3d0129a6f2dcbbdafaae99f09983ffcbcc2edef04350d7ee76dfb33454491"
+        }
+      },
+      "n_opportunities": 136
     },
     "g3_family/o5_p0.5/G3_LONG": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 8738395,
-          "sha256": "2db172d9abfd95c12bc987909032d160470a4a2382b87061488442c280a7e1fa"
+          "bytes": 8743442,
+          "sha256": "229f7569fe5965c92411a845dc504df846e68f448343bda868f8488eb9101d25"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 10030832,
-          "sha256": "b66bfaeb9c28fdb8e0ef7b6fe123f998b9fc861502bf81f984f0bb0949016add"
+          "bytes": 10035942,
+          "sha256": "a8902a8f65a9b826873e62012cf52fc1ebf50b4534dc0243e9e81e4e08877f98"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7609541,
-          "sha256": "1ae8f0cf782cce0d27dc4fc894d37828736cfecd94de050a5361378985b52cba"
+          "bytes": 7614550,
+          "sha256": "5696ba909f88aca79347d575fa19b5a613af72dd51e5799acc5062b609551102"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 8535268,
-          "sha256": "fda139953479e1716096d59d53d50240a5c6f04f8b889ff8fdcb3b2be741e31f"
+          "bytes": 8540470,
+          "sha256": "1d7fb24f2ce0be781cbc6147ace59fd4d14eaa2af5d84460505ed57d9e42e610"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 8369077,
-          "sha256": "73ee79bf51ee2878117e7c509dad970177e9bc980523a9671b7dcfae5fe850d8"
+          "bytes": 8374161,
+          "sha256": "a9fdb505d59d3a5b917e7a96c88ced2f20f28617a1e93e5a49a5b7f202970e95"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 8057653,
-          "sha256": "f719be92f0f2a2baf3c33c49d7331ac304029a28229c52f8281246e1ddd3384e"
+          "bytes": 8062780,
+          "sha256": "e524eb741bdcd2234c8535dbf71078bcdbf1514855801fa86da40b9ab8ac3dfd"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6401819,
-          "sha256": "2cadd195765b2f55ee0b1144a51c37fe18e6d7e5daca87b4fcdbf7db729ce737"
+          "bytes": 6406054,
+          "sha256": "79853b3fed432b4e86d0150bce537ceec9fbb0da0e32ea027862d5d8574d6e96"
         }
       },
       "ledger": {
         "ledger_2020.parquet": {
           "rows": 142761,
-          "bytes": 2831447,
-          "sha256": "19b792513a9a4ae48578f8cd534cbcae827bff6ae574515e895e72d07939ea98"
+          "bytes": 4034642,
+          "sha256": "ab5e4500696dac5c3b5f64348b1cf72b9a505a95cb903a10f4b5a9b316f8a901"
         },
         "ledger_2021.parquet": {
           "rows": 175413,
-          "bytes": 4382133,
-          "sha256": "e7aa3ed28b63696c4e93cc59315bde3f20e95a6553250e5aacbaabe6433d53b2"
+          "bytes": 5800725,
+          "sha256": "dfc41afd8859dd010374cf252f081afbe14369364bcffcbed46fe52aa0c4f906"
         },
         "ledger_2022.parquet": {
           "rows": 13195,
-          "bytes": 252903,
-          "sha256": "4c515ccc49cea91c577d97e07cc1fe9eede29a9bf15c70208512393f79b975c3"
+          "bytes": 365223,
+          "sha256": "7df4d508841ad39ecee17a1b919a509353dc3b6b6fcd5f174cf2622bb7f9322c"
         },
         "ledger_2023.parquet": {
           "rows": 212514,
-          "bytes": 3167254,
-          "sha256": "dd1658d1f1f3f2b7df7425329d03508b966ba9ed0a4f80f8e42d23e9f08b044e"
+          "bytes": 4829331,
+          "sha256": "21de42fe714f0f31ad9dc4078bfd506d241a47cb135b1c2148a8b5977d65eefe"
         },
         "ledger_2024.parquet": {
           "rows": 138156,
-          "bytes": 2417830,
-          "sha256": "d704968a53e9d5ea2206a4300df33d5ade3be5117e956e03c79c65b807811fea"
+          "bytes": 3588354,
+          "sha256": "eda1d1b45cc523245911533c7c8f7e21df04dc6d9253e1fcd467ad49e7ae785e"
         },
         "ledger_2025.parquet": {
           "rows": 76395,
-          "bytes": 1451825,
-          "sha256": "903a3b30d23c411b68d4421be19e3552a3a3b6fcbedf561bf5dac054fe41c280"
+          "bytes": 2103080,
+          "sha256": "61040198d6e670056ed399212603689b710058c40874995b6db8fc9a1919eb29"
         },
         "ledger_2026.parquet": {
           "rows": 92508,
-          "bytes": 1598372,
-          "sha256": "c2f96fbb926c9fddd6054d92f1972705e3e8e9a26baf07fc55b1fc0886d790c6"
+          "bytes": 2389045,
+          "sha256": "3f6b783dbd8fd7bf9b760a3d45ee724870e98726fce1c80669a46be95a80a96b"
         }
       },
-      "opportunities": {
-        "opportunities_2020.parquet": {
+      "decisions": {
+        "decisions_2020.parquet": {
           "rows": 13,
-          "bytes": 13461,
-          "sha256": "73a6900f1edb2974b72d480fbf639a55adc60575ae9ee5f774e1c945ef0b2590"
+          "bytes": 5875,
+          "sha256": "a7181ab83f817cbacf8b54d14afdba2594b7a7c447c21b47027a1ffc2219e3ed"
         },
-        "opportunities_2021.parquet": {
+        "decisions_2021.parquet": {
           "rows": 17,
-          "bytes": 13886,
-          "sha256": "3172cffc274428f23ac2c49aa0ea1f98b2cc074be2f1754e4c6f5e980e7b0ef1"
+          "bytes": 5982,
+          "sha256": "e0d456350612330690c3e9e8529823b067438556c5dd0c467dda6058fff14c71"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 11,
-          "bytes": 13093,
-          "sha256": "d141bf143d2473d36389f850cf65b67e84631f2592c036a6a92d7c0019bef387"
+          "bytes": 5792,
+          "sha256": "3ef82195fd3508a0411d8752893f414d79263f62dd97ac26faf8fc270ee6175c"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 33,
-          "bytes": 15154,
-          "sha256": "a824831d8e2ab952ec8a53f6fff255196c3c08cb284d64ec880a7cb79bed32b7"
+          "bytes": 6400,
+          "sha256": "15597a546da12b49fb20447df8bd2106e7da63ab47d7a77fbbd399a02c1373c7"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 17,
-          "bytes": 13724,
-          "sha256": "ad5b7860a22b62dca5f60127cb8a74a09ad339152343c61b7bedb05d96ea400f"
+          "bytes": 5954,
+          "sha256": "074b841aea8f734acf2eb5107235e80bfeb0837b463cc9266dadd54929943711"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 20,
-          "bytes": 13922,
-          "sha256": "fa9669f21515bc4addbb5c7daf93562b0d981933e0153172164442dbf32c7841"
+          "bytes": 5978,
+          "sha256": "e1b09e00bca74f9dc5ce25d93965bfc42be70aab93df3c1449335aeb40e558fb"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 17,
-          "bytes": 13703,
-          "sha256": "02f86887947aacb7a4ffead78788b1d0e603f8c6fc4e8dc285c18552df0fa902"
+          "bytes": 5943,
+          "sha256": "17de3dab55de14a232fe1071055ada64351fecaffc4cf621169dc6c65b1d1aa1"
         }
       },
-      "n_opportunities": 128,
-      "n_trades": 116
+      "outcomes": {
+        "outcomes_2020.parquet": {
+          "rows": 13,
+          "bytes": 10222,
+          "sha256": "dfeeaf9931b4f8dd7be1990b8ab5e7a3c8bf392a079acc187b3dfb5faf42836d"
+        },
+        "outcomes_2021.parquet": {
+          "rows": 17,
+          "bytes": 10566,
+          "sha256": "7a1178979e7b0d025f5490abe7df46c028cbe0f0391ebf73e8e5818ea4873b7b"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 11,
+          "bytes": 9913,
+          "sha256": "9e4e1dc316413df7d6f421835f74e8802952b041d58377e6d58aec223cd28029"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 33,
+          "bytes": 11605,
+          "sha256": "45cf9f5e3aace33f2c2f4084ace89a700c786ac551cd2a08d017c32b1e64c4b9"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 17,
+          "bytes": 10437,
+          "sha256": "c8ab1c767a86fa8646972d13d4aaf8b4ebd36d749739c6d67abe48a22971cd7f"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 20,
+          "bytes": 10642,
+          "sha256": "623f8bf25714c9eb19a0ee1758b181746ab2d166feec1fab44c386b464ca3de7"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 17,
+          "bytes": 10429,
+          "sha256": "cc8775c63b096f2ff4a65c893f0c56591c4e28225aa16ae5b12846b37ad3baca"
+        }
+      },
+      "n_opportunities": 128
     },
     "g3_family/o5_p1.0/G3_LONG": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 8737399,
-          "sha256": "2f42125282278df7d8d1e38b01a42d861697ee142e7d4e801680de3df1a50503"
+          "bytes": 8742446,
+          "sha256": "ddf8a8cdc79ff71f572f44ea9e1ae919a6bf0854ca4f055089aadd261c0e45a1"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 10025477,
-          "sha256": "71757af48e3326ca5a401143845106fa8f1cbce99a0f1c88bb993c5493d9256b"
+          "bytes": 10030587,
+          "sha256": "52b8730ab3aebe364c4ad891ba9fe8ac0804439f8eccee00467ff3bb32da824f"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7609582,
-          "sha256": "e57eb0331e9f611a28722696743e9a4090030bd111e8ce60863f44e2ea110415"
+          "bytes": 7614591,
+          "sha256": "a8043d015771fc83f5423615f12db27719f0d27d8c859a85b3446621e5f56e49"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 8535346,
-          "sha256": "5b72da366185ee9469b62c8a2395c4faff51bc04510bd82418002710e3424c22"
+          "bytes": 8540548,
+          "sha256": "12554496b1607d86b15d1eeb5c3848881922d497f1cac174fdc5475ec42c486e"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 8369071,
-          "sha256": "e7ceef1444a015136f9b3beb85a922f3117c81005a17bb77d48a4669056243f8"
+          "bytes": 8374155,
+          "sha256": "3c1f2d375903495a43e9d38f23fc2739169d8e2636c6316f5dcda05086f82970"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 8055328,
-          "sha256": "7db09487f129e083d1a83fbc88c35f59a6279c8882d7a425f452158dccf5b527"
+          "bytes": 8060455,
+          "sha256": "c799e4ab9842611094ba99a58a8f7ce9d3e2774b9ede23efa05a018fd5995180"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6402100,
-          "sha256": "ca25217d0687ea18428d1a59f852baa5b131bd85e826d6c6fe6954ceb456de10"
+          "bytes": 6406335,
+          "sha256": "72bfec0aec4fd39d99290f21c174d0b6ef5f1406dfc8fb1f266159e853f836f5"
         }
       },
       "ledger": {
         "ledger_2020.parquet": {
           "rows": 142759,
-          "bytes": 2830422,
-          "sha256": "84145af27b20ed2c9e738dbdb613d02e3b129f0a7050b20e54ff6221c648851d"
+          "bytes": 4033604,
+          "sha256": "fdace424b6d3c01b085d03430ec1d3a78c620613eac4f56317cb014863419283"
         },
         "ledger_2021.parquet": {
           "rows": 175429,
-          "bytes": 4377475,
-          "sha256": "d43d7883dab5b3964c2c64fe651fa9e9c794d5b8fead3cc4c4c9b7e526206e82"
+          "bytes": 5796180,
+          "sha256": "a6ddce182f31361fdd9b91b8a693d7cdc28e0aca10209675f5c8f61c9c3c4602"
         },
         "ledger_2022.parquet": {
           "rows": 13198,
-          "bytes": 252942,
-          "sha256": "99625ccaa3830589b8009a9556031c22402cfbbe5895e54e6d0a69035dfeeb4f"
+          "bytes": 365280,
+          "sha256": "c015db45d42031b2186ba16d6f8cd78ac19d9f5a66ee642396c37b6836347c0e"
         },
         "ledger_2023.parquet": {
           "rows": 212549,
-          "bytes": 3169030,
-          "sha256": "a4e762979362d8cf4b26363d242b3170fe0827e6c1224f897ab7197762b2f14a"
+          "bytes": 4832881,
+          "sha256": "41c2706c69929ffb6c87d845f78cb08727ddf50efb317fb0185a73e116a0a2ce"
         },
         "ledger_2024.parquet": {
           "rows": 138154,
-          "bytes": 2417176,
-          "sha256": "48eab4fe3695babedccbc3d10fb7f2979a1777648499462eca2042a41d725753"
+          "bytes": 3589069,
+          "sha256": "82325d682e1ce2f81657b9045a9f9f0b338668a1b8d57f4e38bfd6815efe59bf"
         },
         "ledger_2025.parquet": {
           "rows": 76147,
-          "bytes": 1446589,
-          "sha256": "957720d11f289f8cf7d2bedb7865f483b61973fff12ac179ed52a7ec09eadf80"
+          "bytes": 2095787,
+          "sha256": "4a0cd5f6ec24daf4b7c4f01e82beccf792c6cf81946916023866fca82e13285e"
         },
         "ledger_2026.parquet": {
           "rows": 92526,
-          "bytes": 1598383,
-          "sha256": "2d8a84e5a3b38c03e1fffd89ea91db4deb70d2138a98590558ffe726b14aa9b4"
+          "bytes": 2389217,
+          "sha256": "199a64ca6b730aaa809cd8df08e95d70b5f3d8bf1405db0b8d21f8cc0d26606f"
         }
       },
-      "opportunities": {
-        "opportunities_2020.parquet": {
+      "decisions": {
+        "decisions_2020.parquet": {
           "rows": 13,
-          "bytes": 13461,
-          "sha256": "d1baa8a71d223090118d8e80c26c3774f7672b341221e2b81a45c090a1ba212e"
+          "bytes": 5875,
+          "sha256": "a7181ab83f817cbacf8b54d14afdba2594b7a7c447c21b47027a1ffc2219e3ed"
         },
-        "opportunities_2021.parquet": {
+        "decisions_2021.parquet": {
           "rows": 17,
-          "bytes": 13886,
-          "sha256": "b25998a580d2bec69b24f296ebc2ba7373e2ef59a8af33326bacb0e8cbd1dd9b"
+          "bytes": 5982,
+          "sha256": "e0d456350612330690c3e9e8529823b067438556c5dd0c467dda6058fff14c71"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 11,
-          "bytes": 13093,
-          "sha256": "18f5a96c1d1ae02eaa936d7fd2697b82607d59042f7a9ce18b21836fdfc8f110"
+          "bytes": 5792,
+          "sha256": "3ef82195fd3508a0411d8752893f414d79263f62dd97ac26faf8fc270ee6175c"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 33,
-          "bytes": 15154,
-          "sha256": "720488a6ac16cd465e9bef3a5f0e50785ff14737ce82d26f260e0c28e6dd77ef"
+          "bytes": 6400,
+          "sha256": "15597a546da12b49fb20447df8bd2106e7da63ab47d7a77fbbd399a02c1373c7"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 17,
-          "bytes": 13724,
-          "sha256": "c7b5d1a88aebd68cfa7fa2e0fd368b380b7fa51937d5738b1debd1c4f04d92b1"
+          "bytes": 5954,
+          "sha256": "074b841aea8f734acf2eb5107235e80bfeb0837b463cc9266dadd54929943711"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 21,
-          "bytes": 14088,
-          "sha256": "f2f3df37d97171b4cb12a0310cbcfa52b14fd3cd77c563748a950dd0fac0f28b"
+          "bytes": 6000,
+          "sha256": "aada05ece2bb44dbf7e415d7d7390cd859e8c8217e8538c9b0f3d8070a8746ae"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 17,
-          "bytes": 13711,
-          "sha256": "441653ceea28dff135ad410400e6f8f43eebd2859c741cb76eec516123e10a81"
+          "bytes": 5943,
+          "sha256": "5b26bf8f45cecc2c70f72eaac20dc8df2391c17e469d6dc75484dbea38cd819f"
         }
       },
-      "n_opportunities": 129,
-      "n_trades": 116
+      "outcomes": {
+        "outcomes_2020.parquet": {
+          "rows": 13,
+          "bytes": 10222,
+          "sha256": "b202587001f72a9e8b021229a2199e9780ba1bfd2634d1319fbd5ee2e047bbe4"
+        },
+        "outcomes_2021.parquet": {
+          "rows": 17,
+          "bytes": 10566,
+          "sha256": "a4160dbaac743fc4dc42c36c25a1b6b3a1c98021a34a49fa589ffb296e966a9e"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 11,
+          "bytes": 9913,
+          "sha256": "d6cab80d5f8ade1f4e3bf9a6d507b0d1b9482bbb58e2c12ca4b94f5d758ceaa3"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 33,
+          "bytes": 11605,
+          "sha256": "fdf90c706885b964fecb0b41f74d620d0b6dc65db37dff699295e71c7b7675a9"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 17,
+          "bytes": 10437,
+          "sha256": "4d4e52d5c37028f2dccdc3a744e9b6d227c4da2e1e4f784e1122953def30d84b"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 21,
+          "bytes": 10796,
+          "sha256": "52ab1834a3e9e76ce9412757442ee43917754d5435f693e2337203ca2dfc5a6d"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 17,
+          "bytes": 10437,
+          "sha256": "37a7c3e48b88ee7aa3294ece5ab6976235e8f1be893a40cd308fdc8d612ae838"
+        }
+      },
+      "n_opportunities": 129
     },
     "g3_family/o5_p2.0/G3_LONG": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 8744566,
-          "sha256": "09906d7b24a5512110ae05db5aa52ccb7199d57601b42f16c842e3641cb664bd"
+          "bytes": 8749613,
+          "sha256": "456fc0a55c13191b852a5fe4ae4f2c9127a9fe9434849a6142b09f8cfdc7d6c1"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 10035156,
-          "sha256": "bb42621e17380fca8495ba3f131bd5878cd90576fd7ea67ffb3990769e00eaa2"
+          "bytes": 10040266,
+          "sha256": "30887db4abd583774b7bbbf595651b6704fda740ca14016dd2118870209c813e"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7610440,
-          "sha256": "cffe439588e6865bb915876aea98f91e58d16ea5d8d060d5787bf880e951167d"
+          "bytes": 7615449,
+          "sha256": "cf853556e597b951cc40f0194ef360c1dfd6fe6131071fae7ea27f52aca9f596"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 8535831,
-          "sha256": "7ce0254c251dfaba42739ca5e39ab39df5bfb90ee9b1f1b55f90345dc257cf15"
+          "bytes": 8541035,
+          "sha256": "79b9a913cd91991cdc5d659273b98b167c851d9548635403d317236715be2fa1"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 8362963,
-          "sha256": "64a439fc9b0a0be53c6cce86fd5984d97a1da85488bc7dfec7ced93e9d5096cc"
+          "bytes": 8368037,
+          "sha256": "348c043da13c857d720bf7439ca0df012e969bc47e9cc4830dff9288e33eff74"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 8036489,
-          "sha256": "a05d7bf39d5fe42a81655c50677821c00699529ae852b172a1236b6723f5c521"
+          "bytes": 8041578,
+          "sha256": "7e14747bae3e38ead8bdd5154878771e9ea093498ec8e116bd8357dec5cd4c02"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6397243,
-          "sha256": "c23185f1c7c8cf6f18134f79ce0dbb24de04e035d81af3f1aba57a850dcf76b1"
+          "bytes": 6401466,
+          "sha256": "06dea4d114dcee70a53032306d8f70209b796fdbcc2bf3a34b52871d752b9384"
         }
       },
       "ledger": {
         "ledger_2020.parquet": {
           "rows": 142757,
-          "bytes": 2837627,
-          "sha256": "dfb4368c5530a88935a4b209cadc75591d24004dbb4834ad817f3368c7c65e52"
+          "bytes": 4040794,
+          "sha256": "f312b0298e16fc39f7b7211ae56b2978680497ffcf4d7b67030f4646622dd4bd"
         },
         "ledger_2021.parquet": {
           "rows": 175481,
-          "bytes": 4387021,
-          "sha256": "6146cd7f8a0fce92de180f24644e227dcf1b665599aa3fd91c9808e7150b84fc"
+          "bytes": 5806078,
+          "sha256": "84790fe5cf0f426632fb9322853a9ca6090d9af2a38ffabf30c32c4ad695432c"
         },
         "ledger_2022.parquet": {
           "rows": 13344,
-          "bytes": 255448,
-          "sha256": "39fe75fc12e460d4a30d4f33ea064761a1b9bd2dfd1cd950bb7e38cae9cd248c"
+          "bytes": 369046,
+          "sha256": "c54e7a90f65928388f6fd4dbe9641aa70e6da395b0592f51a81b11ce51930d2f"
         },
         "ledger_2023.parquet": {
           "rows": 212584,
-          "bytes": 3169909,
-          "sha256": "f26159d61b4073dceee3fe17a9ccd9f065ebc5ddba266e00d97af159c63bc196"
+          "bytes": 4832696,
+          "sha256": "81efced9e31de50dd3fccc06bf11b0a8f67d55647fa907c1e23fe49193ec474d"
         },
         "ledger_2024.parquet": {
           "rows": 137641,
-          "bytes": 2407968,
-          "sha256": "b0d7445a2c6dc362f0bdd36d23b37208130c0c725c8cb0ca11a3fe55f529b491"
+          "bytes": 3575187,
+          "sha256": "384d3a1e58cf85ab9baf90073bc200d7305932b2de824ee30cb0b07975c85d5b"
         },
         "ledger_2025.parquet": {
           "rows": 74670,
-          "bytes": 1408717,
-          "sha256": "bd41f03a4d837804ecf55f5ca26e29de0161d3ad4ce06387f6654b3b597aa46f"
+          "bytes": 2044133,
+          "sha256": "315fa1b9c16fa649feb87457b06a72ac224216fc81f7b03f6a2f541dcf5a881f"
         },
         "ledger_2026.parquet": {
           "rows": 92156,
-          "bytes": 1589113,
-          "sha256": "0e195f36bb8c0f96e4248ca935a361fb1c86023ca6f96a9b08f19d5925177822"
+          "bytes": 2376783,
+          "sha256": "36417d4f1308499781a78a35fe6552415e2ff6738215280f16504b66ea549694"
         }
       },
-      "opportunities": {
-        "opportunities_2020.parquet": {
+      "decisions": {
+        "decisions_2020.parquet": {
           "rows": 13,
-          "bytes": 13461,
-          "sha256": "1d1ee714944f34cdb0987ce00c12d6ebbcceeefb905ded7626296f015c0def57"
+          "bytes": 5875,
+          "sha256": "a7181ab83f817cbacf8b54d14afdba2594b7a7c447c21b47027a1ffc2219e3ed"
         },
-        "opportunities_2021.parquet": {
+        "decisions_2021.parquet": {
           "rows": 17,
-          "bytes": 13886,
-          "sha256": "1985cb690e7e9eb0e4eae5f62416f0ffa1c079b1974c0167dc17a8b9b4290920"
+          "bytes": 5982,
+          "sha256": "e0d456350612330690c3e9e8529823b067438556c5dd0c467dda6058fff14c71"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 11,
-          "bytes": 13098,
-          "sha256": "bd03fe83469b7e410310eca699b42174209f8a3d5f343c758e23a13c797d9b5a"
+          "bytes": 5792,
+          "sha256": "3ef82195fd3508a0411d8752893f414d79263f62dd97ac26faf8fc270ee6175c"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 33,
-          "bytes": 15150,
-          "sha256": "2adc0f91a6ae3b6fe330b5584db4b41036bb5218abc36210e1c8737120b601c2"
+          "bytes": 6400,
+          "sha256": "15597a546da12b49fb20447df8bd2106e7da63ab47d7a77fbbd399a02c1373c7"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 18,
-          "bytes": 13714,
-          "sha256": "2b795c662aa485ff9683abd693b151414c39d9dd3c2665e71322cfe38723a21a"
+          "bytes": 5974,
+          "sha256": "1043980a32048d1357c4b94b1c5014fc8a7a0831e3499ce6963588e86b3e10e7"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 24,
-          "bytes": 13971,
-          "sha256": "387c5e6c6628579ede50c8e22f23b1847ea2f3fae930cabd9671f2f26932326e"
+          "bytes": 6060,
+          "sha256": "30c94c742b546f2272f7e4de0ae73249dd6c397c24cde6c8ae59ea7e7d3e40a3"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 18,
-          "bytes": 13670,
-          "sha256": "606412f983734ff24808b04f76621568bd530e07b82d589eff033b57a62e5c76"
+          "bytes": 5961,
+          "sha256": "be2c012ecf74c7967d6ca318f4f2cde0e46595baab2faaca3871d2f14a1b417c"
         }
       },
-      "n_opportunities": 134,
-      "n_trades": 111
+      "outcomes": {
+        "outcomes_2020.parquet": {
+          "rows": 13,
+          "bytes": 10222,
+          "sha256": "abe78e191cf7d09b39174e07d6e5fd212f3ad8cbef6b8d50610b86c4ea102c39"
+        },
+        "outcomes_2021.parquet": {
+          "rows": 17,
+          "bytes": 10566,
+          "sha256": "78236330796b6d55706b052017b9d0a8e7018c2200340021279942858da35eb2"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 11,
+          "bytes": 9918,
+          "sha256": "f2babdd33c5c29902599ff8631617ae1e08698b54ef1c2c1678798066ce5beec"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 33,
+          "bytes": 11601,
+          "sha256": "4285e241be1091e9efe257415a04545381daf5a24c922a4f8db65feba6f27944"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 18,
+          "bytes": 10417,
+          "sha256": "454b6f8cfb9f242ccb7ab102a16414f97d9badaff50f731e64fe7ee9caec5769"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 24,
+          "bytes": 10649,
+          "sha256": "5ba31cdbfedfc83cd9c130014535e916bdbe47823c0763670e4bd8664e45ef50"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 18,
+          "bytes": 10388,
+          "sha256": "8d8554b6cfad132c3c362f491b2ee556299f8eb9d304694da0cae591d8fd28cd"
+        }
+      },
+      "n_opportunities": 134
     },
     "g3_family/o2_p0.5/G3_SHORT": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "3d9e4e89568b06c424560ead50fb5f88e0bee7decb0f67d92054a4852e28a780"
+          "bytes": 7537018,
+          "sha256": "43f20094291a25e07a3eb580dde1a9dfae8f40e44450c1b0351766e4c5504d49"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 8114074,
-          "sha256": "f47a7a581ffe33a0cef8ccc475b0db10db18bfd944515a77ffd94e08c8af4210"
+          "bytes": 8119402,
+          "sha256": "8d7946e3af050efae790d6dd059dd1f792cf7c285627404363de5a2447572a1f"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7968738,
-          "sha256": "dda73788d8fce1f66471aa4f83bb3b1da0ce14c37b39f720a08317209c1a0382"
+          "bytes": 7974213,
+          "sha256": "1fe0c8b873687ac9fb9fd9494c96f63b3941ca12d5caede7be67d889baf24769"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7673594,
-          "sha256": "678c14aace9aee3940af56946f7b187481b7fda213aacbf6c0d28c6f846a9a7d"
+          "bytes": 7678763,
+          "sha256": "e9d0d3ad8954110819c141c98815753df9ecb440748fec80f4a216525e0c62d7"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7701113,
-          "sha256": "684c9dbeb186273e530d87cc385a168c04ae742f7feae6c2d044e7aa9d83ef36"
+          "bytes": 7706221,
+          "sha256": "db9bab52ee81c96566df2c3f43c13a8a21ad38800276633b6a9d15fe4cd64b7a"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7918529,
-          "sha256": "15cf0b2306ffacab449989a763b490f56723d11521a1a41d52a2e965f6c49783"
+          "bytes": 7923775,
+          "sha256": "bad31bad6f82abd10ecca7d554cdf4bf2a81602b0c3a371b3321fa265f26de19"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6056775,
-          "sha256": "b8bd2f7af7e0f90651e2a6fee3eed3234a8038bf266003360d41dc208bde51cf"
+          "bytes": 6061062,
+          "sha256": "c0cb9c477ff6625d231cd0c3b7b435a234895deb25a024586d0600585443efaf"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 32330,
-          "bytes": 974138,
-          "sha256": "5842c4c3ce2022e871dc2bc2eb3dc71759a5c7b1b2cadff168012fe480d09ea5"
+          "bytes": 1251961,
+          "sha256": "1debc78b495d8f9280082bc9f3f341d1d923fce1139b6dc5592edd72c8e21aaf"
         },
         "ledger_2022.parquet": {
           "rows": 32414,
-          "bytes": 833824,
-          "sha256": "b655ee5e8baae6c61dbcec8931c0dd4e4eb2bc170383481ea2947a47f37ee68b"
+          "bytes": 1113647,
+          "sha256": "2cd8d60a629492070fa048d697b36dc4400a6627fc4dcae0737e3c38995f58cd"
         },
         "ledger_2023.parquet": {
           "rows": 16454,
-          "bytes": 353268,
-          "sha256": "d774137d62f7a920feacd25d97c2935c10e2f298b6235adaeb8c99d5bbe93b98"
+          "bytes": 495455,
+          "sha256": "62c094e312295b7e5ab244dffb0b8862f5640f890380630965e209a4fa4cbc81"
         },
         "ledger_2024.parquet": {
           "rows": 13740,
-          "bytes": 330173,
-          "sha256": "b964e1149731be358e08c448b3ac93e3a5e01c851c6e16df3e6d66687c2f8a94"
+          "bytes": 447439,
+          "sha256": "8f6873eedb2896d8235414b873fe8ade115fd5c648881da46215a19d3f9d3846"
         },
         "ledger_2025.parquet": {
           "rows": 31065,
-          "bytes": 789391,
-          "sha256": "796f00f86cf059ba9c1ecc65b0cf57a89785cc11abef7159b8729576c6359d64"
+          "bytes": 1054602,
+          "sha256": "70b684dff9b2d8ce4773ee5afa7755f18fb8a2bc93403792992b97178d320f51"
         },
         "ledger_2026.parquet": {
           "rows": 14304,
-          "bytes": 352683,
-          "sha256": "87e5e5e60eadef39e67179fbbd0f268bb12198a92fbf9b57a45b3884ac54b619"
+          "bytes": 474399,
+          "sha256": "3d75e9bf9082ba107bc580c390db40cb0596eb18856d5f351222cbeca00dce04"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 39,
-          "bytes": 15780,
-          "sha256": "c63466a09334bf043259487eff605f3dddc7c8c20269d44b0f71134966aefe1e"
+          "bytes": 6640,
+          "sha256": "3dbcded202bc92c00fa9ac458fd62592a58523899a3462ff125d0fe501a6e5ba"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 53,
-          "bytes": 16647,
-          "sha256": "d4322984a9bf437f938a0705deef0fb7b2eb68a85a3b0f28cffe79e6cda18aa9"
+          "bytes": 6829,
+          "sha256": "dd1d3fbb93ad4826e02c92dc9d44522ae541136e19b423e7de45cf747c48139d"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 26,
-          "bytes": 14617,
-          "sha256": "acae48402d4e31aa35c9295ecafddeb9ce75ee89a2d303702f52b6f295cb7e01"
+          "bytes": 6215,
+          "sha256": "8e74b3e560de92be65b26aeb8ebb6cff486b2282ec6f810fc901b624da0ce842"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 19,
-          "bytes": 14088,
-          "sha256": "77c7a2a27d96742ea5a6adcf746194f34e092ad2f694c9bab4662b53b72fb06b"
+          "bytes": 6062,
+          "sha256": "fa22d06edbc62899821367f0a4a07ca487bc30d4e8cdfb574c0561b830796cc8"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 31,
-          "bytes": 15079,
-          "sha256": "e31c9008e674802410f5e7708a0c6fd7fb4faaa94ffeeb9c8457237fefe24990"
+          "bytes": 6363,
+          "sha256": "068f88d8375d6e9502c5b810a76d75c59de987ef955cb2499eb207a4f1e90e3b"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 24,
-          "bytes": 14409,
-          "sha256": "3f790b805461ef4c028726727243e5047cd3605ba7c6037b8839134330e491c6"
+          "bytes": 6202,
+          "sha256": "a52092348a5cf66fb7ca97ce06b6644d2c72094d5e13d5a1d42a2196ac5e0e61"
         }
       },
-      "n_opportunities": 192,
-      "n_trades": 183
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 39,
+          "bytes": 12040,
+          "sha256": "5395a74bceb235a561b7974fea52dfcd2605ef812e2791ec1912bf5d2058e099"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 53,
+          "bytes": 12865,
+          "sha256": "08f6541b13f7e6ac21db1d73e5e0093c5f401fdd7f09492266e030b395ac78ab"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 26,
+          "bytes": 11169,
+          "sha256": "c317cb701643cbbb351d9530f5506638d181036d27edd6ecfb2568069c3012da"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 19,
+          "bytes": 10715,
+          "sha256": "842335ae24750f9bdbcad52c9d33192093d758b9f8adb998d92ec0551e3bf413"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 31,
+          "bytes": 11514,
+          "sha256": "77c60e71c6240c750e395ef41cc9d630d78fd5291c8bd74a3f3b3327b225aae2"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 24,
+          "bytes": 10948,
+          "sha256": "a5afb10ee2ce8aca9a192a7c73e26b19379df44b4a58cb284f6daf2d4cdec984"
+        }
+      },
+      "n_opportunities": 192
     },
     "g3_family/o2_p1.0/G3_SHORT": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "ec1849e56574f3f4f8f9838470663cd4951974f119eb1443de6d3cf4600a6973"
+          "bytes": 7537018,
+          "sha256": "139bbad535f65c122cfb6a80e685cc424b970fd5ecc471adf61098e8aa0565c5"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 8114014,
-          "sha256": "8f545a88356627df875c8d9cfcb192b502043edda31f8414842e6f9d13746930"
+          "bytes": 8119342,
+          "sha256": "3d9a7e16a5ca91d265aef5f5a257a155f00b2d7e750542952a3104ae9e7e85dd"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7968280,
-          "sha256": "2acafde170a72ba048a7e6632f7ca8ee2ff03791731941785b0c27108896f169"
+          "bytes": 7973755,
+          "sha256": "46b7c42b96699de24a858e0af27800e670ff76c90fa68008d993272178195ae4"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7672618,
-          "sha256": "4cc336a347d9db7cefea4d43d5bd2a97e2a4fb88cf176bbb87ae5949eded3217"
+          "bytes": 7677787,
+          "sha256": "caa3876a6d941b7c663d45fc6ce4ddbe196f4dcc5e005e9c3d84abc04d64d1fd"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7701084,
-          "sha256": "8d28cba7852d0576f22b077588f3427c3f7b4fb7a7195d3bbb2306f9c401397b"
+          "bytes": 7706192,
+          "sha256": "687250857ea111a70b566f5b6ccecc3c8d1b39f47f28b6b6c43e16e038a5aa79"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7916180,
-          "sha256": "083abadca310c4a7e2a4e769083bb4d531d64797d11fd0924a2d9277f10af064"
+          "bytes": 7921426,
+          "sha256": "c3d8e8bf14dca90ce0f950f5a084629d2c98c9be25f3cd5004a65a2e64670e90"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6057038,
-          "sha256": "053c885a920059e78c4661f3684f49acfd96c92aa3bc6fa3f12c526bd1b54021"
+          "bytes": 6061326,
+          "sha256": "51167f07466633b673b4b4a19ee554241865343b98702733afb9d63ef3cf53ed"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 32328,
-          "bytes": 974045,
-          "sha256": "c75ebcb079321baa0ac8a0c634229ed8ee215262da02c90d63cff19a995b8dfc"
+          "bytes": 1251839,
+          "sha256": "6a5b86b2dca24a61ae53f0083d0d6fbd3eb4c73132e35275697b35763519ff3c"
         },
         "ledger_2022.parquet": {
           "rows": 32511,
-          "bytes": 840672,
-          "sha256": "14a75014f8321460ed3cc2d7863f08857364b0cfbf03e5df43ac364b5625aa53"
+          "bytes": 1121299,
+          "sha256": "8f840f60e7a74c342bd951d0e9ad564fead54d2615cab2975723add22c0fcc10"
         },
         "ledger_2023.parquet": {
           "rows": 16310,
-          "bytes": 347339,
-          "sha256": "3c22b6f22a17b02579977ebe3cb9b999c54b8bcffa4ec2dc67652693ce9bd821"
+          "bytes": 486691,
+          "sha256": "0d7b2ec3ac514c8afe129f28405544a7195c0b3ef56123a2a8ae72ee7b887995"
         },
         "ledger_2024.parquet": {
           "rows": 13734,
-          "bytes": 330059,
-          "sha256": "c5de18bfd1f2ea62cbdc1108e21336244a4d864da052370be14c5930e89ef3aa"
+          "bytes": 447270,
+          "sha256": "9837fa460f9bb31052cdf232a092be8fa03fce96596699a5f30b24e3ed2b319a"
         },
         "ledger_2025.parquet": {
           "rows": 30819,
-          "bytes": 783954,
-          "sha256": "c691fd4133f88b372287ad5b0afd614e880ec96d1106fc88d78932f5eabfee20"
+          "bytes": 1046945,
+          "sha256": "9b1a6abfdde1df7f25de38fae9c6669417b30b0aa69834eba1a4ee02591df811"
         },
         "ledger_2026.parquet": {
           "rows": 14329,
-          "bytes": 353291,
-          "sha256": "dbd599d4ced898a43edeef025d0e9474825df4fefeb41a59e1f732e29bfd4b2f"
+          "bytes": 475235,
+          "sha256": "beb32729af9691a2a1aa862f188e457955f8960fbdb95226a4c1b82119b19d65"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 39,
-          "bytes": 15780,
-          "sha256": "de3bb05a18e911c139603ff04d9f1930ec75ed0b849de9e5acd6dcbae1728902"
+          "bytes": 6640,
+          "sha256": "3dbcded202bc92c00fa9ac458fd62592a58523899a3462ff125d0fe501a6e5ba"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 53,
-          "bytes": 16650,
-          "sha256": "44607dc0c7c9d9f9b7a61e832bb6ea8c54b25edaf5eabf6e0f5e3e2c0a35298a"
+          "bytes": 6829,
+          "sha256": "dd1d3fbb93ad4826e02c92dc9d44522ae541136e19b423e7de45cf747c48139d"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 27,
-          "bytes": 14640,
-          "sha256": "1fb146d691d8148bb53267eb7c93b4300b80e2c8effc718e99f1d1e655903f93"
+          "bytes": 6234,
+          "sha256": "ebec6ba4726d797e9b4e7522a11443417d842974c133b4d5ef930f595b2875c7"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 19,
-          "bytes": 14088,
-          "sha256": "fa38acda02923b6bd10e94b4de4d9db9f120dbef330d51013ad4041c6bab1a53"
+          "bytes": 6062,
+          "sha256": "b9239c0c89ebde5bf4fc3c5f01f160c1a133bb1dc3baaad85916d77938b16c90"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 32,
-          "bytes": 15296,
-          "sha256": "3ac5fde77c13a71024a0a0fbfadc27132b0f401169010580e84acb52b037c4b0"
+          "bytes": 6409,
+          "sha256": "49a5c1f06d7384e2564e0b45563b0321e439e48123dea655e97b2f892c88db19"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 24,
-          "bytes": 14417,
-          "sha256": "1e6f0b577155d31a6bd8687720ce4ef7567768343fd2d5246c886900f4bd81e3"
+          "bytes": 6202,
+          "sha256": "d5878a7e96c2e26a2c75bdf97bdd9e54631540cf6c1844b0f29c2c147b2dfc14"
         }
       },
-      "n_opportunities": 194,
-      "n_trades": 183
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 39,
+          "bytes": 12040,
+          "sha256": "a71b7d946a2ba391637686452b43826b63b31a2945d62dc77858e206a02f8848"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 53,
+          "bytes": 12868,
+          "sha256": "46168c1e432665d019ca5d63fb07f4a23a296d20de7d7306c5910eff0cf516d9"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 27,
+          "bytes": 11182,
+          "sha256": "2e82420bb58c1e413fcdb9d3b938b871607e0d698059f1e53ae043570e8129a8"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 19,
+          "bytes": 10715,
+          "sha256": "9c28702fd9b9a9890aea8c18707befb383ae67e9b904f79184eda7bac9283cf7"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 32,
+          "bytes": 11713,
+          "sha256": "b028b70a520a75139c3dec06ebf25da140c24f91a7584409d4ca4080f51272ab"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 24,
+          "bytes": 10956,
+          "sha256": "482d61482b01e67839aa9918fbb7fadd22da97b590d76cf5f1b3e0c9a3b0dd44"
+        }
+      },
+      "n_opportunities": 194
     },
     "g3_family/o2_p2.0/G3_SHORT": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "7968792c3aa23992808ab5ce5325605f42cca96bfd15e90ecd7210bfe8751797"
+          "bytes": 7537018,
+          "sha256": "bbf2dd595b61b9c96cad7cc9d9c7df706b67bea7bd974320a687ed3133de1db6"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 8114978,
-          "sha256": "da0d2ac1cc4d4876e3500e7bccd14e8bbd741c7a14214bb478742f6a19ecb8e5"
+          "bytes": 8120306,
+          "sha256": "1efc85d512ea07adfa97623e875426ef11f8bb876069a598a46c3e944e7cd560"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7963326,
-          "sha256": "4ecd77758352eddbeb8232a1038fe3b9474b64d6860382e6fd93080d109075dd"
+          "bytes": 7968774,
+          "sha256": "ed4a20e2b71f42ac4d91b7b3662e66fad7817742c7e1cb06f5925b461679a7a1"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7672518,
-          "sha256": "cff0e59b01f2d9349050245183705c665f9b44d78d90e96664102386a96e63c8"
+          "bytes": 7677687,
+          "sha256": "ad7466bff12ba9b01644f7e7e563b7ad7061a322fa3d05ff13a8ec8d7737dc63"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7694217,
-          "sha256": "202704f79c6e984527680019afb7d33705b4279d4902369cc1a53b8f9561e20a"
+          "bytes": 7699301,
+          "sha256": "b21099cb58d4e2b2b653e802ca9a5913c53e94be57ffe807fdec5bbf34bca117"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7910894,
-          "sha256": "6b0e164d45c9ae791828d1b0fd89952c0625d1da90396f2993a76f8143f1ac3c"
+          "bytes": 7916118,
+          "sha256": "00fe8c12699e100d3fa84c368b6f79ceaf73d374151fdc133e64ce4a86af131f"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6053700,
-          "sha256": "41046aba09c4f298e5a0e94de5dfceb742259ba4925099d1786b969d14666b1e"
+          "bytes": 6057978,
+          "sha256": "7ea63c68a3d952eb3c64c6b25c0e1a53e682eef31a2c48a6de0572bc7ee1914e"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 32471,
-          "bytes": 976728,
-          "sha256": "d1d5460828858ac8d2f0149bf64242971877c070e20cec8c8ac71d713ce6a8a9"
+          "bytes": 1255758,
+          "sha256": "7f46b11efbd189c57ffd748224b7bec420b41e6146b8769d7370ecf54115b02d"
         },
         "ledger_2022.parquet": {
           "rows": 32050,
-          "bytes": 821217,
-          "sha256": "0b270b39cbc058561e8d07bdeb4096fb68c3b3730dcd52736f53c4c27d872261"
+          "bytes": 1097862,
+          "sha256": "0e6c0a0961bfb7922133b4492f4209a646fd9ccb33b43d8021d3b02503c7fd7b"
         },
         "ledger_2023.parquet": {
           "rows": 16237,
-          "bytes": 346261,
-          "sha256": "1ce091d45f497b506687a056d804219eb1594dff0f4ac49d63773ddce8dba249"
+          "bytes": 484982,
+          "sha256": "538116629898aa37d23b486f7bc92b4539a55a9bd8379022ce4399f616849c80"
         },
         "ledger_2024.parquet": {
           "rows": 13338,
-          "bytes": 318752,
-          "sha256": "39b93bb4e5c7130823ef3a358806191a072fcfd08efc0032d78992dd2ac06115"
+          "bytes": 432524,
+          "sha256": "cc5d34e5588822b1cbf1830be685f8e09722a89eba634b980b39cc86c84f944f"
         },
         "ledger_2025.parquet": {
           "rows": 30540,
-          "bytes": 775653,
-          "sha256": "89b692e77d807632b70ef27e11a948dfb27defb67aae66cc1f807a17f14cf606"
+          "bytes": 1036296,
+          "sha256": "f02516be62e7b84a417c95a734b482d98bbf3c817af81f993447fa337c044fdf"
         },
         "ledger_2026.parquet": {
           "rows": 13979,
-          "bytes": 345772,
-          "sha256": "bbd336fe103a6b5ad02cc2c1f2c5792ce7dfad23ed60ba3b635faf267a5a7626"
+          "bytes": 464634,
+          "sha256": "2139b2a7d3138561f03a5a56f1df083b7eb0dc768355c57373113e88af86b798"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 39,
-          "bytes": 15778,
-          "sha256": "abb32a9d33af8362dc3d65d84dc416e9f9334cf4a6f7e84b118bf87c7a0b7680"
+          "bytes": 6640,
+          "sha256": "3dbcded202bc92c00fa9ac458fd62592a58523899a3462ff125d0fe501a6e5ba"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 53,
-          "bytes": 16573,
-          "sha256": "b934d6bb5b305e8593a385632da14afb6f8dbad00260d6767da2e4919cf27519"
+          "bytes": 6829,
+          "sha256": "dd1d3fbb93ad4826e02c92dc9d44522ae541136e19b423e7de45cf747c48139d"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 28,
-          "bytes": 14667,
-          "sha256": "dd832960e60430843ae7a4893903f0cf6af244037d6285bb5d077b2b06e09703"
+          "bytes": 6259,
+          "sha256": "47187dd27de3868f60481880bd4076832b675bd86dd6f0d7ef17b694b452100b"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 19,
-          "bytes": 13986,
-          "sha256": "f7ddc9babe2f504e83af68e294afc2812748837172f0548c0a239f7e580e39f9"
+          "bytes": 6062,
+          "sha256": "ed98da810b34db3732e5f9fe0e6a0b11786590def10d0c97ff6fa4a941211ee4"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 32,
-          "bytes": 15191,
-          "sha256": "388e7bd692df50c03da3216b518319291b7886e6dc7d30ad040450783e05ff9c"
+          "bytes": 6409,
+          "sha256": "cf5a75f340a8aaac47a53c5fc114b021b12245cf287d3a05a9b5b0b1d6ec1cd2"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 25,
-          "bytes": 14455,
-          "sha256": "eda47f547aa8ad9eaa63a316f7dfce3c164f6e4e9924c7ed25503b4a85d49899"
+          "bytes": 6253,
+          "sha256": "8d473b83c2f262a814da9c7fef267c2de566fba89807b296a3340027e1d98ebc"
         }
       },
-      "n_opportunities": 196,
-      "n_trades": 176
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 39,
+          "bytes": 12038,
+          "sha256": "3287619f1d7de30b891fe4b3d1f24ebc2347dd95a6868e3d02117c681d5b8acf"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 53,
+          "bytes": 12791,
+          "sha256": "70ba11e9243473e95600d9701dbf7c1c53ffcb4de05e0a86461dd8aa667c49fc"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 28,
+          "bytes": 11195,
+          "sha256": "4f8b3008e6160b2fae83815bd4d5c9dd73bd4bd7191f48cbe3e36b9257098894"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 19,
+          "bytes": 10613,
+          "sha256": "f1551716281e1a122dd68bedfb09357ba28810f5b0cc59e7c99090808f747533"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 32,
+          "bytes": 11608,
+          "sha256": "a6db9c12c490e27368319738b77092cecb678a9d52bedd44385cd686ab3a1a38"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 25,
+          "bytes": 10962,
+          "sha256": "26326bd6552f8aee29bea35421f99a4275cb49512463bc03e5e44b9c868ed5f8"
+        }
+      },
+      "n_opportunities": 196
     },
     "g3_family/o5_p0.5/G3_SHORT": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "80186177c6345c6b87a0d55bcb8e720f1d0e9e7a16dafbe49a3b12dd83be25d5"
+          "bytes": 7537018,
+          "sha256": "5569c926e2c983e9d8da35212af6cbbe571436ea92617c79af8d3e2e7e54e0dd"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 8113478,
-          "sha256": "3d21520ce7486658aa9a212d344314145c95836139777c1134882f3b3f4cfa1a"
+          "bytes": 8118806,
+          "sha256": "afa8336d31e426ed6ee7ef7d2b5afed7415691bcf837db4db50911f1371edc7d"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7961926,
-          "sha256": "bacd69bb8bb61a81e0da0b063047a9c5865686c6e731b935c37f54b119269060"
+          "bytes": 7967377,
+          "sha256": "b9b1b0eaa363e2fdff737f31b0e17ef5ce53e95f58ee9b7dc511e86a2820f106"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7670561,
-          "sha256": "8db14866ca262a222af3171b9ee5103c3ba47ce36149e0a57eaf685c5fc107e8"
+          "bytes": 7675730,
+          "sha256": "b696e4f0d0627b6ae2b6cff2d4d73826b5332849460d5ce26f702ef2dfbdaa3e"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7692828,
-          "sha256": "2aa079c2fa073ab807338abac2286fdb0af6f5d3cc0cf10ab67a0be7a8176804"
+          "bytes": 7697912,
+          "sha256": "1e3eea220993c12ac48767474389f978635692f8d4f4fc3feb70ce104d98f96a"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7907682,
-          "sha256": "776c74c7d5e8cf61559e5158cb4a0389db0569c9eea021bc30201d698d6323c2"
+          "bytes": 7912928,
+          "sha256": "8ec2edab7863c7cb5d07ca7a800ec975d8943cf73293a520c3fb9f202267b431"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6061439,
-          "sha256": "57611e71e312ac26a4e68d2212d35186338e0ab3f4dc46b25979e261d49cde70"
+          "bytes": 6065737,
+          "sha256": "7699de53475e53cf9fb1815dc02dd8190c3f567e6f9861cda12d84eef0c29360"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 32318,
-          "bytes": 973488,
-          "sha256": "32248e98a5bdca549bd7632f7d09249ff2447381c0141020a66e2c110c7dd43a"
+          "bytes": 1251198,
+          "sha256": "fbab59e611b810cd3fe0095aeab377b71e5adf930077c999fcfc9258d2e9f8bc"
         },
         "ledger_2022.parquet": {
           "rows": 31887,
-          "bytes": 824867,
-          "sha256": "043c83ce639d82f78e8c99b6d4c2d9383f742306e9baa7906a716085ce0c7c7b"
+          "bytes": 1100198,
+          "sha256": "a7f2b5f2663d15bf9bf15eb5b331e0d568dae7480970532c83759d8c9b45d082"
         },
         "ledger_2023.parquet": {
           "rows": 15737,
-          "bytes": 338698,
-          "sha256": "7383c45fa642883c7a2f7b1afece8b2a89c652af6a14aed3768cd340f6281258"
+          "bytes": 473169,
+          "sha256": "297fe5d586bd3d2002319cd44058ead9c8f67ad3845e28e695b5f7285a1823c0"
         },
         "ledger_2024.parquet": {
           "rows": 13255,
-          "bytes": 316461,
-          "sha256": "d8e9d63e7d544bfd31e16f2956d7428e248e180d3e2c8e716cd3213ae1347f46"
+          "bytes": 429524,
+          "sha256": "377403e6c2b0166c6c4a4ea1416c8edfa713a8619ef06a952f76b996693dd7ef"
         },
         "ledger_2025.parquet": {
           "rows": 30254,
-          "bytes": 769140,
-          "sha256": "0b6a1539cd3eddee4929ee22ff614de6bd7e7319eae330504585339e4571d334"
+          "bytes": 1027457,
+          "sha256": "ebed13702ed8025c832524622d744f002690f8f048ec6a9e31a008a6ca3deb86"
         },
         "ledger_2026.parquet": {
           "rows": 14772,
-          "bytes": 362998,
-          "sha256": "09d50b074bbe2392620c63d94e0f84d1b358ea572104ae602d93a911a9008528"
+          "bytes": 488776,
+          "sha256": "e90237cd46c14990a5539f1f7161f739d26ad1aab2496dacaa8a12e1a8b4b965"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 39,
-          "bytes": 15784,
-          "sha256": "cc445608a51683795e8910b935e649101c2aad79c04dbcce16d8a89e4463f894"
+          "bytes": 6640,
+          "sha256": "3dbcded202bc92c00fa9ac458fd62592a58523899a3462ff125d0fe501a6e5ba"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 53,
-          "bytes": 16572,
-          "sha256": "7ca00fc91efdbfecb02e8ca24ec98b9d3727b45f8a68f701dba59b47831ac744"
+          "bytes": 6829,
+          "sha256": "dd1d3fbb93ad4826e02c92dc9d44522ae541136e19b423e7de45cf747c48139d"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 29,
-          "bytes": 14680,
-          "sha256": "d12e927169fea33c7e5e8c9ef11813609c17e253bff928cde12d436f67899241"
+          "bytes": 6256,
+          "sha256": "866fcc9621460b71103cc1ec617efb2c04b2ce57ecfab3a6cee2dffe08ecbd67"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 19,
-          "bytes": 13956,
-          "sha256": "592d5033f2045b72f19e01b4ecbafecd8ae3121075f71d4a7e5cc21f4db23c79"
+          "bytes": 6062,
+          "sha256": "99ff4e5e97bc910cca40a5231ded7bd6028fcd104faaef0d75602a0eed696d69"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 34,
-          "bytes": 15412,
-          "sha256": "8112e7bceca945cd4ed1c6cb8c6f48f0856c2a62ab34e1363b514bf475bdc556"
+          "bytes": 6477,
+          "sha256": "ce236915525b78b4a6b28e9e1fd2312cb457174cfc4f32b93eceb6502b620b5a"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 23,
-          "bytes": 14419,
-          "sha256": "636df1a328bc30f4b80e837247479e601322b832d35be6ecdc335ff78bb73fde"
+          "bytes": 6171,
+          "sha256": "da9dbf116ccff32417337c07b0977f2c053b8aa399f2904d9b2a700742c9b938"
         }
       },
-      "n_opportunities": 197,
-      "n_trades": 180
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 39,
+          "bytes": 12044,
+          "sha256": "dd7458e92d034aa8cdc80c7adc213103c81d20efd4e96afb3f0682e290981f08"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 53,
+          "bytes": 12790,
+          "sha256": "84b690d7e628fcfb906eb49b892f2878ad8902a1c20b8af26d20c824af1b8a48"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 29,
+          "bytes": 11202,
+          "sha256": "2db4630b49f70a83a51e68dadb910f8eb4a70cc85230fe8a79ddbcfcc1855c01"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 19,
+          "bytes": 10583,
+          "sha256": "6c0af526d62ad252dbaf16165c70e89f3d74ec480d564d56a7155d5f62b01134"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 34,
+          "bytes": 11779,
+          "sha256": "bc09a00d7f78cf3ba7f07f4cd753e5bc529c1c3c9da34765ea4fc860f834cf45"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 23,
+          "bytes": 10979,
+          "sha256": "bcb76989ea3116cb489c7ef4d818ed632cf7b05b47353c93db39798610b1ce52"
+        }
+      },
+      "n_opportunities": 197
     },
     "g3_family/o5_p1.0/G3_SHORT": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "c56baada66cdbf9819dc61a2b3e74a1b56d3057cfe8900d94dbe1e3db9a30735"
+          "bytes": 7537018,
+          "sha256": "fc35ac75207e732ce3278b8c83d65e25bb4bb179385516ebe49b28efd14e6adf"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 8109055,
-          "sha256": "90fe2c047c94a85df592962f5ed03e74b936ecff1009664d6c8a25d28f38f50f"
+          "bytes": 8114382,
+          "sha256": "f66afccc29deb781a7db871d2013f0479bec1f578f8d69f7ed1c5570c8f82943"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7956690,
-          "sha256": "02f22ec7c7e299fcacefc02ccd5bd7e84098d79782de5a0306ab24eacc983cb7"
+          "bytes": 7962134,
+          "sha256": "7ba27db3dc0d4ad9770e6493b0b48a61c56a9e0b580902001c88129b3d14e2a0"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7664181,
-          "sha256": "cb9f819b164d4dfb1726479c32a771baf21343270c32bc60ab10cd3b6b29d1ed"
+          "bytes": 7669342,
+          "sha256": "70d7df307c2157f785581a39f8bda375fef6703c75dfd6d46f9c868f41931502"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7692594,
-          "sha256": "f2edc4aa9c9a828ab32d33cc299616ad068a97ff26d5b4f0465b6b39bb734916"
+          "bytes": 7697678,
+          "sha256": "91e02ea6d6f2ca92e60e2ecd68bb999f39b514a28a8c25444ebd34dd01fb61ba"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7900708,
-          "sha256": "6daae1670aac157ddc10683636cbe4587b9ab58b3931723ea1d89b3528d4818b"
+          "bytes": 7905943,
+          "sha256": "df1a2532bc1f475cd194b9125a89bb1150490c8239a1fd3daa639fc00d7feef6"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6055271,
-          "sha256": "1d94e4328a1f146f0c417b4eda6d82c5e6127c0f8ee3eddf27df84474e6de416"
+          "bytes": 6059555,
+          "sha256": "a1a5c03078afa2dc8078f0d1c3d3dbb24b938d814c0ce1e4d737fabafeac4ae6"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 32083,
-          "bytes": 966448,
-          "sha256": "bb64b86cf6b7ca27822f8523e85eda9e40fefb4085b6ad3b90d3f34e8a813428"
+          "bytes": 1242195,
+          "sha256": "3114b00873b8d525d1223bbe21ca5d421c4451686f1542deae8052574b56a825"
         },
         "ledger_2022.parquet": {
           "rows": 31434,
-          "bytes": 817653,
-          "sha256": "775513d90f155b3ddc517fc04d811ca1c7547ac1279d6cb06f9f5568b7cf8942"
+          "bytes": 1089227,
+          "sha256": "3257ce71addac9059aa3ea834d56a3a36158a777eaf7af789613cb59e4078693"
         },
         "ledger_2023.parquet": {
           "rows": 15063,
-          "bytes": 324395,
-          "sha256": "8bbd7231bd22c15e27602c008197a5010e06420f8b2f9bc772288ae7d0d9d588"
+          "bytes": 453091,
+          "sha256": "2ee2dc83410ac359c6d178aa096b76c036850268145493c27093f93f52b3c507"
         },
         "ledger_2024.parquet": {
           "rows": 13234,
-          "bytes": 316011,
-          "sha256": "786024d1be6c9d7ef10134dc91b6fecbea8180cc57053b01579f783ed57fc0d3"
+          "bytes": 428901,
+          "sha256": "9d6588869b81805fe51008b2ef41113397389e5c3f17ffc72ade8f89085c2519"
         },
         "ledger_2025.parquet": {
           "rows": 29789,
-          "bytes": 756681,
-          "sha256": "3eebe97845757c05028c54fc279f0121fa3257f5247ca12811fc8d1087fb8263"
+          "bytes": 1010993,
+          "sha256": "7e8d62bf359d2031331a3ed1f7c7cdc9bb7ea5653f5aab1a34676646db31191e"
         },
         "ledger_2026.parquet": {
           "rows": 14250,
-          "bytes": 350650,
-          "sha256": "ae58e44a0d1ae5d8543cccb5542f8c4faa2e32665fa86475e38a7c4ed07a81db"
+          "bytes": 471939,
+          "sha256": "a4ace6e2fef961704a03b56d1c9ecd02b6318b45372672346ba2487f3fb8db1e"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 40,
-          "bytes": 15923,
-          "sha256": "1f9fd499a318234af1dc82f234660e6d65c779fd7ecc0e4c944a0616997e5fea"
+          "bytes": 6662,
+          "sha256": "99e5506bc6a4bfba358f75e6ec0d15218c67788f684e6196aa0590f7c772a1ca"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 54,
-          "bytes": 16543,
-          "sha256": "ee21c0d385382374efeb4dd6cdb0423472f3e8ee72e6bf7c22834c45e061aa53"
+          "bytes": 6843,
+          "sha256": "08d359a38dab602169af3b9bb549d4113ea9d3ff850a61a7973ecad3930d5a5c"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 31,
-          "bytes": 14679,
-          "sha256": "db264c32aa011b574965ffe95da77ad32a36961c8152ab63340aff5ad6f4fb7a"
+          "bytes": 6287,
+          "sha256": "797506c78ced8b684012d809b2c1bccfb795e0593f4b5f52da92f481f1ab676d"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 19,
-          "bytes": 13956,
-          "sha256": "2a961a816b1331825cb1d179578529c1415eacc2c1b188dd10413f74dcb3976b"
+          "bytes": 6062,
+          "sha256": "9e614a53731c0d9e6984ec7efe7f449a728c5a6007ccfbd0c10c8051b7d2cb28"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 35,
-          "bytes": 15401,
-          "sha256": "6564634e392b2b94e6ad84ad36aa8e2ebb658c07268dfc2686f2b502d67c8ddf"
+          "bytes": 6514,
+          "sha256": "e5febcece171889566330e4106e0877a5126a52227bc3839a29f3a3bcf16046d"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 23,
-          "bytes": 14321,
-          "sha256": "595d4c14c066241f6c7e470e854056a566cd3f5047f0553ac5ed60d28727f15e"
+          "bytes": 6171,
+          "sha256": "6df2b1d1fae74dec3a8f4bd419c09e253ae83652a27d9e50a27892025b38ce43"
         }
       },
-      "n_opportunities": 202,
-      "n_trades": 175
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 40,
+          "bytes": 12172,
+          "sha256": "be42a16335357d738d870547fce5f5c9c1e38e81051515209643dd37c619ba04"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 54,
+          "bytes": 12755,
+          "sha256": "63c4dc4730181e13a4711b91e6166fd0abb01fca12c0f6b685a18ef8388b10a3"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 31,
+          "bytes": 11182,
+          "sha256": "975f6907158b34cfca21ad31ce25dea5a1e0fa8db9deaff1f6d15857df290512"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 19,
+          "bytes": 10583,
+          "sha256": "822bee18f2a717eefb3ecde38527fe78b040132ad3886eb2cde401da7443c5a2"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 35,
+          "bytes": 11750,
+          "sha256": "8bcab4d2a0321e04108a68ceba116d4f51fd56966ba21caa191ef0215c899b1a"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 23,
+          "bytes": 10881,
+          "sha256": "fd5afbc8285210609b7fd13cc8dd98080cbc214eccd055b1b0dce470a0061da9"
+        }
+      },
+      "n_opportunities": 202
     },
     "g3_family/o5_p2.0/G3_SHORT": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "18178ba35b2923a34cff283a9cad76488f937a143069e8e26386f0d0d52611bb"
+          "bytes": 7537018,
+          "sha256": "b5d6bc2eece7c7d7cfbab506f8bd95986d07fd2e2679c70921b3f78b1c4dc091"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 8107726,
-          "sha256": "882b73c4bdb1b7cc31f9eadd07478dec9df230537b91f0538007b1831d727f8e"
+          "bytes": 8113053,
+          "sha256": "afef69291c307daa62c81741f392cfdb6a618f3f9265d34b66b9e2659600ab60"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7958094,
-          "sha256": "3af987f4b552f8b8957c8df4ff93a9434a38400ee196b3b079eead9c4a9f8cb1"
+          "bytes": 7963538,
+          "sha256": "3feaa3772ce68e3b774fbd31bff7542b8f43ea65a079f2d8bcd4ef03a816dabc"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7660611,
-          "sha256": "4a094f664e688cab20cb30f4c3ea190eff91062ff93424eab963ac1ba46b7d91"
+          "bytes": 7665761,
+          "sha256": "1825730ba2a7f62b3a810a2f599a7ad48290615849198259e270a589efeea170"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7689554,
-          "sha256": "5595f72e6c86a7557aeec12b111f909e8baf05f888488b03c118fc4df6410cc0"
+          "bytes": 7694628,
+          "sha256": "47ff292717a1c91197072fd22c608c05d84c611e7b18899cb6a2b7892e88fac2"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7894738,
-          "sha256": "11791981f08a22530ad1856590713074b2d9a91712beb8b7a06e80c18a7ba649"
+          "bytes": 7899973,
+          "sha256": "f92b59f4c7548d202c1208d21536ed44b69bee1bf6e57891b8ccf42370655e55"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6047219,
-          "sha256": "fe13e1679f2e374e6c98be19222cd8a6c3a8f3321ea7c7460eff099ea4705157"
+          "bytes": 6051492,
+          "sha256": "038b93a2ef8066d1faf12d369a8da9464a4b4df28e9671d3aa82b7605da33f03"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 32183,
-          "bytes": 966120,
-          "sha256": "f4fd9143d8a78f1cfef125388bc10a982c47fa70ebcda5030fe327fbca1da6dc"
+          "bytes": 1242724,
+          "sha256": "33a277fef49017b7f8e086c9558487e01634e34f644ab2ef3372b5e2c6c635f8"
         },
         "ledger_2022.parquet": {
           "rows": 31605,
-          "bytes": 821071,
-          "sha256": "3d6250fd858ad5018a4a9799b3252442383fd53408d21a09b5c9c30e4f142068"
+          "bytes": 1094141,
+          "sha256": "166dc0fb93d1a17b58f401b8476eb99970ee7f3af78e61795671072ffda0236d"
         },
         "ledger_2023.parquet": {
           "rows": 14847,
-          "bytes": 318531,
-          "sha256": "e5d815b7668cfe61744ddfbb02e062111e7a7260cef43119d46dbcd18d37c75b"
+          "bytes": 445296,
+          "sha256": "7c4bff9cbd84ab54d00b1988e1aace0284836b0c1514a2687d1fc526fe6fc43a"
         },
         "ledger_2024.parquet": {
           "rows": 13070,
-          "bytes": 311081,
-          "sha256": "20edc6642600388f02408fab9fa93a7d45c50ff86d7f4b59523eb60a64ddfad2"
+          "bytes": 422540,
+          "sha256": "62be3023d06eaeef03bbafcbbc6ea09c6eeb8d74dc5c64296dcb7e3aaac50892"
         },
         "ledger_2025.parquet": {
           "rows": 29301,
-          "bytes": 745313,
-          "sha256": "79b28f5c32820566b7a6f4b2afdd03300a2515fa7d8c3312e30d05ec1ef2ce6e"
+          "bytes": 995551,
+          "sha256": "9c79f876ca4fe4c1a8ab8064e97d9353a1e9d594d49a0c1c536ae8989b832b37"
         },
         "ledger_2026.parquet": {
           "rows": 13690,
-          "bytes": 336205,
-          "sha256": "056af39b83aee1b2e849664d33dc60409acf1aab1c9b60be1700437f3e0fb029"
+          "bytes": 452677,
+          "sha256": "3a1782b30fe991278875fe1f9f2f98f4b996ec3dfb2d2c2d38461ee0acb23974"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 40,
-          "bytes": 15921,
-          "sha256": "59b14fdf41b18f052eead0ebf600dbf8a2bc29dc78381d826263a49671387e6f"
+          "bytes": 6662,
+          "sha256": "99e5506bc6a4bfba358f75e6ec0d15218c67788f684e6196aa0590f7c772a1ca"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 54,
-          "bytes": 16551,
-          "sha256": "2bb27764d92602b2d2fff50fd65c931f8af4e5f2daa7edf76f4a56188235e53f"
+          "bytes": 6843,
+          "sha256": "08d359a38dab602169af3b9bb549d4113ea9d3ff850a61a7973ecad3930d5a5c"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 31,
-          "bytes": 14621,
-          "sha256": "03df13c50babb15264879f26d9bc4b30885a8019dd6ca822e369ae97552ff295"
+          "bytes": 6287,
+          "sha256": "797506c78ced8b684012d809b2c1bccfb795e0593f4b5f52da92f481f1ab676d"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 19,
-          "bytes": 13914,
-          "sha256": "de7422ca6ffcb26e11144651877e7fba49529fe530b0530bdfb41bcd5783208b"
+          "bytes": 6062,
+          "sha256": "9e614a53731c0d9e6984ec7efe7f449a728c5a6007ccfbd0c10c8051b7d2cb28"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 38,
-          "bytes": 15471,
-          "sha256": "46aa98a96f9b126fcc1694aaa98586ec2a559d705f1e1802c9d1aaba21421f20"
+          "bytes": 6591,
+          "sha256": "cd62c94d5236a901c407a42e62d4a5e85f3c9d6ad7700a012917de1d0c44130e"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 25,
-          "bytes": 14389,
-          "sha256": "e3031f1bb5d5fb36bb6ab53df75af08b3d0a600de31ece1e7da432460d77e068"
+          "bytes": 6247,
+          "sha256": "4fddb836c3276db0732cf74dca83f53fb68a621d612c1c756665cfc0979773f8"
         }
       },
-      "n_opportunities": 207,
-      "n_trades": 172
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 40,
+          "bytes": 12170,
+          "sha256": "54721fe38cf70b7059e329c9e3e7025f9374ae55ea0c5ebf702ce9d0899e867a"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 54,
+          "bytes": 12763,
+          "sha256": "6b189726ffc9fdca632c685d85027d4d405ec1b52e28623ea4c7264c1967abfb"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 31,
+          "bytes": 11124,
+          "sha256": "d9bf47a6e4bb8e87af3b05e86bc31e7113f9df294112234ed3d08a2d67d1bfaa"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 19,
+          "bytes": 10541,
+          "sha256": "6d6b441e8d5c2f92c51147cc2084f5d60148ba24cff6cb7cedc0c5a381367d3d"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 38,
+          "bytes": 11772,
+          "sha256": "253750c256277dee7b93cf8c9c7c21c46940b8420fe7012d9ff2630402a8df1f"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 25,
+          "bytes": 10904,
+          "sha256": "31fc1b34d19059dddd1eb5c5c2429e9397949deeec50a5116f023df63b9b4e74"
+        }
+      },
+      "n_opportunities": 207
     },
     "g3_family/o2_p0.5/LBR_FUND": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "400cebfbf576dfdb94ae3104e7e9238ea5036ad63064049f69ca8631316103f9"
+          "bytes": 7537024,
+          "sha256": "dfe929ebc4812d5b4db8f6f62de24096a2b549fcde6db6359dcfe488a46c2e77"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 7674630,
-          "sha256": "0d985058938384ce92dd880dd9fee93aeea4829fb0be85bf916f809702d11e77"
+          "bytes": 7679790,
+          "sha256": "78634c391896b8dcab0dc58e249c9614ca0b8fcb2c6bde3959aaa945dd548aff"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7609428,
-          "sha256": "d7bc8bd708988e9dd10577aa3cf67b8013f571eb93dbf6eed2a8e492e1c51e56"
+          "bytes": 7614523,
+          "sha256": "7555fcc714a171a6cf24d27f4df07eec6093aa17de224eed515864396a08de38"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7690346,
-          "sha256": "454a076663f9fa746c96311329b11c78c4c87c8463cfc79748a31f6a1f64ccfd"
+          "bytes": 7695701,
+          "sha256": "553b9c4b9e403ff82d633a306843e76c7ab08dc3797ec7c9fd88cfa815523303"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7749291,
-          "sha256": "fddc8362f755d62630d15f2ed6f6289ec72c7d553b0c6da7d57d0f13145a7ff4"
+          "bytes": 7754619,
+          "sha256": "3dea5a33672dd8c226d9c08b70b434ecbcb46e01e8e7198c0ecb05f7c725a24c"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7758774,
-          "sha256": "cede869db65f9c6e1212f71f7d37cfd2aa3ee1925b90f321cc64ccb8695f5090"
+          "bytes": 7764144,
+          "sha256": "9e144d563fa42796aeb5df0213518cbd33cca7d9aae0ef35db264ab21a1e50c3"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6134617,
-          "sha256": "5307bbd45aeee2eddae2712136e759bfcc8a13135b101b2cb07122d3b57ea8bc"
+          "bytes": 6139120,
+          "sha256": "c73e14daa18ae7cfc5ca532e351b4171e0bab1f89c044d2b71e0733ce06cf0ff"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 8393,
-          "bytes": 256927,
-          "sha256": "a99002f1b01e721241c68c9b38bf21858c3422425c3b004ab443145af895e9a6"
+          "bytes": 328622,
+          "sha256": "164f7cebfbf4681e59145a76ebe7dd7237b2292d4780792cb4a1f6b7da2f6cc0"
         },
         "ledger_2022.parquet": {
           "rows": 8240,
-          "bytes": 195072,
-          "sha256": "bc6a5a640aa37d4c9ce9eb82d987f5562517d48b131f1d97821703a004b780be"
+          "bytes": 265253,
+          "sha256": "425f1643fef60f9d7f8ced409d70b038c2a575acaa752b0d640a945820fd6d0b"
         },
         "ledger_2023.parquet": {
           "rows": 16102,
-          "bytes": 362486,
-          "sha256": "b749d21b99fec45bddf9d45ce00d4ea2d9157c93ba35f93d73ebccd4074f453a"
+          "bytes": 500814,
+          "sha256": "f3c5f7e8823b381d8cb52ca914b965a6b5936cae1885e1316813147a3a2ef5cd"
         },
         "ledger_2024.parquet": {
           "rows": 14347,
-          "bytes": 384485,
-          "sha256": "bf7bd0eeb82a0449b4671496364c0cb1b618b92c4b0c2dedba410d9f11cd29a2"
+          "bytes": 508110,
+          "sha256": "462f8075f8065c3a38bd33af215131f7a18af3d0b04687012f323761a55dcd01"
         },
         "ledger_2025.parquet": {
           "rows": 16966,
-          "bytes": 467976,
-          "sha256": "81bd89c47f66df5c51db2d7e18c0b109b22d39e529b00f16a6b07d144c8fec3c"
+          "bytes": 615069,
+          "sha256": "027df4588bc75b082da9b9fd60de30e21bc4a5b34ed42f8ca3b6570a46c1e677"
         },
         "ledger_2026.parquet": {
           "rows": 17841,
-          "bytes": 474254,
-          "sha256": "96464755fc1f3ed258cc27a7ec4c8199fe38c5154bdb1e8ac82170dfc6f86362"
+          "bytes": 629008,
+          "sha256": "414e61b59740895ccd139619ca4c71aa4e2eb3fb7caadd89c4b6a55bd2313b27"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 19,
-          "bytes": 14170,
-          "sha256": "9d4d88d8090b20eea0c859a529340bc7b62075e80c0c2a249c80922b33f88abb"
+          "bytes": 6161,
+          "sha256": "bfce75e169407cc0a66a744098a73ace84f342df0946dc0400ac791f12a531a4"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 17,
-          "bytes": 13837,
-          "sha256": "6c78d2eb766f5063ea577cefcdeaa823d46f046f2b92d018c710b10d5f626b18"
+          "bytes": 6050,
+          "sha256": "615305d729af8979d2b5b5ba885735f5b6fb63049a7054dbe648f2482390ec59"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 39,
-          "bytes": 15905,
-          "sha256": "4e13beccabe98e0b1b6cf7fba9888ed8d478880780ca2e33b5e314c90632688d"
+          "bytes": 6810,
+          "sha256": "33d0463d67a6d19d40f5372445c3abd417578aa0934a7a3e10cd2295c2c889c0"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 34,
-          "bytes": 15736,
-          "sha256": "e20386984b5d91038a1aa76e6b78c5a8c1162272f00b61a386488bf76958bb47"
+          "bytes": 6795,
+          "sha256": "561a9a6388579fcada0d6e5b7c1b4141627c9cc960489ab267e7eba02c4c9c0b"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 39,
-          "bytes": 16113,
-          "sha256": "a9ec66dd730c3d1106bee4b7cc7c8a7afc666144b494d2968ba6814c891a113b"
+          "bytes": 6879,
+          "sha256": "8b5914d8ea517bb1349046a8d8ed913e0a1edb8fe032118c672a7dcc4c66c2f7"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 40,
-          "bytes": 16124,
-          "sha256": "29d8930d6f8914ae7b9c36f96a631decb4da0726265591adf8ae2eff433d3535"
+          "bytes": 6904,
+          "sha256": "8cb0a3757bc596abaa845a5a252c419763c74ed76882fc7e316fbccc9142e3d2"
         }
       },
-      "n_opportunities": 188,
-      "n_trades": 175
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 19,
+          "bytes": 10687,
+          "sha256": "4225dbd29303b6079a0661d0064239c5ded28747c2abb271d561cfa21ec66a14"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 17,
+          "bytes": 10450,
+          "sha256": "f7487cf5efe9083b2ae480c06cde6a0bc71c5daa5a7155a3245864009287676e"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 39,
+          "bytes": 11992,
+          "sha256": "357db50a6122841f7b3da82af5b635d1e719f40346b60232aa48fa1b28c8acd3"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 34,
+          "bytes": 11803,
+          "sha256": "64458aeb77065ad67dd303c862d6a50e90651c22b5b6ce4f729cf5831621ca54"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 39,
+          "bytes": 12134,
+          "sha256": "b471ada732578d7397131305771862972726547ebdae2f5171c6bcddf0196d83"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 40,
+          "bytes": 12149,
+          "sha256": "503a047fd2467fe4f7c5bb02054a6626c637f5f4b812c602410677daddacdcbe"
+        }
+      },
+      "n_opportunities": 188
     },
     "g3_family/o2_p1.0/LBR_FUND": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "f953e186e9a5718c082fa3f72bacd16f4b4c273ed31c60a2e82d99acc08afc24"
+          "bytes": 7537024,
+          "sha256": "4a128d699dc21c8ff1b115f3c4225db0a5ff7b0e257209fe535e4530aec32e1c"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 7674347,
-          "sha256": "890833f91e8025b096e044984312cc06a962b4862f8e1e371438f7cc19ac7629"
+          "bytes": 7679507,
+          "sha256": "2bf2e00f6f15732250c591977f39823245a6b6d3a3ba9873053dd77ffa9ab5db"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7609523,
-          "sha256": "ee40a51c3e36b0676a3f67310251c646bfb58b2993f9573faab7e15e17665be2"
+          "bytes": 7614618,
+          "sha256": "9f25ef229b7a32f215c512d1b338af0c284cc05726adac093d53eef57a04fbf1"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7679200,
-          "sha256": "d99bc53f13a797ed0bbe63143fe1d1e2d73e56c123b73b6495ea355914950812"
+          "bytes": 7684611,
+          "sha256": "1b0a9649768a883c1b8644cbc989ba3e8bd05218b971837dcd8dfede57ccaa4f"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7746006,
-          "sha256": "816f6b48903c2292a89d7ee44005398d39216f89d6f8f20dc7a32e820923bc52"
+          "bytes": 7751343,
+          "sha256": "d03479a5a827970732e878bf30d31f05bf16ea5aa28048886b7363f355a6dada"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7752678,
-          "sha256": "767f68bdae0b010d60e72987e5bffb56aec9f6d5063ad5c0a219cfcb48dd6654"
+          "bytes": 7758049,
+          "sha256": "bfe0666999d299e07771359ac31a858ba28b2891b480a7a2204e24c91a9699d6"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6126008,
-          "sha256": "9f2c9866f4fef9197690b9a6b41e82a45f21b7f715183bd46aaabef3a9c4fb52"
+          "bytes": 6130529,
+          "sha256": "dc18255d84297dd85c9b516d63d1d1e024283157f770db376941353b5dafcdec"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 8379,
-          "bytes": 256512,
-          "sha256": "9139e9e8c225e2ec43f60e365919405477c796009963bef54eadd2d0d771f9df"
+          "bytes": 328084,
+          "sha256": "cc519e08af6fc1048dbeaf241eb37244b35fecae9de30cc04b721fbfa609f901"
         },
         "ledger_2022.parquet": {
           "rows": 8254,
-          "bytes": 195328,
-          "sha256": "0f51bdfbc4898f181a761643dd3e24e5341b2dc55d8548483107058b789657d4"
+          "bytes": 265632,
+          "sha256": "c6f574ffb27b52cb7a5573c72756a085d67069e80490216901ee6c35e92b2c4a"
         },
         "ledger_2023.parquet": {
           "rows": 14795,
-          "bytes": 336178,
-          "sha256": "2dacbc1ad314d66c46ad746d80e8c7f6254f42382a194dd98a40b92e68e17259"
+          "bytes": 463266,
+          "sha256": "b28525ceb91dbd1d661b103195350bc399fb7cec42bf822137962a4d0147b98f"
         },
         "ledger_2024.parquet": {
           "rows": 14039,
-          "bytes": 377537,
-          "sha256": "4f2799026388f602bf230fec64b505d14c16dc36bb4095d28a67b2f2ff76f47c"
+          "bytes": 498498,
+          "sha256": "0ce5c9b5a511b10fefecacc64b8aeaada37c13a7ef574a3e8a84eb456c5367b2"
         },
         "ledger_2025.parquet": {
           "rows": 16609,
-          "bytes": 457934,
-          "sha256": "f78c3d47a1b04bb14f3b99c0ebbc767f0fd3aa75f6fa0a6a02dd39914626d08d"
+          "bytes": 602071,
+          "sha256": "e02137d75db66a486a261c194d24a4c472e38925c8ee60d7909fdcd7d9cf32aa"
         },
         "ledger_2026.parquet": {
           "rows": 17230,
-          "bytes": 458595,
-          "sha256": "cbe91a5fd5a2575d9ca178421b181848b7dfebf3798616b441abd1563ece724b"
+          "bytes": 608077,
+          "sha256": "5d08297727535c60a83b7a9f51710c0f7f63b813685b6453d7f1ef467701c059"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 19,
-          "bytes": 14170,
-          "sha256": "b8111cbd7c1107f3b36e2420493820e918ed90507af7d37e9df07d692e5614be"
+          "bytes": 6161,
+          "sha256": "bfce75e169407cc0a66a744098a73ace84f342df0946dc0400ac791f12a531a4"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 17,
-          "bytes": 13837,
-          "sha256": "c7fa422a526f0e4f1f9b1dce0f8bd2c0ceb6035462f3aca5adf68e46d078bbdb"
+          "bytes": 6050,
+          "sha256": "615305d729af8979d2b5b5ba885735f5b6fb63049a7054dbe648f2482390ec59"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 42,
-          "bytes": 15848,
-          "sha256": "c82ad3a677fd5c76270b8c545f8c8da228c1dd0569bc372040ea27c37250d51e"
+          "bytes": 6945,
+          "sha256": "1b32f117ea874f19a2456a50a75cb211243bd0b3ec03ccfad70a3fa90ffd853f"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 35,
-          "bytes": 15767,
-          "sha256": "b3f94b9392fa7a7576fb4b391cd29f95f2de1fffb9304fddcfa0bfc23906fd64"
+          "bytes": 6825,
+          "sha256": "c12af7a72b4a65a4cc5f6799a9b267dba7f6623abf95058739ae1bdd1a940f5b"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 40,
-          "bytes": 16150,
-          "sha256": "4220e45385a1ab4a5411432f7d97919684eba54b13b15a09e21bd8f0aa259b5f"
+          "bytes": 6928,
+          "sha256": "7d92a415deb027cd947166d59cc26e63ca444d291f1ce652ef534359eb80d86d"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 42,
-          "bytes": 16243,
-          "sha256": "52494f5d8fe10a68c64215d84497ca211e5e89514099546e4dc4e23aef7b8ab4"
+          "bytes": 6990,
+          "sha256": "d52cf08a92dbe4a391842d1470a1f6c1af50cf61b3c15bef88cc9070ebe442af"
         }
       },
-      "n_opportunities": 195,
-      "n_trades": 169
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 19,
+          "bytes": 10687,
+          "sha256": "b9c932f8e8c974f69be8e006867e8a6bcd0b01a420e1b7f68727d2aba311e76f"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 17,
+          "bytes": 10450,
+          "sha256": "381ee8c24c20aa5b232d426b8b8015a1de220a91e98a15fa1d1c05af8f32784e"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 42,
+          "bytes": 11855,
+          "sha256": "d9c1bbec34a2ded9b770a3dc7a08e51c3d244491eef95966c538fd525c071430"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 35,
+          "bytes": 11816,
+          "sha256": "52c496f53b693a6ffdfc8989d7e93a80721b42aa644e4c914d093241c6de8715"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 40,
+          "bytes": 12149,
+          "sha256": "cbfd350749d88f29368e3d5e23edb84902bb3f370db4b6d69720d2799ca0ab42"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 42,
+          "bytes": 12213,
+          "sha256": "451052a1a95bb2ee4ea72ccae4eaf74ae6e6d679dd67e991ee25cdbadfa77af1"
+        }
+      },
+      "n_opportunities": 195
     },
     "g3_family/o2_p2.0/LBR_FUND": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "6a9c87d7cadc68a07de2bbfed3d68e38fc9beef3e5d17f382841ce71338797d5"
+          "bytes": 7537024,
+          "sha256": "9a4295f63275771cdd0a59430ab072556637b1b8962f8bc7dfb88b7f984cd9e1"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 7669874,
-          "sha256": "5f6548d3eb41741afbdcf5809b79edee85bddaa2d1088498dd622e45680882d7"
+          "bytes": 7675047,
+          "sha256": "a32afc3a808fcb222d62ca11a6772f4989f577980b94252d219804f704a5c9c7"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7609193,
-          "sha256": "32c8b51c34f2dca53775bf595091ede221a19e3fd7c9cf471434847500fc3cbc"
+          "bytes": 7614288,
+          "sha256": "ca1851eafb15419dd6cf652e4b904ad7c331aff82f72490dad56e1877d938b53"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7670451,
-          "sha256": "9ab26614a3eaec9793ececae63cf46cf4643fafe26f200c9da15dd2f6a00e2d8"
+          "bytes": 7675893,
+          "sha256": "79fd00e330fce1108035aae0b13c669e33254a17124af3bc219ec41b1b8b2cf1"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7737210,
-          "sha256": "9727d14458fb244001e44a2e1bccf7e82d051c6db477b35d9aac8ee02dd9c9ae"
+          "bytes": 7742591,
+          "sha256": "753a45ee9f7dd0888ce9435fb2cc3d87c608733c8952604804d91d034a9680c1"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7745107,
-          "sha256": "75704198d7dbccac97ffa905e425a21c66f048474523dd8fac67d5f7def08829"
+          "bytes": 7750518,
+          "sha256": "e56d50f1b3b2c82050bcbec5693bd1638de6ac607b7ab08b2284ac98cb357cc4"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6112839,
-          "sha256": "1103846aece8c8bde85f3d1ab17b056eede627bbd36184a86ff448df11836ef5"
+          "bytes": 6117397,
+          "sha256": "cba8ab963ca6da8c3c4defc169be44404c545b5cff74da44ae320b1fbaa14665"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 8139,
-          "bytes": 245932,
-          "sha256": "020935e6340970e2cec7c76dd939cb88f213d089ca4209761cf05a13a6c542c9"
+          "bytes": 314732,
+          "sha256": "d2a1253ff76fc00584b98755cb159962df5ab8bebceecb8766f803bccaf6b1bf"
         },
         "ledger_2022.parquet": {
           "rows": 8242,
-          "bytes": 194876,
-          "sha256": "7a1b832e94c5315f2da4909cb78b215c6006073b58d5e0886e7851d94afca111"
+          "bytes": 265103,
+          "sha256": "237843531c88c1ca1d1210aa6883af0b4603ddae03d7e990e95ad8f2d13abc73"
         },
         "ledger_2023.parquet": {
           "rows": 14331,
-          "bytes": 322225,
-          "sha256": "e4782b4151c02074e81f9e1c4d1fa2688cfb9f6f48040ffef40d47192c783539"
+          "bytes": 445215,
+          "sha256": "a31c451e594d872854d3844d6cd123cb731e9f425204f8c810e92239bd01f1ed"
         },
         "ledger_2024.parquet": {
           "rows": 13367,
-          "bytes": 360931,
-          "sha256": "e136c7125615dc34a5614b904fa92108fe09ae257d1e363eb0be8c9bf076dc32"
+          "bytes": 475986,
+          "sha256": "771434ac95230764a83aa8a371766df3e4bc2d2dea4d7f164ab8e07a2ce97bb0"
         },
         "ledger_2025.parquet": {
           "rows": 15997,
-          "bytes": 440065,
-          "sha256": "c7758d6adb39e44d5a9fa9b5eda551dd68f19eed18907c6c292f8917e867cf68"
+          "bytes": 577423,
+          "sha256": "73e32c30daf87e8a30ec9fcfb63e6400d6691e2d3ef5e88d914f59876c4cf181"
         },
         "ledger_2026.parquet": {
           "rows": 16220,
-          "bytes": 430838,
-          "sha256": "6ae03576b4294c7f13ef341c7b10a2ecdc61fb607b76b9f9f0f23433c1d4a7cd"
+          "bytes": 570216,
+          "sha256": "6f2f27e255c329df964f28a40765e083546180bf13a13d89731cbdd206d7b1b0"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 20,
-          "bytes": 14208,
-          "sha256": "18f3f6d289bb47a49c3d80b832532726c15536d7e4e8a8c7ab97b2df310d7479"
+          "bytes": 6190,
+          "sha256": "d3c277bca1b5cb0a45cda2f2e96a4c73bf33eeabe7b5e66932c0e249b2f33df9"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 17,
-          "bytes": 13837,
-          "sha256": "fb89b5760f26a68498ee21540ae2958ac119a05809b4d583887f861910a68d8d"
+          "bytes": 6050,
+          "sha256": "d443931c72fe57735b58718e2342c60582cd44234267651600b0c8b8f9973641"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 45,
-          "bytes": 15784,
-          "sha256": "598a6c3525085fb167407fcccbee4fb7df489b807390180b1b4f860c8ec3c95f"
+          "bytes": 6994,
+          "sha256": "7f64cd845df517cc608f860b6c3f2018aa05729b864ce4db779a9b49187af8c9"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 38,
-          "bytes": 15826,
-          "sha256": "71741dd33f6ce7722649b4d48a2c7da1b1122991f9a3883427cad72b4b189027"
+          "bytes": 6890,
+          "sha256": "eb2c87f5786ca7ebda55986c7d84f962435723248072958900be2236ce109523"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 43,
-          "bytes": 16304,
-          "sha256": "1eca5b578acdf17b4245825147cc30a1bf3975bf8120e00e7bf6ea80bcfd1548"
+          "bytes": 7026,
+          "sha256": "282cf462194d75f64209337d1edc567d67b76bf2522d0fa7fa3be80cf35c2cac"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 44,
-          "bytes": 16218,
-          "sha256": "1da4d083dcbd02cbe41fe175b9bccb1b7305faa3676dc0ffea3062a67308fb8d"
+          "bytes": 7025,
+          "sha256": "4edb858a133396c477f05c7605a7b5c2f85358aaec8e5d2df54ea458235e7e79"
         }
       },
-      "n_opportunities": 207,
-      "n_trades": 164
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 20,
+          "bytes": 10706,
+          "sha256": "3e305a3e019b3ba35918bc5b1d9c43535852a8f195e2450a992625e903c1a088"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 17,
+          "bytes": 10450,
+          "sha256": "c906b8a5fcb03d93b6c3a1cd8686a447bd2f8735d151e20454a689f24bd9d6ba"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 45,
+          "bytes": 11758,
+          "sha256": "83a36956bd422b087dede1673daeb686f8cd34ff004949a27479b27947e3cf2f"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 38,
+          "bytes": 11824,
+          "sha256": "340c7e9dc287c195dfbfa16677a61f2b65e7195cd0a842601880f4e456fa0888"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 43,
+          "bytes": 12226,
+          "sha256": "a7cf777404ce095223682aca48e65e544eb04fbf749029038a662963dcc9fe4a"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 44,
+          "bytes": 12153,
+          "sha256": "b994fb2584daa1a00394744e39bd1d4c09a39423e33737aaab13b8d066dccec4"
+        }
+      },
+      "n_opportunities": 207
     },
     "g3_family/o5_p0.5/LBR_FUND": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "7bdb25895ab5118177dbf4a874026f90f411b050cd0ee43decb76120856d0e98"
+          "bytes": 7537024,
+          "sha256": "468afc07dce928bf8de775c5555634ae1ab44fc348be9d8d3bc5122e1c82a2e4"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 7669623,
-          "sha256": "9f179ca42c7816364c7ee7abd2f711286b62666c0e72e727ac3f818a7d49de76"
+          "bytes": 7674796,
+          "sha256": "02911a1f69a63c498f5c831bc2e66da14fc828e342f82cf6e45a236076f5199a"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7608882,
-          "sha256": "2ea5ece13aa6e1989b50034580d677bb1ff4003c8fe014016f3f631eff2b99c2"
+          "bytes": 7613977,
+          "sha256": "882429e9220715f5153fdd00994e10d9c2b9f6968f68a68169f3ec52fd52ef47"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7680383,
-          "sha256": "893c9e5a33de039d0004c389e30aafcd0a4b7ec9884ce2ae2581777dddd2a1bd"
+          "bytes": 7685764,
+          "sha256": "da069c430aa32ff78e5287423056663585ebbcbac013b0f86f778debc961b449"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7738515,
-          "sha256": "9ae9942c98b0fbe3be1e1ecf3b1db36f8494fc9ed76f5011db882c1e0ca1413a"
+          "bytes": 7743872,
+          "sha256": "e4790239f2f08a83049c07dfee43d95cab7236fee23efeaab67226bf520a8e7d"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7736540,
-          "sha256": "267bd7be154c11dabbe4b6b11afcaad7ee1c45377d2f61624b11bd22f62d86be"
+          "bytes": 7741944,
+          "sha256": "9de23c729bcaefe6035629b4733b2190296be1293ad731e500ec8df57c7de190"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6124830,
-          "sha256": "d35fbd06e008b23b577035533367623cc5992070990ec4815637afc0dd0aa463"
+          "bytes": 6129354,
+          "sha256": "c57c15a5434ee3f2c0f6bd5d821fe2c541c67cf4ebef4197d2b2bc76bd2d27a3"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 8125,
-          "bytes": 245534,
-          "sha256": "1dd083d087141dc30c03d602d3a5101f80cb9c8d1c336d5c0d6487f1c5eb50ec"
+          "bytes": 314216,
+          "sha256": "6a76ed73a56958dfcb2ab78a9e2645e27a2ab1cba81d069336012d164ba78453"
         },
         "ledger_2022.parquet": {
           "rows": 8166,
-          "bytes": 192208,
-          "sha256": "25ca0eb10094e09c813cf3a91b0a51c61d8c4e18cdd804d666228244d09cbd41"
+          "bytes": 261019,
+          "sha256": "90672203595999659b066ccdd9fc086ae80fdc84697f1ec5911eb182884e5ae8"
         },
         "ledger_2023.parquet": {
           "rows": 14976,
-          "bytes": 339657,
-          "sha256": "92f8cfcaf9db59cd11c8305a33bf75cad925f45e765ccd91bed38d8702cdd6e0"
+          "bytes": 468342,
+          "sha256": "d6523ee33626a5c01e7ac5db1d3ee1535f2f772f4ceae962c96879bb9df4c81f"
         },
         "ledger_2024.parquet": {
           "rows": 13530,
-          "bytes": 364432,
-          "sha256": "98ee265e3ffc7e81db76803e55e3852e649d8e59c0279f337170d08687ff48c1"
+          "bytes": 481002,
+          "sha256": "9193a0c5a38909e4173d77a5327dfede1390a42b79ad789119c1a97b9a00310e"
         },
         "ledger_2025.parquet": {
           "rows": 15466,
-          "bytes": 425735,
-          "sha256": "bd6c68cb90c5a7c0fed107ce1998a8eb86d61a7413d7bde855693aa18f131de4"
+          "bytes": 558592,
+          "sha256": "d3dba278a14574be706bfddfd282e71d7ce442068a869e493cb4fada924aceeb"
         },
         "ledger_2026.parquet": {
           "rows": 17188,
-          "bytes": 457021,
-          "sha256": "337a665f31668d3bc90b1c8f223ccf97a0ce3704d75ead49cbf9d8bd9f84ff7b"
+          "bytes": 606142,
+          "sha256": "4955bdae0a1ac3e46c6c6900a2e6c53cb29f6258f215af83eb557dd9798ad8d0"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 20,
-          "bytes": 14197,
-          "sha256": "3a832810f5855f5b2d63239eec979cde78c3583f8ff6cb556cea06b8306391d0"
+          "bytes": 6190,
+          "sha256": "d3c277bca1b5cb0a45cda2f2e96a4c73bf33eeabe7b5e66932c0e249b2f33df9"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 17,
-          "bytes": 13836,
-          "sha256": "413b3550cf4b19539ecd6b8b8e9b76b2332f26bc5931a6848ad5925916c88a53"
+          "bytes": 6050,
+          "sha256": "d443931c72fe57735b58718e2342c60582cd44234267651600b0c8b8f9973641"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 41,
-          "bytes": 15928,
-          "sha256": "968e54b2a05bd965a2ae1790fd2cdfb6f1315242e2ad9c110ff6dc3aaeea9859"
+          "bytes": 6910,
+          "sha256": "400e64c7519311570e0956c589dcb25f2aa85f54e1864f7ffca5c6bec4efceb8"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 37,
-          "bytes": 15805,
-          "sha256": "6221f97c6c4f354b917d0a9475842e738c65498e04c7d99639630840be2e8c54"
+          "bytes": 6854,
+          "sha256": "f5b9c93c7c07c971d524ff1a52ddd67562e1aa97009917f404800c1180c45b9d"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 43,
-          "bytes": 16237,
-          "sha256": "3597bce200d05cac55062c547adb860565bb7a1ba45d79864b1a6026580f6d67"
+          "bytes": 7019,
+          "sha256": "a6fb5b587dd41f05929c9af89b650a9c4c79640ab3cbcca2b771a0d09f804c13"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 41,
-          "bytes": 16191,
-          "sha256": "3a536516a84ae78fb774c4f56229cf83014b9d3444e5e0ee25231957213b1a97"
+          "bytes": 6963,
+          "sha256": "be7930b9e09285d590eeec86811e53a3fab5aa61795a78cca3b67d51a5f99b88"
         }
       },
-      "n_opportunities": 199,
-      "n_trades": 170
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 20,
+          "bytes": 10695,
+          "sha256": "8159f4b9bf6756e166aa0f972c6b2bcef0072acc257898b741ace9f51bebd6e7"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 17,
+          "bytes": 10449,
+          "sha256": "1f532ddbd2423195d4bc00b44f8667f0c21ddb0c545b4fe438dff42cddc347aa"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 41,
+          "bytes": 11961,
+          "sha256": "138dcbeb58c6c83dfe315157d7fe23aaaa60448ce707505a0f09deb5c81223f5"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 37,
+          "bytes": 11826,
+          "sha256": "95b5f067420823f2c14161d1edfd6b9698b84ef2fb35332f420e88abf7e51842"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 43,
+          "bytes": 12173,
+          "sha256": "ccdb68ca26b9e76c86424b1983e70971e5d411aed4c5e375d398e838d03e58e4"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 41,
+          "bytes": 12179,
+          "sha256": "58500f31e9755591cb4d9306dce35c7971a902eafaeeacea03887446addb7094"
+        }
+      },
+      "n_opportunities": 199
     },
     "g3_family/o5_p1.0/LBR_FUND": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "8c8ee0b7c9b743eb71887193f853bb9eff2b38824868ea773f57c57db0434285"
+          "bytes": 7537024,
+          "sha256": "6b8216e427ab0ab42d53c3cc9bb64d68794788779416e8621823b203ba676904"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 7669623,
-          "sha256": "c4b6588dac11f0b8503229a20f8212a1c94a3beef933e0e048d01971dc95c582"
+          "bytes": 7674796,
+          "sha256": "b4cd93a17419db70fbeec1a0c7e2a85cdb0fb076dd0fe147942ea0d0bcc4e4d3"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7608970,
-          "sha256": "9483c73e46ca9446523fecdf41368b33a1e92fdd31a6dc5c7e5faaae4470f69c"
+          "bytes": 7614065,
+          "sha256": "6ed9f59cb5b2e7db6a1b6dd58679326ee950d0de38704c89890a49603d973b39"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7674337,
-          "sha256": "961239963ceea2b8c673282e50d5cf1b63737a2774ef67e46bcfd5da345c9d00"
+          "bytes": 7679756,
+          "sha256": "e2f05dc7dae074775330c6233cc87d7bb806ed6e3008b9508f3674ac41ce9ebd"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7735234,
-          "sha256": "9489e523555a89025a1e864140920eecf94de28772a4ab465624b2307d93e023"
+          "bytes": 7740615,
+          "sha256": "af5e045b03ea3b319145646529e60693f1aa90fc5dbea9f7a961aa1d76fb4de1"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7730703,
-          "sha256": "825b6ace876643d29ee537a6ea53c205b812911a64f089604017efe59286120b"
+          "bytes": 7736119,
+          "sha256": "aef599c3a5a7a00b73d46ece8a6c57748202ceba57109dd2e838cc69b5c47142"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6120132,
-          "sha256": "001382ae2e0bb8c1356cfceda2198a279da7ae0eda585a37e456398096ea6493"
+          "bytes": 6124672,
+          "sha256": "c83d50ca7a435403bf2fdd5aa1c5565a158324031faf729a1a2d76880d341689"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 8125,
-          "bytes": 245534,
-          "sha256": "1dd083d087141dc30c03d602d3a5101f80cb9c8d1c336d5c0d6487f1c5eb50ec"
+          "bytes": 314216,
+          "sha256": "6a76ed73a56958dfcb2ab78a9e2645e27a2ab1cba81d069336012d164ba78453"
         },
         "ledger_2022.parquet": {
           "rows": 8180,
-          "bytes": 192451,
-          "sha256": "d63963f8808d422f942e87c7962c989307bfe68501dd2a3deae0a64eb035a60f"
+          "bytes": 261381,
+          "sha256": "a0b08fa538c106f62d1a2dccab49a0045a73017415e616c98a130459ca6bffdb"
         },
         "ledger_2023.parquet": {
           "rows": 14442,
-          "bytes": 327331,
-          "sha256": "6e64ea7009a1ee7860ad602a638896398cff49676d554c0acb70bb9cce3a1b1c"
+          "bytes": 451383,
+          "sha256": "7be4b5311a2c0b929809df35427f3a860a1244e11365d1bd857d094ed3292dce"
         },
         "ledger_2024.parquet": {
           "rows": 13247,
-          "bytes": 357742,
-          "sha256": "a5f72826bcacd806abf838d07b101db82940cd93e2805a51e6057f04c959d33b"
+          "bytes": 471775,
+          "sha256": "339ded259b79afc4873d1b3f58dddbb8e65ac8cfea4d0c2b348bf03212d439e8"
         },
         "ledger_2025.parquet": {
           "rows": 15089,
-          "bytes": 415557,
-          "sha256": "dc132ed0b42e31e35c7d1aef9b306b322241bcf545796ce959cdfc3c1183ee72"
+          "bytes": 545096,
+          "sha256": "c3685eb81a40019c6f03a6bcff7c8a0a553d40043c2e7b846dcfa12234869c30"
         },
         "ledger_2026.parquet": {
           "rows": 16726,
-          "bytes": 447038,
-          "sha256": "5b15990da45eeb1b5fce5e404797d8a4e8f63e02e7e7983b3fde78dd202c8018"
+          "bytes": 592274,
+          "sha256": "2a63a9859408122e6be8808e4fabacbdcc24bd601022d5b3c173d957e36c6298"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 20,
-          "bytes": 14197,
-          "sha256": "3a832810f5855f5b2d63239eec979cde78c3583f8ff6cb556cea06b8306391d0"
+          "bytes": 6190,
+          "sha256": "d3c277bca1b5cb0a45cda2f2e96a4c73bf33eeabe7b5e66932c0e249b2f33df9"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 17,
-          "bytes": 13836,
-          "sha256": "a1911f9c9a35e70ae1463ada0aec7d20a7a4ec33a4a95f767cef0100ec9f1c8c"
+          "bytes": 6050,
+          "sha256": "d443931c72fe57735b58718e2342c60582cd44234267651600b0c8b8f9973641"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 43,
-          "bytes": 15832,
-          "sha256": "e9b2612d06391142d9a470823c86c102d7b52b78d232ae00c3e47806fe6f89a2"
+          "bytes": 6963,
+          "sha256": "a9a6036825e5d6a62e580248e968c7e9eef0b1afd251063ffdf9abcf5b3c7fc9"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 38,
-          "bytes": 15815,
-          "sha256": "36f7a2e85574fc0df7dd04b9a7faaf9cbb9cd41e5a05566ed8f778a1882dd1e5"
+          "bytes": 6890,
+          "sha256": "d10668672def50fcc259c4c712ad65d528951443b95710fa1a8fad72ef6d386d"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 44,
-          "bytes": 16193,
-          "sha256": "831dda7036b7f20603fe6641bbae3a947df79af52b0e8e6adbd9a43aefb0e535"
+          "bytes": 7031,
+          "sha256": "5ce6fa9c1e2dde99a6f9d36843e6743780df17ff041f70902cbb60b0195f048d"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 42,
-          "bytes": 16208,
-          "sha256": "066a16be06d30c93bab5d56e0d6875fc050009b15745afffa99ee2d32b14234b"
+          "bytes": 6971,
+          "sha256": "7a53e0bbfd3f00213d360fbabb325924b566a0069a1e5b366db68397173a0eea"
         }
       },
-      "n_opportunities": 204,
-      "n_trades": 166
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 20,
+          "bytes": 10695,
+          "sha256": "8159f4b9bf6756e166aa0f972c6b2bcef0072acc257898b741ace9f51bebd6e7"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 17,
+          "bytes": 10449,
+          "sha256": "4e743af6d08287a1504a967c9c67df68c1e239ed49d2bd0e945b8051a63dd88c"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 43,
+          "bytes": 11831,
+          "sha256": "f95b0d30a551a5b555e00d6559e40d5af1e2ac0dac61f467674fb0fb7938ea91"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 38,
+          "bytes": 11813,
+          "sha256": "a2ffc43bc5064c9e357819714a52de810483b1fba626456c9f3d0787cdd28a42"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 44,
+          "bytes": 12122,
+          "sha256": "45ce9ee1e4c4a477e5d53d895769534ee574a83391417c2a726c6f9b0a6fe87c"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 42,
+          "bytes": 12179,
+          "sha256": "1811becfd5348e4bf5ac32f48b775f32c4763ebd5a985d548ec20811d4927a18"
+        }
+      },
+      "n_opportunities": 204
     },
     "g3_family/o5_p2.0/LBR_FUND": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7532096,
-          "sha256": "920735e744d25babe641f2a6f556dcff030a116ea50c26b46af5be913d5c2ac0"
+          "bytes": 7537024,
+          "sha256": "372e800743022173ba04a5fd7eb8c45b0643811204fcebcf98f3418c33adaa8e"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 7669662,
-          "sha256": "604f26a227d6b6897fd85267114dbff145ddc8365d9ae013c6148086abdfa6cc"
+          "bytes": 7674835,
+          "sha256": "f36951f3a92b7baf67f42eb91ec52b7627dedfc2767517040fede57d051dba69"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7609471,
-          "sha256": "0334e077edd3e0f47c49959ea6c0687027d4d9691c29a6a3cddf5214a989c02f"
+          "bytes": 7614566,
+          "sha256": "09a29277f8d59dd95b1d79fd73cf0fddcff1337f4b6f2efbbfac57d37b534936"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 7660808,
-          "sha256": "f69e95f2dc5a9f45bfb31a2365fcada377f4132443113876d12d25675bece7a4"
+          "bytes": 7666285,
+          "sha256": "e90cfe7ca7cb30a6c3c4a849d789ef0ec22780e3e67aa76aee4744e270383c0c"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 7728217,
-          "sha256": "a8c344b95aa6f83fd2c68e1a76ee9b05c09bbf9e0f83c17fd38ea5746bc54233"
+          "bytes": 7733613,
+          "sha256": "fa63d3dd36a25536c4ee8024d46f39073c93007a804116f94dff72347daf5937"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 7722801,
-          "sha256": "3d602926f54dc1a338424915668c975b5099321668a72490a8a46f60ef121386"
+          "bytes": 7728234,
+          "sha256": "94d53d9883bc9aa3a503e6a0e1ed87b0ec56b9099ac07626af0f75f5b881b4f3"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 6104875,
-          "sha256": "7b6d39cd74965eedbe7a003c9746c14cc7e1e9ee6c5c648b99ae65da9f9bbcfe"
+          "bytes": 6109479,
+          "sha256": "fe61fb65d8a85c976d5a2b516c9b881e1ff55f0ca25336f07c590032b7231caf"
         }
       },
       "ledger": {
         "ledger_2021.parquet": {
           "rows": 8123,
-          "bytes": 245503,
-          "sha256": "3ef3d13440ef1a7b17164a63964f330554522912f819d29ba385ab97256a6366"
+          "bytes": 314171,
+          "sha256": "11803211f1e87c3e989047de54e21373916eca2962c606e960548dfdda494d77"
         },
         "ledger_2022.parquet": {
           "rows": 8249,
-          "bytes": 195245,
-          "sha256": "b66b0aeb4034921585060fab3356533d66c2378d06969325034ae52ae63be96f"
+          "bytes": 265519,
+          "sha256": "9b1b725123160af13c678b7a7dbb1a644d535205d3402160403b643280efff5b"
         },
         "ledger_2023.parquet": {
           "rows": 13475,
-          "bytes": 302932,
-          "sha256": "1f7a1a56ecbc37f394e96e18bb383df2152933e5aa5a78e968178d06a38c6107"
+          "bytes": 418396,
+          "sha256": "eb29312434d4c6d06461ded59faf5e0314c86254ec7b72b1502fcd39a25f508e"
         },
         "ledger_2024.parquet": {
           "rows": 12803,
-          "bytes": 345621,
-          "sha256": "cdac576848a2c0abcd6393bd556677ba1fde1775e2c98c7158ea1341e44d4d91"
+          "bytes": 455829,
+          "sha256": "4ca45bff5ad1c3666237291f45a804aa4cd1229f5ce86f2452bd0a0824ae9138"
         },
         "ledger_2025.parquet": {
           "rows": 14459,
-          "bytes": 400347,
-          "sha256": "ef057a5608325b43095eefc41e9b1507d9390d2d00e36997ffc6027736c3d495"
+          "bytes": 524508,
+          "sha256": "1bbe81dd42ec93c14d20c09e2e7c691ddba86d61819058a43a560b8dad184e24"
         },
         "ledger_2026.parquet": {
           "rows": 15571,
-          "bytes": 415283,
-          "sha256": "f72d5bcdc419c39cd0fbaa581635353c92023c78b4cf0d79e53de6cf6c8af479"
+          "bytes": 549078,
+          "sha256": "feb750334b3351d2e4a927c3d1cf8d4cb027f136b65cadfcc0f86bc32b994f36"
         }
       },
-      "opportunities": {
-        "opportunities_2021.parquet": {
+      "decisions": {
+        "decisions_2021.parquet": {
           "rows": 20,
-          "bytes": 14209,
-          "sha256": "6266cf04b3c4a34bac4ea850a48f964eafa65cfa0c0263acac3eacd6fc759411"
+          "bytes": 6190,
+          "sha256": "d3c277bca1b5cb0a45cda2f2e96a4c73bf33eeabe7b5e66932c0e249b2f33df9"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 17,
-          "bytes": 13836,
-          "sha256": "d65e3b29fa48ba0c6fb1fc9df664d705023e013eb89c5b015f6a0f6757d39131"
+          "bytes": 6050,
+          "sha256": "d443931c72fe57735b58718e2342c60582cd44234267651600b0c8b8f9973641"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 48,
-          "bytes": 15771,
-          "sha256": "6f483493166c744fd943d050008f7323dcedeb0852a96135466e63cf5cc37032"
+          "bytes": 7065,
+          "sha256": "07adff8fc66b76991c3f586291a0b4e7208467b252f140b6be2fc05d70bde30e"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 39,
-          "bytes": 15787,
-          "sha256": "01a418106638569500f53609b3b720fe0dc8e7443387cc8907b65718b6c845aa"
+          "bytes": 6918,
+          "sha256": "6d6165aa818cd5a69a4875f48211010fef4d917bd26242993efcb01217cbb2a9"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 45,
-          "bytes": 16158,
-          "sha256": "653679a4b5b6403ba9f0cc879360d8c12d736394bd54a5b1e0a0ce8cb6f89f51"
+          "bytes": 7053,
+          "sha256": "24ee6ab98c1c0f352d6b09c5b989206b80817f4a4e1f5b6d3d5d16842ec8798d"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 48,
-          "bytes": 16371,
-          "sha256": "e8050bead25e9d0ff08c08f92efbe4700c5599c8fd66766faa4b9e6f6f3405ee"
+          "bytes": 7114,
+          "sha256": "707691e1610736e1fddf1a1afde2579857d341965487c97db3d6b3e736e31fd9"
         }
       },
-      "n_opportunities": 217,
-      "n_trades": 161
+      "outcomes": {
+        "outcomes_2021.parquet": {
+          "rows": 20,
+          "bytes": 10707,
+          "sha256": "1db53f975e525dbb9c2e384fb0bffc0c79e8ea09fd3214279fc4a5ff61fcedd2"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 17,
+          "bytes": 10449,
+          "sha256": "65aa4780d9e35008417dfa9415ddce7dfaf328c14314463add1c77935170f4cb"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 48,
+          "bytes": 11694,
+          "sha256": "6bfdb6180dbc552ab115e5ebfe2d395a3348652d23bb73b7767902e7b5f3aa6e"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 39,
+          "bytes": 11760,
+          "sha256": "79a0fcb2f1e3394934a13246f100848a45b92f69e24055efa75d1327299545c8"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 45,
+          "bytes": 12072,
+          "sha256": "ab375cd88bca64ad801a7208267b9a58f6374d02074e334d785a5b6fa3a10d10"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 48,
+          "bytes": 12247,
+          "sha256": "420a6b8e4013da1685d1f068bac52d33cd7cb4f274fc9f64cd71b5d5ca686fdf"
+        }
+      },
+      "n_opportunities": 217
     },
     "common/market": {
       "market_2020.parquet": {
         "rows": 527040,
-        "bytes": 11276449,
-        "sha256": "b3cd8c989e333d46481efe4af67151dfd0c381a7b821960478bf6c97931f4cc1"
+        "bytes": 15013102,
+        "sha256": "2d53f352a584311b232c784ee8ea90f8e14220c25b46a0691250ed5f0963ff54"
       },
       "market_2021.parquet": {
         "rows": 525600,
-        "bytes": 12288706,
-        "sha256": "5ec90c487197a5e1d4c88de834c1f6b0df70282fbe98dcc15b623213b31da79d"
+        "bytes": 16019036,
+        "sha256": "514d0422d291f4ae9ceab5d6faecfbf5fc93f582f7b9b0335fbffc683d1485ae"
       },
       "market_2022.parquet": {
         "rows": 525600,
-        "bytes": 10518103,
-        "sha256": "eb200c37a20aeb7f77e84f92750668e7efc106e2b61967b0e279d3d4470031c2"
+        "bytes": 14244588,
+        "sha256": "1126b8f5c4dabd71e74c8e4f7ca1b033eadc600ddb0cfcc81db4bbeb0107aab3"
       },
       "market_2023.parquet": {
         "rows": 525600,
-        "bytes": 9545877,
-        "sha256": "80760e86de202bb5e46ddb8f677fa2d036b6a0344fced03dfb492ca9479205a7"
+        "bytes": 13275576,
+        "sha256": "bdb63352f4d4453b0b6697f6a9d118c4c49b29a906c65a718507acec6e7eb5ca"
       },
       "market_2024.parquet": {
         "rows": 527040,
-        "bytes": 10427880,
-        "sha256": "e8fea8a7f8d6c1a288d01c839daa0ea242cf0da17f60c6a857a1904fb1fd0be4"
+        "bytes": 14165181,
+        "sha256": "1fcd0a04bdbc13cd8978a580ec8aaa9a88cba75fbe7324c97b2f6df577482bcf"
       },
       "market_2025.parquet": {
         "rows": 525600,
-        "bytes": 10507146,
-        "sha256": "cbad4e6ea8a454ce8a3ba1910252bfc8ce080770960981d77faeea3ac4f8a074"
+        "bytes": 14224396,
+        "sha256": "824601edfafbc1704b4b331126e5a6759281dec46e83b09d34426ed7cadb3260"
       },
       "market_2026.parquet": {
         "rows": 403200,
-        "bytes": 8215359,
-        "sha256": "80a10bc382d420b17df8dd7cc2a542d742c52fe5b3ec62401d219db8fcc3c62e"
+        "bytes": 11127831,
+        "sha256": "6e265556150783d39c3fbc9870e89d4738d0313538df28d494f48bc50b1dbc7d"
       }
     },
     "common/funding_g3": {
@@ -3601,116 +4401,227 @@
         "sha256": "d03f414be4d66831309167676777cfb4810694cf1e07f9393f80dd3cd9d56a9b"
       }
     },
+    "signals/g3_state": {
+      "g3_state_2020.parquet": {
+        "rows": 2195,
+        "bytes": 151703,
+        "sha256": "7e37910aceb85ce56db75279f0f713dcdbfef8006d17288b80525743978e83bf"
+      },
+      "g3_state_2021.parquet": {
+        "rows": 2190,
+        "bytes": 180646,
+        "sha256": "5f70bffe9d949acfeff48c7b7d93c21b7671534365f4b66f46936bb8cfbdbe54"
+      },
+      "g3_state_2022.parquet": {
+        "rows": 2190,
+        "bytes": 178480,
+        "sha256": "9f52f8b7c84b95e0637510f3d5d9deaf0e0d3bebce665ce5724718cd4513a8ed"
+      },
+      "g3_state_2023.parquet": {
+        "rows": 2190,
+        "bytes": 176540,
+        "sha256": "71b622e186075779ea92fa186fb05e88e2a76b364c116f00a4a1fc8446dbcba0"
+      },
+      "g3_state_2024.parquet": {
+        "rows": 2196,
+        "bytes": 188817,
+        "sha256": "9c07bc534aea2b95255069e5f39a043b20627c4adfbb4bc53000f2a6f2f2408f"
+      },
+      "g3_state_2025.parquet": {
+        "rows": 2190,
+        "bytes": 184572,
+        "sha256": "95eaa4c023c92fbb418cc18006d19b70552be5776be5eb2e9d7a0985f3a3081e"
+      },
+      "g3_state_2026.parquet": {
+        "rows": 1681,
+        "bytes": 143859,
+        "sha256": "9e68a1489ef9e4d432623a9934e6998eda40e1c431355e268d2cfa6151ee0554"
+      }
+    },
+    "signals/lbr_features": {
+      "lbr_features_2020.parquet": {
+        "rows": 2195,
+        "bytes": 87143,
+        "sha256": "decad0f508515475599c7b416651d6805fe6fa5e519fee510cc69b0d590bf989"
+      },
+      "lbr_features_2021.parquet": {
+        "rows": 2190,
+        "bytes": 121965,
+        "sha256": "52040f9a235f355341ddafc2b56618d8e4509cafe7936e71b4fa729cff7953bd"
+      },
+      "lbr_features_2022.parquet": {
+        "rows": 2190,
+        "bytes": 110488,
+        "sha256": "90081ce4853c09bdc6ef328a38bb0987a9560fbb7cba9f2cf19d59523a51d32e"
+      },
+      "lbr_features_2023.parquet": {
+        "rows": 2190,
+        "bytes": 122057,
+        "sha256": "4bfefcd4f14df99da9ac3141b2205ea1cb96e4c351a544f75b58ac7eb0099d09"
+      },
+      "lbr_features_2024.parquet": {
+        "rows": 2196,
+        "bytes": 126361,
+        "sha256": "8a21f96044d5487b4094c3a8888a16ff4253d2e09dc066a94f7a2bba5f77970c"
+      },
+      "lbr_features_2025.parquet": {
+        "rows": 2190,
+        "bytes": 125740,
+        "sha256": "e7e304cd388bea5517daf0a83eb9f045513d023724f96033bb14d70c557e911d"
+      },
+      "lbr_features_2026.parquet": {
+        "rows": 1681,
+        "bytes": 96761,
+        "sha256": "76a7e032594c849f9380373c0410d93e72b655baa23fe9afe2ff0417dbb7a075"
+      }
+    },
     "common/C1v2": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 14290206,
-          "sha256": "225b2432f2966ac16876c7e27032ea0f04facd868ffabb2476534308f818472c"
+          "bytes": 17159768,
+          "sha256": "40ff80d7411e15937dfbb329032ffa57d59c1412b0f88b1e4c5ee164b0b60f4f"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 12698351,
-          "sha256": "8d4459be556cd29cb236aa3a43862b61026ce430cca6e9f61018beae953dabeb"
+          "bytes": 15603595,
+          "sha256": "413f7d075417661cbe7732f715949a41767f765911da54452ba6be5594622038"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 11597323,
-          "sha256": "c9f415e4e127c1c3aa2af7c6d42fca683e88ed2b2bfdc2cd6d61e54cda08373a"
+          "bytes": 14501778,
+          "sha256": "c6aa291134a3befc576b2281036b5910ed7d88471a28af3142c4203051ffbefe"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 11578833,
-          "sha256": "a42507627aece02faad2a9bb4c4460f61c2cfeba8377f29832e25505a65a44d3"
+          "bytes": 14486404,
+          "sha256": "7973de87a52963e161bd1a9e8ad633726c665997c3db3c3fa795253ce881054e"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 11709231,
-          "sha256": "691db4e25504a09eb8f31635591414d31ef04b75a06351d86a68e535f78329a8"
+          "bytes": 14618319,
+          "sha256": "b25f7483ad3485ff99968110193e81400440031f5c02f781a56d3f78df7616bb"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 11996887,
-          "sha256": "e5cfc15ec6f8258540ddbe6adb7a92351e5d1199fd9f95f91e752f0507fc7429"
+          "bytes": 14899622,
+          "sha256": "6671f9c7c84b8a63210c32874cbf1b74a298d31d39c21d21593c48a2a1c7621c"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 9041853,
-          "sha256": "000f2599a9d4edfc3f17b2d692d46e65b3263ce3b6a55ecf6f37722f0a6a09f1"
+          "bytes": 11310340,
+          "sha256": "a04ce72488f761992487363d85dfd83fe6c07653b5ff5dca557f7e0e1a483b4f"
         }
       },
       "ledger": {
         "ledger_2020.parquet": {
           "rows": 420094,
-          "bytes": 10463147,
-          "sha256": "1107e1754f54bfaeed14998c17e48b82b60f257ee124fd4470c0df52263a00a1"
+          "bytes": 13447390,
+          "sha256": "ef97f7f3b53d0580473161140e1126e09129c803eed0a852c8cf2d1f6ed05443"
         },
         "ledger_2021.parquet": {
           "rows": 310935,
-          "bytes": 8110697,
-          "sha256": "65a3d2da997b088871b1715fe74749a61f3ab0c62b08484a679fcbb8537ad16d"
+          "bytes": 10439820,
+          "sha256": "b1bb5d8c67b81b724df5f06e221158f5511d53576ba317632d881215938ff809"
         },
         "ledger_2022.parquet": {
           "rows": 240447,
-          "bytes": 6478318,
-          "sha256": "bf8b45ece5b0d6a357799029ba5312ac972448df67e8a93be4915ce9e713f35e"
+          "bytes": 8336955,
+          "sha256": "a8c5595da7a49dd69883e58901de2e9b8fcc8a7e939cb9fa6fa7866fb89588f3"
         },
         "ledger_2023.parquet": {
           "rows": 243319,
-          "bytes": 6478736,
-          "sha256": "f0b933066d70357e305e17f20067b082fda561cdad629de21bef6339865465a8"
+          "bytes": 8361159,
+          "sha256": "809af78bd5efd1162d170fae0444848743cafd365c28d4f97c56b3905309234e"
         },
         "ledger_2024.parquet": {
           "rows": 247251,
-          "bytes": 6615087,
-          "sha256": "043ea464f3e42e1498379b0c8664bd964dad4bb00c9445e39cf108c449e259de"
+          "bytes": 8513556,
+          "sha256": "02166a83e1dbb2c4ff03fae9276e911a6554f98b927123ac71a92f85171d9c92"
         },
         "ledger_2025.parquet": {
           "rows": 271131,
-          "bytes": 7128066,
-          "sha256": "83847b2c1b2d189bd1d3e997547db9acdd6aaf52f81900317432b0d5c180e22e"
+          "bytes": 9187686,
+          "sha256": "53509e40d503c62e7838fde0fa64ad309ef1386efb3e632bdd0f173637a3f0ae"
         },
         "ledger_2026.parquet": {
           "rows": 181092,
-          "bytes": 5103892,
-          "sha256": "6543346f8ed71cb6401aa01f078ebeea122b020d9bdadc15d9ff18d5838d3643"
+          "bytes": 6568119,
+          "sha256": "fbc2a7c7d190d84af005e89d553c3e2b567ea941624277d43553169432b033aa"
         }
       },
-      "opportunities": {
-        "opportunities_2020.parquet": {
+      "decisions": {
+        "decisions_2020.parquet": {
           "rows": 300,
-          "bytes": 34418,
-          "sha256": "6a97b259c56dc7da59ab90b6515f5b612cccce6a542fcbb71f12add233cc26d1"
+          "bytes": 14355,
+          "sha256": "563694c84e126ae9ba6568b69058aec360b71c38115c0700933475e3afc4f750"
         },
-        "opportunities_2021.parquet": {
+        "decisions_2021.parquet": {
           "rows": 223,
-          "bytes": 29164,
-          "sha256": "11ce9b0a27ce2ec6b27ae5bb014fbb8c379f4913f903854c39bd3a8080967c88"
+          "bytes": 12299,
+          "sha256": "f9dcffc72c0c7602d3c07c64e977b0279b9a81e60056d4fbe0f1589fa133ffdf"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 173,
-          "bytes": 25468,
-          "sha256": "2511a15f61768664091ef07f6688f073de3f9fe9d4ca9fbeb0d5a18b4fe085be"
+          "bytes": 10908,
+          "sha256": "dad1de94f5beaa7ab040a1b375d258baf7af107c532a7eb5f227d3878d12252f"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 180,
-          "bytes": 25766,
-          "sha256": "99a4b431621512b3b06c31ab404fc7e4caa6102e6947c33bf30d2f578fb590e0"
+          "bytes": 11123,
+          "sha256": "4bf69f45030859d76da47ba5ba4107d1f7d6fd77cc0791d54a95b1829e7d4844"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 181,
-          "bytes": 25696,
-          "sha256": "94448adea621a407d0104794f83caa814f0a2f4899b11653e4aad584fb30ce3e"
+          "bytes": 11144,
+          "sha256": "70e5659a57d0a74b5d060065d567c4794c2dd5055bbc67a85d2f18e65749d776"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 195,
-          "bytes": 27070,
-          "sha256": "0ea2839bda7ad44406f196a91f4905acf34bb22d0cbab8984a021ef2060611b2"
+          "bytes": 11553,
+          "sha256": "abad9ac5cad10afa42511c23f277cf5bc5b6151bc65fb282e39b39821efbe4e0"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 132,
-          "bytes": 22551,
-          "sha256": "d2ca330e801f012e54114184ebf73080352eadc7b70097ad8c24ff1406d3f6d8"
+          "bytes": 9703,
+          "sha256": "e223eeda6225115eaa8115de44eeace036ce4ef0fac6cf500125afa8ddef6a92"
+        }
+      },
+      "outcomes": {
+        "outcomes_2020.parquet": {
+          "rows": 300,
+          "bytes": 25241,
+          "sha256": "a17f0f6ee29818416f0f5b7ec2ceae784322020d0ea506a6d70a9941b1c1c39b"
+        },
+        "outcomes_2021.parquet": {
+          "rows": 223,
+          "bytes": 21328,
+          "sha256": "85ea168de5e47d4fdcd6ec376e9784cb15fece4e7248419ead02391de6237293"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 173,
+          "bytes": 18486,
+          "sha256": "107a4bd7f7209cab9999eea39988bf08be8d9b97818da16fb73471aa136d8db2"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 180,
+          "bytes": 18670,
+          "sha256": "9e89024888d069a50784beeb1634c3e83c3bcf0f9dbbbbc88e06020805a6ad64"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 181,
+          "bytes": 18577,
+          "sha256": "083e0ce78858e7ace6da4baf7afe99a1c58002f84cd282d9cbf10e146d767592"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 195,
+          "bytes": 19692,
+          "sha256": "4c8128fd4866520c5ddd7f725e20887eec56b199500a4bb025c88c119ff273bc"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 132,
+          "bytes": 16346,
+          "sha256": "41219010fb3d443bc2ef8ff3e6f3abeb4a60a104a7b7104d98ddf7119abfd9bd"
         }
       },
       "n_opportunities": 1384
@@ -3719,112 +4630,149 @@
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 14613412,
-          "sha256": "e3b4deda85df75a9285d72d2ab8a3b61a26dc897f75ac35427c1277343cb4245"
+          "bytes": 16576304,
+          "sha256": "f6bf921977969bdfc304937a3aee3d5605722aac481119e4ccb30a96de47db94"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 12884786,
-          "sha256": "4ee137f6f10f392e2860b99973fc2f2c00380e9175da052523de59e5979bd10c"
+          "bytes": 14865697,
+          "sha256": "d2b19bc5d7f1d9449928baffe05f646cd8f1fc99d737985c4864bd3edb83a6ed"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 12310708,
-          "sha256": "94d4d39b7e1e6c1719898e9f8c328dd7ea9c53adefe7a6609de0450854d0a317"
+          "bytes": 14290779,
+          "sha256": "1687bb7e5e1335f59508783beb7f95e051a117ef444509aea4dbeff3ced8030d"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 12917760,
-          "sha256": "7d89af8f9a04c6fa20b25ea8021c7829945358a76d7686fdddc1f5fc80d9f773"
+          "bytes": 14898175,
+          "sha256": "d694aeaee9fbf2537a8023eed0826bf5a79f148eb3a060a4382df374e0d2122d"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 12991823,
-          "sha256": "f6bbd2ce9a667d0f8b6e42d125ef254670ed7a7e84915b3891f6549e39d3949c"
+          "bytes": 14975553,
+          "sha256": "31c2c30cd195a01fb3e3ae2d2c625fd031fd13a1781d2d82ee2fc0cb65e966df"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 12434425,
-          "sha256": "e096e6e531fa2beafb59e84e27f029edb6502006c0fdb3f608bb94b09d80cebc"
+          "bytes": 14416932,
+          "sha256": "dddf2812b20bf377748c7015a3e64fad62b1aa25ccbeef4af35911b173f3782c"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 10109974,
-          "sha256": "2029c8b73e78f0a446536742ff589beb1dcec7cc27cbdc9073c56499cd575817"
+          "bytes": 11755581,
+          "sha256": "0f80f4c55591011d7696d32b59e2cae0482bbad96fb97a5c9715bc585bfb0de0"
         }
       },
       "ledger": {
         "ledger_2020.parquet": {
           "rows": 441898,
-          "bytes": 10903193,
-          "sha256": "ca990464adfc02d5098bbc3c126822209399437d23247daeb13327ee685044f1"
+          "bytes": 13981248,
+          "sha256": "a5354356e489f28ffc0cb2c7c12b91f2159528eea780b4137ee3340003067f0a"
         },
         "ledger_2021.parquet": {
           "rows": 322962,
-          "bytes": 8386221,
-          "sha256": "d1aecd75bf36a48900c516ff6911614649d67867509d2011901b5edfa83393b9"
+          "bytes": 10794568,
+          "sha256": "9dad53ec2eb2ec4d9e07bc0ffb5466e646fbe79c04a3f96590dfb7a0f1182124"
         },
         "ledger_2022.parquet": {
           "rows": 289914,
-          "bytes": 7569452,
-          "sha256": "cac3a1535c45aa66ed0c2f0d96c488b023c85217868ca47642991466803c7e52"
+          "bytes": 9752042,
+          "sha256": "572aaba2e87f0d1843871e6bf61b532d9a9a914167d0f185a9d550eb184aa961"
         },
         "ledger_2023.parquet": {
           "rows": 336200,
-          "bytes": 8458990,
-          "sha256": "201b591f3f0985696fee522623e059390ad3aea0fcdbf4757c4e4fe2d225f332"
+          "bytes": 10896761,
+          "sha256": "5b945f2c01f737bf2c2517845bacf6baa1f0d5c9cb1da884efe0f38819b4ab69"
         },
         "ledger_2024.parquet": {
           "rows": 333195,
-          "bytes": 8447118,
-          "sha256": "84cf86be5b60360bed143c0ec56a7fc1e31bcc614343cddfb0b5940e8bdd2233"
+          "bytes": 10808937,
+          "sha256": "32ce6e2b9ef02a1215ce39558098695a4b36c7fff75117b265b78e13957570b9"
         },
         "ledger_2025.parquet": {
           "rows": 300924,
-          "bytes": 7795508,
-          "sha256": "3c636fa209dd7e0e0e6a01cc740112e1ca732ea2909cb05f49f8a82a9ea2acc3"
+          "bytes": 10050472,
+          "sha256": "53616e158df10df07353fb67178e472f6c33273c41ea5dcbd6f6c23159ba607a"
         },
         "ledger_2026.parquet": {
           "rows": 255213,
-          "bytes": 6634441,
-          "sha256": "31fdd3fdf13b73a7c3c39f7bae68ed53d1ba3a4c9c3023749b7961ec6133be1c"
+          "bytes": 8482794,
+          "sha256": "d4f0605acc4082bac83e6af5fbae930d8915562193a07882ab81fc7fdbdd7ca4"
         }
       },
-      "opportunities": {
-        "opportunities_2020.parquet": {
+      "decisions": {
+        "decisions_2020.parquet": {
           "rows": 599,
-          "bytes": 56270,
-          "sha256": "a4193d43b47bceea8c8d45977a52d550d2d70f45b96211014eeb6445ba025bf3"
+          "bytes": 23583,
+          "sha256": "a2e926e1c41846f49c5978629450ffda14030a6b0dd7485b61560ef42ca30995"
         },
-        "opportunities_2021.parquet": {
+        "decisions_2021.parquet": {
           "rows": 435,
-          "bytes": 44687,
-          "sha256": "c4cadca8ff975c8aaab030b7bd89231da82b7e47d9c7de0ab77b85a52fa10fa2"
+          "bytes": 18598,
+          "sha256": "cac15fb01fbf5ffd3a79bd8782e339341d0eed037758998411a80c23e633ddc7"
         },
-        "opportunities_2022.parquet": {
+        "decisions_2022.parquet": {
           "rows": 381,
-          "bytes": 40620,
-          "sha256": "1b10df54dfdb580c077f816f024c120bb6ef7b0299f09106a758e2057342fdd2"
+          "bytes": 17296,
+          "sha256": "c949d283b670d26c535218f7cfcf7055d968b270d1238056c2467487d4d7df9b"
         },
-        "opportunities_2023.parquet": {
+        "decisions_2023.parquet": {
           "rows": 440,
-          "bytes": 44460,
-          "sha256": "b03a5f88b96d14a63cc4cf8debd6511ca150393d821bb25167c5ce54bab80ce6"
+          "bytes": 18914,
+          "sha256": "3426141dad67e495fd8e4f4ab1957d5ab5a63d46e36c092cd77cf6b980c0b661"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 435,
-          "bytes": 44315,
-          "sha256": "5f7d67b7866bad4631822d9d5bb4f54406067bce37fd65bb7d2d998ea1e341d9"
+          "bytes": 18881,
+          "sha256": "80cb7e2a37e58c0f1d12e006c41c0426242e3e65fe3b0b4a18aef580872735e4"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 384,
-          "bytes": 40985,
-          "sha256": "c9d788680fe4d9db5e7919456a4b1351fef85e2f3c8ecc607e1a82d2b40ce588"
+          "bytes": 17267,
+          "sha256": "2aac3ca281a888daa84bf894cd6fa59665968c6e883794f35f24bf6b87a73e66"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 333,
-          "bytes": 37392,
-          "sha256": "3ee2984e47e1a1dc1e6e33a4eed359ae460904d3dc0a210ee0bde6407220ac22"
+          "bytes": 15743,
+          "sha256": "552b4925f2c690532ccc30057d17ece6cb30cdb43a7a01305509293a7baf2f08"
+        }
+      },
+      "outcomes": {
+        "outcomes_2020.parquet": {
+          "rows": 599,
+          "bytes": 41309,
+          "sha256": "3976857e0dbead9fd346062321c867eab3fa50ef0dbd4f4b244bacb2e1a006b0"
+        },
+        "outcomes_2021.parquet": {
+          "rows": 435,
+          "bytes": 32938,
+          "sha256": "5d63963d6e13205ccb6cb79f946aa31b88fe9075792913bbac3bc1222d59ca83"
+        },
+        "outcomes_2022.parquet": {
+          "rows": 381,
+          "bytes": 29774,
+          "sha256": "5d807ee9b7a333a980b5feca6e8960abe7f99791bc18989dbf4ff4f5274843c7"
+        },
+        "outcomes_2023.parquet": {
+          "rows": 440,
+          "bytes": 32634,
+          "sha256": "61ea1ea31808dcd1ba82244fa32d0f93e0592683747a7e31e5970ba322038782"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 435,
+          "bytes": 32510,
+          "sha256": "8e52ce44d2594f3c273bf94a07357400fc553e1bf198a634f27a6799895193da"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 384,
+          "bytes": 30152,
+          "sha256": "462bd984df4febb4124d0ce81cf1da381a5f5f393f8d046a533d12e72160852d"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 333,
+          "bytes": 27509,
+          "sha256": "641a30033e2672fcf78e3c3374a96e5fc99f4fb395eda0a1c6d7365836fa1f8e"
         }
       },
       "n_opportunities": 3007
@@ -3866,173 +4814,335 @@
         "sha256": "356cd74a22d4f939973f1f5522c45deae250af8588ab04332e8b085b0de5042b"
       }
     },
+    "signals/C1v2_F": {
+      "C1v2_F_2020.parquet": {
+        "rows": 105407,
+        "bytes": 1845174,
+        "sha256": "bbe64ba33f5862a8f568ecb0877580d12e58306c51bbfc5f0a240c878abb2152"
+      },
+      "C1v2_F_2021.parquet": {
+        "rows": 105120,
+        "bytes": 1845159,
+        "sha256": "4232f0e90d7aa4d4f40670c6f71c0197736a321f6617964970d47640151a6a2d"
+      },
+      "C1v2_F_2022.parquet": {
+        "rows": 105120,
+        "bytes": 1842147,
+        "sha256": "7b4c1e51758be930beb347c334da36b0539c7a068667bf2a8a8f5e0e83ddc389"
+      },
+      "C1v2_F_2023.parquet": {
+        "rows": 105120,
+        "bytes": 1844572,
+        "sha256": "c4fb47c4b30ca2f97c7f9592d2c4a93bfddd81e2062c10600851d5deda04fc94"
+      },
+      "C1v2_F_2024.parquet": {
+        "rows": 105408,
+        "bytes": 1849467,
+        "sha256": "31c3215bf4996bf320d3a993626db5f03d6dcd8e38afb15b08e5c32d87552541"
+      },
+      "C1v2_F_2025.parquet": {
+        "rows": 105120,
+        "bytes": 1839150,
+        "sha256": "2a29f73b14ec96cc91c7de1f727815f8ee6783fb421d8eeabfa4146f26fa4ef7"
+      },
+      "C1v2_F_2026.parquet": {
+        "rows": 80641,
+        "bytes": 1407523,
+        "sha256": "8fb2cf9106713a3fa80070f60a35fd126dde03d66cffef69c6984ca635f652f3"
+      }
+    },
+    "signals/C4v2_F": {
+      "C4v2_F_2020.parquet": {
+        "rows": 8783,
+        "bytes": 152636,
+        "sha256": "53d08905432367bf35bef4c47117fab4ef969b6e0e660f06219260e8aa939720"
+      },
+      "C4v2_F_2021.parquet": {
+        "rows": 8760,
+        "bytes": 151130,
+        "sha256": "0b9e105d9545e62cb29aa23ef6c0a7620acd3aaf95dae8bf40516ca27378abc9"
+      },
+      "C4v2_F_2022.parquet": {
+        "rows": 8760,
+        "bytes": 152793,
+        "sha256": "e6bb449041f18a191063249ea76afd703ae2110bd15a1cc716fbce4462d32858"
+      },
+      "C4v2_F_2023.parquet": {
+        "rows": 8760,
+        "bytes": 150945,
+        "sha256": "5ff444368d2ef6916ba19ed13f35ddec86ec1edee7bc86f2a773edfde1b6548c"
+      },
+      "C4v2_F_2024.parquet": {
+        "rows": 8784,
+        "bytes": 152916,
+        "sha256": "aa9ff54ca8bdf37bb34bf245ae6144b56c0ad0d97ec2d93ffdeb5762369e7b68"
+      },
+      "C4v2_F_2025.parquet": {
+        "rows": 8760,
+        "bytes": 150827,
+        "sha256": "64ba7a61fd70c528313d36a958550c0bd07a1ca1ebb80c863cc547ae1a24f8da"
+      },
+      "C4v2_F_2026.parquet": {
+        "rows": 6721,
+        "bytes": 114862,
+        "sha256": "f98c1777d0a4ecafb249219ee875c1ae2fd70c1e858fc5935841d5d1b643eea3"
+      }
+    },
     "common/B3_AXC0": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7522004,
-          "sha256": "cc3629a4e885c2415407702ce006b936c0cf6cad132080d52a7346db330d5e47"
+          "bytes": 7526926,
+          "sha256": "3061dfb0773fcab32eefeab3c54c67f5a5274afea2f78c76d9e4a16d2de8fc01"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 7508248,
-          "sha256": "01918d6b0912fad4f8ec021af381597004e705f776e73783d29d8bd8477acb97"
+          "bytes": 7513170,
+          "sha256": "ae49359dca5c652a8fc85126c159599e694531af96f579931e4a7755209b9703"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7501725,
-          "sha256": "d6494f0b98b275ad3165bcc3b3df5df3d94e24700de10b1bb3bb7008e8770931"
+          "bytes": 7506647,
+          "sha256": "5650b52365fa5f9c268ed54f93c7e95db1a5611b8f1cf54aa100c7f706e4250b"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 8985489,
-          "sha256": "77dfa792e36df714b56066edddac636bc456670657b072a4811e2e1270287701"
+          "bytes": 9046350,
+          "sha256": "7de78623cc0933f945e2bbededfc655945ff642e40e498bad43102c7e7a6be3b"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 12115862,
-          "sha256": "0c9c243ce6c396a1af74eb1b8ba0eed18e13bf9fc2b0562d9dcf8fe547cf3186"
+          "bytes": 12292956,
+          "sha256": "5c4924f087932e052780d8b6626b79c803043af418759462684b10cc452f7632"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 11892040,
-          "sha256": "522b8d236ddac397e983ab28ad726c1516f29b587d1dbb12590fb61336a1dda2"
+          "bytes": 12068184,
+          "sha256": "2f435533fb4afd28002ec713699c79d994dda088b818887e702c7cd134821aaa"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 8982905,
-          "sha256": "4cd8c51de3d2bd244e7edeb097da1ef7e43ea9bc27be67164d4f5f63812435ac"
+          "bytes": 9118395,
+          "sha256": "d19c198b30da372d3149c9b21aa80e524c662eab6323a8f634ad3eb9107379d0"
         }
       },
       "ledger": {
         "ledger_2023.parquet": {
           "rows": 80126,
-          "bytes": 2399214,
-          "sha256": "1505b3d435d4dbc010c0a24c4062201a5b525ce1f396102df51ebe7ce4554b15"
+          "bytes": 3090126,
+          "sha256": "60ef0ac8036e06099e1553f5cfe19625e8370923466a4400ca8e5e79a5ec1f6d"
         },
         "ledger_2024.parquet": {
           "rows": 270473,
-          "bytes": 7141570,
-          "sha256": "26461734c21c14ea5ac93d070b487b16a661080ffc4e7e5d289855b4f7600a09"
+          "bytes": 9202623,
+          "sha256": "3fdea345061897cce8fed1332c9358bc50a07990d9c2d573c95eb88de44bd9a5"
         },
         "ledger_2025.parquet": {
           "rows": 259849,
-          "bytes": 6849170,
-          "sha256": "efd91464e39b353fe99c460785f60e9610279cf0d5a680349b0710b6d4333cd8"
+          "bytes": 8831734,
+          "sha256": "e12f2c3ab34b2c081dc6f96b80de59b027fc9b31806f22fdff692dd1ebf93d27"
         },
         "ledger_2026.parquet": {
           "rows": 174450,
-          "bytes": 4924182,
-          "sha256": "78e2111815159c97739a2a9a89ac4a896af4cc60c5e698d7d0bb5f019d40e372"
+          "bytes": 6343738,
+          "sha256": "770b25af067e44c72819fc6e7448193e8ec4adba8669c3342c3b50a1784dc66d"
         }
       },
-      "opportunities": {
-        "opportunities_2023.parquet": {
+      "decisions": {
+        "decisions_2023.parquet": {
           "rows": 116,
-          "bytes": 23018,
-          "sha256": "4f1b2c27ca7f25f1e0deb4b02f55b2adae7d70d2f42b53572fbcddd9886e620b"
+          "bytes": 8193,
+          "sha256": "6ca49d20a1e931e433113cbe8e5b5718f16d13a4d8bfcfc6254221c360e0b388"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 421,
-          "bytes": 46081,
-          "sha256": "79ca6c47ae5c5f6d6841528824bc9b5e9df319c3affcfe58a4cfc6033c3d9697"
+          "bytes": 15333,
+          "sha256": "d3ee0555fc1015c226d9b080a781a1b5cc094b0021a17ffa793eb3efa1250a91"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 552,
-          "bytes": 56300,
-          "sha256": "3e6898f6966968e0faddefac1135121f7f0b13de09d8e5c7f004f0d1d71cfe31"
+          "bytes": 18343,
+          "sha256": "839a5690635d0d0665341c3808b48c9789d2887aa47f7dff995a48310d53e94c"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 468,
-          "bytes": 49727,
-          "sha256": "c5d8f53a47a0c4651308aedd69b7adb05077024edd5a73f11a47d6474c1abba4"
+          "bytes": 16243,
+          "sha256": "8a691bae008e7051b5ab6b4ad6df8a32fc5c368c8ed2132e1018a9e94643e79a"
+        }
+      },
+      "outcomes": {
+        "outcomes_2023.parquet": {
+          "rows": 116,
+          "bytes": 18034,
+          "sha256": "7e62d43fee3a654f13954bc827f9b3714beafd740594a0a3286a18c11194bea1"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 421,
+          "bytes": 37562,
+          "sha256": "c96279723e2dc2026975aabcf840f884c001fec88bf7a91542e400ceb7ae7136"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 552,
+          "bytes": 46266,
+          "sha256": "18a14381a35eb9737aba824236dd1c0842df429f33f62214fad45f731e2cd7e2"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 468,
+          "bytes": 40764,
+          "sha256": "f9003ce59758ed4b7040fb34fbbdbbc5b94a06a0cd1f5b898323810ad94b6e02"
         }
       },
       "n_opportunities": 1557
+    },
+    "signals/B3_AXC0_table": {
+      "B3_AXC0_table_2023.parquet": {
+        "rows": 46848,
+        "bytes": 610455,
+        "sha256": "183f2ed9edb781f9ae012d675050f8bb5d0df9ebbca1f2d7ffe319bbb84b3775"
+      },
+      "B3_AXC0_table_2024.parquet": {
+        "rows": 140544,
+        "bytes": 1867891,
+        "sha256": "f3b579a4a484b79926937a36dbddd054904046dd3cf41f9cfcb99b583bfab63d"
+      },
+      "B3_AXC0_table_2025.parquet": {
+        "rows": 140160,
+        "bytes": 1856140,
+        "sha256": "c3aa4e60201f23d0e4d7e8fdb1b1f08a73a280b315e685f8214918824b9a71c4"
+      },
+      "B3_AXC0_table_2026.parquet": {
+        "rows": 107520,
+        "bytes": 1458302,
+        "sha256": "8780c5f90ce8a184c6dd20acfaf050f845f2debbb3e4f68424454061ba06a937"
+      }
     },
     "common/K04_AXC0": {
       "grid": {
         "grid_2020.parquet": {
           "rows": 527040,
-          "bytes": 7522004,
-          "sha256": "1befa30423f145a27d63fab90d6cd98cb00b9b09f86e315f4d02e3d74d1dfa84"
+          "bytes": 7526926,
+          "sha256": "a3bd05dddfcaa1df97dca280bd491ec267f7c492f4f604367e88452f766763db"
         },
         "grid_2021.parquet": {
           "rows": 525600,
-          "bytes": 7508248,
-          "sha256": "5a66a1af4d10ee1e12329ee8cefb87cac2f1d9df4950034a97df4899185bcf5e"
+          "bytes": 7513170,
+          "sha256": "098c653e0ea5dae9b2c33d8ce4ff297c9e65cbc694b36987c8d5d6f9997972bd"
         },
         "grid_2022.parquet": {
           "rows": 525600,
-          "bytes": 7501725,
-          "sha256": "1424079279de21cdae4627120169f034a635e8fb3ab577e6a1fe3bb5886e2f29"
+          "bytes": 7506647,
+          "sha256": "c1d95fd1e4d8746e182c2a96da1534c1858d17e1960082886c9484fb6103c306"
         },
         "grid_2023.parquet": {
           "rows": 525600,
-          "bytes": 8207467,
-          "sha256": "9b3ae25390b2070a11acd798a5fb1465c47ebdfd1984a4e1e89c359a37ef84c3"
+          "bytes": 8267157,
+          "sha256": "5d28b9dd2806c5e1a2fead7f567ec46f9082b5120bed35aa7aeddf90c1eb9a8a"
         },
         "grid_2024.parquet": {
           "rows": 527040,
-          "bytes": 8999016,
-          "sha256": "05ef668004f13743d1211bac13e9917f05fba2552584f609842a3aec1de624c2"
+          "bytes": 9169341,
+          "sha256": "42ff7c4730afc94516abbbd102776c9ef6385501b6ac4a22fd75369ba3932735"
         },
         "grid_2025.parquet": {
           "rows": 525600,
-          "bytes": 8676304,
-          "sha256": "5c716c73c1f9d9d829f134b234a62891ea6a21898e97d18afb8fb6ac64e3e2f0"
+          "bytes": 8849161,
+          "sha256": "4a049dc818db5a0a35777dd7c3f2b23bc92d5d4e195f4258b55f9f29c9386b22"
         },
         "grid_2026.parquet": {
           "rows": 403200,
-          "bytes": 7306944,
-          "sha256": "622ec1c7dc49c621a8b732998fd71927e33f59e06a89e53370458e89e4cae706"
+          "bytes": 7437475,
+          "sha256": "f626c77fdad52beb3574f52340a8e2b4e4d0ca82603c0098c56fa7f61c564ce0"
         }
       },
       "ledger": {
         "ledger_2023.parquet": {
           "rows": 37648,
-          "bytes": 1130211,
-          "sha256": "f84b5d9d286e0f873aa90ddc839e4ac570bbe0e11a4e87bb50e1c51e4083d73f"
+          "bytes": 1454321,
+          "sha256": "c717627601ddd24d5722d9dcec1a6774e589a0930de1f2951672843ce7edd083"
         },
         "ledger_2024.parquet": {
           "rows": 77945,
-          "bytes": 2370806,
-          "sha256": "52c9b22e70e6deaba1439db3bc89e089bb6e7f6ffa0679e3ad96890571df82bb"
+          "bytes": 3046966,
+          "sha256": "4760f8f1ea32818deda5492186fe8c381c2d8101140392fa385717e9a1de08a8"
         },
         "ledger_2025.parquet": {
           "rows": 63522,
-          "bytes": 1912073,
-          "sha256": "064f9be5866ca39c7cf554b443b5244da56e6689e14c792d7022a07c469e5925"
+          "bytes": 2461869,
+          "sha256": "eca84dc1b11c1ec7d8ba10d81d58b1ad408fda9a12bab992e1c2cb9471fb65b5"
         },
         "ledger_2026.parquet": {
           "rows": 77303,
-          "bytes": 2328912,
-          "sha256": "58f852bd810d7d7aac296f679e0ada5d971e8f597ef04e438702560fe1abc841"
+          "bytes": 2995780,
+          "sha256": "03895f36d5c7832ee6b826f26cf0858fcf021c13db26113650e785e53c7176cf"
         }
       },
-      "opportunities": {
-        "opportunities_2023.parquet": {
+      "decisions": {
+        "decisions_2023.parquet": {
           "rows": 104,
-          "bytes": 21853,
-          "sha256": "ac76d570b4f6451ea81c1f10be077b18694e3bc9bd98bab3d5a1d4b21a4ad341"
+          "bytes": 7891,
+          "sha256": "7f8c80cfdfcb360d04c9c9b9124f84aa7ed78f4756a72e58c6d6ca598161bef5"
         },
-        "opportunities_2024.parquet": {
+        "decisions_2024.parquet": {
           "rows": 293,
-          "bytes": 35844,
-          "sha256": "7d7ef007c62b219ddf427f8c7ca461e704bf2b37caaa1994815c6646a8e6a6d7"
+          "bytes": 12259,
+          "sha256": "5cdf1fc12394a70f71ec793616cd21b2cffd1e8eb7d58f6c9d2684f0f69a6713"
         },
-        "opportunities_2025.parquet": {
+        "decisions_2025.parquet": {
           "rows": 279,
-          "bytes": 34894,
-          "sha256": "c16c2c5870a98dba8ba4da94eea12b21b72bf3ff1424bbefac1d35483298c5c6"
+          "bytes": 12058,
+          "sha256": "2fe9028b1d87333294434a3639482e50684738441fb6f1f7d3a93d3743251dcb"
         },
-        "opportunities_2026.parquet": {
+        "decisions_2026.parquet": {
           "rows": 214,
-          "bytes": 29932,
-          "sha256": "782a0066cd8e4e92f572148c8b59408761d204f1a5df595c4e4db3636e40643e"
+          "bytes": 10370,
+          "sha256": "1357e914437a496a380a1868cc0e12f1c5dbde13efc049a3330c4a2ad4f489d5"
+        }
+      },
+      "outcomes": {
+        "outcomes_2023.parquet": {
+          "rows": 104,
+          "bytes": 17050,
+          "sha256": "bf91d255dd13abb7b651039a10b9912a64ff3eba9f7b9a4d96e928545ce335d1"
+        },
+        "outcomes_2024.parquet": {
+          "rows": 293,
+          "bytes": 28911,
+          "sha256": "63822ab324f6dad62686384931a7b3d5be68974a216ba03eb654d8452b9bc11d"
+        },
+        "outcomes_2025.parquet": {
+          "rows": 279,
+          "bytes": 28123,
+          "sha256": "04c5fe186da28ed9056796e4afa3c1f6c6f5eac299ade12dd9b2524670cb2491"
+        },
+        "outcomes_2026.parquet": {
+          "rows": 214,
+          "bytes": 23954,
+          "sha256": "6308aaebdc80924b41241920b868c2ad871fd88d28cfdf1d4ce9070ca81785b9"
         }
       },
       "n_opportunities": 890
+    },
+    "signals/K04_AXC0_table": {
+      "K04_AXC0_table_2023.parquet": {
+        "rows": 11712,
+        "bytes": 306108,
+        "sha256": "f85bf8ba0be659b946566ccd2e7b14874a942f7ef5c60d04bd7021397298da96"
+      },
+      "K04_AXC0_table_2024.parquet": {
+        "rows": 35136,
+        "bytes": 943196,
+        "sha256": "f5f8fb3502da92b39ed738b43d8bc6fb22121002b3f6b1dab8e22c18fa15f51e"
+      },
+      "K04_AXC0_table_2025.parquet": {
+        "rows": 35040,
+        "bytes": 938254,
+        "sha256": "7edded80f180338fe1bd96a57d7ec8a3bd372c4365c20344d066b34f2ca0a0e7"
+      },
+      "K04_AXC0_table_2026.parquet": {
+        "rows": 26880,
+        "bytes": 706339,
+        "sha256": "bf95b7403b988da8b237a92cdbf1902381698eedb4c8d2a87a910197acd0e375"
+      }
     },
     "common/funding_ax_NATIVE": {
       "funding_ax_NATIVE_2020.parquet": {
@@ -4109,18 +5219,24 @@
       }
     }
   },
-  "total_bytes": 1611468988,
+  "total_bytes": 1788849686,
   "layout": {
     "common/<sleeve>": "B3_AXC0, K04_AXC0, C1v2, C4v2 (native fill, one cell)",
     "g3_family/<cell>/<sleeve>": "G3_LONG, G3_SHORT, LBR_FUND x 6 cells",
-    "grid_<year>": "per minute state + canonical P&L (float64 P&L, float32 state)",
-    "ledger_<year>": "per (minute, opportunity) canonical rows: fast counterfactual replay input",
-    "opportunities_<year>": "canonical entry opportunity schedule (env-only: realized exit fields are future information and must never enter observations)",
-    "observation_cache_1h": "placeholder (step 3)"
+    "grid_<year>": "per-minute causal state + canonical P&L (observation-safe; row usable at T only if available_time <= T)",
+    "ledger_<year>": "per (minute, opportunity) realized canonical rows (replay input; observation-safe by available_time)",
+    "decisions_<year>": "canonical entry opportunities, decision-time columns only (observation-safe)",
+    "outcomes_<year>": "PRIVATE: fill result, realized exits, reasons, trade P&L (replay/accounting only; read_observation refuses it)",
+    "signals/": "decision-time source features (G3 state, LBR features, AXC0 tables, C F-leg events)",
+    "observation_cache_1h": "placeholder; step 3 writes out/rl_allocator_20261010/state/"
   },
-  "test_guard": "read_partitioned refuses *_2026 partitions without allow_test=True",
+  "test_guard": "read_partitioned/read_observation refuse *_2026 partitions without allow_test=True; the precompute itself refuses to start without --allow-test-parity",
   "notes": [
-    "G3/LBR grid minutes 2020-01-01..2026-10-07; B3/K04 available 2023-09-01..2026-10-07 in two segments (native rolling-k ends with a data_end close at 2025-12-31 23:59; TEST restarts flat)",
-    "base_exit_sched_time: LBR exit decision bar close (activation + 2 bars), C max_hold expiry; G3 and B3/K04 have no scheduled exit (-1)"
+    "G3/LBR grid minutes 2020-01-01..2026-10-07; available = source signal inputs ready",
+    "B3/K04 available 2023-09-01..2026-10-07 in two segments (native rolling-k segment ends with a data_end close at 2025-12-31 23:59; TEST restarts flat); unavailable before 2023-09-01",
+    "terminal rule (all sleeves): a position open at a ledger end is marked to the last close and charged the exit fee (G3/LBR: reserved 2 bps x w; native: 2 bps per side at the last close)",
+    "base_mandatory_exit_time: LBR exit decision bar close (activation + 2 bars), C max_hold expiry; G3 and B3/K04 -1; never the realized exit",
+    "C decision_time = available_time = fill minute T (R2-37 zero-latency contract): observations at T must exclude the minute-T market row",
+    "native pending: C has none (fill at the decision minute open); B3/K04 pending = decision minute while flat (market order executes at the next open)"
   ]
 }
