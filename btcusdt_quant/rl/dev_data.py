@@ -1,10 +1,12 @@
 """DEV-only market / funding loader (Codex review 2026-10-11): never opens a TEST path.
 
-  * market: artifacts/btcusdt_2020_2026h1.parquet read with a predicate (open_time < 2026-01-01) pushed down; rows
-    are re-checked. The file itself also stores 2026 H1 rows (single mixed artifact); only DEV row groups are
-    decoded. The R2-54 stage-B snapshot (the TEST source) is refused outright.
+  * market: artifacts/btcusdt_2020_2026h1.parquet read with a predicate (open_time < 2026-01-01); rows are re-checked.
+    The file is a single mixed artifact (2026 H1 rows included) whose last row group straddles 2025-12-24..2026-06-30:
+    those 2026 rows are decoded by the reader and dropped before any use. The R2-54 stage-B snapshot (the TEST
+    source) is refused outright.
   * funding: only the monthly archives BTCUSDT-fundingRate-YYYY-MM.zip with YYYY-MM < 2026-01 are opened.
-Every opened file is hashed (sha256) and returned with the frames so experiments can record their exact inputs."""
+Funding archives are hashed by file bytes; the market input is hashed over its decoded DEV rows (frame_sha), so no
+2026 bytes of the mixed parquet are read for hashing."""
 from __future__ import annotations
 import hashlib, re
 from pathlib import Path
@@ -40,6 +42,17 @@ def _sha(p: Path) -> str:
     return h.hexdigest()
 
 
+def frame_sha(f: pd.DataFrame) -> str:
+    """sha256 over the decoded rows (open_time ns + every numeric column, in column order)."""
+    h = hashlib.sha256()
+    h.update(f.open_time.array.asi8.astype("<i8").tobytes())
+    for c in f.columns:
+        if c != "open_time":
+            h.update(c.encode())
+            h.update(np.ascontiguousarray(f[c].to_numpy(float)).astype("<f8").tobytes())
+    return h.hexdigest()
+
+
 def dev_funding_files(funding_dir: Path = DEV_FUNDING) -> list[Path]:
     out = []
     for p in sorted(Path(funding_dir).glob("*.zip")):
@@ -63,7 +76,11 @@ def load_dev(market: Path = DEV_MARKET, funding_dir: Path = DEV_FUNDING):
     f = f[f.time < sp.TEST_START].sort_values("time").drop_duplicates("time").reset_index(drop=True)
     f["time"] = f.time.astype("datetime64[ns, UTC]")
     sp.guard_times(f.time.array.asi8, False, "dev funding")
-    hashes = {"market": {"path": str(market.relative_to(ROOT)).replace("\\", "/"), "sha256": _sha(market),
-                         "rows": int(len(minutes)), "last": str(minutes.open_time.iloc[-1])},
+    hashes = {"market": {"path": str(market.relative_to(ROOT)).replace("\\", "/"),
+                         "dev_slice_sha256": frame_sha(minutes), "rows": int(len(minutes)),
+                         "last": str(minutes.open_time.iloc[-1]),
+                         "note": "hash of the decoded DEV rows only (file bytes not hashed). The mixed parquet has "
+                                 "4 row groups; the last one spans 2025-12-24 12:48 .. 2026-06-30 23:59, so the "
+                                 "open_time < 2026-01-01 predicate still decodes its 2026 rows before dropping them"},
               "funding": {p.name: _sha(p) for p in files}, "funding_rows": int(len(f))}
     return minutes, f, hashes

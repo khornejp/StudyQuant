@@ -86,3 +86,13 @@ def test_ma100_uses_completed_days_only():
     c2[d[0] + 1:] = 1e6                                                  # future tamper
     m2 = type("M", (), {"t": t, "c": c2})()
     assert np.isclose(mod.ma100_bear(m2, T, d)[1][0], ma[0])
+
+
+def test_dev_market_hash_is_slice_hash():
+    from btcusdt_quant.rl import dev_data as DD
+    f = pd.DataFrame({"open_time": pd.to_datetime([0, 60_000_000_000], utc=True), "open": [1.0, 2.0]})
+    g = f.copy()
+    g.loc[1, "open"] = 2.5
+    assert DD.frame_sha(f) == DD.frame_sha(f.copy()) and DD.frame_sha(f) != DD.frame_sha(g)
+    import inspect
+    assert "_sha(market)" not in inspect.getsource(DD.load_dev)            # mixed parquet bytes never hashed

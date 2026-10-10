@@ -2826,6 +2826,10 @@ def cmd_regime_bidir(args) -> None:
     regime_experiment("bidir")
 
 
+def cmd_regime_bidir_r2(args) -> None:
+    regime_experiment("bidir_r2")
+
+
 def regime_inputs():
     """DEV-only market / funding (never opens a TEST path) + causal state features at 4h decisions."""
     from btcusdt_quant.rl import dev_data as DD, regime_short as RS
@@ -2856,7 +2860,7 @@ def ma100_bear(m, T: np.ndarray, d: np.ndarray) -> np.ndarray:
 def regime_experiment(mode: str) -> None:
     from btcusdt_quant.rl import regime_short as RS
     t0 = time.time()
-    name = "regime_short_24h" if mode == "short" else "regime_bidir_24h_r1"
+    name = {"short": "regime_short_24h", "bidir": "regime_bidir_24h_r1", "bidir_r2": "regime_bidir_24h_r2"}[mode]
     RD = OUT / name
     RD.mkdir(parents=True, exist_ok=True)
     b2, m, st, in_hash = regime_inputs()
@@ -2877,6 +2881,9 @@ def regime_experiment(mode: str) -> None:
                           "execution": "Batch-2 maker engine (event kind), 2 bps exit quote, 6 cells, 4 bps rt",
                           "regime": None if mode == "short" else "bear: close_T < MA100 (last 100 completed UTC "
                                                                   "daily closes) -> short model; bull -> long model",
+                          "regime_training": ("short model on train & bear rows, long model on train & bull rows; "
+                                              "normalizer and lambda CV on that subset" if mode == "bidir_r2"
+                                              else "both models on all train rows, one normalizer"),
                           "train_rows": "label end <= val start - 24h (embargo)", "folds": FOLDS_A2,
                           "source": "local Binance USD-M BTCUSDT 1m + monthly funding archives, DEV loader "
                                     "(btcusdt_quant/rl/dev_data.py, TEST paths refused); state_1h DEV",
@@ -2891,7 +2898,7 @@ def regime_experiment(mode: str) -> None:
         emb = a_va - RS.HOLD_MIN * sp.MIN
         tr = (T >= a_tr) & (T < b_tr) & (lend <= emb) & np.isfinite(y_s)
         va = (T >= a_va) & (T < b_va)
-        med, sc = RS.fit_norm(X[tr])
+        med0, sc0 = RS.fit_norm(X[tr])
         c2 = m.c.copy()
         c2[int(np.searchsorted(m.t, emb)):] *= 1.7
         fr2 = np.where(m.ft > emb, m.fr * 1.7, m.fr)
@@ -2905,20 +2912,23 @@ def regime_experiment(mode: str) -> None:
         side = np.zeros(int(va.sum()), int)
         for sd in sides:
             y = labels[sd]
-            lam, cvres = RS.cv_lambda(X[tr], y[tr], T[tr], lend[tr])
-            w, b0 = RS.ridge(RS.apply_norm(X[tr], med, sc), y[tr], lam)
+            trs = (tr & (bear if sd == "short" else ~bear)) if mode == "bidir_r2" else tr
+            med, sc = RS.fit_norm(X[trs]) if mode == "bidir_r2" else (med0, sc0)
+            lam, cvres = RS.cv_lambda(X[trs], y[trs], T[trs], lend[trs])
+            w, b0 = RS.ridge(RS.apply_norm(X[trs], med, sc), y[trs], lam)
             pred = RS.apply_norm(X[va], med, sc) @ w + b0
-            lam2, _ = RS.cv_lambda(X[tr], tam2[sd][tr], T[tr], lend[tr])
-            w2, b02 = RS.ridge(RS.apply_norm(X[tr], med, sc), tam2[sd][tr], lam2)
+            lam2, _ = RS.cv_lambda(X[trs], tam2[sd][trs], T[trs], lend[trs])
+            w2, b02 = RS.ridge(RS.apply_norm(X[trs], med, sc), tam2[sd][trs], lam2)
+            tr_used = trs
             p3 = RS.apply_norm(X3[va], med, sc) @ w + b0
-            F["tamper"][sd] = {"train_labels_equal": bool(np.array_equal(y[tr], tam2[sd][tr])),
+            F["tamper"][sd] = {"train_labels_equal": bool(np.array_equal(y[tr_used], tam2[sd][tr_used])),
                                "model_equal": bool(lam2 == lam and np.array_equal(w, w2) and b0 == b02),
                                "pred_before_cut_equal": bool(np.array_equal(p3[T[va] <= cut], pred[T[va] <= cut]))}
             top = np.argsort(-np.abs(w))[:8]
             F["models"][sd] = {"lambda": lam, "cv": {str(k_): v for k_, v in cvres.items()}, "intercept": b0,
                                "coef_top": {RS.FEATURES[i]: float(w[i]) for i in top},
                                "pred_positive_share": float((pred > 0).mean()),
-                               "label_mean_train": float(np.nanmean(y[tr])),
+                               "label_mean_train": float(np.nanmean(y[tr_used])), "train_rows": int(tr_used.sum()),
                                "rule_label_sum_val": float(np.nansum(y[va][pred > 0]))}
             if mode == "short":
                 side = np.where(pred > 0, -1, side)
@@ -2940,7 +2950,8 @@ def regime_experiment(mode: str) -> None:
             boots = {str(bl): b2.stationary_boot_p05(daily, bl) for bl in (20, 60, 120)}
             days = pd.date_range(pd.Timestamp(a_va, tz="UTC"), periods=len(daily), freq="D")
             mon = pd.Series(daily, index=days).groupby(days.strftime("%Y-%m")).sum()
-            F["cells"][f"o{o}_p{p}"] = {
+            top2 = float(mon.sort_values(ascending=False).iloc[:2].sum() / wnd["net4"]) if wnd["net4"] > 0 else None
+            F["cells"][f"o{o}_p{p}"] = {"top2_month_share": top2,
                 "net4": wnd["net4"], "net8_report_only": wnd["net8"], "closed": wnd["closed"], "win": wnd["win"],
                 "mdd": wnd["mdd_1m"], "funding": wnd["funding"], "fill_rate": wnd["fill_notional_rate"],
                 "long_net4": wnd["long_net4"], "short_net4": wnd["short_net4"], "long_closed": wnd["long_closed"],
@@ -2962,13 +2973,18 @@ def regime_experiment(mode: str) -> None:
                                           for F in rep["folds"].values()}
     rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
                runtime_sec=round(time.time() - t0, 1), test_accessed=False,
-               test_access_note="DEV loader refuses the stage-B snapshot and 2026 funding archives; the mixed market "
-                                "artifact is read with an open_time < 2026-01-01 predicate; state_1h is the DEV store",
+               test_access_note="DEV loader refuses the stage-B snapshot and 2026 funding archives. The mixed market "
+                                "parquet is read with an open_time < 2026-01-01 predicate: its last row group "
+                                "(2025-12-24..2026-06-30) is decoded and the 2026 rows dropped before use; the input "
+                                "hash covers the DEV slice only. state_1h was generated earlier through b2.load_all "
+                                "(which opened the stage-B snapshot); its DEV rows are prefix/tamper-verified causal",
                code_sha256={"regime_short": sha(ROOT / "btcusdt_quant/rl/regime_short.py"),
                             "dev_data": sha(ROOT / "btcusdt_quant/rl/dev_data.py"), "script": sha(Path(__file__))})
-    dump(RD / ("regime_short_report_devloader.json" if mode == "short" else "regime_bidir_report.json"), rep)
-    registry.record(REGISTRY, {"experiment": ("REGIME-SHORT-24H rerun (DEV-only loader)" if mode == "short"
-                                              else "REGIME-BIDIR-24H-r1 (MA100 regime, short/long ridge)"),
+    dump(RD / {"short": "regime_short_report_devloader.json", "bidir": "regime_bidir_report.json",
+               "bidir_r2": "regime_bidir_r2_report.json"}[mode], rep)
+    registry.record(REGISTRY, {"experiment": {"short": "REGIME-SHORT-24H rerun (DEV-only loader)",
+                                              "bidir": "REGIME-BIDIR-24H-r1 (MA100 regime, short/long ridge)",
+                                              "bidir_r2": "REGIME-BIDIR-24H-r2 (regime-specific training)"}[mode],
                                "role": "trial", "n_trials": len(RS.LAMBDAS) * len(sides),
                                "n_simulations": 4 * len(cells),
                                "config": {k_: v for k_, v in rep["spec"].items() if k_ not in ("folds", "input_sha256")},
@@ -2981,7 +2997,7 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
-                                       "regime-short", "regime-bidir"))
+                                       "regime-short", "regime-bidir", "regime-bidir-r2"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -3017,6 +3033,8 @@ def main(argv=None) -> None:
         return cmd_regime_short(args)
     if args.command == "regime-bidir":
         return cmd_regime_bidir(args)
+    if args.command == "regime-bidir-r2":
+        return cmd_regime_bidir_r2(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
