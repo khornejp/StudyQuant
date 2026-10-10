@@ -19,7 +19,8 @@
       "sleeve_precompute": "33c78335fcd4ae8c04e5e926283a978ea23721169f28dc06250bbdea400ebffe"
     },
     "normalizers_sha256": "cf7663fbbe267906e2ff42f559bd51a88acabf5c358da77c033d64ad7e314308",
-    "note": "state code differs from precompute commit only in allocator_state.py (hour_grid/hourly-edge integer fixes, 9be9293, e6dd022); sleeve_precompute.py and the script are byte-identical"
+    "note": "state code differs from precompute commit only in allocator_state.py (hour_grid/hourly-edge integer fixes, 9be9293, e6dd022); sleeve_precompute.py and the script are byte-identical",
+    "superseded_by": "round2"
   },
   "freeze": {
     "sha256_lf": "ad6a6550f10fa244000c63cb01639ae812095208226245caec1dcdb6adb98fe3",
@@ -37,5 +38,26 @@
     "tests/rl/test_allocator_state.py": "87aaeedaae2cf705576bcde32c3adaef4e83a020"
   },
   "head_at_write": "e6dd0228e5da5eed9a3f1d2702ce77116171d280",
-  "verify": "git checkout <code_commit>; sha256 of each LF file == code_sha256_lf; out/ artifacts regenerate with precompute --allow-test-parity / state --allow-test-parity"
+  "verify": "git checkout <code_commit>; sha256 of each LF file == code_sha256_lf; out/ artifacts regenerate with precompute --allow-test-parity / state --allow-test-parity",
+  "round2": {
+    "code_commit": "d3e4493",
+    "signals": {
+      "manifest": "out/rl_allocator_20261010/precompute/signals/manifest.json",
+      "sha256": "5aa05693ac549faa353ee1da3bc4e75f7a7dd7b1228014f02ad6b03720bf63e0",
+      "code_commit": "d3e4493"
+    },
+    "state": {
+      "manifest": "out/rl_allocator_20261010/state/manifest.json",
+      "sha256": "3a0fe8772644b9dd57efdde5e508b0050e8627fb8dfa20f69a54c7dca6d9ef60",
+      "code_commit": "d3e4493d90a98a090d0bdc9b3f702c5402bd475f",
+      "code_sha256_lf": {
+        "script": "de3f5f491a879ad2da23f848ea8afb9a96da93cee2d160ef4614238dd7a81f57",
+        "allocator_state": "54d5366c43acd64b1cb54c0307faa5eb29843de61be577c453f40408f7d46e20",
+        "sleeve_precompute": "33c78335fcd4ae8c04e5e926283a978ea23721169f28dc06250bbdea400ebffe"
+      },
+      "normalizers_sha256": "3d887127f46bdc7f6d156d3eabeb1ffd6b8ce493b3e34419be9d97de22e069ea"
+    },
+    "precompute": "unchanged (manifest sha f09649710970ea12c8648c489a049c7ddd394997792ce2b6b553a7e25bd77553, code c85e46a); round-2 script edits do not touch the precompute path",
+    "diff_precompute_path": "git diff c85e46a d3e4493 -- btcusdt_quant/rl/sleeve_precompute.py: none"
+  }
 }

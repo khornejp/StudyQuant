@@ -66,8 +66,21 @@
     "K04_AXC0_sig_side",
     "C1v2_F_side",
     "C1v2_F_age_h",
+    "C1v2_Flv_ls_pos",
     "C4v2_F_side",
     "C4v2_F_age_h",
+    "C4v2_Flv_ls_pos",
+    "c_e1_volume_z",
+    "c_e1_breakout_bps",
+    "ax_M",
+    "ax_L",
+    "ax_e1_volume_z",
+    "ax_e1_breakout_bps",
+    "ax_a2_breakout_hi_bps",
+    "ax_a2_breakout_lo_bps",
+    "ax_f3_ls_pos",
+    "ax_f3w_ls_pos",
+    "ax_age_h",
     "B3_AXC0_available",
     "B3_AXC0_signal_active",
     "B3_AXC0_pending",
@@ -249,7 +262,40 @@
     "rows_compared": 240,
     "equal": true,
     "diff_cols": [],
-    "cols_changed_after_cut": 218
+    "cols_changed_after_cut": 216
+  },
+  "contaminated_unavailable_rows": {
+    "G3_LONG": 0,
+    "G3_SHORT": 0,
+    "LBR_FUND": 0,
+    "B3_AXC0": 0,
+    "K04_AXC0": 0,
+    "C1v2": 0,
+    "C4v2": 0
+  },
+  "history_first_row_per_cell_nonnan_steps": 0,
+  "seq_columns": [
+    "ret_1h",
+    "range_1h",
+    "logvol_1h",
+    "taker_share_1h",
+    "G3_LONG_net4_1h",
+    "G3_SHORT_net4_1h",
+    "LBR_FUND_net4_1h",
+    "B3_AXC0_net4_1h",
+    "K04_AXC0_net4_1h",
+    "C1v2_net4_1h",
+    "C4v2_net4_1h"
+  ],
+  "features_1h": {
+    "scaled": 204,
+    "masks": 204,
+    "observation_columns": 453
+  },
+  "features_4h": {
+    "scaled": 204,
+    "masks": 204,
+    "observation_columns": 453
   },
   "dev_prefix_vs_full": {
     "equal": true,
@@ -258,35 +304,35 @@
   "test_rows_1h": 40326,
   "files": {
     "normalizers.json": {
-      "bytes": 145808,
-      "sha256": "cf7663fbbe267906e2ff42f559bd51a88acabf5c358da77c033d64ad7e314308"
+      "bytes": 182060,
+      "sha256": "3d887127f46bdc7f6d156d3eabeb1ffd6b8ce493b3e34419be9d97de22e069ea"
     },
     "state_1h.parquet": {
-      "bytes": 51944457,
-      "sha256": "eda151bde720d34ea79216e483358841ffe59b64f63755e669b7c13e7c12964b"
+      "bytes": 56297371,
+      "sha256": "b166202220608baab77625ecd9fca1960fa3126a93fd2165778e47d4b7801fdf"
     },
     "state_1h_TEST.parquet": {
-      "bytes": 5879791,
-      "sha256": "118cef1891a29305eb2463a867a386606b7acdb2d217c56258485d896a56b2b8"
+      "bytes": 7076723,
+      "sha256": "7662e971532811e894ec8caf904cd4cf2a50d69bc515355a9b41403651db38b2"
     },
     "state_4h.parquet": {
-      "bytes": 13653235,
-      "sha256": "323d69743d8bd953a2e67c7c871cea96dae7acb7b865cb0ca2947ff6223fe586"
+      "bytes": 14649776,
+      "sha256": "4a531a97d739a825c03635638f7d0873c640b9d8eb1b43bcd1bd876cdf17d696"
     },
     "state_4h_TEST.parquet": {
-      "bytes": 1714978,
-      "sha256": "9afb8614a4025117b582402650ff7bb1b3493a4d25b0cb1a335bebbb91970032"
+      "bytes": 1988608,
+      "sha256": "1c7050eddc7c29f4b0b5fff4677b26949510d0c53d2ccfec8337885b47bedb4b"
     }
   },
-  "created_utc": "2026-10-10T13:14:00.832215+00:00",
-  "git_head": "e6dd0228e5da5eed9a3f1d2702ce77116171d280",
+  "created_utc": "2026-10-10T13:40:01.676817+00:00",
+  "git_head": "d3e4493d90a98a090d0bdc9b3f702c5402bd475f",
   "code_sha256": {
-    "script": "bcde63e8d8a5b0f44c30829e0871d4b5feb8cc35d3e9102bd2c4fa94fbe01a35",
-    "allocator_state": "e4d10d4a1052d926d7b1a1cb536a0ba830afa3251527ba64f6bf628aacfd38e9",
+    "script": "de3f5f491a879ad2da23f848ea8afb9a96da93cee2d160ef4614238dd7a81f57",
+    "allocator_state": "54d5366c43acd64b1cb54c0307faa5eb29843de61be577c453f40408f7d46e20",
     "sleeve_precompute": "33c78335fcd4ae8c04e5e926283a978ea23721169f28dc06250bbdea400ebffe"
   },
   "precompute_manifest_sha256": "f09649710970ea12c8648c489a049c7ddd394997792ce2b6b553a7e25bd77553",
-  "runtime_sec": 123.7,
+  "runtime_sec": 134.6,
   "rules": {
     "market": "minute_time + 1m <= T (minute-T row excluded)",
     "grid/ledger/signals": "available_time <= T",

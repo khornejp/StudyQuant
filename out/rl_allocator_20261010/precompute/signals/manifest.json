@@ -1,0 +1,151 @@
+{
+  "created_utc": "2026-10-10T13:37:45.614503+00:00",
+  "git_head": "d3e4493d90a98a090d0bdc9b3f702c5402bd475f",
+  "code_sha256": "de3f5f491a879ad2da23f848ea8afb9a96da93cee2d160ef4614238dd7a81f57",
+  "checks": {
+    "C1v2_F_side_reproduced": true,
+    "C4v2_F_side_reproduced": true,
+    "C_E1_side_reproduced": true,
+    "K04_NATIVE_inputs_reproduce_table": true,
+    "B3_NATIVE_inputs_reproduce_table": true,
+    "K04_TEST_inputs_reproduce_table": true,
+    "B3_TEST_inputs_reproduce_table": true
+  },
+  "files": {
+    "signals/C1v2_F_levels": {
+      "C1v2_F_levels_2020.parquet": {
+        "rows": 105407,
+        "bytes": 2346714,
+        "sha256": "6cd36163b0476d1f19676afee50a8fbdbdf25ba20471e481c40c17e363377e22"
+      },
+      "C1v2_F_levels_2021.parquet": {
+        "rows": 105120,
+        "bytes": 3486672,
+        "sha256": "fdb9b93776bdb2bde1df9c7fa130b11aaa787e74124446057696c4853cb496e0"
+      },
+      "C1v2_F_levels_2022.parquet": {
+        "rows": 105120,
+        "bytes": 3407914,
+        "sha256": "b4177a55214ca750745ef408527f6137bd63019a41bf368cf0b3d470f3993eaf"
+      },
+      "C1v2_F_levels_2023.parquet": {
+        "rows": 105120,
+        "bytes": 3453712,
+        "sha256": "a0a2c3a749562881f07a3a58644d6f588dce7e717c85c823b85e3a725e790132"
+      },
+      "C1v2_F_levels_2024.parquet": {
+        "rows": 105408,
+        "bytes": 3446243,
+        "sha256": "d073002f805b3ffee6f7d756f661b79c54ecacbbb5916d487b04c962577717bb"
+      },
+      "C1v2_F_levels_2025.parquet": {
+        "rows": 105120,
+        "bytes": 3463985,
+        "sha256": "0d3fc70667e968fc7a8422839073d3347887230a8eb58b4b853ae374f37ada00"
+      },
+      "C1v2_F_levels_2026.parquet": {
+        "rows": 80641,
+        "bytes": 2636449,
+        "sha256": "a26612826fc3badfe06413926cdf00fd84b089e90b66f4a9cc944facc0a746d4"
+      }
+    },
+    "signals/C4v2_F_levels": {
+      "C4v2_F_levels_2020.parquet": {
+        "rows": 8783,
+        "bytes": 205335,
+        "sha256": "9cd9d16c592e40938358879158ffd36beb6ccf7820a1b44086b6bdbf72786b35"
+      },
+      "C4v2_F_levels_2021.parquet": {
+        "rows": 8760,
+        "bytes": 313638,
+        "sha256": "2e6bf21672a3ada278a888f5690bf5ec5fa937a071a1c7d7a34b60c8f836e3a4"
+      },
+      "C4v2_F_levels_2022.parquet": {
+        "rows": 8760,
+        "bytes": 305484,
+        "sha256": "7333f8570f4403f2cf246cb7e3f0efebf44c53d8fc5fe43f30f008a7d4885fed"
+      },
+      "C4v2_F_levels_2023.parquet": {
+        "rows": 8760,
+        "bytes": 315162,
+        "sha256": "4e3c1034e1eab236cce4d9ef959ed378235c83d8d847220437790cb302395916"
+      },
+      "C4v2_F_levels_2024.parquet": {
+        "rows": 8784,
+        "bytes": 328936,
+        "sha256": "ad7a96815639060e98dc66de6abf1ba445055628271f63059e42082da53b9155"
+      },
+      "C4v2_F_levels_2025.parquet": {
+        "rows": 8760,
+        "bytes": 303967,
+        "sha256": "b39bdc4e18ca97ee6e1443b407a8b4aa7e5f24e2f192ca0def688aae7d812d02"
+      },
+      "C4v2_F_levels_2026.parquet": {
+        "rows": 6721,
+        "bytes": 243421,
+        "sha256": "fc41bb6b38a97917b508538a886641f39c93c95464e73edc7e740b0f7817d4e5"
+      }
+    },
+    "signals/C_E1": {
+      "C_E1_2020.parquet": {
+        "rows": 527039,
+        "bytes": 15875452,
+        "sha256": "e741e0a258ce27edb34e0e739c2db0284ce06feb387c44f8fe6b52a70a006271"
+      },
+      "C_E1_2021.parquet": {
+        "rows": 525600,
+        "bytes": 15957268,
+        "sha256": "c0a709f50d428f4d008f0e2ad4b41f46673bba913ee4e30f31821d7ed6cb26a7"
+      },
+      "C_E1_2022.parquet": {
+        "rows": 525600,
+        "bytes": 15670298,
+        "sha256": "254d13544957d5e94861e54bdb50d61d84ddd2c46b1c7d6696dde330d1c278ea"
+      },
+      "C_E1_2023.parquet": {
+        "rows": 525600,
+        "bytes": 15452002,
+        "sha256": "b817ab7a4cc138ffa0a65b33441b2f6d269bc0741328df2630dcea0c512b1a9d"
+      },
+      "C_E1_2024.parquet": {
+        "rows": 527040,
+        "bytes": 15895717,
+        "sha256": "fd8f4c95124008efb7825d4678a17e1c4a7a26c89f92ad02b2d854f5fda9405f"
+      },
+      "C_E1_2025.parquet": {
+        "rows": 525600,
+        "bytes": 15818416,
+        "sha256": "d8cf77a098a478d2e8c1a95f4632d23a4cda9876e8a10256c4a7731562d0ba2a"
+      },
+      "C_E1_2026.parquet": {
+        "rows": 403201,
+        "bytes": 12336489,
+        "sha256": "3cab07742ceffc479a553c21a1ca51861ee23def115c4a5d66b7c0cba3abdf77"
+      }
+    },
+    "signals/AX_fast": {
+      "AX_fast_2023.parquet": {
+        "rows": 11712,
+        "bytes": 754000,
+        "sha256": "d8b4eb27f02f34057e368cfa44c51dfd1c835daee3a86b9dc12cee50acf52618"
+      },
+      "AX_fast_2024.parquet": {
+        "rows": 35136,
+        "bytes": 2273222,
+        "sha256": "1d676da62c6f91d898f2bd97a404ea5c09f127d4a90aaba00cab9a80694f57b5"
+      },
+      "AX_fast_2025.parquet": {
+        "rows": 35040,
+        "bytes": 2214617,
+        "sha256": "b42903b1e3fcf4b6747872556d53f5ac22a08a31a7556dc0952a1ae8f08e29b2"
+      },
+      "AX_fast_2026.parquet": {
+        "rows": 26880,
+        "bytes": 1745404,
+        "sha256": "e003c010088e5488f9dc9fc1a78b6716ede9d95c381fb428fe212625c14e8baa"
+      }
+    }
+  },
+  "runtime_sec": 105.1,
+  "rule": "every row: available_time = decision_time (source decision clock); state reads available_time <= T"
+}
