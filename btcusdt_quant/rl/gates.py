@@ -12,6 +12,7 @@ SEED, NBOOT, BLOCKS, MAIN_BLOCK = 20261010, 10_000, (20, 60, 120), 60
 YEARS = (2022, 2023, 2024, 2025)
 START, END = pd.Timestamp("2022-01-01", tz="UTC"), pd.Timestamp("2026-01-01", tz="UTC")
 N_DAYS = (END - START).days
+CELLS = ("o2_p0.5", "o2_p1.0", "o2_p2.0", "o5_p0.5", "o5_p1.0", "o5_p2.0")
 
 
 def boot_p05(x: np.ndarray, block: int, n_boot: int = NBOOT, seed: int = SEED) -> float:
@@ -54,7 +55,12 @@ def top2_share(daily: np.ndarray) -> float | None:
 
 
 def evaluate(cells: dict, baseline: dict | None = None) -> dict:
-    """cells: {cell: {"daily": [N_DAYS] net4, "closed": {year: n}}}; baseline: {cell: [N_DAYS] daily} or None."""
+    """cells: exactly the 6 execution cells, {cell: {"daily": [N_DAYS] net4, "closed": {year: n}, optional "daily8":
+    [N_DAYS] net8 (report only)}}; baseline: {cell: [N_DAYS] daily} for the same 6 cells, or None."""
+    if set(cells) != set(CELLS) or len(cells) != len(CELLS):
+        raise ValueError(f"gate needs exactly the 6 cells {CELLS}, got {sorted(cells)}")
+    if baseline is not None and set(baseline) != set(CELLS):
+        raise ValueError(f"baseline needs exactly the 6 cells {CELLS}, got {sorted(baseline)}")
     ys = year_slices()
     out = {"cells": {}}
     net_ok, cl_ok, pool_ok, rep_ok, diag_pos = [], [], [], [], 0
@@ -64,9 +70,13 @@ def evaluate(cells: dict, baseline: dict | None = None) -> dict:
             raise ValueError(f"{c}: daily series must cover 2022-01-01..2025-12-31 ({N_DAYS} days), got {len(d)}")
         r = {"pooled_net4": float(d.sum()), "pooled_boot_p05": {str(b): boot_p05(d, b) for b in BLOCKS},
              "mdd": mdd(d), "top2_month_share": top2_share(d), "years": {}}
+        if "daily8" in v:
+            r["pooled_net8_report_only"] = float(np.asarray(v["daily8"], float).sum())
         for y, sl in ys.items():
             yy = {"net4": float(d[sl].sum()), "closed": int(v["closed"][y]),
                   "boot_p05": {str(b): boot_p05(d[sl], b) for b in BLOCKS}}
+            if "daily8" in v:
+                yy["net8_report_only"] = float(np.asarray(v["daily8"], float)[sl].sum())
             r["years"][str(y)] = yy
             net_ok.append(yy["net4"] > 0)
             cl_ok.append(yy["closed"] >= 30)

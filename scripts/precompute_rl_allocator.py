@@ -3030,6 +3030,23 @@ def book_series(b2, m, dec, side, w, cell, kind="state", entry_ok=None, lo=0, ho
     return bk.daily(a, b), closed, bk, tr
 
 
+def daily8(bk, a: int, b: int) -> np.ndarray:
+    """net8 daily (report only): net4 minus another 2 bps x weight at every entry and exit leg."""
+    extra = np.zeros(bk.m.N)
+    if len(bk.s):
+        np.add.at(extra, bk.j0, 2 * bk.w)
+        np.add.at(extra, bk.jx, 2 * bk.w)
+    return (bk.pnl - extra)[a:b].reshape(-1, 1440).sum(1)
+
+
+def stitch_folds(parts: list) -> tuple[np.ndarray, ...]:
+    """Concatenate per-fold decision arrays (fold order); decisions must be strictly increasing across folds."""
+    cols = [np.concatenate([p_[k] for p_ in parts]) for k in range(len(parts[0]))]
+    if len(cols[0]) and np.any(np.diff(cols[0]) <= 0):
+        raise ValueError("stitched decisions not strictly increasing (fold windows overlap or unsorted)")
+    return tuple(cols)
+
+
 def g3_combined(b2, m, dec4, sig: dict, entry_ok: dict | None = None) -> dict:
     out = {}
     for cell in G_CELLS:
@@ -3039,7 +3056,10 @@ def g3_combined(b2, m, dec4, sig: dict, entry_ok: dict | None = None) -> dict:
                                     entry_ok=None if entry_ok is None else entry_ok[sd])
         dl, cl, bkl, trl = parts["long"]
         ds, cs, bks, trs = parts["short"]
+        import btcusdt_quant.rl.gates as GT
+        a8, b8 = m.idx(GT.START), m.idx(GT.END)
         out[f"o{cell[0]}_p{cell[1]}"] = {"daily": dl + ds, "closed": {y: cl[y] + cs[y] for y in cl},
+                                         "daily8": daily8(bkl, a8, b8) + daily8(bks, a8, b8),
                                          "long_daily": dl, "short_daily": ds, "books": (bkl, bks), "trades": (trl, trs)}
     return out
 
@@ -3122,7 +3142,7 @@ def cmd_gates(args) -> None:
         same_model[f] = bool(all(chk))
         dd_all.append(d[va])
         side_all.append(side)
-    dd_all, side_all = np.concatenate(dd_all), np.concatenate(side_all)
+    dd_all, side_all = stitch_folds(list(zip(dd_all, side_all)))
     lo = m.idx(GT.START)
     r1c = {}
     for cell in G_CELLS:

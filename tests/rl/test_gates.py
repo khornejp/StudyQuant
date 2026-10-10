@@ -26,17 +26,26 @@ def test_boot_matches_batch2():
 def test_evaluate_counts_and_paired():
     rng = np.random.default_rng(0)
     cells = {}
-    for k in range(2):
+    for c in GT.CELLS:
         d = rng.normal(5, 3, GT.N_DAYS)
-        cells[f"c{k}"] = {"daily": d, "closed": {y: 40 for y in GT.YEARS}}
-    cells["c1"]["closed"][2023] = 10
+        cells[c] = {"daily": d, "closed": {y: 40 for y in GT.YEARS}, "daily8": d - 0.5}
+    cells["o2_p1.0"]["closed"][2023] = 10
     base = {c: v["daily"] - 1.0 for c, v in cells.items()}
     r = GT.evaluate(cells, baseline=base)
-    assert r["absolute"]["year_cell_net4>0"] == "8/8" and r["absolute"]["year_cell_closed>=30"] == "7/8"
+    assert r["absolute"]["year_cell_net4>0"] == "24/24" and r["absolute"]["year_cell_closed>=30"] == "23/24"
     assert not r["absolute"]["pass"] and r["replacement"]["pass"]
-    assert np.isclose(r["cells"]["c0"]["paired_excess"]["net4"], GT.N_DAYS)
+    assert np.isclose(r["cells"]["o2_p0.5"]["paired_excess"]["net4"], GT.N_DAYS)
+    assert np.isclose(r["cells"]["o2_p0.5"]["pooled_net8_report_only"], r["cells"]["o2_p0.5"]["pooled_net4"] - 0.5 * GT.N_DAYS)
+    assert "net8_report_only" in r["cells"]["o2_p0.5"]["years"]["2022"]
+    five = {c: v for c, v in cells.items() if c != "o5_p2.0"}
     with pytest.raises(ValueError):
-        GT.evaluate({"x": {"daily": np.zeros(10), "closed": {y: 0 for y in GT.YEARS}}})
+        GT.evaluate(five)                                                   # exactly 6 cells required
+    with pytest.raises(ValueError):
+        GT.evaluate(cells, baseline={c: v for c, v in base.items() if c != "o2_p0.5"})
+    bad = dict(cells)
+    bad["o5_p2.0"] = {"daily": np.zeros(10), "closed": {y: 0 for y in GT.YEARS}}
+    with pytest.raises(ValueError):
+        GT.evaluate(bad)
 
 
 def test_veto_episode_fixed_at_first_decision():
@@ -63,3 +72,11 @@ def test_g3_combined_reference_values():
     assert r["absolute"]["pooled_boot60_p05>0"] == "6/6"
     assert abs(min(p60) - 5.068) < 5e-4 and abs(max(p60) - 5.872) < 5e-4
     assert abs(min(net) - 16136.077) < 5e-3 and abs(max(net) - 16967.267) < 5e-3
+
+
+def test_stitch_folds_continuous_order():
+    mod = _load("pra_gate_st_t", "scripts/precompute_rl_allocator.py")
+    d, s = mod.stitch_folds([(np.array([1, 5]), np.array([-1, 0])), (np.array([9, 12]), np.array([1, -1]))])
+    assert d.tolist() == [1, 5, 9, 12] and s.tolist() == [-1, 0, 1, -1]
+    with pytest.raises(ValueError):
+        mod.stitch_folds([(np.array([1, 9]), np.array([0, 0])), (np.array([5]), np.array([1]))])
