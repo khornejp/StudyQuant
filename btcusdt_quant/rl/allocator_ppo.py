@@ -351,11 +351,8 @@ class Trainer:
         L = (b - a) // (cad * HOUR)
         names = list(self.cells)
         envs = {c: AV.VecAllocatorEnv(self.cells[c], 1, cadence_h=cad, static_weights=self.static_w) for c in names}
-        cmp_env = {(c, k): AV.VecAllocatorEnv(self.cells[c], 1, cadence_h=cad, static_weights=w)
-                   for c in names for k, w in self.comparators.items()}
+        cmp = {(c, k): comparator_book(self.cells[c], a, L, cad, w) for c in names for k, w in self.comparators.items()}
         obs = {c: envs[c].reset(np.array([a]), L) for c in names}
-        for e in cmp_env.values():
-            e.reset(np.array([a]), L)
         z = np.zeros((1, len(C.SLEEVES)), np.int64)
         acc = {c: {"net_rl": 0.0, "net_static": 0.0, "reward": 0.0, "dd_pen": 0.0, "to_pen": 0.0,
                    "nonzero_entries": 0, "active_entries": 0, "deviate_entries": 0, "nonhold_open": 0,
@@ -395,19 +392,18 @@ class Trainer:
                         r_["gross_reserved_max"] = max(r_["gross_reserved_max"], float(info["gross_reserved"][0]))
                         series[c]["rl"][step] = info["net_rl"][0]
                         series[c]["static"][step] = info["net_st"][0]
-                        for k in self.comparators:
-                            _, _, _, ci = cmp_env[(c, k)].step(z, z, z)
-                            series[c][k][step] = ci["net_st"][0]
                         obs[c] = o
         res = {}
         for c in names:
+            for k in self.comparators:
+                series[c][k][:] = cmp[(c, k)][0]
             r_ = acc[c]
             r_["excess"] = r_["net_rl"] - r_["net_static"]
             r_["trades"] = int(envs[c].rl.new_alloc[0])
             r_["mdd_rl"], r_["mdd_static"] = float(envs[c].rl.mdd[0]), float(envs[c].st.mdd[0])
             for k in self.comparators:
                 r_[f"net_{k}"] = float(series[c][k].sum())
-                r_[f"mdd_{k}"] = float(cmp_env[(c, k)].st.mdd[0])
+                r_[f"mdd_{k}"] = cmp[(c, k)][1]
             r_["max_baseline"] = max([r_["net_static"]] + [r_[f"net_{k}"] for k in self.comparators])
             r_["excess_vs_max_baseline"] = r_["net_rl"] - r_["max_baseline"]
             r_["all_flat"] = r_["trades"] == 0
@@ -419,6 +415,25 @@ class Trainer:
                "flat_cells": int(sum(r["all_flat"] for r in res.values())), "_actions": actions, "_series": series}
         out["score"] = checkpoint_score(res, self.cfg.ckpt_score)
         return out
+
+
+_CMP_CACHE: dict = {}
+
+
+def comparator_book(cd, start: int, L: int, cad: int, w) -> tuple:
+    """Per-step net4 series and MDD of a static comparator book (RL actions OFF) on one cell; cached because it
+    does not depend on the policy."""
+    key = (id(cd), cd.fold, int(start), int(L), int(cad), tuple(float(x) for x in w))
+    if key not in _CMP_CACHE:
+        e = AV.VecAllocatorEnv(cd, 1, cadence_h=cad, static_weights=w)
+        e.reset(np.array([start]), L)
+        z = np.zeros((1, len(C.SLEEVES)), np.int64)
+        ser = np.zeros(L)
+        for i in range(L):
+            _, _, _, info = e.step(z, z, z)
+            ser[i] = info["net_st"][0]
+        _CMP_CACHE[key] = (ser, float(e.st.mdd[0]))
+    return _CMP_CACHE[key]
 
 
 def checkpoint_score(cells: dict, mode: str = "max_baseline") -> float:

@@ -121,3 +121,18 @@ def test_inactive_sleeves_are_fixed_and_ensemble_median():
     pol = AP.ensemble_policy([M(0, 3), M(4, 3), M(2, 0)])
     e, o = pol({k: None for k in ("seq", "seq_nan", "seq_pad", "static", "account", "m_entry", "m_open")})
     assert e[0, 0] == 2 and o[0, 0] == 3
+
+
+def test_mdd_gate_is_strict():
+    import importlib.util, sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("pra_mdd_t", root / "scripts/precompute_rl_allocator.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    assert mod.mdd_gate({"mdd_rl": 99.0, "mdd_G3_ONLY": 100.0})
+    assert not mod.mdd_gate({"mdd_rl": 100.0, "mdd_G3_ONLY": 100.0})              # equal fails (strict <)
+    assert mod.E2_CANDIDATES == (20, 40, 60, 80, 100, 123)
+    cfg = mod.e2_cfg()
+    assert cfg.lr == 3e-4 and cfg.epochs == 4 and cfg.entry_bias == 2.5 and cfg.ent_decay_frac == 0.8
