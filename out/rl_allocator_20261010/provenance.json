@@ -149,5 +149,10 @@
     "pass": false,
     "chosen": "90d",
     "note": "allocator_state.py changed only by opt-in long_mtm (default output unchanged); state store not regenerated"
+  },
+  "round11_regime_short": {
+    "code_commit": "27962962648d4418044ff6e38beca600e600eb12",
+    "report_sha256": "c5c7ebd3531636d9d904de60147a23a0d9cf8f7fa2ec5514c896df29df640f55",
+    "pass": false
   }
 }
