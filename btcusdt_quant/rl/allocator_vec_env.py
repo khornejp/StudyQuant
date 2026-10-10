@@ -32,10 +32,10 @@ class _Sleeve:
         self.rs = np.where(self.L > 0, sd.row_min[np.minimum(sd.row_off[:-1], max(len(sd.row_min) - 1, 0))], 0)
         self.base = (sd.row_off[:-1] + np.arange(n)).astype(np.int64)
         self.cs = sd.row_cs
-        for q in np.flatnonzero(self.L > 0)[:: max(1, n // 200)]:      # consecutive-minute rows (spot check)
-            m = sd.row_min[sd.row_off[q]:sd.row_off[q + 1]]
-            if not np.array_equal(m, self.rs[q] + np.arange(len(m))):
-                raise ValueError(f"{sd.name}: rows of opportunity {q} are not consecutive minutes")
+        own = np.repeat(np.arange(n), self.L)                          # full row-contiguity check
+        expect = self.rs[own] + (np.arange(len(sd.row_min)) - sd.row_off[:-1][own])
+        if not np.array_equal(sd.row_min, expect):
+            raise ValueError(f"{sd.name}: opportunity rows are not consecutive minutes")
         endres = np.where(self.e >= 0, self.x, self.exp)
         self.endres_cmax = np.maximum.accumulate(endres) if n else endres
         if n and np.any(np.diff(self.dec) < 0):
@@ -57,6 +57,9 @@ class _Book:
         self.equity = np.zeros(N)
         self.peak = np.zeros(N)
         self.mdd = np.zeros(N)
+        self.cap_scaled = np.zeros(N, np.int64)        # allocations scaled below the requested level by the cap
+        self.new_alloc = np.zeros(N, np.int64)         # allocations with multiplier > 0
+        self.alloc_sum = np.zeros(N)                   # sum of those multipliers
 
 
 class VecAllocatorEnv:
@@ -257,7 +260,11 @@ class VecAllocatorEnv:
                 if sel.any():
                     r_, c_ = np.nonzero(sel)
                     q = gq[r_, c_]
-                    book.mult[si][r_, q] = req[r_, c_] / s.w[q] * scale[r_]
+                    mult = req[r_, c_] / s.w[q] * scale[r_]
+                    book.mult[si][r_, q] = mult
+                    np.add.at(book.cap_scaled, r_, (scale[r_] < 1.0).astype(np.int64))
+                    np.add.at(book.new_alloc, r_, (mult > 0).astype(np.int64))
+                    np.add.at(book.alloc_sum, r_, mult)
 
     def _pnl(self, book: _Book, cands, a, b, last):
         rows = np.arange(self.N)[:, None]
@@ -283,6 +290,43 @@ class VecAllocatorEnv:
                 lg = lg + term
             legs += np.where(live, m * w * lg, 0).sum(1)
         return net, legs * C.FEE_SIDE_BPS
+
+    def _gross(self, book: _Book, idx):
+        """gross_open (open allocated exposure) and gross_reserved (open + pending) at the start of minute idx."""
+        cands = self._cands(idx, idx + 1)
+        rows = np.arange(self.N)[:, None]
+        go, gr = np.zeros(self.N), np.zeros(self.N)
+        I = idx[:, None]
+        for si, (s, (q, ok)) in enumerate(zip(self.sl, cands)):
+            m = book.mult[si][rows, q]
+            e, end, ex, dec = s.e[q], book.end[si][rows, q], s.exp[q], s.dec[q]
+            live = ok & (m > 0)
+            x = m * s.w[q]
+            go += np.where(live & (e >= 0) & (e < I) & (I <= end), x, 0).sum(1)
+            res = np.where(e >= 0, end > I, ex >= I)
+            gr += np.where(live & (dec < I) & res, x, 0).sum(1)
+        return go, gr
+
+    def state_dict(self) -> dict:
+        """Everything that evolves during an episode (bit-exact resume)."""
+        books = {}
+        for tag, b in (("rl", self.rl), ("st", self.st)):
+            books[tag] = {k: [a.copy() for a in getattr(b, k)] for k in ("mult", "end", "tf", "mod", "xval")}
+            books[tag].update({k: getattr(b, k).copy() for k in ("equity", "peak", "mdd", "cap_scaled", "new_alloc", "alloc_sum")})
+        return {"k": self.k, "L": self.L, "Ts": self.Ts.copy(), "ti": self.ti.copy(), "mi": self.mi.copy(),
+                "start_j": self.start_j.copy(), "static_w": self.static_w.copy(), "books": books}
+
+    def load_state_dict(self, st: dict) -> None:
+        self.k, self.L = int(st["k"]), int(st["L"])
+        self.Ts, self.ti, self.mi, self.start_j = (st[k].copy() for k in ("Ts", "ti", "mi", "start_j"))
+        self.static_w = st["static_w"].copy()
+        self.rl, self.st = _Book(self.N, self.sl), _Book(self.N, self.sl)
+        for tag, b in (("rl", self.rl), ("st", self.st)):
+            src = st["books"][tag]
+            for k in ("mult", "end", "tf", "mod", "xval"):
+                setattr(b, k, [a.copy() for a in src[k]])
+            for k in ("equity", "peak", "mdd", "cap_scaled", "new_alloc", "alloc_sum"):
+                setattr(b, k, src[k].copy())
 
     def step(self, entry, pending, open_):
         entry, pending, open_ = (np.asarray(x) for x in (entry, pending, open_))
@@ -317,6 +361,9 @@ class VecAllocatorEnv:
             - C.TURNOVER_PENALTY * np.maximum(0.0, out["rl"][2] - out["st"][2])
         self.k += 1
         done = self.k == self.L
+        g_open, g_res = self._gross(self.rl, b)
         info = {"net_rl": out["rl"][0], "net_st": out["st"][0], "turnover_rl": out["rl"][2],
-                "turnover_st": out["st"][2], "dmdd_rl": out["rl"][1], "dmdd_st": out["st"][1]}
+                "turnover_st": out["st"][2], "dmdd_rl": out["rl"][1], "dmdd_st": out["st"][1],
+                "gross_open": g_open, "gross_reserved": g_res, "cap_scaled": self.rl.cap_scaled.copy(),
+                "new_alloc": self.rl.new_alloc.copy(), "alloc_sum": self.rl.alloc_sum.copy()}
         return (None if done else self.observation()), rew, done, info

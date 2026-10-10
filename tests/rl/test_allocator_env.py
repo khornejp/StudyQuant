@@ -249,6 +249,7 @@ def test_vec_env_matches_scalar_env(cell):
     rep = mod.vec_parity(cell, 6, 240, starts, rng, [0.25, 0.5, 0.25, 0.25, 0.25, 0.25, 0.25])
     assert rep["mask_mismatch"] == 0 and rep["obs_max_abs"] <= 1e-6 and rep["events"] > 0
     assert rep["net_max_abs"] <= 1e-9 and rep["reward_max_abs"] <= 1e-9 and rep["equity_max_abs"] <= 1e-9
+    assert rep["gross_max_abs"] <= 1e-12
     from btcusdt_quant.rl import allocator_vec_env as V
     v = V.VecAllocatorEnv(cell, 2)
     with pytest.raises(ValueError):

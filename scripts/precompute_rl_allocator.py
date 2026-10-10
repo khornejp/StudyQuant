@@ -1942,6 +1942,8 @@ def vec_parity(cd, n_envs: int, steps: int, starts, rng, static_w, cadence_h: in
             rep["net_max_abs"] = max(rep["net_max_abs"], abs(inf["net_rl"] - info["net_rl"][n]),
                                      abs(inf["net_st"] - info["net_st"][n]))
             rep["reward_max_abs"] = max(rep["reward_max_abs"], abs(r - rew[n]))
+            rep["gross_max_abs"] = max(rep.get("gross_max_abs", 0.0), abs(inf["gross_open"] - info["gross_open"][n]),
+                                       abs(inf["gross_reserved"] - info["gross_reserved"][n]))
     rep["equity_max_abs"] = float(max(abs(e.rl.equity - venv.rl.equity[n]) for n, e in enumerate(envs)))
     return rep
 
@@ -2093,10 +2095,125 @@ def cmd_baselines(args) -> None:
         raise SystemExit("SCORER PARITY FAIL")
 
 
+# ================================================================ step 5: PPO smoke (Codex spec, F4 seed 0)
+SMOKE_COUNTS = {"o2_p0.5": 22, "o2_p1.0": 22, "o2_p2.0": 21, "o5_p0.5": 21, "o5_p1.0": 21, "o5_p2.0": 21}
+
+
+def cmd_smoke(args) -> None:
+    import torch
+    from btcusdt_quant.rl import allocator_env as AE, allocator_ppo as AP
+    t0 = time.time()
+    SD = OUT / "smoke"
+    SD.mkdir(parents=True, exist_ok=True)
+    sel = json.loads((OUT / "baselines/static_selection.json").read_text(encoding="utf-8"))["selection"]["F4"]
+    static_w = np.array([sel["weights"][s] for s in SLEEVES])
+    if not np.array_equal(static_w, [0, 0, 0, 0, 0, 1, 1]):
+        raise SystemExit(f"F4 static weights changed: {static_w}")
+    train, val = FOLDS_A2["F4"]
+    cells = {c: AE.load_cell(c, allow_test=False) for c in SMOKE_COUNTS}
+    cfg = AP.AllocPPOConfig()
+    n_updates = 7
+    log(f"smoke: cells loaded {time.time() - t0:.0f}s; train {train} val {val}")
+
+    def trainer():
+        return AP.Trainer(cells, SMOKE_COUNTS, static_w, train, val, cfg, seed=0)
+
+    # A: uninterrupted 7 updates, validation at 0 and 7
+    tr = trainer()
+    rep: dict = {"spec": {"fold": "F4", "seed": 0, "train": list(train), "val": list(val), "counts": SMOKE_COUNTS,
+                          "cfg": dataclasses_asdict(cfg), "updates": n_updates, "static_weights": static_w.tolist(),
+                          "device": str(tr.device)}, "updates": []}
+    t1 = time.time()
+    rep["val_0"] = tr.validate()
+    best = {"key": rep["val_0"]["worst_cell_excess"], "update": 0} if not rep["val_0"]["all_flat"] else \
+        {"key": -math.inf, "update": -1}
+    if best["update"] == 0:
+        torch.save({"model": tr.model.state_dict(), "update": 0, "key": best["key"], "model_args": tr.model.model_args},
+                   SD / "best.pt")
+    for _ in range(n_updates):
+        tu = time.time()
+        rec = tr.run_update()
+        rec["sec"] = round(time.time() - tu, 2)
+        rep["updates"].append(rec)
+        log(f"smoke update {rec['update']}: reward {rec['reward']:.1f} ent {rec['entropy_active_heads']:.3f} "
+            f"nonzero {rec['nonzero_entry_ratio']} new_alloc {rec['new_alloc']} kl {rec['approx_kl']:.4f} {rec['sec']}s")
+    rep["val_7"] = tr.validate()
+    if not rep["val_7"]["all_flat"] and rep["val_7"]["worst_cell_excess"] > best["key"]:
+        best = {"key": rep["val_7"]["worst_cell_excess"], "update": n_updates}
+        torch.save({"model": tr.model.state_dict(), "update": n_updates, "key": best["key"],
+                    "model_args": tr.model.model_args}, SD / "best.pt")
+    rep["best"] = best
+    rep["train_sec_uninterrupted"] = round(time.time() - t1, 1)
+    final_a = tr.state_dict()
+    torch.save(final_a, SD / "last.pt")
+    # B: split run (3 updates, checkpoint to disk, fresh trainer, 4 updates) must equal A exactly
+    tb = trainer()
+    vb0 = tb.validate()
+    recs_b = [tb.run_update() for _ in range(3)]
+    torch.save(tb.state_dict(), SD / "split_u3.pt")
+    del tb
+    tc = trainer()
+    tc.load_state_dict(torch.load(SD / "split_u3.pt", map_location="cpu", weights_only=False))
+    recs_b += [tc.run_update() for _ in range(4)]
+    vb7 = tc.validate()
+    final_b = tc.state_dict()
+    strip = lambda r: {k: v for k, v in r.items() if k != "sec"}  # noqa: E731
+    rep["split_resume"] = {
+        "model_equal": AP.tensors_equal(final_a["model"], final_b["model"]),
+        "optimizer_equal": AP.tensors_equal(final_a["opt"], final_b["opt"]),
+        "env_equal": AP.tensors_equal(final_a["env"], final_b["env"]),
+        "torch_rng_equal": AP.tensors_equal(final_a["torch_rng"], final_b["torch_rng"]),
+        "cuda_rng_equal": AP.tensors_equal(final_a["cuda_rng"], final_b["cuda_rng"]),
+        "update_logs_equal": AP.tensors_equal([strip(r) for r in rep["updates"]], [strip(r) for r in recs_b]),
+        "val_equal": AP.tensors_equal(rep["val_0"], vb0) and AP.tensors_equal(rep["val_7"], vb7)}
+    U = rep["updates"]
+    v0, v7 = rep["val_0"], rep["val_7"]
+    rep["contracts"] = {
+        "illegal_actions==0": sum(u["illegal"] for u in U) == 0,
+        "nan_inf==0": sum(u["nonfinite"] for u in U) == 0,
+        "reward_identity<=1e-6": max(u["identity_err"] for u in U) <= 1e-6
+        and max(c["identity_err"] for v in (v0, v7) for c in v["cells"].values()) <= 1e-6,
+        "gross_reserved<=2": max(u["gross_reserved_max"] for u in U) <= C_GROSS + 1e-12
+        and max(c["gross_reserved_max"] for v in (v0, v7) for c in v["cells"].values()) <= C_GROSS + 1e-12,
+        "update0_val_reward==0": all(c["reward"] == 0.0 and c["excess"] == 0.0 for c in v0["cells"].values()),
+        "split_resume_exact": all(rep["split_resume"].values())}
+    rep["activity"] = {"rollout_nonzero_entry": all((u["nonzero_entry_ratio"] or 0) > 0 for u in U),
+                       "rollout_new_alloc": sum(u["new_alloc"] for u in U),
+                       "final_flat_cells": v7["flat_cells"]}
+    rep["smoke_pass"] = bool(all(rep["contracts"].values()) and rep["activity"]["rollout_new_alloc"] > 0
+                             and rep["activity"]["rollout_nonzero_entry"] and v7["flat_cells"] == 0)
+    rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
+               runtime_sec=round(time.time() - t0, 1),
+               code_sha256={k: sha(ROOT / f"btcusdt_quant/rl/{k}.py") for k in
+                            ("allocator_model", "allocator_ppo", "allocator_vec_env", "allocator_env")},
+               note="positive excess is not a smoke criterion; TEST never accessed",
+               throughput_transitions_per_sec=round(sum(cfg.n_steps * 128 for _ in U)
+                                                    / sum(u["sec"] for u in U), 1))
+    dump(SD / "smoke_report.json", rep)
+    registry.record(REGISTRY, {"experiment": "RL allocator PPO smoke (F4 seed 0, 7 updates)", "role": "smoke",
+                               "n_trials": 0, "n_simulations": 0,
+                               "config": {"fold": "F4", "seed": 0, "updates": n_updates, "cfg": dataclasses_asdict(cfg),
+                                          "static_weights": static_w.tolist()},
+                               "result_summary": {"smoke_pass": rep["smoke_pass"], "val_0": v0["worst_cell_excess"],
+                                                  "val_7": v7["worst_cell_excess"]}})
+    log(f"smoke {'PASS' if rep['smoke_pass'] else 'FAIL'} contracts {rep['contracts']} activity {rep['activity']} "
+        f"val7 worst excess {v7['worst_cell_excess']:.1f}")
+    if not rep["smoke_pass"]:
+        raise SystemExit("SMOKE FAIL")
+
+
+C_GROSS = 2.0
+
+
+def dataclasses_asdict(x):
+    import dataclasses
+    return dataclasses.asdict(x)
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
-                                       "vec-check", "baselines"))
+                                       "vec-check", "baselines", "smoke"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--only", default="g3,c,ax")
     ap.add_argument("--no-registry", action="store_true")
@@ -2118,6 +2235,8 @@ def main(argv=None) -> None:
         return cmd_vec_check(args)
     if args.command == "baselines":
         return cmd_baselines(args)
+    if args.command == "smoke":
+        return cmd_smoke(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
