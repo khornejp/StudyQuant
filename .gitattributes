@@ -28,3 +28,5 @@ btcusdt_quant/rl/gates.py text eol=lf
 tests/rl/test_gates.py text eol=lf
 btcusdt_quant/rl/event_sim.py text eol=lf
 tests/rl/test_event_sim.py text eol=lf
+btcusdt_quant/rl/pullback.py text eol=lf
+tests/rl/test_pullback.py text eol=lf

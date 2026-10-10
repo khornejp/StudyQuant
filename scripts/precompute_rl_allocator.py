@@ -3365,12 +3365,167 @@ def cmd_hsel(args) -> None:
         f"{rep['runtime_sec']}s")
 
 
+# ================================================================ LONG-PULLBACK-GBM-24H-r1 (Codex spec 2026-10-11)
+PB_HOLD = 1440
+
+
+def pb_trade(b2, m, dec, side, cell, lo, hi):
+    """Event run (TTL 15 m, hold 1440 m) -> Book."""
+    o, p = cell
+    tr, od = b2.simulate(m, "event", dec, side, np.ones(len(dec)), o, b2.TTL_EVENT, p, lo, hi, hold=PB_HOLD)
+    return b2.Book(m, tr, od, lo, hi)
+
+
+def cmd_long_pullback(args) -> None:
+    from btcusdt_quant.rl import gates as GT, pullback as PB, regime_short as RS
+    t0 = time.time()
+    PD = OUT / "long_pullback_gbm_24h_r1"
+    PD.mkdir(parents=True, exist_ok=True)
+    b2, m, st, in_hash = regime_inputs()
+    MAT, mg, dec4, stg, _ = g3_setup()
+    sig = g3_signals(MAT, stg)
+    T = st["T"].to_numpy(np.int64)
+    T4 = mg.t[dec4] + sp.MIN
+    k = np.searchsorted(T4, T)
+    if np.any(k >= len(T4)) or not np.array_equal(T4[k], T):
+        raise SystemExit("state / G3 decision grids misaligned")
+    if not np.array_equal(m.t, mg.t):
+        raise SystemExit("market grids differ")
+    fast, slow = stg["score"][(6, 18, 42)][k], stg["score"][(42, 168, 504)][k]
+    extra = np.column_stack([fast, slow, stg["svi"][42][k], stg["svi"][180][k], stg["sig"][k],
+                             (stg["fund"] - stg["med"])[k], stg["mad"][k]])
+    X = np.column_stack([st[list(RS.FEATURES)].to_numpy(float), extra])
+    names = list(RS.FEATURES) + list(PB.EXTRA)
+    uni = PB.universe(sig["long"]["side"][k], slow, fast)
+    d = np.searchsorted(m.t, T) - 1
+    y, lend = RS.long_labels(m.t, m.c, m.ft, m.fr, d, hold=PB_HOLD)
+    ts = lambda x: pd.Timestamp(x, tz="UTC").value  # noqa: E731
+    cells = G_CELLS
+    rep: dict = {"spec": {"universe": "G3_LONG target 0 & slow score(42,168,504) > 0 & fast score(6,18,42) < 0",
+                          "label": "24h long price return - 4 bps - actual funding (PESS settlements in (T, T+24h])",
+                          "features": names, "model": PB.GBM_PARAMS,
+                          "model_note": "subsample_freq=1 so that subsample .8 is applied; deterministic/force_row_wise "
+                                        "for reproducibility",
+                          "threshold": "inner blocked OOF prediction quantile in {0.50, 0.65, 0.80}; rank worst block x "
+                                       "cell net4 -> min boot60 -> max MDD (smaller) -> higher quantile; inner year x "
+                                       "cell closed >= 30 enforced",
+                          "execution": "event, weight 1, entry TTL 15 m, hold 1440 m, 2 bps exit quote 60 m requote, "
+                                       "6 cells, PESS funding, maker 4 bps; outer folds stitched into one continuous "
+                                       "2022..2025 run (year-end carry)", "purge": "24h", "folds": FOLDS_A2,
+                          "portfolio": {"G3_LONG": 0.8, "G3_SHORT": 0.8, "NEW_LONG": 0.4},
+                          "data": "DEV loader (< 2026-01-01)", "input_sha256": in_hash}, "folds": {}}
+    parts, tamper = [], {}
+    for f, (tr_w, va_w) in FOLDS_A2.items():
+        a_tr, b_tr, a_va, b_va = ts(tr_w[0]), ts(tr_w[1]), ts(va_w[0]), ts(va_w[1])
+        purge = a_va - PB_HOLD * sp.MIN
+        trn = (T >= a_tr) & (T < b_tr) & (lend <= purge) & np.isfinite(y) & uni
+        idx = np.flatnonzero(trn)
+        blk = RS.block_ids(T[idx])
+        oof = np.full(len(idx), np.nan)
+        for b in np.unique(blk):
+            te = blk == b
+            t0_, t1_ = T[idx][te].min(), T[idx][te].max()
+            fit_rows = idx[~te & ((lend[idx] < t0_) | (T[idx] > t1_ + PB_HOLD * sp.MIN))]
+            oof[te] = PB.fit(X[fit_rows], y[fit_rows]).predict(X[idx][te])
+        table = []
+        for q in PB.QUANTILES:
+            thr = float(np.quantile(oof, q))
+            nets, dailies, closed_y = [], {c: [] for c in cells}, {}
+            for b in np.unique(blk):
+                te = blk == b
+                rows = idx[te]
+                take = oof[te] > thr
+                t0_, t1_ = T[rows].min(), T[rows].max()
+                lo = m.idx(pd.Timestamp(int(t0_), tz="UTC"))
+                hi = min(m.idx(pd.Timestamp(int(t1_ + 4 * 3600 * 10**9), tz="UTC")), m.N)
+                lo -= lo % 1440
+                hi -= hi % 1440
+                yr = pd.Timestamp(int(t0_), tz="UTC").year
+                for cell in cells:
+                    bk = pb_trade(b2, m, d[rows][take], np.ones(int(take.sum()), int), cell, lo, hi)
+                    dly = bk.daily(lo, hi)
+                    nets.append(float(dly.sum()))
+                    dailies[cell].append(dly)
+                    closed_y[(yr, cell)] = closed_y.get((yr, cell), 0) + bk.window(lo, hi)["closed"]
+            cat = {c: np.concatenate(v) for c, v in dailies.items()}
+            table.append({"quantile": q, "threshold": thr, "worst_block_cell_net4": min(nets),
+                          "boot60_min_cell": min(GT.boot_p05(v, 60) for v in cat.values()),
+                          "mdd_max_cell": max(GT.mdd(v) for v in cat.values()),
+                          "min_year_cell_closed": int(min(closed_y.values())),
+                          "closed_ok": bool(min(closed_y.values()) >= 30), "entries_inner": int((oof > thr).sum())})
+        valid = [r for r in table if r["closed_ok"]]
+        pool = valid if valid else table
+        best = sorted(pool, key=lambda r: (-r["worst_block_cell_net4"], -r["boot60_min_cell"], r["mdd_max_cell"],
+                                           -r["quantile"]))[0]
+        model = PB.fit(X[trn], y[trn])
+        va = (T >= a_va) & (T < b_va) & uni
+        pred = model.predict(X[va])
+        take = pred > best["threshold"]
+        parts.append((d[va][take], np.ones(int(take.sum()), int)))
+        # tamper: future prices / funding after the purge point x1.7 -> same train labels and model predictions;
+        # features after a val cut -> predictions before it unchanged
+        c2 = m.c.copy()
+        c2[int(np.searchsorted(m.t, purge)):] *= 1.7
+        y2, _ = RS.long_labels(m.t, c2, m.ft, np.where(m.ft > purge, m.fr * 1.7, m.fr), d, hold=PB_HOLD)
+        m2 = PB.fit(X[trn], y2[trn])
+        X3 = X.copy()
+        cut = a_va + (b_va - a_va) // 2
+        X3[T > cut] = 99.0
+        p3 = model.predict(X3[va])
+        tamper[f] = {"train_labels_equal": bool(np.array_equal(y[trn], y2[trn])),
+                     "model_equal": bool(np.array_equal(m2.predict(X[va]), pred)),
+                     "pred_before_cut_equal": bool(np.array_equal(p3[T[va] <= cut], pred[T[va] <= cut]))}
+        imp = model.booster_.feature_importance(importance_type="gain")
+        top = np.argsort(-imp)[:8]
+        rep["folds"][f] = {"train": tr_w, "val": va_w, "threshold_table": table, "selected": best,
+                           "no_valid_threshold": not valid, "universe_train_rows": int(trn.sum()),
+                           "universe_val_rows": int(va.sum()), "val_entries_signalled": int(take.sum()),
+                           "importance_gain_top": {names[i]: float(imp[i]) for i in top}, "tamper": tamper[f]}
+        log(f"pullback {f}: rows {trn.sum()} val {va.sum()} q {best['quantile']} thr {best['threshold']:.2f} "
+            f"signals {take.sum()} valid {len(valid)}")
+    dd_all, side_all = stitch_folds(parts)
+    lo, hi = m.idx(GT.START), m.N
+    new = {}
+    for cell in cells:
+        bk = pb_trade(b2, m, dd_all, side_all, cell, lo, hi)
+        closed, win = {}, {}
+        for yv in GT.YEARS:
+            ya, yb = m.idx(pd.Timestamp(f"{yv}-01-01", tz="UTC")), m.idx(pd.Timestamp(f"{yv + 1}-01-01", tz="UTC"))
+            w_ = bk.window(ya, yb)
+            closed[yv], win[yv] = w_["closed"], w_["win"]
+        new[f"o{cell[0]}_p{cell[1]}"] = {"daily": bk.daily(lo, hi), "daily8": daily8(bk, lo, hi), "closed": closed,
+                                         "win": win, "win_all": bk.window(lo, hi)["win"]}
+    g_new = GT.evaluate({c: {k_: v[k_] for k_ in ("daily", "daily8", "closed")} for c, v in new.items()})
+    base = g3_combined(MAT.b2, mg, dec4, sig)
+    port = {c: {"daily": 0.8 * base[c]["long_daily"] + 0.8 * base[c]["short_daily"] + 0.4 * new[c]["daily"],
+                "closed": {yv: base[c]["closed"][yv] + new[c]["closed"][yv] for yv in GT.YEARS}} for c in new}
+    g_port = GT.evaluate(port, baseline={c: v["daily"] for c, v in base.items()})
+    corr = {c: float(np.corrcoef(new[c]["daily"], base[c]["daily"])[0, 1]) for c in new}
+    tam_ok = all(all(v.values()) for v in tamper.values())
+    rep.update(new_long=g_new, portfolio=g_port, corr_new_vs_g3=corr, tamper_all=tam_ok,
+               win={c: {"all": v["win_all"], **{str(y_): v["win"][y_] for y_ in GT.YEARS}} for c, v in new.items()})
+    rep["pass"] = bool(g_new["absolute"]["pass"] and g_port["replacement"]["pass"] and tam_ok)
+    rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
+               runtime_sec=round(time.time() - t0, 1), test_accessed=False,
+               code_sha256={k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py") for k_ in ("pullback", "regime_short", "gates",
+                                                                                   "dev_data")})
+    dump(PD / "long_pullback_report.json", rep)
+    registry.record(REGISTRY, {"experiment": "LONG-PULLBACK-GBM-24H-r1", "role": "trial", "n_trials": len(PB.QUANTILES),
+                               "n_simulations": 6, "input_hashes": in_hash,
+                               "config": {"universe": rep["spec"]["universe"], "model": PB.GBM_PARAMS},
+                               "result_summary": {"pass": rep["pass"], "new_absolute": g_new["absolute"],
+                                                  "portfolio_replacement": g_port["replacement"],
+                                                  "selected_q": {f: x["selected"]["quantile"] for f, x in rep["folds"].items()}}})
+    log(f"pullback {'PASS' if rep['pass'] else 'FAIL'} new {g_new['absolute']} port {g_port['replacement']} tamper "
+        f"{tam_ok} {rep['runtime_sec']}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel"))
+                                       "short-hsel", "long-pullback"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -3412,6 +3567,8 @@ def main(argv=None) -> None:
         return cmd_gates(args)
     if args.command == "short-hsel":
         return cmd_hsel(args)
+    if args.command == "long-pullback":
+        return cmd_long_pullback(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
