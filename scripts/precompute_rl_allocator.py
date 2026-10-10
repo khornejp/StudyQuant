@@ -12,7 +12,7 @@ TEST rows are read here only for integrity parity (explicit allow_test); nothing
 Usage: venv_btcusdt\\Scripts\\python.exe scripts\\precompute_rl_allocator.py freeze|precompute [--paths 100]
 """
 from __future__ import annotations
-import argparse, hashlib, importlib.util, json, subprocess, sys, time
+import argparse, hashlib, importlib.util, json, math, subprocess, sys, time
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1599,9 +1599,225 @@ def c_e1_features(market, bars) -> dict:
     return {"decision_time": t, "side": side, "volume_z": z_a, "breakout_bps": brk}
 
 
+# ================================================================ step 4: env checks
+def slow_tighten(cd, sd, k: int, x0: int, f: float, end: int):
+    """Independent minute loop of the tightened R2-52A stop (reference for allocator_env.tighten_exit)."""
+    s, e, px = int(sd.side[k]), int(sd.e[k]), float(sd.px_in[k])
+    if x0 >= end or x0 <= e:
+        return None
+    best = px
+    for i in range(e, x0):
+        best = max(best, cd.h[i]) if s == 1 else min(best, cd.l[i])
+    for i in range(x0, end):
+        R = min(float(sd.R_t[i]), f * float(sd.R0[k]))
+        hard = px * math.exp(-s * R / 1e4)
+        lvl = hard
+        if sd.armed[i - 1] == 1:
+            trail = best * math.exp(-s * 0.5 * R / 1e4)
+            if s * (trail - hard) > 0:
+                lvl = trail
+        if (s == 1 and cd.o[i] <= lvl) or (s == -1 and cd.o[i] >= lvl):
+            return i, float(cd.o[i])
+        if (s == 1 and cd.l[i] <= lvl) or (s == -1 and cd.h[i] >= lvl):
+            return i, float(lvl)
+        best = max(best, cd.h[i]) if s == 1 else min(best, cd.l[i])
+    return None
+
+
+def slow_replay(cd, env, book, b2) -> np.ndarray:
+    """Rebuild the book's minute ledger from scratch: final exits re-derived from the action log with the source
+    Batch-2 exit_fill (lin), next-open fills (log) and the independent stop loop; rows from lin_rows / log_rows."""
+    from btcusdt_quant.rl import allocator_contracts as AC
+    a0, b0 = int(env.mi[0]), int(env.mi[-1])
+    out = np.zeros(b0 - a0)
+    m = b2.Market(cd.t, cd.o, cd.h, cd.l, cd.c, np.ones(len(cd.t)), np.ones(len(cd.t)), np.zeros(0, np.int64),
+                  np.zeros(0))
+    for si, s in enumerate(AC.SLEEVES):
+        sd = env.sd[si]
+        ev = {}
+        for (sj, q, act, minute, val) in book.events:
+            if sj == si:
+                ev.setdefault(q, []).append((act, minute, val))
+        for q, mult in book.mult[si].items():
+            if mult <= 0 or sd.e[q] < 0:
+                continue
+            end, px_end, tf = int(sd.x[q]), None, 1.0
+            for act, a, val in ev.get(q, []):
+                if act == "EXIT":
+                    if sd.kind == "lin":
+                        if not (sd.e[q] <= a - 1 < sd.xdec[q]) or a - 1 >= end:
+                            continue
+                        j, px = b2.exit_fill(m, a - 1, int(sd.side[q]), len(cd.t), sd.pen)
+                        if j >= 0 and j <= end:
+                            end, px_end = j, px
+                    elif sd.e[q] < a <= end:
+                        end, px_end = a, float(cd.o[a])
+                elif act in AC.TIGHTEN_F:
+                    tf = min(tf, val)
+                    ch = slow_tighten(cd, sd, q, a, tf, end)
+                    if ch is not None:
+                        end, px_end = ch
+            ft, fr = sd.fund[q]
+            if px_end is None:
+                lo, hi = sd.row_off[q], sd.row_off[q + 1]
+                mins, net = sd.row_min[lo:hi], np.diff(sd.row_cs[lo + q:hi + q + 1])
+            elif sd.kind == "lin":
+                tr = pd.DataFrame({"tid": [0], "side": [sd.side[q]], "entry_weight_frozen": [sd.w[q]],
+                                   "entry_idx": [sd.e[q]], "entry_px": [sd.px_in[q]], "open_at_end": [False],
+                                   "exit_idx": [end], "exit_px": [px_end]})
+                r = sp.lin_rows(cd.t, cd.c, tr, len(cd.t), ft, fr)
+                mins, net = r["minute"], r["gross"] + r["fee"] + r["funding"]
+            else:
+                tr = pd.DataFrame({"tid": [0], "side": [sd.side[q]], "units": [1.0], "e": [sd.e[q]], "x": [end],
+                                   "px_in": [sd.px_in[q]], "px_out": [px_end], "entry_ns": [cd.t[sd.e[q]]],
+                                   "exit_ns": [cd.t[end]]})
+                r = sp.log_rows(cd.t, cd.c, tr, 2.0, ft, fr)
+                mins, net = r["minute"], r["gross"] + r["fee"] + r["funding"]
+            w = (mins >= a0) & (mins < b0)
+            np.add.at(out, mins[w] - a0, mult * net[w])
+            if env.terminal_fee and end >= b0 and sd.e[q] < b0:
+                out[b0 - 1 - a0] += mult * (-2.0 * sd.w[q] if sd.kind == "lin" else -2.0)
+    return out
+
+
+def random_action(rng, masks, p_exit=0.05, p_tight=0.15, p_cancel=0.2):
+    from btcusdt_quant.rl import allocator_contracts as AC
+    n = len(AC.SLEEVES)
+    entry = tuple(int(rng.choice(np.flatnonzero(masks.entry[k]))) for k in range(n))
+    pend = tuple(1 if masks.pending[k, 1] and rng.random() < p_cancel else 0 for k in range(n))
+    op = []
+    for k in range(n):
+        legal = np.flatnonzero(masks.open[k])
+        r = rng.random()
+        if 3 in legal and r < p_exit:
+            op.append(3)
+        elif len([x for x in legal if x in (1, 2)]) and r < p_exit + p_tight:
+            op.append(int(rng.choice([x for x in legal if x in (1, 2)])))
+        else:
+            op.append(0)
+    return AC.Action(entry, pend, tuple(op))
+
+
+def cmd_env_check(args) -> None:
+    from btcusdt_quant.rl import allocator_contracts as AC, allocator_env as AE
+    sp.require_unlock(args.allow_test_parity, "env parity on TEST windows")
+    b2 = load("nm_b2_env", "out/run_new_model_batch2_20261010.py")
+    pm = json.loads((PRE / "manifest.json").read_text(encoding="utf-8"))["parity"]
+    ts = lambda x: pd.Timestamp(x, tz="UTC").value  # noqa: E731
+    win = {"TEST": (ts("2026-01-01"), ts("2026-10-08")), "DEV-FULL": (ts("2020-01-01 01:00"), ts("2026-01-01")),
+           "NATIVE_C": (ts("2023-01-01"), ts("2026-01-01")), "NATIVE_AX": (ts("2023-09-01"), ts("2026-01-01"))}
+    rep: dict = {"parity": {}, "random": {}, "static": {}, "throughput": {}}
+    t0 = time.time()
+    worst_tot = worst_min = 0.0
+    for cell in [CELL_TAG[c] for c in CELLS]:
+        tl = time.time()
+        cd = AE.load_cell(cell, allow_test=True)
+        rep.setdefault("load_sec", {})[cell] = round(time.time() - tl, 2)
+        for si, s in enumerate(AC.SLEEVES):
+            if s not in G3_FAMILY and cell != CELL_TAG[PRIMARY]:
+                continue                                      # native sleeves are cell independent
+            checks = [("TEST", f"{s}|{cell if s in G3_FAMILY else 'native'}", "TEST_net4")]
+            if s in G3_FAMILY:
+                checks.append(("DEV-FULL", f"{s}|{cell}", "DEV-FULL_net4"))
+            elif s.startswith("C"):
+                checks.append(("NATIVE_C", f"{s}|native", "NATIVE_2023_2025_net4"))
+            else:
+                checks.append(("NATIVE_AX", f"{s}|native", "NATIVE_net4"))
+            for wname, key, field_ in checks:
+                env = AE.AllocatorEnv(cd, inherit_open=[s], terminal_fee=False, record_minutes=True)
+                obs = env.reset(*win[wname])
+                tot = 0.0
+                while True:
+                    lv = [4 if (k == si and obs["masks"].entry[k, 4]) else 0 for k in range(len(AC.SLEEVES))]
+                    obs, r, done, info = env.step(AC.Action(tuple(lv), (0,) * 7, (0,) * 7))
+                    tot += info["net_rl"]
+                    if done:
+                        break
+                ref = pm[key][field_]
+                sl = slow_replay(cd, env, env.rl, b2)
+                dmin = float(np.abs(sl - env.minutes["rl"]).max())
+                rep["parity"][f"{s}|{cell}|{wname}"] = {"env": tot, "ref": ref, "abs_diff": abs(tot - ref),
+                                                       "minute_vs_slow": dmin,
+                                                       "steps_sum_vs_minutes": abs(tot - env.minutes["rl"].sum())}
+                worst_tot, worst_min = max(worst_tot, abs(tot - ref)), max(worst_min, dmin)
+        # random legal policies (all 7 sleeves) vs slow replay; static-equal actions -> reward 0
+        rng = np.random.default_rng(SEED + CELLS.index(next(c for c in CELLS if CELL_TAG[c] == cell)))
+        starts = [ts("2021-03-01"), ts("2022-06-01"), ts("2023-11-01"), ts("2024-08-01"), ts("2025-05-01"),
+                  ts("2026-02-01")]
+        rr = {"episodes": 0, "steps": 0, "max_minute_diff": 0.0, "max_total_diff": 0.0, "max_gross": 0.0,
+              "steps_sum_vs_minutes": 0.0, "events": 0}
+        tsec = 0.0
+        for st_ in starts:
+            env = AE.AllocatorEnv(cd, static_weights=[0.25] * 7, record_minutes=True)
+            obs = env.reset(st_, st_ + 90 * 86400 * 10**9)
+            tot, rsum, nst = 0.0, 0.0, 0
+            t1 = time.time()
+            while True:
+                obs, r, done, info = env.step(random_action(rng, obs["masks"]))
+                tot += info["net_rl"]
+                rsum += r
+                nst += 1
+                rr["max_gross"] = max(rr["max_gross"], info["gross"])
+                if done:
+                    break
+            tsec += time.time() - t1
+            sl = slow_replay(cd, env, env.rl, b2)
+            rr["max_minute_diff"] = max(rr["max_minute_diff"], float(np.abs(sl - env.minutes["rl"]).max()))
+            rr["max_total_diff"] = max(rr["max_total_diff"], abs(sl.sum() - tot))
+            rr["steps_sum_vs_minutes"] = max(rr["steps_sum_vs_minutes"], abs(tot - env.minutes["rl"].sum()))
+            rr["episodes"] += 1
+            rr["steps"] += nst
+            rr["events"] += len(env.rl.events)
+            rr["modified_exits"] = rr.get("modified_exits", 0) + sum(len(x) for x in env.rl.mod)
+            rr["tighten_exits"] = rr.get("tighten_exits", 0) + sum(1 for (si_, q_, a_, m_, v_) in env.rl.events
+                                                                   if a_.startswith("TIGHTEN") and q_ in env.rl.mod[si_])
+        rr["steps_per_sec"] = round(rr["steps"] / tsec, 1)
+        rep["random"][cell] = rr
+        # static-baseline actions: reward exactly 0 every step
+        env = AE.AllocatorEnv(cd, static_weights=[0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.5])
+        obs = env.reset(ts("2024-01-01"), ts("2024-07-01"))
+        rs, nz = 0.0, 0
+        while True:
+            obs, r, done, info = env.step(AC.static_action(env.static_w, env.masks()))
+            nz += int(r != 0.0)
+            rs += abs(r)
+            if done:
+                break
+        rep["static"][cell] = {"nonzero_reward_steps": nz, "sum_abs_reward": rs}
+        log(f"env-check {cell}: random {rr} static {rep['static'][cell]}")
+    # 4h ablation throughput (uses 32 x 1h history from the 1h store)
+    cd = AE.load_cell(CELL_TAG[PRIMARY], cadence_h=4, allow_test=True)
+    env = AE.AllocatorEnv(cd, cadence_h=4)
+    obs = env.reset(ts("2024-01-01"), ts("2025-01-01"))
+    t1, n4 = time.time(), 0
+    rng = np.random.default_rng(SEED)
+    while True:
+        obs, r, done, info = env.step(random_action(rng, obs["masks"]))
+        n4 += 1
+        if done:
+            break
+    rep["throughput"]["4h_steps_per_sec"] = round(n4 / (time.time() - t1), 1)
+    rep["summary"] = {"parity_runs": len(rep["parity"]), "max_abs_total_vs_ref": worst_tot,
+                      "max_minute_vs_slow": worst_min,
+                      "random_max_minute_diff": max(v["max_minute_diff"] for v in rep["random"].values()),
+                      "random_max_gross": max(v["max_gross"] for v in rep["random"].values()),
+                      "static_nonzero_reward_steps": sum(v["nonzero_reward_steps"] for v in rep["static"].values())}
+    rep.update(created_utc=datetime.now(timezone.utc).isoformat(), git_head=git("rev-parse", "HEAD"),
+               code_sha256={"allocator_env": sha(ROOT / "btcusdt_quant/rl/allocator_env.py"),
+                            "allocator_contracts": sha(ROOT / "btcusdt_quant/rl/allocator_contracts.py"),
+                            "script": sha(Path(__file__))}, runtime_sec=round(time.time() - t0, 1))
+    ok = (worst_tot <= 1e-6 and worst_min <= 1e-9 and rep["summary"]["random_max_minute_diff"] <= 1e-9
+          and rep["summary"]["random_max_gross"] <= AC.GROSS_CAP + 1e-9 and rep["summary"]["static_nonzero_reward_steps"] == 0)
+    rep["pass"] = bool(ok)
+    dump(OUT / "env" / "env_check.json", rep)
+    log(f"env-check {'PASS' if ok else 'FAIL'} {rep['summary']}")
+    if not ok:
+        raise SystemExit("ENV CHECK FAIL")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=("freeze", "amend", "precompute", "signals", "state"))
+    ap.add_argument("command", choices=("freeze", "amend", "precompute", "signals", "state", "env-check"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--only", default="g3,c,ax")
     ap.add_argument("--no-registry", action="store_true")
@@ -1615,6 +1831,8 @@ def main(argv=None) -> None:
         return cmd_amend(args)
     if args.command == "signals":
         return cmd_signals(args)
+    if args.command == "env-check":
+        return cmd_env_check(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)

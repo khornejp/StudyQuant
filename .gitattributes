@@ -9,3 +9,6 @@ tests/rl/test_allocator_state.py text eol=lf
 out/rl_allocator_20261010/*.json text eol=lf
 out/rl_allocator_20261010/**/*.json text eol=lf
 out/rl_allocator_20261010/inputs_archive/* -text
+btcusdt_quant/rl/allocator_env.py text eol=lf
+btcusdt_quant/rl/allocator_contracts.py text eol=lf
+tests/rl/test_allocator_env.py text eol=lf
