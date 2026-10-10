@@ -3222,11 +3222,155 @@ def cmd_gates(args) -> None:
     log(f"gates: veto {g2['absolute']} {g2['replacement']} tamper {tam} pass {g2['pass']} {time.time() - t0:.0f}s")
 
 
+# ================================================================ SHORT-HSEL-4H-r1 (Codex spec 2026-10-11)
+HSEL_H = (240, 480, 720, 1440)
+HSEL_W = {"G3_LONG": 0.8, "G3_SHORT": 0.8, "NEW_SHORT": 0.4}
+
+
+def hsel_cv(b2, m, X, T, d, y, lend, h, lam, trows, cells) -> dict:
+    """Blocked CV inside the train window for one (horizon, lambda): per held-out block fit on the other blocks
+    (rows whose label window touches the block are dropped), trade the block in every cell, score."""
+    from btcusdt_quant.rl import regime_short as RS
+    import btcusdt_quant.rl.gates as GT
+    idx = np.flatnonzero(trows)
+    blk = RS.block_ids(T[idx])
+    per_cell = {f"o{o}_p{p}": [] for o, p in cells}
+    block_net = []
+    for b in np.unique(blk):
+        te = idx[blk == b]
+        t0_, t1_ = T[te].min(), T[te].max()
+        trn = idx[(blk != b) & ((lend[idx] < t0_) | (T[idx] > t1_ + h * sp.MIN))]
+        med, sc = RS.fit_norm(X[trn])
+        w, b0 = RS.ridge(RS.apply_norm(X[trn], med, sc), y[trn], lam)
+        pred = RS.apply_norm(X[te], med, sc) @ w + b0
+        side = np.where(pred > 0, -1, 0)
+        lo = m.idx(pd.Timestamp(int(t0_), tz="UTC"))
+        hi = min(m.idx(pd.Timestamp(int(t1_ + 4 * 3600 * 10**9), tz="UTC")), m.N)
+        lo -= lo % 1440
+        hi -= hi % 1440
+        for o, p in cells:
+            tr_, od = b2.simulate(m, "event", d[te], side, np.ones(len(te)), o, b2.TTL_TREND, p, lo, hi, hold=h)
+            bk = b2.Book(m, tr_, od, lo, hi)
+            dly = bk.daily(lo, hi)
+            per_cell[f"o{o}_p{p}"].append(dly)
+            block_net.append(float(dly.sum()))
+    cat = {c: np.concatenate(v) for c, v in per_cell.items()}
+    return {"worst_block_cell_net4": float(min(block_net)), "blocks": int(len(np.unique(blk))),
+            "boot60_min_cell": float(min(GT.boot_p05(v, 60) for v in cat.values())),
+            "mdd_max_cell": float(max(GT.mdd(v) for v in cat.values())),
+            "net4_mean_cell": float(np.mean([v.sum() for v in cat.values()]))}
+
+
+def cmd_hsel(args) -> None:
+    from btcusdt_quant.rl import event_sim as ES, gates as GT, regime_short as RS
+    t0 = time.time()
+    HD = OUT / "short_hsel_4h_r1"
+    HD.mkdir(parents=True, exist_ok=True)
+    b2, m, st, in_hash = regime_inputs()
+    T = st["T"].to_numpy(np.int64)
+    X = st[list(RS.FEATURES)].to_numpy(float)
+    d = np.searchsorted(m.t, T) - 1
+    if not np.array_equal(m.t[d] + sp.MIN, T):
+        raise SystemExit("decision bars misaligned")
+    lab = {h: RS.short_labels(m.t, m.c, m.ft, m.fr, d, hold=h) for h in HSEL_H}
+    ts = lambda x: pd.Timestamp(x, tz="UTC").value  # noqa: E731
+    cells = G_CELLS
+    rep: dict = {"spec": {"side": "short only", "features": RS.FEATURES, "lambdas": RS.LAMBDAS, "horizons_min": HSEL_H,
+                          "selection": "train-internal blocked CV (years, quarters if one year); rank worst block x "
+                                       "cell net4 desc -> min-cell boot60 desc -> max-cell MDD asc -> shorter horizon",
+                          "label": "short net4 over the horizon (4 bps + funding received)", "embargo": "= horizon",
+                          "entry": "pred > 0", "hold": "selected horizon", "cadence": "4h", "weight": 1.0,
+                          "execution": "Batch-2 maker rules (event kind), one continuous 2022..2025 run with a "
+                                       "per-decision hold (btcusdt_quant/rl/event_sim.py)", "cells": 6,
+                          "portfolio": HSEL_W, "folds": FOLDS_A2, "input_sha256": in_hash,
+                          "data": "DEV loader (< 2026-01-01), state_1h DEV"}, "folds": {}}
+    parts, tamper = [], {}
+    for f, (tr_w, va_w) in FOLDS_A2.items():
+        a_tr, b_tr, a_va, b_va = ts(tr_w[0]), ts(tr_w[1]), ts(va_w[0]), ts(va_w[1])
+        table = []
+        for h in HSEL_H:
+            y, lend = lab[h]
+            trows = (T >= a_tr) & (T < b_tr) & (lend <= a_va - h * sp.MIN) & np.isfinite(y)
+            for lam in RS.LAMBDAS:
+                r = hsel_cv(b2, m, X, T, d, y, lend, h, lam, trows, cells)
+                table.append({"horizon": h, "lambda": lam, **r})
+        best = sorted(table, key=lambda r: (-r["worst_block_cell_net4"], -r["boot60_min_cell"], r["mdd_max_cell"],
+                                            r["horizon"]))[0]
+        h, lam = best["horizon"], best["lambda"]
+        y, lend = lab[h]
+        trows = (T >= a_tr) & (T < b_tr) & (lend <= a_va - h * sp.MIN) & np.isfinite(y)
+        med, sc = RS.fit_norm(X[trows])
+        w, b0 = RS.ridge(RS.apply_norm(X[trows], med, sc), y[trows], lam)
+        va = (T >= a_va) & (T < b_va)
+        pred = RS.apply_norm(X[va], med, sc) @ w + b0
+        side = np.where(pred > 0, -1, 0)
+        parts.append((d[va], side, np.full(int(va.sum()), h)))
+        # tamper: future after the embargo point x1.7 -> same train labels / model; feature tamper after a val cut
+        emb = a_va - h * sp.MIN
+        c2 = m.c.copy()
+        c2[int(np.searchsorted(m.t, emb)):] *= 1.7
+        y2, _ = RS.short_labels(m.t, c2, m.ft, np.where(m.ft > emb, m.fr * 1.7, m.fr), d, hold=h)
+        w2, b02 = RS.ridge(RS.apply_norm(X[trows], med, sc), y2[trows], lam)
+        X3 = X.copy()
+        cut = a_va + (b_va - a_va) // 2
+        X3[T > cut] = 99.0
+        p3 = RS.apply_norm(X3[va], med, sc) @ w + b0
+        tamper[f] = {"train_labels_equal": bool(np.array_equal(y[trows], y2[trows])),
+                     "model_equal": bool(np.array_equal(w, w2) and b0 == b02),
+                     "pred_before_cut_equal": bool(np.array_equal(p3[T[va] <= cut], pred[T[va] <= cut]))}
+        top = np.argsort(-np.abs(w))[:8]
+        rep["folds"][f] = {"train": tr_w, "val": va_w, "selected": {"horizon": h, "lambda": lam}, "cv_table": table,
+                           "train_rows": int(trows.sum()), "short_share_val": float((pred > 0).mean()),
+                           "coef_top": {RS.FEATURES[i]: float(w[i]) for i in top}, "intercept": b0, "tamper": tamper[f]}
+        log(f"hsel {f}: selected h={h} lam={lam} worst {best['worst_block_cell_net4']:.1f} short {(pred > 0).mean():.3f}")
+    dd_all, side_all, hold_all = stitch_folds(parts)
+    lo = m.idx(GT.START)
+    new = {}
+    for o, p in cells:
+        tr_, od = ES.simulate_event(m.o, m.h, m.l, m.c, dd_all, side_all, np.ones(len(dd_all)), hold_all, o,
+                                    b2.TTL_TREND, p, lo, m.N)
+        bk = b2.Book(m, tr_, od, lo, m.N)
+        closed = {}
+        for yv in GT.YEARS:
+            ya, yb = m.idx(pd.Timestamp(f"{yv}-01-01", tz="UTC")), m.idx(pd.Timestamp(f"{yv + 1}-01-01", tz="UTC"))
+            closed[yv] = bk.window(ya, yb)["closed"]
+        new[f"o{o}_p{p}"] = {"daily": bk.daily(lo, m.N), "daily8": daily8(bk, lo, m.N), "closed": closed}
+    g_new = GT.evaluate(new)
+    MAT, mg, dec4, stg, _ = g3_setup()
+    base = g3_combined(MAT.b2, mg, dec4, g3_signals(MAT, stg))
+    port = {c: {"daily": HSEL_W["G3_LONG"] * base[c]["long_daily"] + HSEL_W["G3_SHORT"] * base[c]["short_daily"]
+                + HSEL_W["NEW_SHORT"] * new[c]["daily"],
+                "closed": {yv: base[c]["closed"][yv] + new[c]["closed"][yv] for yv in GT.YEARS}} for c in new}
+    g_port = GT.evaluate(port, baseline={c: v["daily"] for c, v in base.items()})
+    corr = {c: float(np.corrcoef(new[c]["daily"], base[c]["daily"])[0, 1]) for c in new}
+    days = pd.date_range(GT.START, periods=GT.N_DAYS, freq="D")
+    monthly = {c: {k_: float(v) for k_, v in pd.Series(new[c]["daily"], index=days).groupby(days.strftime("%Y-%m")).sum().items()}
+               for c in ("o2_p0.5", "o5_p2.0")}
+    tam_ok = all(all(v.values()) for v in tamper.values())
+    rep.update(new_short=g_new, portfolio=g_port, corr_new_vs_g3=corr, monthly_new=monthly, tamper_all=tam_ok)
+    rep["pass"] = bool(g_new["absolute"]["pass"] and g_port["replacement"]["pass"] and tam_ok)
+    rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
+               runtime_sec=round(time.time() - t0, 1), test_accessed=False,
+               code_sha256={k: sha(ROOT / f"btcusdt_quant/rl/{k}.py") for k in ("regime_short", "event_sim", "gates",
+                                                                                 "dev_data")})
+    dump(HD / "short_hsel_report.json", rep)
+    registry.record(REGISTRY, {"experiment": "SHORT-HSEL-4H-r1 (horizon x lambda CV, continuous 2022-2025)",
+                               "role": "trial", "n_trials": len(HSEL_H) * len(RS.LAMBDAS), "n_simulations": 6,
+                               "input_hashes": in_hash,
+                               "config": {"horizons": HSEL_H, "lambdas": RS.LAMBDAS, "portfolio": HSEL_W},
+                               "result_summary": {"pass": rep["pass"], "new_absolute": g_new["absolute"],
+                                                  "portfolio_replacement": g_port["replacement"],
+                                                  "selected": {f: x["selected"] for f, x in rep["folds"].items()}}})
+    log(f"hsel {'PASS' if rep['pass'] else 'FAIL'} new {g_new['absolute']} port {g_port['replacement']} tamper {tam_ok} "
+        f"{rep['runtime_sec']}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
-                                       "regime-short", "regime-bidir", "regime-bidir-r2", "gates"))
+                                       "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
+                                       "short-hsel"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -3266,6 +3410,8 @@ def main(argv=None) -> None:
         return cmd_regime_bidir_r2(args)
     if args.command == "gates":
         return cmd_gates(args)
+    if args.command == "short-hsel":
+        return cmd_hsel(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
