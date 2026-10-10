@@ -178,7 +178,8 @@ def sleeve_channels(name: str, grid: pd.DataFrame, ledger: pd.DataFrame, c: np.n
     for nm, w in (("24h", 1440), ("7d", 10080), ("30d", 43200)):
         out[pre + f"mtm_{nm}"] = _window_sum(cs, i, w)
     out[pre + "net4_1h"] = _window_sum(cs, i, 60)
-    hourly = np.diff(cs[np.searchsorted(t, np.arange(t[0], t[-1] + MIN + 1, HOUR))]) if len(t) else np.zeros(0)
+    edges = t[0] + HOUR * np.arange((t[-1] + MIN - t[0]) // HOUR + 1, dtype=np.int64) if len(t) else np.zeros(0, np.int64)
+    hourly = np.diff(cs[np.searchsorted(t, edges)]) if len(t) else np.zeros(0)
     hcs, hcs2 = _cum(hourly), _cum(hourly ** 2)
     hi = (i + 1) // 60 - 1                         # last full hour fully closed by T (grid starts on an hour)
     for nm, w in (("24h", 24), ("7d", 168)):
