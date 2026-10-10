@@ -142,5 +142,12 @@
     "report_sha256": "17df5cfd6fd0f82dca5580b968ea62bb786603ee3a31c7223657ef2c6b05ff90",
     "pilot_pass": false,
     "U_star": 40
+  },
+  "round10_router": {
+    "code_commit": "f681ceb5fd0ed247edc50b179a43d04896958c93",
+    "report_sha256": "4833f42539f8c96e1a456c0691cfe237e88202c6028636046cf0b05c562dcce8",
+    "pass": false,
+    "chosen": "90d",
+    "note": "allocator_state.py changed only by opt-in long_mtm (default output unchanged); state store not regenerated"
   }
 }
