@@ -1,0 +1,97 @@
+{
+  "run_id": "LB-20261010T082821Z-7ad0117d",
+  "parent_run_id": "NM-B5-20261010T080025Z-c55285f2",
+  "created_utc": "2026-10-10T08:29:58.415416+00:00",
+  "spec": "scratchpad codex_b5_review.md 'next research: long tail' (Codex 01a124e0-8cc4-76b2-9038-1e5868334e7e)",
+  "name": "LONG-THRESH-BREADTH",
+  "interpretations": "LONG-THRESH-BREADTH (2026-10-10): long-only S180 threshold breadth ablation.\n\nSpec: scratchpad codex_b5_review.md section \"\ub2e4\uc74c \uc5f0\uad6c: long tail\" (Codex session 01a124e0-8cc4-76b2-9038-1e5868334e7e).\nParent run NM-B5-20261010T080025Z-c55285f2 (LONG_DEV_PICK = G5-S180-c+0.0-W180-P65, long sleeve parity source).\nFrozen hypothesis: lowering the long score / SVI entry thresholds below (0.50, 0.10) adds enough long trades to\ndilute the TEST profit concentration (14 closed, top1 59.29%) without losing DEV edge.\nFixed: long-only, trend (42,168,504), SVI 180, vol W180-P65 (tv = trailing 180d Q0.65 of sigma_ann, weight\nmin(1, tv/sigma)), maker 4 bps rt, offset {2,5} x pen {0.5,1,2}, continuous 2020-01-01..2026-10-08 sim.\nGrid: score thr {0.30,0.40,0.50} x SVI thr {0.00,0.05,0.10} = 9 logical, 54 sims.\nEngine: Batch-5 build_state/core_signal/prefix_checks + Batch-2 simulate/Book/bootstrap + Batch-3 side_books/\nwindow_bounds imported unchanged via importlib.\nDecision time: T = market_time[dec4] + 1m (dec4 = 239 + 240k, the 4h bar's last 1m bar); score/SVI/sigma use closes\nwith index <= dec4 (close time <= T); limit price from close[dec4]; fill search starts at bar dec4+1 (opens at T).\nInterpretations:\n  * long-only: side = 1 iff ready & score >= s_thr & SVI >= v_thr else 0 (no short leg, so long path timing\n    differs from the Batch-5 two-sided sim; parity therefore checked twice: Batch-5 core_signal reproduced exactly,\n    and long-only (0.50,0.10) reported against it).\n  * DEV selection: offset 2/5 pen 0.5 DEV-A and DEV-B long net4 > 0; DEV-FULL primary closed >= 40; DEV-FULL primary\n    fill_notional_rate >= 0.10; score = min DEV-A/DEV-B long boot p05 over blocks 20/60/120. Ties: lower DEV-FULL\n    MDD, config id. No eligible config -> DEV_BEST_INELIGIBLE (whole pool, flagged).\n  * TEST success: 6/6 cells TEST net4 > 0, primary TEST closed >= 30, TEST boot p05 at 20/60/120 all > 0.\n  * top1/top3 share: per-trade window net4 contribution (Book.window partition), largest k / window net4.\n",
+  "windows": {
+    "DEV-FULL": [
+      "2020-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "DEV-A": [
+      "2020-01-01 00:00:00+00:00",
+      "2024-01-01 00:00:00+00:00"
+    ],
+    "DEV-B": [
+      "2024-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "TEST": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ]
+  },
+  "data_cutoff": "2026-10-08 00:00:00+00:00",
+  "counts": {
+    "logical": 9,
+    "sims": 54,
+    "n_trials": 9,
+    "parity_sims": 6
+  },
+  "pick": "LB-S180-W180P65-s0.50-v0.10",
+  "pick_label": "LB_DEV_PICK",
+  "n_dev_eligible": 9,
+  "pick_TEST": {
+    "TEST_cells_6of6": true,
+    "TEST_closed_ge30": false,
+    "TEST_boot_all_pos": false,
+    "TEST_SUCCESS": false
+  },
+  "parity": {
+    "got": {
+      "DEV-FULL": 22996.226652431793,
+      "TEST": 1684.115629575647,
+      "TEST_closed": 14
+    },
+    "ref": {
+      "DEV-FULL": 22996.2267,
+      "TEST": 1684.1156,
+      "TEST_closed": 14
+    },
+    "max_abs_diff_4dp": 4.756820635520853e-05,
+    "cells_max_abs_diff_vs_b5": 0.0,
+    "boot_TEST_long_max_abs_diff_vs_b5": 0.0
+  },
+  "prefix_checks": {
+    "cut": "2026-01-01 00:00:00+00:00",
+    "decisions_compared": 13152,
+    "configs": {
+      "LB-S180-W180P65-s0.30-v0.00": {
+        "prefix_closed_trades_equal": 126,
+        "prefix_open": 0
+      },
+      "LB-S180-W180P65-s0.50-v0.10": {
+        "prefix_closed_trades_equal": 101,
+        "prefix_open": 0
+      }
+    }
+  },
+  "input_sha256": {
+    "batch5_code": "c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428",
+    "batch5_selected_long": "8bc6af8e3c91b6f6079b6c3dc03e5230d24491317e3957b029c0da24388ba72f",
+    "dev_market": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "dev_metrics_tree": "fb9591579dacfab0a93de72f120770496f6f04b2b6cebd58859e9449acc904bd",
+    "dev_premium_tree": "3e246393245cfb0bc1a6ed81e9c81320e144cb87822a8696f9695d1867f5121c",
+    "dev_funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "batch1_code": "8a329e4fc730ccd32d10d67216a2fc7581076c226c4813b7414afd2df9fdba1a",
+    "snap_market_1m.parquet": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59",
+    "snap_technique_metrics.parquet": "dd5afe89d138b0ec63f27de3738bcbde0ef75664e4288bfe8d95fa578a3e5408",
+    "snap_technique_premium.parquet": "5d02b5ba1015b28812fc08b1d9ca7232f1298d8556c5b55b40ce3ac2c2300c98",
+    "snap_funding_model_input.parquet": "ac0f660302dc805c421a9c79304b4af6fecb332b6b01704d908e1805297e6590",
+    "snap_manifest.json": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069",
+    "batch2_code": "97244bea96d70d0fdcce3d9d8132a683edcd98e79f3c591c8a1e3b960b72ec04",
+    "batch3_code": "7760a0d9140d9e254862a9377266175c933f26fd45ddd79d5d3d7d959b0c6181",
+    "batch4_code": "ec7d54099d2bae3c100e2f07f3cdacb0fd9bfcf9ff5f8f025a5e4b0857d42d6d",
+    "batch4_manifest": "4006556893d7356a286d3a963c362ffd50a01c571e4f2f9a861b64cb47e78d2a",
+    "batch4_controls_strict": "672fbfadda4814101b19ef61d82d1c4743ffb3fbbe025ad4483426dbc9806233",
+    "code": "7ad0117d71466deb4e9aa438edcf1d807d688bfaf2e8a652ed60a37061ce7c7b"
+  },
+  "git": {
+    "head": "20538c4f4b7b644224f0edb74531ccf117afebbf",
+    "branch": "research/k45-audit-and-negative-results-20260930",
+    "dirty_files": 79
+  },
+  "runtime_sec": 97.4
+}

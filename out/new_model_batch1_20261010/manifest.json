@@ -1,0 +1,92 @@
+{
+  "run_id": "NM-B1-20261010",
+  "parent_run_id": null,
+  "created_utc": "2026-10-10T06:20:41.925616+00:00",
+  "spec": "codex_newmodel.md Batch-1 spec (Codex session 01a1245a-507e-7cb0-bfaf-0a63c6e2a481)",
+  "windows": {
+    "DEV": [
+      "2020-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "TEST": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ]
+  },
+  "data_cutoff": "2026-10-08 00:00:00+00:00",
+  "sources": {
+    "dev_market": "D:\\StudyQuant\\artifacts\\btcusdt_2020_2026h1.parquet",
+    "test_market": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\market_1m.parquet",
+    "dev_metrics": "D:\\StudyQuant\\artifacts\\metrics",
+    "test_metrics": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\technique_metrics.parquet",
+    "dev_funding": "D:\\StudyQuant\\artifacts\\funding_2020_2026h1",
+    "test_funding": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\funding_model_input.parquet"
+  },
+  "input_sha256": {
+    "dev_market": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "dev_metrics_tree": "fb9591579dacfab0a93de72f120770496f6f04b2b6cebd58859e9449acc904bd",
+    "dev_funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "code": "8a329e4fc730ccd32d10d67216a2fc7581076c226c4813b7414afd2df9fdba1a",
+    "snap_market_1m.parquet": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59",
+    "snap_technique_metrics.parquet": "dd5afe89d138b0ec63f27de3738bcbde0ef75664e4288bfe8d95fa578a3e5408",
+    "snap_funding_model_input.parquet": "ac0f660302dc805c421a9c79304b4af6fecb332b6b01704d908e1805297e6590",
+    "snap_manifest.json": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069"
+  },
+  "git": {
+    "head": "9cfd84f793d4f3be8731578b086250c10f5a81e5",
+    "branch": "research/k45-audit-and-negative-results-20260930",
+    "dirty_files": 77
+  },
+  "metric_gaps_on_5m_grid": {
+    "DEV": {
+      "global_ls": 9460,
+      "top_ls": 95859,
+      "oi": 4153,
+      "taker_lsr": 40956,
+      "grid_rows": 561025
+    },
+    "TEST": {
+      "global_ls": 9,
+      "top_ls": 9,
+      "oi": 9,
+      "taker_lsr": 9,
+      "grid_rows": 80640
+    }
+  },
+  "frozen_hypotheses": {
+    "vt_tsmom": "risk-normalized multi-horizon momentum exceeds 4 bps and persists in 2026",
+    "cascade_proxy": "OI drop + extreme return/range/volume + taker agreement = forced-position proxy; short-term reversal after the shock",
+    "crowd_disagreement": "taker flow opposite to global account crowd (top confirms) wins 15m-4h"
+  },
+  "execution": {
+    "tick": 0.1,
+    "entry_offsets_bps": [
+      2,
+      5
+    ],
+    "touch_bps": 0.5,
+    "ttl_min": {
+      "vt_tsmom": 60,
+      "event": 15
+    },
+    "exit_quote_bps": 2.0,
+    "requote_min": 60,
+    "cost_bps_rt": 4,
+    "report_only_bps_rt": 8,
+    "slippage": 0,
+    "funding": "actual events, -side*rate*1e4*weight, PESS minute timing"
+  },
+  "interpretations": "Batch-1 new-model screen (2026-10-10): VT-TSMOM, cascade-exhaustion proxy, crowding disagreement.\n\nSpec: scratchpad codex_newmodel.md \"Batch-1 spec\". DEV [2020-01-01, 2026-01-01), TEST [2026-01-01, 2026-10-08).\nMaker-only fills, 4 bps round trip (8 bps report-only), slippage 0, actual funding events (PESS timing).\nCausality: decision on the closed bar i (decision time T = open_time[i] + 1m), orders fill from bar i+1;\nmetrics used only when available_time (= create_time + 5m) <= T; trailing quantiles / robust z exclude the\ncurrent observation (strictly past); VT-TSMOM sigma includes the just-closed bar (it is known at T).\nInterpretations (spec silent): sigma window 30 days; 'same hour' volume baseline = all 5m vol30 values in the\nsame UTC hour over the prior 30 days; selection over o=2 variants, stress = o=5 twin; daily equity is MTM.\n",
+  "bootstrap": {
+    "block_days": 20,
+    "n": 10000,
+    "seed": 20261010,
+    "stat": "mean daily MTM net4"
+  },
+  "grid_sizes": {
+    "vt_tsmom": 48,
+    "cascade_proxy": 96,
+    "crowd_disagreement": 108
+  },
+  "runtime_sec": 390.5
+}

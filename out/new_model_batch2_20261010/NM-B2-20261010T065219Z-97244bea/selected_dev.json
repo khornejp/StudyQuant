@@ -1,0 +1,3391 @@
+{
+  "V": {
+    "variant_id": "family=V|blend=slow|db=0.5|tv=0.2|gate=0.0|sizing=conviction|offset=2",
+    "params": {
+      "family": "V",
+      "blend": "slow",
+      "db": 0.5,
+      "tv": 0.2,
+      "gate": 0.0,
+      "sizing": "conviction",
+      "offset": 2
+    },
+    "dev_eligible": false,
+    "n_eligible": 0,
+    "dev_score": -0.060667280957702074,
+    "adaptive_score": 0.17766788846595133,
+    "PROFIT_PASS": false,
+    "LOW_N": false,
+    "STRONG": false,
+    "KILL": true,
+    "verdict": "KILL",
+    "boot_TEST": [
+      -0.45465326295493663,
+      -0.21936387959668485,
+      -0.1334248096790957
+    ],
+    "boot_DEV-FULL": [
+      -0.05226705552481074,
+      0.15899954169151007,
+      0.2652535177400542
+    ],
+    "metrics": {
+      "DEV-FULL": {
+        "days": 2192,
+        "net4": 1726.2337853856054,
+        "net8": 1665.1148993680863,
+        "gross": 2106.5184082942324,
+        "funding": -319.1657368911084,
+        "closed": 399,
+        "entries": 399,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.2706766917293233,
+        "exp_days": 58.8478569204947,
+        "per_day": 0.7875154130408784,
+        "long_net4": 1429.9158662970285,
+        "long_net8": 1392.958092862692,
+        "long_gross": 1790.9039726152482,
+        "long_funding": -324.0303328838835,
+        "long_closed": 257,
+        "long_entries": 257,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.2918287937743191,
+        "long_exp_days": 42.428243637367494,
+        "long_per_day": 0.6523338806099582,
+        "short_net4": 296.31791908857724,
+        "short_net8": 272.1568065053948,
+        "short_gross": 315.6144356789843,
+        "short_funding": 4.864595992775142,
+        "short_closed": 142,
+        "short_entries": 142,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.2323943661971831,
+        "short_exp_days": 16.419613283127205,
+        "short_per_day": 0.13518153243092026,
+        "turnover": 30.55944300875935,
+        "orders": 433,
+        "order_notional": 16.257346144067697,
+        "fill_notional_rate": 0.939865668662978,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 1335.6278236165012,
+        "sharpe": 0.5704869661131773,
+        "active_months": 61,
+        "pos_month_ratio": 0.5409836065573771
+      },
+      "DEV-A": {
+        "days": 1461,
+        "net4": 902.0708647829904,
+        "net8": 866.9230458563353,
+        "gross": 1182.2241167756656,
+        "funding": -245.00543306602006,
+        "closed": 224,
+        "entries": 225,
+        "open_n": 1,
+        "open_mtm": 4.650842529363587,
+        "win": 0.28125,
+        "exp_days": 34.30498603464186,
+        "per_day": 0.6174338567987614,
+        "long_net4": 561.4051633143331,
+        "long_net8": 543.6762882504213,
+        "long_gross": 824.9089032434633,
+        "long_funding": -245.7748648652184,
+        "long_closed": 108,
+        "long_entries": 109,
+        "long_open_n": 1,
+        "long_open_mtm": 4.650842529363587,
+        "long_win": 0.3148148148148148,
+        "long_exp_days": 21.02035273988389,
+        "long_per_day": 0.38426089207004316,
+        "short_net4": 340.6657014686574,
+        "short_net8": 323.2467576059141,
+        "short_gross": 357.31521353220216,
+        "short_funding": 0.7694317991983795,
+        "short_closed": 116,
+        "short_entries": 116,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.25,
+        "short_exp_days": 13.28463329475797,
+        "short_per_day": 0.2331729647287183,
+        "turnover": 17.573909463327453,
+        "orders": 245,
+        "order_notional": 9.47461956954221,
+        "fill_notional_rate": 0.9287359905496497,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 1335.6278236165012,
+        "sharpe": 0.3915033335883973,
+        "active_months": 37,
+        "pos_month_ratio": 0.4864864864864865
+      },
+      "DEV-B": {
+        "days": 731,
+        "net4": 824.162920602615,
+        "net8": 798.1918535117511,
+        "gross": 924.2942915185672,
+        "funding": -74.16030382508833,
+        "closed": 175,
+        "entries": 174,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.2571428571428571,
+        "exp_days": 24.542870885852842,
+        "per_day": 1.1274458558175309,
+        "long_net4": 868.5107029826953,
+        "long_net8": 849.2818046122705,
+        "long_gross": 965.9950693717849,
+        "long_funding": -78.2554680186651,
+        "long_closed": 149,
+        "long_entries": 148,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.2751677852348993,
+        "long_exp_days": 21.407890897483604,
+        "long_per_day": 1.188113136775233,
+        "short_net4": -44.34778238008022,
+        "short_net8": -51.08995110051935,
+        "short_gross": -41.70077785321783,
+        "short_funding": 4.095164193576763,
+        "short_closed": 26,
+        "short_entries": 26,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.15384615384615385,
+        "short_exp_days": 3.134979988369234,
+        "short_per_day": -0.060667280957702074,
+        "turnover": 12.985533545431894,
+        "orders": 188,
+        "order_notional": 6.782726574525486,
+        "fill_notional_rate": 0.9554124351287371,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 326.8983082922217,
+        "sharpe": 1.306682736715738,
+        "active_months": 24,
+        "pos_month_ratio": 0.625
+      },
+      "TEST": {
+        "days": 280,
+        "net4": 260.8056492984309,
+        "net8": 248.2604649160935,
+        "gross": 275.04872672437705,
+        "funding": -1.6978930436085526,
+        "closed": 82,
+        "entries": 82,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.3048780487804878,
+        "exp_days": 7.3304610710879645,
+        "per_day": 0.9314487474943961,
+        "long_net4": 211.0586405279646,
+        "long_net8": 206.58180442484237,
+        "long_gross": 221.51418271420778,
+        "long_funding": -5.978706083120886,
+        "long_closed": 27,
+        "long_entries": 27,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.3333333333333333,
+        "long_exp_days": 2.4552408360698843,
+        "long_per_day": 0.753780859028445,
+        "short_net4": 49.74700877046637,
+        "short_net8": 41.6786604912511,
+        "short_gross": 53.534544010169284,
+        "short_funding": 4.280813039512335,
+        "short_closed": 55,
+        "short_entries": 55,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.2909090909090909,
+        "short_exp_days": 4.87522023501808,
+        "short_per_day": 0.17766788846595133,
+        "turnover": 6.27259219116875,
+        "orders": 92,
+        "order_notional": 3.2914716370313655,
+        "fill_notional_rate": 0.9528552700557533,
+        "exit_latency_p50": 2.0,
+        "exit_latency_p95": 61.95,
+        "mdd_1m": 137.5087253692525,
+        "sharpe": 1.1944365964454315,
+        "active_months": 10,
+        "pos_month_ratio": 0.4
+      }
+    },
+    "stress": {
+      "o2_p0.5": {
+        "DEV-FULL": {
+          "net4": 1726.2337853856054,
+          "long_net4": 1429.9158662970285,
+          "short_net4": 296.31791908857724,
+          "closed": 399,
+          "fill_notional_rate": 0.939865668662978
+        },
+        "DEV-A": {
+          "net4": 902.0708647829904,
+          "long_net4": 561.4051633143331,
+          "short_net4": 340.6657014686574,
+          "closed": 224,
+          "fill_notional_rate": 0.9287359905496497
+        },
+        "DEV-B": {
+          "net4": 824.162920602615,
+          "long_net4": 868.5107029826953,
+          "short_net4": -44.34778238008022,
+          "closed": 175,
+          "fill_notional_rate": 0.9554124351287371
+        },
+        "TEST": {
+          "net4": 260.8056492984309,
+          "long_net4": 211.0586405279646,
+          "short_net4": 49.74700877046637,
+          "closed": 82,
+          "fill_notional_rate": 0.9528552700557533
+        }
+      },
+      "o2_p1.0": {
+        "DEV-FULL": {
+          "net4": 1694.3330256310196,
+          "long_net4": 1428.5163849875908,
+          "short_net4": 265.8166406434292,
+          "closed": 399,
+          "fill_notional_rate": 0.9301288996434354
+        },
+        "DEV-A": {
+          "net4": 898.768322268906,
+          "long_net4": 559.5888852171399,
+          "short_net4": 339.1794370517662,
+          "closed": 224,
+          "fill_notional_rate": 0.9136425316683097
+        },
+        "DEV-B": {
+          "net4": 795.5647033621137,
+          "long_net4": 868.9274997704506,
+          "short_net4": -73.36279640833699,
+          "closed": 175,
+          "fill_notional_rate": 0.9534917966513967
+        },
+        "TEST": {
+          "net4": 259.4539868074028,
+          "long_net4": 210.1973445813361,
+          "short_net4": 49.25664222606682,
+          "closed": 82,
+          "fill_notional_rate": 0.9332157141514705
+        }
+      },
+      "o2_p2.0": {
+        "DEV-FULL": {
+          "net4": 1661.6805028235317,
+          "long_net4": 1402.5444525319656,
+          "short_net4": 259.13605029156656,
+          "closed": 399,
+          "fill_notional_rate": 0.8630313930056425
+        },
+        "DEV-A": {
+          "net4": 867.7640764965885,
+          "long_net4": 533.7037915084301,
+          "short_net4": 334.0602849881585,
+          "closed": 224,
+          "fill_notional_rate": 0.8203992278569692
+        },
+        "DEV-B": {
+          "net4": 793.9164263269435,
+          "long_net4": 868.8406610235354,
+          "short_net4": -74.924234696592,
+          "closed": 175,
+          "fill_notional_rate": 0.9287656087814221
+        },
+        "TEST": {
+          "net4": 242.40348585226394,
+          "long_net4": 199.96134352939785,
+          "short_net4": 42.44214232286607,
+          "closed": 81,
+          "fill_notional_rate": 0.7831578897011918
+        }
+      },
+      "o5_p0.5": {
+        "DEV-FULL": {
+          "net4": 1714.9463592922486,
+          "long_net4": 1413.2576072076442,
+          "short_net4": 301.6887520846041,
+          "closed": 399,
+          "fill_notional_rate": 0.8789031931243423
+        },
+        "DEV-A": {
+          "net4": 881.4018163692419,
+          "long_net4": 539.9407973616416,
+          "short_net4": 341.46101900760027,
+          "closed": 224,
+          "fill_notional_rate": 0.8385285921921154
+        },
+        "DEV-B": {
+          "net4": 833.5445429230066,
+          "long_net4": 873.3168098460026,
+          "short_net4": -39.77226692299615,
+          "closed": 175,
+          "fill_notional_rate": 0.9403889796626654
+        },
+        "TEST": {
+          "net4": 266.75802899103354,
+          "long_net4": 211.51131973548507,
+          "short_net4": 55.2467092555484,
+          "closed": 82,
+          "fill_notional_rate": 0.8802571986569606
+        }
+      },
+      "o5_p1.0": {
+        "DEV-FULL": {
+          "net4": 1683.1144604323508,
+          "long_net4": 1412.3576560182732,
+          "short_net4": 270.75680441407746,
+          "closed": 399,
+          "fill_notional_rate": 0.8687719875341665
+        },
+        "DEV-A": {
+          "net4": 878.1909878273672,
+          "long_net4": 538.6556152745391,
+          "short_net4": 339.535372552828,
+          "closed": 224,
+          "fill_notional_rate": 0.8260078173874195
+        },
+        "DEV-B": {
+          "net4": 804.9234726049835,
+          "long_net4": 873.7020407437341,
+          "short_net4": -68.77856813875054,
+          "closed": 175,
+          "fill_notional_rate": 0.9344818307745164
+        },
+        "TEST": {
+          "net4": 265.70109347997845,
+          "long_net4": 211.51131973548507,
+          "short_net4": 54.189773744493316,
+          "closed": 82,
+          "fill_notional_rate": 0.8600382729049462
+        }
+      },
+      "o5_p2.0": {
+        "DEV-FULL": {
+          "net4": 1634.7990332936595,
+          "long_net4": 1419.3391059173857,
+          "short_net4": 215.45992737627353,
+          "closed": 399,
+          "fill_notional_rate": 0.7915133412132883
+        },
+        "DEV-A": {
+          "net4": 832.5055000588715,
+          "long_net4": 546.622492843757,
+          "short_net4": 285.8830072151142,
+          "closed": 224,
+          "fill_notional_rate": 0.7547862646726913
+        },
+        "DEV-B": {
+          "net4": 802.293533234788,
+          "long_net4": 872.7166130736288,
+          "short_net4": -70.42307983884069,
+          "closed": 175,
+          "fill_notional_rate": 0.8472457391598551
+        },
+        "TEST": {
+          "net4": 258.6363640646255,
+          "long_net4": 202.83154584464623,
+          "short_net4": 55.80481821997921,
+          "closed": 82,
+          "fill_notional_rate": 0.7880674339047725
+        }
+      }
+    },
+    "twin_o5": {
+      "DEV-FULL": {
+        "net4": 1714.9463592922486,
+        "long_net4": 1413.2576072076442,
+        "short_net4": 301.6887520846041,
+        "closed": 399
+      },
+      "DEV-A": {
+        "net4": 881.4018163692419,
+        "long_net4": 539.9407973616416,
+        "short_net4": 341.46101900760027,
+        "closed": 224
+      },
+      "DEV-B": {
+        "net4": 833.5445429230066,
+        "long_net4": 873.3168098460026,
+        "short_net4": -39.77226692299615,
+        "closed": 175
+      },
+      "TEST": {
+        "net4": 266.75802899103354,
+        "long_net4": 211.51131973548507,
+        "short_net4": 55.2467092555484,
+        "closed": 82
+      }
+    }
+  },
+  "E": {
+    "variant_id": "family=E|zthr=2.0|hold=30|offset=2",
+    "params": {
+      "family": "E",
+      "zthr": 2.0,
+      "hold": 30,
+      "offset": 2
+    },
+    "dev_eligible": false,
+    "n_eligible": 0,
+    "dev_score": -1.8144699453837403,
+    "adaptive_score": -0.08103006529321784,
+    "PROFIT_PASS": false,
+    "LOW_N": true,
+    "STRONG": false,
+    "KILL": true,
+    "verdict": "LOW_N+KILL",
+    "boot_TEST": [
+      -0.3494178141988248,
+      -0.29343718445335926,
+      -0.2552927302281223
+    ],
+    "boot_DEV-FULL": [
+      -4.029389207725463,
+      -4.051957819316921,
+      -4.013384872620043
+    ],
+    "metrics": {
+      "DEV-FULL": {
+        "days": 2192,
+        "net4": -4258.064252225842,
+        "net8": -7142.064252225842,
+        "gross": -1374.0642522258424,
+        "funding": 0.0,
+        "closed": 721,
+        "entries": 721,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.44937586685159503,
+        "exp_days": 19.737499999999997,
+        "per_day": -1.9425475603220084,
+        "long_net4": -1360.0958889340025,
+        "long_net8": -3180.0958889340027,
+        "long_gross": 459.90411106599754,
+        "long_funding": 0.0,
+        "long_closed": 455,
+        "long_entries": 455,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.44175824175824174,
+        "long_exp_days": 12.6375,
+        "long_per_day": -0.620481701156023,
+        "short_net4": -2897.96836329184,
+        "short_net8": -3961.96836329184,
+        "short_gross": -1833.9683632918404,
+        "short_funding": 0.0,
+        "short_closed": 266,
+        "short_entries": 266,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.462406015037594,
+        "short_exp_days": 7.1,
+        "short_per_day": -1.3220658591659853,
+        "turnover": 1442.0,
+        "orders": 810,
+        "order_notional": 810.0,
+        "fill_notional_rate": 0.8901234567901235,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 4435.1111274713885,
+        "sharpe": -0.7271899160081251,
+        "active_months": 56,
+        "pos_month_ratio": 0.44642857142857145
+      },
+      "DEV-A": {
+        "days": 1461,
+        "net4": -2873.217022777808,
+        "net8": -4705.217022777808,
+        "gross": -1041.2170227778079,
+        "funding": 0.0,
+        "closed": 458,
+        "entries": 458,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.4410480349344978,
+        "exp_days": 12.700694444444443,
+        "per_day": -1.9666098718533935,
+        "long_net4": -222.2764325721631,
+        "long_net8": -1366.2764325721632,
+        "long_gross": 921.7235674278368,
+        "long_funding": 0.0,
+        "long_closed": 286,
+        "long_entries": 286,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.43356643356643354,
+        "long_exp_days": 7.994444444444444,
+        "long_per_day": -0.15213992646965305,
+        "short_net4": -2650.9405902056446,
+        "short_net8": -3338.9405902056446,
+        "short_gross": -1962.940590205645,
+        "short_funding": 0.0,
+        "short_closed": 172,
+        "short_entries": 172,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.45348837209302323,
+        "short_exp_days": 4.706249999999999,
+        "short_per_day": -1.8144699453837403,
+        "turnover": 916.0,
+        "orders": 506,
+        "order_notional": 506.0,
+        "fill_notional_rate": 0.9051383399209486,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 3974.9642864216166,
+        "sharpe": -0.6335795107273924,
+        "active_months": 36,
+        "pos_month_ratio": 0.4722222222222222
+      },
+      "DEV-B": {
+        "days": 731,
+        "net4": -1384.847229448034,
+        "net8": -2436.8472294480343,
+        "gross": -332.84722944803445,
+        "funding": 0.0,
+        "closed": 263,
+        "entries": 263,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.46387832699619774,
+        "exp_days": 7.036805555555556,
+        "per_day": -1.8944558542380767,
+        "long_net4": -1137.8194563618395,
+        "long_net8": -1813.8194563618395,
+        "long_gross": -461.81945636183923,
+        "long_funding": 0.0,
+        "long_closed": 169,
+        "long_entries": 169,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.4556213017751479,
+        "long_exp_days": 4.643055555555556,
+        "long_per_day": -1.5565245641064835,
+        "short_net4": -247.02777308619514,
+        "short_net8": -623.0277730861951,
+        "short_gross": 128.9722269138049,
+        "short_funding": 0.0,
+        "short_closed": 94,
+        "short_entries": 94,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.4787234042553192,
+        "short_exp_days": 2.39375,
+        "short_per_day": -0.3379312901315939,
+        "turnover": 526.0,
+        "orders": 304,
+        "order_notional": 304.0,
+        "fill_notional_rate": 0.8651315789473685,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 44.799999999999955,
+        "mdd_1m": 1591.2587361225703,
+        "sharpe": -1.292552925773604,
+        "active_months": 20,
+        "pos_month_ratio": 0.4
+      },
+      "TEST": {
+        "days": 280,
+        "net4": 356.30044447762754,
+        "net8": 196.30044447762756,
+        "gross": 516.3004444776276,
+        "funding": 0.0,
+        "closed": 40,
+        "entries": 40,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.525,
+        "exp_days": 1.017361111111111,
+        "per_day": 1.2725015874200984,
+        "long_net4": 378.98886275972853,
+        "long_net8": 230.9888627597286,
+        "long_gross": 526.9888627597286,
+        "long_funding": 0.0,
+        "long_closed": 37,
+        "long_entries": 37,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.5405405405405406,
+        "long_exp_days": 0.9472222222222223,
+        "long_per_day": 1.353531652713316,
+        "short_net4": -22.688418282100994,
+        "short_net8": -34.688418282101,
+        "short_gross": -10.688418282100997,
+        "short_funding": 0.0,
+        "short_closed": 3,
+        "short_entries": 3,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.3333333333333333,
+        "short_exp_days": 0.07013888888888889,
+        "short_per_day": -0.08103006529321784,
+        "turnover": 80.0,
+        "orders": 47,
+        "order_notional": 47.0,
+        "fill_notional_rate": 0.851063829787234,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 19.49999999999997,
+        "mdd_1m": 160.65279783347523,
+        "sharpe": 1.7241822809410365,
+        "active_months": 6,
+        "pos_month_ratio": 0.3333333333333333
+      }
+    },
+    "stress": {
+      "o2_p0.5": {
+        "DEV-FULL": {
+          "net4": -4258.064252225842,
+          "long_net4": -1360.0958889340025,
+          "short_net4": -2897.96836329184,
+          "closed": 721,
+          "fill_notional_rate": 0.8901234567901235
+        },
+        "DEV-A": {
+          "net4": -2873.217022777808,
+          "long_net4": -222.2764325721631,
+          "short_net4": -2650.9405902056446,
+          "closed": 458,
+          "fill_notional_rate": 0.9051383399209486
+        },
+        "DEV-B": {
+          "net4": -1384.847229448034,
+          "long_net4": -1137.8194563618395,
+          "short_net4": -247.02777308619514,
+          "closed": 263,
+          "fill_notional_rate": 0.8651315789473685
+        },
+        "TEST": {
+          "net4": 356.30044447762754,
+          "long_net4": 378.98886275972853,
+          "short_net4": -22.688418282100994,
+          "closed": 40,
+          "fill_notional_rate": 0.851063829787234
+        }
+      },
+      "o2_p1.0": {
+        "DEV-FULL": {
+          "net4": -4479.30452131856,
+          "long_net4": -1297.5957374223788,
+          "short_net4": -3181.7087838961806,
+          "closed": 698,
+          "fill_notional_rate": 0.8617283950617284
+        },
+        "DEV-A": {
+          "net4": -2874.617601294148,
+          "long_net4": -209.64164810105981,
+          "short_net4": -2664.9759531930877,
+          "closed": 445,
+          "fill_notional_rate": 0.8794466403162056
+        },
+        "DEV-B": {
+          "net4": -1604.6869200244123,
+          "long_net4": -1087.9540893213189,
+          "short_net4": -516.7328307030934,
+          "closed": 253,
+          "fill_notional_rate": 0.8322368421052632
+        },
+        "TEST": {
+          "net4": 368.577495871233,
+          "long_net4": 391.265914153334,
+          "short_net4": -22.688418282100994,
+          "closed": 40,
+          "fill_notional_rate": 0.851063829787234
+        }
+      },
+      "o2_p2.0": {
+        "DEV-FULL": {
+          "net4": -5823.817844022918,
+          "long_net4": -2281.4254762626615,
+          "short_net4": -3542.392367760256,
+          "closed": 650,
+          "fill_notional_rate": 0.8024691358024691
+        },
+        "DEV-A": {
+          "net4": -3481.030573554824,
+          "long_net4": -675.0349720012175,
+          "short_net4": -2805.9956015536063,
+          "closed": 416,
+          "fill_notional_rate": 0.8221343873517787
+        },
+        "DEV-B": {
+          "net4": -2342.7872704680935,
+          "long_net4": -1606.3905042614438,
+          "short_net4": -736.3967662066498,
+          "closed": 234,
+          "fill_notional_rate": 0.7697368421052632
+        },
+        "TEST": {
+          "net4": 535.0900156276454,
+          "long_net4": 510.113128067351,
+          "short_net4": 24.976887560294262,
+          "closed": 37,
+          "fill_notional_rate": 0.7872340425531915
+        }
+      },
+      "o5_p0.5": {
+        "DEV-FULL": {
+          "net4": -3416.7505685852448,
+          "long_net4": -691.1291655842822,
+          "short_net4": -2725.6214030009614,
+          "closed": 647,
+          "fill_notional_rate": 0.7987654320987654
+        },
+        "DEV-A": {
+          "net4": -2094.750772052292,
+          "long_net4": 270.85479276531834,
+          "short_net4": -2365.60556481761,
+          "closed": 417,
+          "fill_notional_rate": 0.8241106719367589
+        },
+        "DEV-B": {
+          "net4": -1321.9997965329526,
+          "long_net4": -961.9839583496006,
+          "short_net4": -360.0158381833515,
+          "closed": 230,
+          "fill_notional_rate": 0.756578947368421
+        },
+        "TEST": {
+          "net4": 551.8225564356222,
+          "long_net4": 560.0049454128795,
+          "short_net4": -8.182388977257197,
+          "closed": 34,
+          "fill_notional_rate": 0.723404255319149
+        }
+      },
+      "o5_p1.0": {
+        "DEV-FULL": {
+          "net4": -3599.0647304701206,
+          "long_net4": -836.3864527861617,
+          "short_net4": -2762.678277683958,
+          "closed": 628,
+          "fill_notional_rate": 0.7753086419753087
+        },
+        "DEV-A": {
+          "net4": -2193.7137082454747,
+          "long_net4": 108.18543809339707,
+          "short_net4": -2301.899146338871,
+          "closed": 403,
+          "fill_notional_rate": 0.7964426877470355
+        },
+        "DEV-B": {
+          "net4": -1405.351022224646,
+          "long_net4": -944.5718908795589,
+          "short_net4": -460.779131345087,
+          "closed": 225,
+          "fill_notional_rate": 0.7401315789473685
+        },
+        "TEST": {
+          "net4": 539.0100361761195,
+          "long_net4": 553.9358829668713,
+          "short_net4": -14.925846790751812,
+          "closed": 33,
+          "fill_notional_rate": 0.7021276595744681
+        }
+      },
+      "o5_p2.0": {
+        "DEV-FULL": {
+          "net4": -3517.0431590454527,
+          "long_net4": -664.7714301433255,
+          "short_net4": -2852.2717289021266,
+          "closed": 583,
+          "fill_notional_rate": 0.7197530864197531
+        },
+        "DEV-A": {
+          "net4": -1985.9647744533067,
+          "long_net4": 361.61553050202247,
+          "short_net4": -2347.5803049553288,
+          "closed": 379,
+          "fill_notional_rate": 0.7490118577075099
+        },
+        "DEV-B": {
+          "net4": -1531.078384592146,
+          "long_net4": -1026.386960645348,
+          "short_net4": -504.691423946798,
+          "closed": 204,
+          "fill_notional_rate": 0.6710526315789473
+        },
+        "TEST": {
+          "net4": 364.7274423590897,
+          "long_net4": 451.03829202655373,
+          "short_net4": -86.31084966746405,
+          "closed": 30,
+          "fill_notional_rate": 0.6382978723404256
+        }
+      }
+    },
+    "twin_o5": {
+      "DEV-FULL": {
+        "net4": -3416.7505685852448,
+        "long_net4": -691.1291655842822,
+        "short_net4": -2725.6214030009614,
+        "closed": 647
+      },
+      "DEV-A": {
+        "net4": -2094.750772052292,
+        "long_net4": 270.85479276531834,
+        "short_net4": -2365.60556481761,
+        "closed": 417
+      },
+      "DEV-B": {
+        "net4": -1321.9997965329526,
+        "long_net4": -961.9839583496006,
+        "short_net4": -360.0158381833515,
+        "closed": 230
+      },
+      "TEST": {
+        "net4": 551.8225564356222,
+        "long_net4": 560.0049454128795,
+        "short_net4": -8.182388977257197,
+        "closed": 34
+      }
+    }
+  },
+  "F": {
+    "variant_id": "family=F|qI=0.9|qOI=0.8|resp=0.0|hold=60|offset=2",
+    "params": {
+      "family": "F",
+      "qI": 0.9,
+      "qOI": 0.8,
+      "resp": 0.0,
+      "hold": 60,
+      "offset": 2
+    },
+    "dev_eligible": false,
+    "n_eligible": 0,
+    "dev_score": -0.4114665181508317,
+    "adaptive_score": -0.34797248547863807,
+    "PROFIT_PASS": false,
+    "LOW_N": false,
+    "STRONG": false,
+    "KILL": true,
+    "verdict": "KILL",
+    "boot_TEST": [
+      -1.2575637039933263,
+      -1.168206920680981,
+      -1.0620510799736667
+    ],
+    "boot_DEV-FULL": [
+      -0.4599149194219436,
+      -0.4812636702137644,
+      -0.4833721872446759
+    ],
+    "metrics": {
+      "DEV-FULL": {
+        "days": 1826,
+        "net4": -267.3056224862497,
+        "net8": -627.3056224862498,
+        "gross": 95.41697751375025,
+        "funding": -2.7226,
+        "closed": 90,
+        "entries": 90,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.4111111111111111,
+        "exp_days": 4.502083333333333,
+        "per_day": -0.14638862129586513,
+        "long_net4": 140.60520095062543,
+        "long_net8": -91.39479904937457,
+        "long_gross": 376.3278009506254,
+        "long_funding": -3.7226,
+        "long_closed": 58,
+        "long_entries": 58,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.43103448275862066,
+        "long_exp_days": 3.0076388888888888,
+        "long_per_day": 0.07700175298500846,
+        "short_net4": -407.91082343687515,
+        "short_net8": -535.9108234368751,
+        "short_gross": -280.91082343687515,
+        "short_funding": 1.0,
+        "short_closed": 32,
+        "short_entries": 32,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.375,
+        "short_exp_days": 1.4944444444444442,
+        "short_per_day": -0.22339037428087358,
+        "turnover": 180.0,
+        "orders": 127,
+        "order_notional": 127.0,
+        "fill_notional_rate": 0.7086614173228346,
+        "exit_latency_p50": 2.0,
+        "exit_latency_p95": 61.55,
+        "mdd_1m": 515.146787598797,
+        "sharpe": -0.36309530829805575,
+        "active_months": 37,
+        "pos_month_ratio": 0.4594594594594595
+      },
+      "DEV-A": {
+        "days": 1095,
+        "net4": 59.05384857385741,
+        "net8": -80.94615142614259,
+        "gross": 199.7108485738574,
+        "funding": -0.657,
+        "closed": 35,
+        "entries": 35,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.5428571428571428,
+        "exp_days": 1.6444444444444444,
+        "per_day": 0.05393045531859124,
+        "long_net4": 166.18264724247464,
+        "long_net8": 94.18264724247463,
+        "long_gross": 239.83964724247463,
+        "long_funding": -1.657,
+        "long_closed": 18,
+        "long_entries": 18,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.6111111111111112,
+        "long_exp_days": 0.8826388888888888,
+        "long_per_day": 0.15176497465066177,
+        "short_net4": -107.1287986686172,
+        "short_net8": -175.1287986686172,
+        "short_gross": -40.128798668617186,
+        "short_funding": 1.0,
+        "short_closed": 17,
+        "short_entries": 17,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.47058823529411764,
+        "short_exp_days": 0.7618055555555555,
+        "short_per_day": -0.09783451933207049,
+        "turnover": 70.0,
+        "orders": 50,
+        "order_notional": 50.0,
+        "fill_notional_rate": 0.7,
+        "exit_latency_p50": 2.0,
+        "exit_latency_p95": 18.49999999999993,
+        "mdd_1m": 314.5338174998831,
+        "sharpe": 0.18403995410519733,
+        "active_months": 20,
+        "pos_month_ratio": 0.5
+      },
+      "DEV-B": {
+        "days": 731,
+        "net4": -326.3594710601071,
+        "net8": -546.3594710601071,
+        "gross": -104.29387106010715,
+        "funding": -2.0656,
+        "closed": 55,
+        "entries": 55,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.32727272727272727,
+        "exp_days": 2.857638888888889,
+        "per_day": -0.44645618476074844,
+        "long_net4": -25.5774462918492,
+        "long_net8": -185.57744629184918,
+        "long_gross": 136.48815370815078,
+        "long_funding": -2.0656,
+        "long_closed": 40,
+        "long_entries": 40,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.35,
+        "long_exp_days": 2.125,
+        "long_per_day": -0.03498966660991683,
+        "short_net4": -300.78202476825794,
+        "short_net8": -360.78202476825794,
+        "short_gross": -240.782024768258,
+        "short_funding": 0.0,
+        "short_closed": 15,
+        "short_entries": 15,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.26666666666666666,
+        "short_exp_days": 0.7326388888888888,
+        "short_per_day": -0.4114665181508317,
+        "turnover": 110.0,
+        "orders": 77,
+        "order_notional": 77.0,
+        "fill_notional_rate": 0.7142857142857143,
+        "exit_latency_p50": 3.0,
+        "exit_latency_p95": 63.79999999999998,
+        "mdd_1m": 495.75044651266523,
+        "sharpe": -0.8478782350728177,
+        "active_months": 17,
+        "pos_month_ratio": 0.4117647058823529
+      },
+      "TEST": {
+        "days": 280,
+        "net4": -146.9796232098853,
+        "net8": -266.9796232098853,
+        "gross": -26.670323209885304,
+        "funding": -0.3093,
+        "closed": 30,
+        "entries": 30,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.3333333333333333,
+        "exp_days": 1.5555555555555556,
+        "per_day": -0.5249272257495903,
+        "long_net4": -84.40746678116231,
+        "long_net8": -156.4074667811623,
+        "long_gross": -11.242366781162307,
+        "long_funding": -1.1651,
+        "long_closed": 18,
+        "long_entries": 18,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.4444444444444444,
+        "long_exp_days": 0.9541666666666666,
+        "long_per_day": -0.3014552385041511,
+        "short_net4": -62.57215642872297,
+        "short_net8": -110.57215642872296,
+        "short_gross": -15.427956428722974,
+        "short_funding": 0.8558,
+        "short_closed": 12,
+        "short_entries": 12,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.16666666666666666,
+        "short_exp_days": 0.6013888888888888,
+        "short_per_day": -0.22347198724543918,
+        "turnover": 60.0,
+        "orders": 44,
+        "order_notional": 44.0,
+        "fill_notional_rate": 0.6818181818181818,
+        "exit_latency_p50": 4.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 206.88031083177222,
+        "sharpe": -1.1199450625954797,
+        "active_months": 9,
+        "pos_month_ratio": 0.2222222222222222
+      }
+    },
+    "stress": {
+      "o2_p0.5": {
+        "DEV-FULL": {
+          "net4": -267.3056224862497,
+          "long_net4": 140.60520095062543,
+          "short_net4": -407.91082343687515,
+          "closed": 90,
+          "fill_notional_rate": 0.7086614173228346
+        },
+        "DEV-A": {
+          "net4": 59.05384857385741,
+          "long_net4": 166.18264724247464,
+          "short_net4": -107.1287986686172,
+          "closed": 35,
+          "fill_notional_rate": 0.7
+        },
+        "DEV-B": {
+          "net4": -326.3594710601071,
+          "long_net4": -25.5774462918492,
+          "short_net4": -300.78202476825794,
+          "closed": 55,
+          "fill_notional_rate": 0.7142857142857143
+        },
+        "TEST": {
+          "net4": -146.9796232098853,
+          "long_net4": -84.40746678116231,
+          "short_net4": -62.57215642872297,
+          "closed": 30,
+          "fill_notional_rate": 0.6818181818181818
+        }
+      },
+      "o2_p1.0": {
+        "DEV-FULL": {
+          "net4": -229.20596942385373,
+          "long_net4": 170.4059169842787,
+          "short_net4": -399.61188640813236,
+          "closed": 82,
+          "fill_notional_rate": 0.6507936507936508
+        },
+        "DEV-A": {
+          "net4": 26.32008333205314,
+          "long_net4": 128.721449317846,
+          "short_net4": -102.40136598579281,
+          "closed": 34,
+          "fill_notional_rate": 0.68
+        },
+        "DEV-B": {
+          "net4": -255.52605275590687,
+          "long_net4": 41.68446766643273,
+          "short_net4": -297.21052042233964,
+          "closed": 48,
+          "fill_notional_rate": 0.631578947368421
+        },
+        "TEST": {
+          "net4": -163.40951611308734,
+          "long_net4": -100.8373596843644,
+          "short_net4": -62.57215642872297,
+          "closed": 29,
+          "fill_notional_rate": 0.6444444444444445
+        }
+      },
+      "o2_p2.0": {
+        "DEV-FULL": {
+          "net4": -1138.2129925501197,
+          "long_net4": -496.2713921542943,
+          "short_net4": -641.9416003958255,
+          "closed": 63,
+          "fill_notional_rate": 0.5
+        },
+        "DEV-A": {
+          "net4": -385.6353703359589,
+          "long_net4": -213.76089214493163,
+          "short_net4": -171.87447819102726,
+          "closed": 23,
+          "fill_notional_rate": 0.46
+        },
+        "DEV-B": {
+          "net4": -752.5776222141608,
+          "long_net4": -282.51050000936266,
+          "short_net4": -470.0671222047983,
+          "closed": 40,
+          "fill_notional_rate": 0.5263157894736842
+        },
+        "TEST": {
+          "net4": -174.4528831571185,
+          "long_net4": -127.23980683690988,
+          "short_net4": -47.2130763202086,
+          "closed": 23,
+          "fill_notional_rate": 0.48936170212765956
+        }
+      },
+      "o5_p0.5": {
+        "DEV-FULL": {
+          "net4": -291.1082715165532,
+          "long_net4": 98.15149618159177,
+          "short_net4": -389.25976769814497,
+          "closed": 74,
+          "fill_notional_rate": 0.5826771653543307
+        },
+        "DEV-A": {
+          "net4": 85.67840795021965,
+          "long_net4": 167.22186937330682,
+          "short_net4": -81.54346142308717,
+          "closed": 29,
+          "fill_notional_rate": 0.5686274509803921
+        },
+        "DEV-B": {
+          "net4": -376.7866794667728,
+          "long_net4": -69.07037319171505,
+          "short_net4": -307.71630627505783,
+          "closed": 45,
+          "fill_notional_rate": 0.5921052631578947
+        },
+        "TEST": {
+          "net4": -153.97459030326442,
+          "long_net4": -97.43229593401865,
+          "short_net4": -56.54229436924578,
+          "closed": 25,
+          "fill_notional_rate": 0.5434782608695652
+        }
+      },
+      "o5_p1.0": {
+        "DEV-FULL": {
+          "net4": -278.51016416110804,
+          "long_net4": 33.94599913473322,
+          "short_net4": -312.45616329584124,
+          "closed": 68,
+          "fill_notional_rate": 0.5354330708661418
+        },
+        "DEV-A": {
+          "net4": 169.48028208279396,
+          "long_net4": 169.31570651266097,
+          "short_net4": 0.16457557013298185,
+          "closed": 26,
+          "fill_notional_rate": 0.5098039215686274
+        },
+        "DEV-B": {
+          "net4": -447.990446243902,
+          "long_net4": -135.36970737792774,
+          "short_net4": -312.6207388659742,
+          "closed": 42,
+          "fill_notional_rate": 0.5526315789473685
+        },
+        "TEST": {
+          "net4": -151.24850733203186,
+          "long_net4": -104.25968949953875,
+          "short_net4": -46.988817832493126,
+          "closed": 23,
+          "fill_notional_rate": 0.4791666666666667
+        }
+      },
+      "o5_p2.0": {
+        "DEV-FULL": {
+          "net4": -722.5240292385067,
+          "long_net4": -291.8595519959656,
+          "short_net4": -430.6644772425411,
+          "closed": 60,
+          "fill_notional_rate": 0.46511627906976744
+        },
+        "DEV-A": {
+          "net4": -255.1006577172335,
+          "long_net4": -192.39228184382262,
+          "short_net4": -62.7083758734109,
+          "closed": 23,
+          "fill_notional_rate": 0.45098039215686275
+        },
+        "DEV-B": {
+          "net4": -467.42337152127317,
+          "long_net4": -99.46727015214296,
+          "short_net4": -367.95610136913024,
+          "closed": 37,
+          "fill_notional_rate": 0.47435897435897434
+        },
+        "TEST": {
+          "net4": 4.899798414468181,
+          "long_net4": -29.69804903014868,
+          "short_net4": 34.597847444616875,
+          "closed": 17,
+          "fill_notional_rate": 0.3469387755102041
+        }
+      }
+    },
+    "twin_o5": {
+      "DEV-FULL": {
+        "net4": -291.1082715165532,
+        "long_net4": 98.15149618159177,
+        "short_net4": -389.25976769814497,
+        "closed": 74
+      },
+      "DEV-A": {
+        "net4": 85.67840795021965,
+        "long_net4": 167.22186937330682,
+        "short_net4": -81.54346142308717,
+        "closed": 29
+      },
+      "DEV-B": {
+        "net4": -376.7866794667728,
+        "long_net4": -69.07037319171505,
+        "short_net4": -307.71630627505783,
+        "closed": 45
+      },
+      "TEST": {
+        "net4": -153.97459030326442,
+        "long_net4": -97.43229593401865,
+        "short_net4": -56.54229436924578,
+        "closed": 25
+      }
+    }
+  },
+  "G": {
+    "variant_id": "family=G|svi_w=42|g=0.1|trend=(42, 168, 504)|db=0.5|tv=0.2|offset=2",
+    "params": {
+      "family": "G",
+      "svi_w": 42,
+      "g": 0.1,
+      "trend": "(42, 168, 504)",
+      "db": 0.5,
+      "tv": 0.2,
+      "offset": 2
+    },
+    "dev_eligible": false,
+    "n_eligible": 0,
+    "dev_score": -0.9421697764857286,
+    "adaptive_score": 3.8400008218229322,
+    "PROFIT_PASS": false,
+    "LOW_N": false,
+    "STRONG": false,
+    "KILL": true,
+    "verdict": "KILL",
+    "boot_TEST": [
+      2.0725232477964566,
+      4.1243536149450515,
+      5.257193707579049
+    ],
+    "boot_DEV-FULL": [
+      0.44593701754185266,
+      0.7475910108622769,
+      1.0686468101245015
+    ],
+    "metrics": {
+      "DEV-FULL": {
+        "days": 2192,
+        "net4": 7680.800189320357,
+        "net8": 7064.933997082655,
+        "gross": 9543.827301553034,
+        "funding": -1247.1609199949755,
+        "closed": 371,
+        "entries": 371,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.33692722371967654,
+        "exp_days": 355.13307457742746,
+        "per_day": 3.504014684908922,
+        "long_net4": 8339.852757477442,
+        "long_net8": 7982.362369388511,
+        "long_gross": 10043.539622755537,
+        "long_funding": -1346.1964771891614,
+        "long_closed": 207,
+        "long_entries": 207,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.3671497584541063,
+        "long_exp_days": 231.68647488984715,
+        "long_per_day": 3.8046773528637963,
+        "short_net4": -659.0525681570857,
+        "short_net8": -917.4283723058556,
+        "short_gross": -499.7123212025024,
+        "short_funding": 99.03555719418597,
+        "short_closed": 164,
+        "short_entries": 164,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.29878048780487804,
+        "short_exp_days": 123.44659968758032,
+        "short_per_day": -0.3006626679548749,
+        "turnover": 307.9330961188512,
+        "orders": 394,
+        "order_notional": 164.2865281186455,
+        "fill_notional_rate": 0.9371830412548073,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 1843.4574901304168,
+        "sharpe": 0.7396360742540468,
+        "active_months": 69,
+        "pos_month_ratio": 0.4492753623188406
+      },
+      "DEV-A": {
+        "days": 1461,
+        "net4": 6949.406980156897,
+        "net8": 6597.299056876669,
+        "gross": 8265.381633982506,
+        "funding": -963.8667305453824,
+        "closed": 227,
+        "entries": 227,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.34801762114537443,
+        "exp_days": 218.08161823072024,
+        "per_day": 4.7566098426809695,
+        "long_net4": 6919.733441702916,
+        "long_net8": 6730.373768753897,
+        "long_gross": 8116.551473456055,
+        "long_funding": -1007.4583588041185,
+        "long_closed": 118,
+        "long_entries": 118,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.3898305084745763,
+        "long_exp_days": 140.3026562427377,
+        "long_per_day": 4.736299412527663,
+        "short_net4": 29.67353845398179,
+        "short_net8": -133.07471187722632,
+        "short_gross": 148.83016052645326,
+        "short_funding": 43.59162825873601,
+        "short_closed": 109,
+        "short_entries": 109,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.30275229357798167,
+        "short_exp_days": 77.77896198798257,
+        "short_per_day": 0.02031043015330718,
+        "turnover": 176.0539616401137,
+        "orders": 244,
+        "order_notional": 95.76062763553978,
+        "fill_notional_rate": 0.9192398065213526,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 45.399999999999864,
+        "mdd_1m": 1599.2628089516434,
+        "sharpe": 0.9889153226888439,
+        "active_months": 45,
+        "pos_month_ratio": 0.4666666666666667
+      },
+      "DEV-B": {
+        "days": 731,
+        "net4": 731.3932091634597,
+        "net8": 467.6349402059843,
+        "gross": 1278.4456675705271,
+        "funding": -283.29418944959303,
+        "closed": 144,
+        "entries": 144,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.3194444444444444,
+        "exp_days": 137.0514563467072,
+        "per_day": 1.0005379058323662,
+        "long_net4": 1420.1193157745267,
+        "long_net8": 1251.9886006346142,
+        "long_gross": 1926.9881492994828,
+        "long_funding": -338.738118385043,
+        "long_closed": 89,
+        "long_entries": 89,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.33707865168539325,
+        "long_exp_days": 91.38381864710946,
+        "long_per_day": 1.942707682318094,
+        "short_net4": -688.7261066110676,
+        "short_net8": -784.3536604286294,
+        "short_gross": -648.5424817289556,
+        "short_funding": 55.44392893544996,
+        "short_closed": 55,
+        "short_entries": 55,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.2909090909090909,
+        "short_exp_days": 45.66763769959775,
+        "short_per_day": -0.9421697764857286,
+        "turnover": 131.8791344787375,
+        "orders": 150,
+        "order_notional": 68.52590048310572,
+        "fill_notional_rate": 0.9622575810678387,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 1843.4574901304636,
+        "sharpe": 0.21799581218041447,
+        "active_months": 24,
+        "pos_month_ratio": 0.4166666666666667
+      },
+      "TEST": {
+        "days": 280,
+        "net4": 3038.1736540506836,
+        "net8": 2948.7384507466318,
+        "gross": 3136.3869885265044,
+        "funding": -8.778131171769322,
+        "closed": 42,
+        "entries": 42,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.35714285714285715,
+        "exp_days": 62.29317411067781,
+        "per_day": 10.850620193038155,
+        "long_net4": 1075.200230110421,
+        "long_net8": 1046.8038534612126,
+        "long_gross": 1137.0772312672193,
+        "long_funding": -33.48062450758989,
+        "long_closed": 13,
+        "long_entries": 13,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.46153846153846156,
+        "long_exp_days": 22.792702244791556,
+        "long_per_day": 3.8400008218229322,
+        "short_net4": 1962.9734239402621,
+        "short_net8": 1901.934597285419,
+        "short_gross": 1999.3097572592853,
+        "short_funding": 24.70249333582057,
+        "short_closed": 29,
+        "short_entries": 29,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.3103448275862069,
+        "short_exp_days": 39.50047186588626,
+        "short_per_day": 7.010619371215222,
+        "turnover": 44.717601652025934,
+        "orders": 45,
+        "order_notional": 24.133667776772793,
+        "fill_notional_rate": 0.9264568085059983,
+        "exit_latency_p50": 1.5,
+        "exit_latency_p95": 71.69999999999997,
+        "mdd_1m": 1070.1677280300057,
+        "sharpe": 1.9538170884325086,
+        "active_months": 9,
+        "pos_month_ratio": 0.5555555555555556
+      }
+    },
+    "stress": {
+      "o2_p0.5": {
+        "DEV-FULL": {
+          "net4": 7680.800189320357,
+          "long_net4": 8339.852757477442,
+          "short_net4": -659.0525681570857,
+          "closed": 371,
+          "fill_notional_rate": 0.9371830412548073
+        },
+        "DEV-A": {
+          "net4": 6949.406980156897,
+          "long_net4": 6919.733441702916,
+          "short_net4": 29.67353845398179,
+          "closed": 227,
+          "fill_notional_rate": 0.9192398065213526
+        },
+        "DEV-B": {
+          "net4": 731.3932091634597,
+          "long_net4": 1420.1193157745267,
+          "short_net4": -688.7261066110676,
+          "closed": 144,
+          "fill_notional_rate": 0.9622575810678387
+        },
+        "TEST": {
+          "net4": 3038.1736540506836,
+          "long_net4": 1075.200230110421,
+          "short_net4": 1962.9734239402621,
+          "closed": 42,
+          "fill_notional_rate": 0.9264568085059983
+        }
+      },
+      "o2_p1.0": {
+        "DEV-FULL": {
+          "net4": 7767.442483839254,
+          "long_net4": 8417.204973883592,
+          "short_net4": -649.7624900443376,
+          "closed": 368,
+          "fill_notional_rate": 0.8904985727406276
+        },
+        "DEV-A": {
+          "net4": 6872.170951394095,
+          "long_net4": 6837.204943746597,
+          "short_net4": 34.96600764749837,
+          "closed": 227,
+          "fill_notional_rate": 0.8795359013572093
+        },
+        "DEV-B": {
+          "net4": 895.2715324451606,
+          "long_net4": 1580.0000301369964,
+          "short_net4": -684.7284976918361,
+          "closed": 141,
+          "fill_notional_rate": 0.9059560736922514
+        },
+        "TEST": {
+          "net4": 2981.139759191048,
+          "long_net4": 1044.3626937949157,
+          "short_net4": 1936.7770653961325,
+          "closed": 42,
+          "fill_notional_rate": 0.8885498792724416
+        }
+      },
+      "o2_p2.0": {
+        "DEV-FULL": {
+          "net4": 7431.457725016259,
+          "long_net4": 8355.07703866388,
+          "short_net4": -923.6193136476188,
+          "closed": 362,
+          "fill_notional_rate": 0.8185185413366125
+        },
+        "DEV-A": {
+          "net4": 6667.921469240712,
+          "long_net4": 6855.355595267261,
+          "short_net4": -187.4341260265483,
+          "closed": 223,
+          "fill_notional_rate": 0.8044348893734011
+        },
+        "DEV-B": {
+          "net4": 763.5362557755464,
+          "long_net4": 1499.7214433966167,
+          "short_net4": -736.1851876210703,
+          "closed": 139,
+          "fill_notional_rate": 0.8382748039755887
+        },
+        "TEST": {
+          "net4": 2985.9166066936878,
+          "long_net4": 1027.080661220666,
+          "short_net4": 1958.8359454730216,
+          "closed": 42,
+          "fill_notional_rate": 0.851466066357599
+        }
+      },
+      "o5_p0.5": {
+        "DEV-FULL": {
+          "net4": 7670.623478800968,
+          "long_net4": 8254.886208950618,
+          "short_net4": -584.2627301496492,
+          "closed": 369,
+          "fill_notional_rate": 0.8760284837265253
+        },
+        "DEV-A": {
+          "net4": 6879.418847609204,
+          "long_net4": 6805.25801532219,
+          "short_net4": 74.16083228701578,
+          "closed": 227,
+          "fill_notional_rate": 0.8716521977067523
+        },
+        "DEV-B": {
+          "net4": 791.2046311917637,
+          "long_net4": 1449.6281936284292,
+          "short_net4": -658.4235624366652,
+          "closed": 142,
+          "fill_notional_rate": 0.8820421438776037
+        },
+        "TEST": {
+          "net4": 3078.084367561906,
+          "long_net4": 1083.8832350261082,
+          "short_net4": 1994.2011325357976,
+          "closed": 42,
+          "fill_notional_rate": 0.8377526801335032
+        }
+      },
+      "o5_p1.0": {
+        "DEV-FULL": {
+          "net4": 7703.019367680545,
+          "long_net4": 8325.004778320312,
+          "short_net4": -621.9854106397677,
+          "closed": 367,
+          "fill_notional_rate": 0.8659835093346411
+        },
+        "DEV-A": {
+          "net4": 6834.616843126516,
+          "long_net4": 6795.894679191904,
+          "short_net4": 38.722163934611785,
+          "closed": 226,
+          "fill_notional_rate": 0.8630464548365351
+        },
+        "DEV-B": {
+          "net4": 868.4025245540284,
+          "long_net4": 1529.110099128408,
+          "short_net4": -660.7075745743796,
+          "closed": 141,
+          "fill_notional_rate": 0.8700236190158248
+        },
+        "TEST": {
+          "net4": 3135.5543303814256,
+          "long_net4": 1084.2742509254233,
+          "short_net4": 2051.2800794560026,
+          "closed": 41,
+          "fill_notional_rate": 0.7964897344262711
+        }
+      },
+      "o5_p2.0": {
+        "DEV-FULL": {
+          "net4": 7284.407954343613,
+          "long_net4": 8127.543269764592,
+          "short_net4": -843.1353154209796,
+          "closed": 363,
+          "fill_notional_rate": 0.8210613080441559
+        },
+        "DEV-A": {
+          "net4": 6596.637349031722,
+          "long_net4": 6806.444363830653,
+          "short_net4": -209.8070147989306,
+          "closed": 226,
+          "fill_notional_rate": 0.8313561668023461
+        },
+        "DEV-B": {
+          "net4": 687.7706053118898,
+          "long_net4": 1321.098905933939,
+          "short_net4": -633.328300622049,
+          "closed": 137,
+          "fill_notional_rate": 0.8070638010384662
+        },
+        "TEST": {
+          "net4": 3096.717365485948,
+          "long_net4": 1092.9634083615233,
+          "short_net4": 2003.7539571244242,
+          "closed": 40,
+          "fill_notional_rate": 0.7021319606434759
+        }
+      }
+    },
+    "twin_o5": {
+      "DEV-FULL": {
+        "net4": 7670.623478800968,
+        "long_net4": 8254.886208950618,
+        "short_net4": -584.2627301496492,
+        "closed": 369
+      },
+      "DEV-A": {
+        "net4": 6879.418847609204,
+        "long_net4": 6805.25801532219,
+        "short_net4": 74.16083228701578,
+        "closed": 227
+      },
+      "DEV-B": {
+        "net4": 791.2046311917637,
+        "long_net4": 1449.6281936284292,
+        "short_net4": -658.4235624366652,
+        "closed": 142
+      },
+      "TEST": {
+        "net4": 3078.084367561906,
+        "long_net4": 1083.8832350261082,
+        "short_net4": 1994.2011325357976,
+        "closed": 42
+      }
+    }
+  },
+  "H": {
+    "variant_id": "family=H|h=2|lam=10.0|q=0.9|offset=2",
+    "params": {
+      "family": "H",
+      "h": 2,
+      "lam": 10.0,
+      "q": 0.9,
+      "offset": 2
+    },
+    "dev_eligible": false,
+    "n_eligible": 0,
+    "dev_score": 0.07412846596773259,
+    "adaptive_score": 0.0,
+    "PROFIT_PASS": false,
+    "LOW_N": true,
+    "STRONG": false,
+    "KILL": true,
+    "verdict": "LOW_N+KILL",
+    "boot_TEST": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "boot_DEV-FULL": [
+      0.09209987604797837,
+      0.003174790876591078,
+      -0.038113589744960645
+    ],
+    "metrics": {
+      "DEV-FULL": {
+        "days": 1826,
+        "net4": 1788.0583894826163,
+        "net8": 1688.0583894826163,
+        "gross": 1830.2435894826162,
+        "funding": 57.8148,
+        "closed": 25,
+        "entries": 25,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.64,
+        "exp_days": 8.403472222222222,
+        "per_day": 0.9792214619291437,
+        "long_net4": 313.60903430930045,
+        "long_net8": 281.60903430930045,
+        "long_gross": 360.2283343093004,
+        "long_funding": -14.619299999999999,
+        "long_closed": 8,
+        "long_entries": 8,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.625,
+        "long_exp_days": 2.708333333333333,
+        "long_per_day": 0.17174645909600245,
+        "short_net4": 1474.4493551733158,
+        "short_net8": 1406.4493551733158,
+        "short_gross": 1470.0152551733158,
+        "short_funding": 72.4341,
+        "short_closed": 17,
+        "short_entries": 17,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.6470588235294118,
+        "short_exp_days": 5.695138888888889,
+        "short_per_day": 0.8074750028331412,
+        "turnover": 50.0,
+        "orders": 26,
+        "order_notional": 26.0,
+        "fill_notional_rate": 0.9615384615384616,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 16.599999999999966,
+        "mdd_1m": 729.1893661452995,
+        "sharpe": 0.7693612621702774,
+        "active_months": 7,
+        "pos_month_ratio": 0.7142857142857143
+      },
+      "DEV-A": {
+        "days": 1095,
+        "net4": 1629.123015168351,
+        "net8": 1553.123015168351,
+        "gross": 1640.774415168351,
+        "funding": 64.3486,
+        "closed": 19,
+        "entries": 19,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.631578947368421,
+        "exp_days": 6.365277777777777,
+        "per_day": 1.487783575496211,
+        "long_net4": 208.86156861744783,
+        "long_net8": 196.86156861744783,
+        "long_gross": 227.94706861744783,
+        "long_funding": -7.0855,
+        "long_closed": 3,
+        "long_entries": 3,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.6666666666666666,
+        "long_exp_days": 1.0055555555555555,
+        "long_per_day": 0.19074115855474688,
+        "short_net4": 1420.2614465509032,
+        "short_net8": 1356.2614465509032,
+        "short_gross": 1412.8273465509033,
+        "short_funding": 71.4341,
+        "short_closed": 16,
+        "short_entries": 16,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.625,
+        "short_exp_days": 5.3597222222222225,
+        "short_per_day": 1.297042416941464,
+        "turnover": 38.0,
+        "orders": 20,
+        "order_notional": 20.0,
+        "fill_notional_rate": 0.95,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 3.3999999999999915,
+        "mdd_1m": 729.1893661452995,
+        "sharpe": 0.9434345054748273,
+        "active_months": 4,
+        "pos_month_ratio": 0.75
+      },
+      "DEV-B": {
+        "days": 731,
+        "net4": 158.93537431426512,
+        "net8": 134.93537431426512,
+        "gross": 189.46917431426513,
+        "funding": -6.5338,
+        "closed": 6,
+        "entries": 6,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.6666666666666666,
+        "exp_days": 2.0381944444444446,
+        "per_day": 0.2174218526870932,
+        "long_net4": 104.7474656918526,
+        "long_net8": 84.7474656918526,
+        "long_gross": 132.2812656918526,
+        "long_funding": -7.5338,
+        "long_closed": 5,
+        "long_entries": 5,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.6,
+        "long_exp_days": 1.7027777777777775,
+        "long_per_day": 0.1432933867193606,
+        "short_net4": 54.18790862241252,
+        "short_net8": 50.18790862241252,
+        "short_gross": 57.18790862241252,
+        "short_funding": 1.0,
+        "short_closed": 1,
+        "short_entries": 1,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 1.0,
+        "short_exp_days": 0.33541666666666664,
+        "short_per_day": 0.07412846596773259,
+        "turnover": 12.0,
+        "orders": 6,
+        "order_notional": 6.0,
+        "fill_notional_rate": 1.0,
+        "exit_latency_p50": 2.0,
+        "exit_latency_p95": 22.75,
+        "mdd_1m": 406.05005563069983,
+        "sharpe": 0.3841754047712523,
+        "active_months": 3,
+        "pos_month_ratio": 0.6666666666666666
+      },
+      "TEST": {
+        "days": 280,
+        "net4": 0.0,
+        "net8": 0.0,
+        "gross": 0.0,
+        "funding": 0.0,
+        "closed": 0,
+        "entries": 0,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": NaN,
+        "exp_days": 0.0,
+        "per_day": 0.0,
+        "long_net4": 0.0,
+        "long_net8": 0.0,
+        "long_gross": 0.0,
+        "long_funding": 0.0,
+        "long_closed": 0,
+        "long_entries": 0,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": NaN,
+        "long_exp_days": 0.0,
+        "long_per_day": 0.0,
+        "short_net4": 0.0,
+        "short_net8": 0.0,
+        "short_gross": 0.0,
+        "short_funding": 0.0,
+        "short_closed": 0,
+        "short_entries": 0,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": NaN,
+        "short_exp_days": 0.0,
+        "short_per_day": 0.0,
+        "turnover": 0.0,
+        "orders": 0,
+        "order_notional": 0.0,
+        "fill_notional_rate": NaN,
+        "exit_latency_p50": NaN,
+        "exit_latency_p95": NaN,
+        "mdd_1m": 0.0,
+        "sharpe": NaN,
+        "active_months": 0,
+        "pos_month_ratio": NaN
+      }
+    },
+    "stress": {
+      "o2_p0.5": {
+        "DEV-FULL": {
+          "net4": 1788.0583894826163,
+          "long_net4": 313.60903430930045,
+          "short_net4": 1474.4493551733158,
+          "closed": 25,
+          "fill_notional_rate": 0.9615384615384616
+        },
+        "DEV-A": {
+          "net4": 1629.123015168351,
+          "long_net4": 208.86156861744783,
+          "short_net4": 1420.2614465509032,
+          "closed": 19,
+          "fill_notional_rate": 0.95
+        },
+        "DEV-B": {
+          "net4": 158.93537431426512,
+          "long_net4": 104.7474656918526,
+          "short_net4": 54.18790862241252,
+          "closed": 6,
+          "fill_notional_rate": 1.0
+        },
+        "TEST": {
+          "net4": 0.0,
+          "long_net4": 0.0,
+          "short_net4": 0.0,
+          "closed": 0,
+          "fill_notional_rate": NaN
+        }
+      },
+      "o2_p1.0": {
+        "DEV-FULL": {
+          "net4": 1788.0583894826163,
+          "long_net4": 313.60903430930045,
+          "short_net4": 1474.4493551733158,
+          "closed": 25,
+          "fill_notional_rate": 0.9615384615384616
+        },
+        "DEV-A": {
+          "net4": 1629.123015168351,
+          "long_net4": 208.86156861744783,
+          "short_net4": 1420.2614465509032,
+          "closed": 19,
+          "fill_notional_rate": 0.95
+        },
+        "DEV-B": {
+          "net4": 158.93537431426512,
+          "long_net4": 104.7474656918526,
+          "short_net4": 54.18790862241252,
+          "closed": 6,
+          "fill_notional_rate": 1.0
+        },
+        "TEST": {
+          "net4": 0.0,
+          "long_net4": 0.0,
+          "short_net4": 0.0,
+          "closed": 0,
+          "fill_notional_rate": NaN
+        }
+      },
+      "o2_p2.0": {
+        "DEV-FULL": {
+          "net4": 1766.960456037281,
+          "long_net4": 250.12121342623016,
+          "short_net4": 1516.8392426110508,
+          "closed": 23,
+          "fill_notional_rate": 0.8846153846153846
+        },
+        "DEV-A": {
+          "net4": 1600.5141448825889,
+          "long_net4": 146.34292780803534,
+          "short_net4": 1454.1712170745536,
+          "closed": 17,
+          "fill_notional_rate": 0.85
+        },
+        "DEV-B": {
+          "net4": 166.446311154692,
+          "long_net4": 103.77828561819483,
+          "short_net4": 62.6680255364972,
+          "closed": 6,
+          "fill_notional_rate": 1.0
+        },
+        "TEST": {
+          "net4": 0.0,
+          "long_net4": 0.0,
+          "short_net4": 0.0,
+          "closed": 0,
+          "fill_notional_rate": NaN
+        }
+      },
+      "o5_p0.5": {
+        "DEV-FULL": {
+          "net4": 1689.4552246232533,
+          "long_net4": 288.61064695634684,
+          "short_net4": 1400.8445776669066,
+          "closed": 23,
+          "fill_notional_rate": 0.8846153846153846
+        },
+        "DEV-A": {
+          "net4": 1493.8524611961805,
+          "long_net4": 149.38934743903184,
+          "short_net4": 1344.4631137571487,
+          "closed": 17,
+          "fill_notional_rate": 0.85
+        },
+        "DEV-B": {
+          "net4": 195.6027634270729,
+          "long_net4": 139.221299517315,
+          "short_net4": 56.38146390975785,
+          "closed": 6,
+          "fill_notional_rate": 1.0
+        },
+        "TEST": {
+          "net4": 0.0,
+          "long_net4": 0.0,
+          "short_net4": 0.0,
+          "closed": 0,
+          "fill_notional_rate": NaN
+        }
+      },
+      "o5_p1.0": {
+        "DEV-FULL": {
+          "net4": 1707.383429754931,
+          "long_net4": 306.53885208802444,
+          "short_net4": 1400.8445776669066,
+          "closed": 23,
+          "fill_notional_rate": 0.8846153846153846
+        },
+        "DEV-A": {
+          "net4": 1493.8524611961805,
+          "long_net4": 149.38934743903184,
+          "short_net4": 1344.4631137571487,
+          "closed": 17,
+          "fill_notional_rate": 0.85
+        },
+        "DEV-B": {
+          "net4": 213.53096855875046,
+          "long_net4": 157.14950464899263,
+          "short_net4": 56.38146390975785,
+          "closed": 6,
+          "fill_notional_rate": 1.0
+        },
+        "TEST": {
+          "net4": 0.0,
+          "long_net4": 0.0,
+          "short_net4": 0.0,
+          "closed": 0,
+          "fill_notional_rate": NaN
+        }
+      },
+      "o5_p2.0": {
+        "DEV-FULL": {
+          "net4": 1097.9006219784972,
+          "long_net4": 68.45048212015458,
+          "short_net4": 1029.450139858343,
+          "closed": 20,
+          "fill_notional_rate": 0.7407407407407407
+        },
+        "DEV-A": {
+          "net4": 1178.8394872973745,
+          "long_net4": 149.38934743903184,
+          "short_net4": 1029.450139858343,
+          "closed": 16,
+          "fill_notional_rate": 0.7619047619047619
+        },
+        "DEV-B": {
+          "net4": -80.93886531887728,
+          "long_net4": -80.93886531887728,
+          "short_net4": 0.0,
+          "closed": 4,
+          "fill_notional_rate": 0.6666666666666666
+        },
+        "TEST": {
+          "net4": 0.0,
+          "long_net4": 0.0,
+          "short_net4": 0.0,
+          "closed": 0,
+          "fill_notional_rate": NaN
+        }
+      }
+    },
+    "twin_o5": {
+      "DEV-FULL": {
+        "net4": 1689.4552246232533,
+        "long_net4": 288.61064695634684,
+        "short_net4": 1400.8445776669066,
+        "closed": 23
+      },
+      "DEV-A": {
+        "net4": 1493.8524611961805,
+        "long_net4": 149.38934743903184,
+        "short_net4": 1344.4631137571487,
+        "closed": 17
+      },
+      "DEV-B": {
+        "net4": 195.6027634270729,
+        "long_net4": 139.221299517315,
+        "short_net4": 56.38146390975785,
+        "closed": 6
+      },
+      "TEST": {
+        "net4": 0.0,
+        "long_net4": 0.0,
+        "short_net4": 0.0,
+        "closed": 0
+      }
+    }
+  },
+  "I": {
+    "variant_id": "family=I|weeks=104|tail=0.1|hold=480|offset=2",
+    "params": {
+      "family": "I",
+      "weeks": 104,
+      "tail": 0.1,
+      "hold": 480,
+      "offset": 2
+    },
+    "dev_eligible": false,
+    "n_eligible": 0,
+    "dev_score": -4.5849830462504,
+    "adaptive_score": -12.505762049630954,
+    "PROFIT_PASS": false,
+    "LOW_N": false,
+    "STRONG": false,
+    "KILL": true,
+    "verdict": "KILL",
+    "boot_TEST": [
+      -21.762176360623652,
+      -18.07234164540938,
+      -15.842597693351918
+    ],
+    "boot_DEV-FULL": [
+      -14.460691921205127,
+      -14.505312851195317,
+      -13.885411073370724
+    ],
+    "metrics": {
+      "DEV-FULL": {
+        "days": 2192,
+        "net4": -14839.366352640065,
+        "net8": -23679.366352640063,
+        "gross": -5882.207352640062,
+        "funding": -117.15899999999999,
+        "closed": 2210,
+        "entries": 2210,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.4764705882352941,
+        "exp_days": 753.4069444444444,
+        "per_day": -6.769783920000029,
+        "long_net4": -6607.439107409718,
+        "long_net8": -11103.439107409717,
+        "long_gross": -810.9867074097155,
+        "long_funding": -1300.4524000000001,
+        "long_closed": 1124,
+        "long_entries": 1124,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.4724199288256228,
+        "long_exp_days": 382.8951388888889,
+        "long_per_day": -3.014342658489835,
+        "short_net4": -8231.927245230347,
+        "short_net8": -12575.927245230347,
+        "short_gross": -5071.220645230349,
+        "short_funding": 1183.2934,
+        "short_closed": 1086,
+        "short_entries": 1086,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.48066298342541436,
+        "short_exp_days": 370.5118055555555,
+        "short_per_day": -3.7554412615101946,
+        "turnover": 4420.0,
+        "orders": 2611,
+        "order_notional": 2611.0,
+        "fill_notional_rate": 0.8464189965530448,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 22870.04930458422,
+        "sharpe": -0.678525464182407,
+        "active_months": 60,
+        "pos_month_ratio": 0.43333333333333335
+      },
+      "DEV-A": {
+        "days": 1461,
+        "net4": -9450.969171701396,
+        "net8": -14960.969171701394,
+        "gross": -3856.4172717013926,
+        "funding": -84.55189999999997,
+        "closed": 1377,
+        "entries": 1378,
+        "open_n": 1,
+        "open_mtm": -4.5293535019721425,
+        "win": 0.47785039941902685,
+        "exp_days": 469.71319444444447,
+        "per_day": -6.468835846475972,
+        "long_net4": -3255.8165006006757,
+        "long_net8": -6047.816500600675,
+        "long_gross": 462.78719939932694,
+        "long_funding": -926.6037,
+        "long_closed": 698,
+        "long_entries": 698,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.4670487106017192,
+        "long_exp_days": 237.80138888888888,
+        "long_per_day": -2.2284849422318107,
+        "short_net4": -6195.152671100719,
+        "short_net8": -8913.152671100719,
+        "short_gross": -4319.20447110072,
+        "short_funding": 842.0518000000001,
+        "short_closed": 679,
+        "short_entries": 680,
+        "short_open_n": 1,
+        "short_open_mtm": -4.5293535019721425,
+        "short_win": 0.4889543446244477,
+        "short_exp_days": 231.91180555555553,
+        "short_per_day": -4.240350904244161,
+        "turnover": 2755.0,
+        "orders": 1629,
+        "order_notional": 1629.0,
+        "fill_notional_rate": 0.8459177409453652,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 18697.623506639255,
+        "sharpe": -0.6279855632507357,
+        "active_months": 36,
+        "pos_month_ratio": 0.3888888888888889
+      },
+      "DEV-B": {
+        "days": 731,
+        "net4": -5388.397180938669,
+        "net8": -8718.397180938671,
+        "gross": -2025.7900809386695,
+        "funding": -32.6071,
+        "closed": 833,
+        "entries": 832,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.47418967587034816,
+        "exp_days": 283.69375,
+        "per_day": -7.371268373377113,
+        "long_net4": -3351.6226068090423,
+        "long_net8": -5055.622606809044,
+        "long_gross": -1273.7739068090427,
+        "long_funding": -373.8487,
+        "long_closed": 426,
+        "long_entries": 426,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.4812206572769953,
+        "long_exp_days": 145.09375,
+        "long_per_day": -4.5849830462504,
+        "short_net4": -2036.7745741296278,
+        "short_net8": -3662.7745741296276,
+        "short_gross": -752.0161741296288,
+        "short_funding": 341.2416,
+        "short_closed": 407,
+        "short_entries": 406,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.4668304668304668,
+        "short_exp_days": 138.6,
+        "short_per_day": -2.7862853271267136,
+        "turnover": 1665.0,
+        "orders": 982,
+        "order_notional": 982.0,
+        "fill_notional_rate": 0.8472505091649695,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 7875.2317191592665,
+        "sharpe": -0.7923344874475313,
+        "active_months": 24,
+        "pos_month_ratio": 0.5
+      },
+      "TEST": {
+        "days": 280,
+        "net4": -2257.02469801489,
+        "net8": -3581.0246980148904,
+        "gross": -900.4277980148904,
+        "funding": -32.5969,
+        "closed": 331,
+        "entries": 331,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.4622356495468278,
+        "exp_days": 113.3722222222222,
+        "per_day": -8.060802492910321,
+        "long_net4": -2741.178640474057,
+        "long_net8": -3565.178640474057,
+        "long_gross": -1857.2552404740566,
+        "long_funding": -59.9234,
+        "long_closed": 206,
+        "long_entries": 206,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.42718446601941745,
+        "long_exp_days": 70.39999999999999,
+        "long_per_day": -9.789923715978775,
+        "short_net4": 484.1539424591674,
+        "short_net8": -15.84605754083259,
+        "short_gross": 956.8274424591675,
+        "short_funding": 27.326500000000003,
+        "short_closed": 125,
+        "short_entries": 125,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.52,
+        "short_exp_days": 42.97222222222222,
+        "short_per_day": 1.729121223068455,
+        "turnover": 662.0,
+        "orders": 382,
+        "order_notional": 382.0,
+        "fill_notional_rate": 0.8664921465968587,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 63.5,
+        "mdd_1m": 4225.746547940568,
+        "sharpe": -0.9532230942835122,
+        "active_months": 10,
+        "pos_month_ratio": 0.4
+      }
+    },
+    "stress": {
+      "o2_p0.5": {
+        "DEV-FULL": {
+          "net4": -14839.366352640065,
+          "long_net4": -6607.439107409718,
+          "short_net4": -8231.927245230347,
+          "closed": 2210,
+          "fill_notional_rate": 0.8464189965530448
+        },
+        "DEV-A": {
+          "net4": -9450.969171701396,
+          "long_net4": -3255.8165006006757,
+          "short_net4": -6195.152671100719,
+          "closed": 1377,
+          "fill_notional_rate": 0.8459177409453652
+        },
+        "DEV-B": {
+          "net4": -5388.397180938669,
+          "long_net4": -3351.6226068090423,
+          "short_net4": -2036.7745741296278,
+          "closed": 833,
+          "fill_notional_rate": 0.8472505091649695
+        },
+        "TEST": {
+          "net4": -2257.02469801489,
+          "long_net4": -2741.178640474057,
+          "short_net4": 484.1539424591674,
+          "closed": 331,
+          "fill_notional_rate": 0.8664921465968587
+        }
+      },
+      "o2_p1.0": {
+        "DEV-FULL": {
+          "net4": -18497.02175215158,
+          "long_net4": -7610.887972289344,
+          "short_net4": -10886.13377986224,
+          "closed": 2160,
+          "fill_notional_rate": 0.8044692737430168
+        },
+        "DEV-A": {
+          "net4": -11705.620517303178,
+          "long_net4": -4100.89389206203,
+          "short_net4": -7604.726625241154,
+          "closed": 1341,
+          "fill_notional_rate": 0.8002385211687537
+        },
+        "DEV-B": {
+          "net4": -6791.401234848401,
+          "long_net4": -3509.9940802273145,
+          "short_net4": -3281.4071546210866,
+          "closed": 819,
+          "fill_notional_rate": 0.8115079365079365
+        },
+        "TEST": {
+          "net4": -2102.6759651546367,
+          "long_net4": -2805.362429955616,
+          "short_net4": 702.6864648009794,
+          "closed": 330,
+          "fill_notional_rate": 0.8312342569269522
+        }
+      },
+      "o2_p2.0": {
+        "DEV-FULL": {
+          "net4": -21850.53273203721,
+          "long_net4": -7655.506784196824,
+          "short_net4": -14195.025947840391,
+          "closed": 2043,
+          "fill_notional_rate": 0.7018206801786327
+        },
+        "DEV-A": {
+          "net4": -14672.006855565607,
+          "long_net4": -4541.742563594692,
+          "short_net4": -10130.264291970918,
+          "closed": 1263,
+          "fill_notional_rate": 0.6941241076331686
+        },
+        "DEV-B": {
+          "net4": -7178.525876471604,
+          "long_net4": -3113.764220602132,
+          "short_net4": -4064.7616558694735,
+          "closed": 780,
+          "fill_notional_rate": 0.7146788990825688
+        },
+        "TEST": {
+          "net4": -1569.9508922458263,
+          "long_net4": -2892.2760901102633,
+          "short_net4": 1322.3251978644375,
+          "closed": 321,
+          "fill_notional_rate": 0.7570754716981132
+        }
+      },
+      "o5_p0.5": {
+        "DEV-FULL": {
+          "net4": -12847.116075976786,
+          "long_net4": -5378.698296106241,
+          "short_net4": -7468.417779870542,
+          "closed": 2104,
+          "fill_notional_rate": 0.743988684582744
+        },
+        "DEV-A": {
+          "net4": -7133.925225187319,
+          "long_net4": -1334.3329717313354,
+          "short_net4": -5799.592253455981,
+          "closed": 1307,
+          "fill_notional_rate": 0.7444507683551508
+        },
+        "DEV-B": {
+          "net4": -5713.190850789468,
+          "long_net4": -4044.365324374906,
+          "short_net4": -1668.8255264145616,
+          "closed": 797,
+          "fill_notional_rate": 0.7432306255835668
+        },
+        "TEST": {
+          "net4": -2075.0538331858866,
+          "long_net4": -3501.6133738966673,
+          "short_net4": 1426.5595407107799,
+          "closed": 322,
+          "fill_notional_rate": 0.7385321100917431
+        }
+      },
+      "o5_p1.0": {
+        "DEV-FULL": {
+          "net4": -12907.703391160498,
+          "long_net4": -4570.066128102472,
+          "short_net4": -8337.637263058024,
+          "closed": 2048,
+          "fill_notional_rate": 0.7057201929703653
+        },
+        "DEV-A": {
+          "net4": -7145.696891944855,
+          "long_net4": -487.6722370811414,
+          "short_net4": -6658.024654863715,
+          "closed": 1268,
+          "fill_notional_rate": 0.7057842046718577
+        },
+        "DEV-B": {
+          "net4": -5762.006499215642,
+          "long_net4": -4082.393891021331,
+          "short_net4": -1679.6126081943098,
+          "closed": 780,
+          "fill_notional_rate": 0.7056159420289855
+        },
+        "TEST": {
+          "net4": -2889.464984452826,
+          "long_net4": -4148.022348683347,
+          "short_net4": 1258.5573642305212,
+          "closed": 320,
+          "fill_notional_rate": 0.7079646017699115
+        }
+      },
+      "o5_p2.0": {
+        "DEV-FULL": {
+          "net4": -14261.94192785351,
+          "long_net4": -4847.258805022864,
+          "short_net4": -9414.683122830644,
+          "closed": 1938,
+          "fill_notional_rate": 0.6111636707663197
+        },
+        "DEV-A": {
+          "net4": -7143.457759231877,
+          "long_net4": -1003.0454791418625,
+          "short_net4": -6140.412280090015,
+          "closed": 1206,
+          "fill_notional_rate": 0.6253886010362695
+        },
+        "DEV-B": {
+          "net4": -7118.484168621632,
+          "long_net4": -3844.2133258810018,
+          "short_net4": -3274.2708427406296,
+          "closed": 732,
+          "fill_notional_rate": 0.589041095890411
+        },
+        "TEST": {
+          "net4": -2184.035062640815,
+          "long_net4": -3537.6948034323236,
+          "short_net4": 1353.6597407915071,
+          "closed": 305,
+          "fill_notional_rate": 0.613682092555332
+        }
+      }
+    },
+    "twin_o5": {
+      "DEV-FULL": {
+        "net4": -12847.116075976786,
+        "long_net4": -5378.698296106241,
+        "short_net4": -7468.417779870542,
+        "closed": 2104
+      },
+      "DEV-A": {
+        "net4": -7133.925225187319,
+        "long_net4": -1334.3329717313354,
+        "short_net4": -5799.592253455981,
+        "closed": 1307
+      },
+      "DEV-B": {
+        "net4": -5713.190850789468,
+        "long_net4": -4044.365324374906,
+        "short_net4": -1668.8255264145616,
+        "closed": 797
+      },
+      "TEST": {
+        "net4": -2075.0538331858866,
+        "long_net4": -3501.6133738966673,
+        "short_net4": 1426.5595407107799,
+        "closed": 322
+      }
+    }
+  },
+  "J": {
+    "variant_id": "family=J|lead=30|zthr=2.0|hold=60|offset=2",
+    "params": {
+      "family": "J",
+      "lead": 30,
+      "zthr": 2.0,
+      "hold": 60,
+      "offset": 2
+    },
+    "dev_eligible": false,
+    "n_eligible": 0,
+    "dev_score": -1.1967108036537302,
+    "adaptive_score": -1.7628827970610068,
+    "PROFIT_PASS": false,
+    "LOW_N": false,
+    "STRONG": false,
+    "KILL": true,
+    "verdict": "KILL",
+    "boot_TEST": [
+      -3.2003176623015808,
+      -2.744631409076454,
+      -2.3671823569112216
+    ],
+    "boot_DEV-FULL": [
+      -3.2733735194620346,
+      -3.134444831196706,
+      -3.0930816986643794
+    ],
+    "metrics": {
+      "DEV-FULL": {
+        "days": 2192,
+        "net4": -3487.12903258769,
+        "net8": -6975.129032587689,
+        "gross": -1131.6206325876888,
+        "funding": 1132.4916,
+        "closed": 872,
+        "entries": 872,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.46215596330275227,
+        "exp_days": 41.94027777777777,
+        "per_day": -1.5908435367644571,
+        "long_net4": -1006.4216118448892,
+        "long_net8": -2190.421611844889,
+        "long_gross": 133.09158815511074,
+        "long_funding": 44.48680000000001,
+        "long_closed": 296,
+        "long_entries": 296,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.43243243243243246,
+        "long_exp_days": 14.227083333333335,
+        "long_per_day": -0.45913394700952975,
+        "short_net4": -2480.7074207428,
+        "short_net8": -4784.7074207427995,
+        "short_gross": -1264.7122207427997,
+        "short_funding": 1088.0048000000002,
+        "short_closed": 576,
+        "short_entries": 576,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.4774305555555556,
+        "short_exp_days": 27.713194444444447,
+        "short_per_day": -1.131709589754927,
+        "turnover": 1744.0,
+        "orders": 987,
+        "order_notional": 987.0,
+        "fill_notional_rate": 0.8834853090172239,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 4779.703918694289,
+        "sharpe": -0.5632668493440348,
+        "active_months": 57,
+        "pos_month_ratio": 0.47368421052631576
+      },
+      "DEV-A": {
+        "days": 1461,
+        "net4": -1938.6056787567418,
+        "net8": -4226.605678756741,
+        "gross": -587.6523787567412,
+        "funding": 937.0467,
+        "closed": 572,
+        "entries": 572,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.46853146853146854,
+        "exp_days": 27.407638888888886,
+        "per_day": -1.3269032708807267,
+        "long_net4": -190.21119461864163,
+        "long_net8": -890.2111946186415,
+        "long_gross": 416.1357053813585,
+        "long_funding": 93.65310000000001,
+        "long_closed": 175,
+        "long_entries": 175,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.44571428571428573,
+        "long_exp_days": 8.220833333333333,
+        "long_per_day": -0.13019246722699632,
+        "short_net4": -1748.3944841380999,
+        "short_net8": -3336.3944841381,
+        "short_gross": -1003.7880841380996,
+        "short_funding": 843.3936000000001,
+        "short_closed": 397,
+        "short_entries": 397,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.47858942065491183,
+        "short_exp_days": 19.18680555555556,
+        "short_per_day": -1.1967108036537302,
+        "turnover": 1144.0,
+        "orders": 646,
+        "order_notional": 646.0,
+        "fill_notional_rate": 0.8854489164086687,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 3237.9941306888613,
+        "sharpe": -0.4181747086302127,
+        "active_months": 42,
+        "pos_month_ratio": 0.42857142857142855
+      },
+      "DEV-B": {
+        "days": 731,
+        "net4": -1548.5233538309476,
+        "net8": -2748.523353830947,
+        "gross": -543.9682538309476,
+        "funding": 195.4449,
+        "closed": 300,
+        "entries": 300,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.45,
+        "exp_days": 14.532638888888888,
+        "per_day": -2.118363001136727,
+        "long_net4": -816.2104172262477,
+        "long_net8": -1300.2104172262477,
+        "long_gross": -283.0441172262476,
+        "long_funding": -49.1663,
+        "long_closed": 121,
+        "long_entries": 121,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.4132231404958678,
+        "long_exp_days": 6.0062500000000005,
+        "long_per_day": -1.116566918230161,
+        "short_net4": -732.3129366047001,
+        "short_net8": -1448.3129366047,
+        "short_gross": -260.9241366046999,
+        "short_funding": 244.6112,
+        "short_closed": 179,
+        "short_entries": 179,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.4748603351955307,
+        "short_exp_days": 8.526388888888889,
+        "short_per_day": -1.0017960829065664,
+        "turnover": 600.0,
+        "orders": 341,
+        "order_notional": 341.0,
+        "fill_notional_rate": 0.8797653958944281,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 1682.929311435673,
+        "sharpe": -1.0862478463990588,
+        "active_months": 15,
+        "pos_month_ratio": 0.6
+      },
+      "TEST": {
+        "days": 280,
+        "net4": -273.3772493274101,
+        "net8": -441.37724932741,
+        "gross": -126.03244932741002,
+        "funding": 20.655199999999997,
+        "closed": 42,
+        "entries": 42,
+        "open_n": 0,
+        "open_mtm": 0.0,
+        "win": 0.5,
+        "exp_days": 2.19375,
+        "per_day": -0.9763473190264645,
+        "long_net4": 156.10842481925584,
+        "long_net8": 68.10842481925584,
+        "long_gross": 238.30602481925592,
+        "long_funding": 5.8024,
+        "long_closed": 22,
+        "long_entries": 22,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.5909090909090909,
+        "long_exp_days": 1.1291666666666664,
+        "long_per_day": 0.5575300886401995,
+        "short_net4": -429.48567414666593,
+        "short_net8": -509.48567414666593,
+        "short_gross": -364.3384741466659,
+        "short_funding": 14.8528,
+        "short_closed": 20,
+        "short_entries": 20,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.4,
+        "short_exp_days": 1.0645833333333332,
+        "short_per_day": -1.5338774076666641,
+        "turnover": 84.0,
+        "orders": 50,
+        "order_notional": 50.0,
+        "fill_notional_rate": 0.84,
+        "exit_latency_p50": 2.5,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 440.1091586689642,
+        "sharpe": -0.7868230429240327,
+        "active_months": 9,
+        "pos_month_ratio": 0.3333333333333333
+      }
+    },
+    "stress": {
+      "o2_p0.5": {
+        "DEV-FULL": {
+          "net4": -3487.12903258769,
+          "long_net4": -1006.4216118448892,
+          "short_net4": -2480.7074207428,
+          "closed": 872,
+          "fill_notional_rate": 0.8834853090172239
+        },
+        "DEV-A": {
+          "net4": -1938.6056787567418,
+          "long_net4": -190.21119461864163,
+          "short_net4": -1748.3944841380999,
+          "closed": 572,
+          "fill_notional_rate": 0.8854489164086687
+        },
+        "DEV-B": {
+          "net4": -1548.5233538309476,
+          "long_net4": -816.2104172262477,
+          "short_net4": -732.3129366047001,
+          "closed": 300,
+          "fill_notional_rate": 0.8797653958944281
+        },
+        "TEST": {
+          "net4": -273.3772493274101,
+          "long_net4": 156.10842481925584,
+          "short_net4": -429.48567414666593,
+          "closed": 42,
+          "fill_notional_rate": 0.84
+        }
+      },
+      "o2_p1.0": {
+        "DEV-FULL": {
+          "net4": -4339.481758316371,
+          "long_net4": -1318.7177270434695,
+          "short_net4": -3020.7640312729013,
+          "closed": 839,
+          "fill_notional_rate": 0.8500506585612969
+        },
+        "DEV-A": {
+          "net4": -2118.6423439712753,
+          "long_net4": -245.31233232808904,
+          "short_net4": -1873.3300116431865,
+          "closed": 554,
+          "fill_notional_rate": 0.8575851393188855
+        },
+        "DEV-B": {
+          "net4": -2220.839414345095,
+          "long_net4": -1073.4053947153805,
+          "short_net4": -1147.4340196297146,
+          "closed": 285,
+          "fill_notional_rate": 0.8357771260997068
+        },
+        "TEST": {
+          "net4": -307.5860806561107,
+          "long_net4": 132.11735349491147,
+          "short_net4": -439.7034341510223,
+          "closed": 39,
+          "fill_notional_rate": 0.78
+        }
+      },
+      "o2_p2.0": {
+        "DEV-FULL": {
+          "net4": -6012.867203833079,
+          "long_net4": -2559.419240623028,
+          "short_net4": -3453.447963210051,
+          "closed": 780,
+          "fill_notional_rate": 0.790273556231003
+        },
+        "DEV-A": {
+          "net4": -3469.362538311748,
+          "long_net4": -1057.7330336043067,
+          "short_net4": -2411.629504707441,
+          "closed": 514,
+          "fill_notional_rate": 0.7956656346749226
+        },
+        "DEV-B": {
+          "net4": -2543.504665521331,
+          "long_net4": -1501.6862070187215,
+          "short_net4": -1041.8184585026102,
+          "closed": 266,
+          "fill_notional_rate": 0.7800586510263929
+        },
+        "TEST": {
+          "net4": -540.0542677203332,
+          "long_net4": -49.23903132601575,
+          "short_net4": -490.81523639431737,
+          "closed": 36,
+          "fill_notional_rate": 0.72
+        }
+      },
+      "o5_p0.5": {
+        "DEV-FULL": {
+          "net4": -2318.2141715691973,
+          "long_net4": -430.7905759599151,
+          "short_net4": -1887.4235956092816,
+          "closed": 761,
+          "fill_notional_rate": 0.7710233029381965
+        },
+        "DEV-A": {
+          "net4": -1276.4283927111355,
+          "long_net4": 153.89946345257007,
+          "short_net4": -1430.3278561637053,
+          "closed": 508,
+          "fill_notional_rate": 0.7863777089783281
+        },
+        "DEV-B": {
+          "net4": -1041.7857788580618,
+          "long_net4": -584.690039412485,
+          "short_net4": -457.0957394455767,
+          "closed": 253,
+          "fill_notional_rate": 0.7419354838709677
+        },
+        "TEST": {
+          "net4": -400.13292316676814,
+          "long_net4": 93.47426001031369,
+          "short_net4": -493.6071831770819,
+          "closed": 37,
+          "fill_notional_rate": 0.74
+        }
+      },
+      "o5_p1.0": {
+        "DEV-FULL": {
+          "net4": -2526.6223612828685,
+          "long_net4": -554.6435386691804,
+          "short_net4": -1971.978822613687,
+          "closed": 741,
+          "fill_notional_rate": 0.7507598784194529
+        },
+        "DEV-A": {
+          "net4": -1205.8049993480226,
+          "long_net4": 182.2916927359351,
+          "short_net4": -1388.0966920839574,
+          "closed": 495,
+          "fill_notional_rate": 0.7662538699690402
+        },
+        "DEV-B": {
+          "net4": -1320.8173619348454,
+          "long_net4": -736.9352314051156,
+          "short_net4": -583.8821305297298,
+          "closed": 246,
+          "fill_notional_rate": 0.7214076246334311
+        },
+        "TEST": {
+          "net4": -417.59557693969975,
+          "long_net4": 79.47721528835305,
+          "short_net4": -497.07279222805295,
+          "closed": 37,
+          "fill_notional_rate": 0.74
+        }
+      },
+      "o5_p2.0": {
+        "DEV-FULL": {
+          "net4": -3439.366874726011,
+          "long_net4": -1112.64188319706,
+          "short_net4": -2326.724991528951,
+          "closed": 672,
+          "fill_notional_rate": 0.6808510638297872
+        },
+        "DEV-A": {
+          "net4": -1433.7321992223035,
+          "long_net4": 26.393577843870673,
+          "short_net4": -1460.1257770661744,
+          "closed": 452,
+          "fill_notional_rate": 0.6996904024767802
+        },
+        "DEV-B": {
+          "net4": -2005.6346755037073,
+          "long_net4": -1139.0354610409308,
+          "short_net4": -866.5992144627763,
+          "closed": 220,
+          "fill_notional_rate": 0.6451612903225806
+        },
+        "TEST": {
+          "net4": -409.68169796618326,
+          "long_net4": 63.002426030896736,
+          "short_net4": -472.68412399707995,
+          "closed": 32,
+          "fill_notional_rate": 0.64
+        }
+      }
+    },
+    "twin_o5": {
+      "DEV-FULL": {
+        "net4": -2318.2141715691973,
+        "long_net4": -430.7905759599151,
+        "short_net4": -1887.4235956092816,
+        "closed": 761
+      },
+      "DEV-A": {
+        "net4": -1276.4283927111355,
+        "long_net4": 153.89946345257007,
+        "short_net4": -1430.3278561637053,
+        "closed": 508
+      },
+      "DEV-B": {
+        "net4": -1041.7857788580618,
+        "long_net4": -584.690039412485,
+        "short_net4": -457.0957394455767,
+        "closed": 253
+      },
+      "TEST": {
+        "net4": -400.13292316676814,
+        "long_net4": 93.47426001031369,
+        "short_net4": -493.6071831770819,
+        "closed": 37
+      }
+    }
+  },
+  "K": {
+    "variant_id": "family=K|base=B1|g=1.0|action=veto|tv=0.4|offset=2",
+    "params": {
+      "family": "K",
+      "base": "B1",
+      "g": 1.0,
+      "action": "veto",
+      "tv": 0.4,
+      "offset": 2
+    },
+    "dev_eligible": true,
+    "n_eligible": 4,
+    "dev_score": 0.9444120683964925,
+    "adaptive_score": 0.6333810732917777,
+    "PROFIT_PASS": true,
+    "LOW_N": true,
+    "STRONG": false,
+    "KILL": false,
+    "verdict": "PROFIT_PASS+LOW_N",
+    "boot_TEST": [
+      -13.555166230344602,
+      -9.61280489411809,
+      -7.120289632068273
+    ],
+    "boot_DEV-FULL": [
+      -2.741747637893604,
+      -2.2086266846306364,
+      -1.0154720403667916
+    ],
+    "metrics": {
+      "DEV-FULL": {
+        "days": 2192,
+        "net4": 14679.650344892689,
+        "net8": 14568.79257862652,
+        "gross": 18255.923323160343,
+        "funding": -3465.415212001489,
+        "closed": 36,
+        "entries": 37,
+        "open_n": 1,
+        "open_mtm": 1562.2115986561707,
+        "win": 0.2777777777777778,
+        "exp_days": 1212.1672804684604,
+        "per_day": 6.6969207777795114,
+        "long_net4": 11157.23323911554,
+        "long_net8": 11078.626150206881,
+        "long_gross": 15043.362953055244,
+        "long_funding": -3807.522625031046,
+        "long_closed": 26,
+        "long_entries": 26,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.3076923076923077,
+        "long_exp_days": 887.6176825168914,
+        "long_per_day": 5.089978667479717,
+        "short_net4": 3522.417105777148,
+        "short_net8": 3490.1664284196413,
+        "short_gross": 3212.5603701050973,
+        "short_funding": 342.1074130295574,
+        "short_closed": 10,
+        "short_entries": 11,
+        "short_open_n": 1,
+        "short_open_mtm": 1562.2115986561707,
+        "short_win": 0.2,
+        "short_exp_days": 324.5495979515689,
+        "short_per_day": 1.6069421102997938,
+        "turnover": 55.42888313308356,
+        "orders": 38,
+        "order_notional": 29.196538069635512,
+        "fill_notional_rate": 0.966362570084461,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 28.0,
+        "mdd_1m": 8880.008358582867,
+        "sharpe": 0.474051038966979,
+        "active_months": 61,
+        "pos_month_ratio": 0.5409836065573771
+      },
+      "DEV-A": {
+        "days": 1461,
+        "net4": 8107.957762191926,
+        "net8": 8045.085818827614,
+        "gross": 10313.092877669525,
+        "funding": -2142.2631721132866,
+        "closed": 21,
+        "entries": 22,
+        "open_n": 1,
+        "open_mtm": 4559.141418873196,
+        "win": 0.3333333333333333,
+        "exp_days": 675.9017454205832,
+        "per_day": 5.549594635312749,
+        "long_net4": 5275.905878412614,
+        "long_net8": 5232.415663539103,
+        "long_gross": 7731.475441068539,
+        "long_funding": -2412.0793477824127,
+        "long_closed": 14,
+        "long_entries": 15,
+        "long_open_n": 1,
+        "long_open_mtm": 4559.141418873196,
+        "long_win": 0.35714285714285715,
+        "long_exp_days": 408.43354858921657,
+        "long_per_day": 3.6111607655117135,
+        "short_net4": 2832.051883779312,
+        "short_net8": 2812.6701552885115,
+        "short_gross": 2581.617436600986,
+        "short_funding": 269.81617566912655,
+        "short_closed": 7,
+        "short_entries": 7,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.2857142857142857,
+        "short_exp_days": 267.4681968313665,
+        "short_per_day": 1.9384338698010348,
+        "turnover": 31.435971682155937,
+        "orders": 22,
+        "order_notional": 16.21798584107797,
+        "fill_notional_rate": 1.0,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 17.0,
+        "mdd_1m": 7865.908035864866,
+        "sharpe": 0.48840456166408086,
+        "active_months": 37,
+        "pos_month_ratio": 0.5675675675675675
+      },
+      "DEV-B": {
+        "days": 731,
+        "net4": 6571.692582700761,
+        "net8": 6523.706759798905,
+        "gross": 7942.8304454908175,
+        "funding": -1323.1520398882021,
+        "closed": 15,
+        "entries": 15,
+        "open_n": 1,
+        "open_mtm": 1562.2115986561707,
+        "win": 0.2,
+        "exp_days": 536.2655350478772,
+        "per_day": 8.990003533106377,
+        "long_net4": 5881.327360702923,
+        "long_net8": 5846.2104866677755,
+        "long_gross": 7311.887511986708,
+        "long_funding": -1395.4432772486334,
+        "long_closed": 12,
+        "long_entries": 11,
+        "long_open_n": 0,
+        "long_open_mtm": 0.0,
+        "long_win": 0.25,
+        "long_exp_days": 479.1841339276749,
+        "long_per_day": 8.045591464709881,
+        "short_net4": 690.365221997836,
+        "short_net8": 677.4962731311298,
+        "short_gross": 630.9429335041112,
+        "short_funding": 72.29123736043087,
+        "short_closed": 3,
+        "short_entries": 4,
+        "short_open_n": 1,
+        "short_open_mtm": 1562.2115986561707,
+        "short_win": 0.0,
+        "short_exp_days": 57.08140112020238,
+        "short_per_day": 0.9444120683964925,
+        "turnover": 23.992911450927615,
+        "orders": 16,
+        "order_notional": 12.978552228557538,
+        "fill_notional_rate": 0.9243292714165176,
+        "exit_latency_p50": 1.0,
+        "exit_latency_p95": 28.09999999999995,
+        "mdd_1m": 8880.008358583735,
+        "sharpe": 0.48701702359822613,
+        "active_months": 24,
+        "pos_month_ratio": 0.5
+      },
+      "TEST": {
+        "days": 280,
+        "net4": 1368.7202604896268,
+        "net8": 1343.021148292767,
+        "gross": 1319.6358468757417,
+        "funding": 74.78352581074498,
+        "closed": 6,
+        "entries": 6,
+        "open_n": 1,
+        "open_mtm": 351.2085280981402,
+        "win": 0.6666666666666666,
+        "exp_days": 250.74753508007313,
+        "per_day": 4.8882866446058095,
+        "long_net4": 177.34670052169776,
+        "long_net8": 169.647588324838,
+        "long_gross": 246.5606869078125,
+        "long_funding": -61.51487418925497,
+        "long_closed": 1,
+        "long_entries": 2,
+        "long_open_n": 1,
+        "long_open_mtm": 351.2085280981402,
+        "long_win": 0.0,
+        "long_exp_days": 41.65239619118426,
+        "long_per_day": 0.6333810732917777,
+        "short_net4": 1191.373559967929,
+        "short_net8": 1173.373559967929,
+        "short_gross": 1073.075159967929,
+        "short_funding": 136.29839999999996,
+        "short_closed": 5,
+        "short_entries": 4,
+        "short_open_n": 0,
+        "short_open_mtm": 0.0,
+        "short_win": 0.8,
+        "short_exp_days": 209.09513888888887,
+        "short_per_day": 4.254905571314032,
+        "turnover": 12.849556098429868,
+        "orders": 6,
+        "order_notional": 5.924778049214934,
+        "fill_notional_rate": 1.0,
+        "exit_latency_p50": 7.5,
+        "exit_latency_p95": 61.0,
+        "mdd_1m": 2579.0045478416014,
+        "sharpe": 0.5005610177195907,
+        "active_months": 10,
+        "pos_month_ratio": 0.4
+      }
+    },
+    "stress": {
+      "o2_p0.5": {
+        "DEV-FULL": {
+          "net4": 14679.650344892689,
+          "long_net4": 11157.23323911554,
+          "short_net4": 3522.417105777148,
+          "closed": 36,
+          "fill_notional_rate": 0.966362570084461
+        },
+        "DEV-A": {
+          "net4": 8107.957762191926,
+          "long_net4": 5275.905878412614,
+          "short_net4": 2832.051883779312,
+          "closed": 21,
+          "fill_notional_rate": 1.0
+        },
+        "DEV-B": {
+          "net4": 6571.692582700761,
+          "long_net4": 5881.327360702923,
+          "short_net4": 690.365221997836,
+          "closed": 15,
+          "fill_notional_rate": 0.9243292714165176
+        },
+        "TEST": {
+          "net4": 1368.7202604896268,
+          "long_net4": 177.34670052169776,
+          "short_net4": 1191.373559967929,
+          "closed": 6,
+          "fill_notional_rate": 1.0
+        }
+      },
+      "o2_p1.0": {
+        "DEV-FULL": {
+          "net4": 14679.650344892689,
+          "long_net4": 11157.23323911554,
+          "short_net4": 3522.417105777148,
+          "closed": 36,
+          "fill_notional_rate": 0.966362570084461
+        },
+        "DEV-A": {
+          "net4": 8107.957762191926,
+          "long_net4": 5275.905878412614,
+          "short_net4": 2832.051883779312,
+          "closed": 21,
+          "fill_notional_rate": 1.0
+        },
+        "DEV-B": {
+          "net4": 6571.692582700761,
+          "long_net4": 5881.327360702923,
+          "short_net4": 690.365221997836,
+          "closed": 15,
+          "fill_notional_rate": 0.9243292714165176
+        },
+        "TEST": {
+          "net4": 1336.04958786598,
+          "long_net4": 177.34670052169776,
+          "short_net4": 1158.702887344282,
+          "closed": 6,
+          "fill_notional_rate": 0.8555910394682801
+        }
+      },
+      "o2_p2.0": {
+        "DEV-FULL": {
+          "net4": 14614.847067578034,
+          "long_net4": 11092.429961800884,
+          "short_net4": 3522.417105777148,
+          "closed": 36,
+          "fill_notional_rate": 0.9297933112930449
+        },
+        "DEV-A": {
+          "net4": 8043.15448487727,
+          "long_net4": 5211.1026010979585,
+          "short_net4": 2832.051883779312,
+          "closed": 21,
+          "fill_notional_rate": 0.9338768134104861
+        },
+        "DEV-B": {
+          "net4": 6571.692582700761,
+          "long_net4": 5881.327360702923,
+          "short_net4": 690.365221997836,
+          "closed": 15,
+          "fill_notional_rate": 0.9243292714165176
+        },
+        "TEST": {
+          "net4": 1325.1462841766506,
+          "long_net4": 178.08730052169776,
+          "short_net4": 1147.058983654953,
+          "closed": 6,
+          "fill_notional_rate": 0.8555910394682801
+        }
+      },
+      "o5_p0.5": {
+        "DEV-FULL": {
+          "net4": 14687.693348777202,
+          "long_net4": 11143.902272106898,
+          "short_net4": 3543.7910766703053,
+          "closed": 36,
+          "fill_notional_rate": 0.9217331510769783
+        },
+        "DEV-A": {
+          "net4": 8081.312348478549,
+          "long_net4": 5235.506082920165,
+          "short_net4": 2845.8062655583844,
+          "closed": 21,
+          "fill_notional_rate": 0.9655806602128443
+        },
+        "DEV-B": {
+          "net4": 6606.381000298655,
+          "long_net4": 5908.396189186732,
+          "short_net4": 697.9848111119211,
+          "closed": 15,
+          "fill_notional_rate": 0.8684204863856982
+        },
+        "TEST": {
+          "net4": 1353.5630119144364,
+          "long_net4": 183.19454665453932,
+          "short_net4": 1170.3684652598972,
+          "closed": 6,
+          "fill_notional_rate": 0.8555910394682801
+        }
+      },
+      "o5_p1.0": {
+        "DEV-FULL": {
+          "net4": 14688.693348777202,
+          "long_net4": 11144.902272106898,
+          "short_net4": 3543.7910766703053,
+          "closed": 36,
+          "fill_notional_rate": 0.9217331510769783
+        },
+        "DEV-A": {
+          "net4": 8082.312348478549,
+          "long_net4": 5236.506082920165,
+          "short_net4": 2845.8062655583844,
+          "closed": 21,
+          "fill_notional_rate": 0.9655806602128443
+        },
+        "DEV-B": {
+          "net4": 6606.381000298655,
+          "long_net4": 5908.396189186732,
+          "short_net4": 697.9848111119211,
+          "closed": 15,
+          "fill_notional_rate": 0.8684204863856982
+        },
+        "TEST": {
+          "net4": 1353.5630119144364,
+          "long_net4": 183.19454665453932,
+          "short_net4": 1170.3684652598972,
+          "closed": 6,
+          "fill_notional_rate": 0.8555910394682801
+        }
+      },
+      "o5_p2.0": {
+        "DEV-FULL": {
+          "net4": 14675.762185585954,
+          "long_net4": 11131.971108915652,
+          "short_net4": 3543.7910766703053,
+          "closed": 36,
+          "fill_notional_rate": 0.8983277269441609
+        },
+        "DEV-A": {
+          "net4": 8069.381185287302,
+          "long_net4": 5223.574919728917,
+          "short_net4": 2845.8062655583844,
+          "closed": 21,
+          "fill_notional_rate": 0.9218101999535462
+        },
+        "DEV-B": {
+          "net4": 6606.381000298655,
+          "long_net4": 5908.396189186732,
+          "short_net4": 697.9848111119211,
+          "closed": 15,
+          "fill_notional_rate": 0.8684204863856982
+        },
+        "TEST": {
+          "net4": 1342.6631911022419,
+          "long_net4": 183.93514665453932,
+          "short_net4": 1158.7280444477024,
+          "closed": 6,
+          "fill_notional_rate": 0.8555910394682801
+        }
+      }
+    },
+    "twin_o5": {
+      "DEV-FULL": {
+        "net4": 14687.693348777202,
+        "long_net4": 11143.902272106898,
+        "short_net4": 3543.7910766703053,
+        "closed": 36
+      },
+      "DEV-A": {
+        "net4": 8081.312348478549,
+        "long_net4": 5235.506082920165,
+        "short_net4": 2845.8062655583844,
+        "closed": 21
+      },
+      "DEV-B": {
+        "net4": 6606.381000298655,
+        "long_net4": 5908.396189186732,
+        "short_net4": 697.9848111119211,
+        "closed": 15
+      },
+      "TEST": {
+        "net4": 1353.5630119144364,
+        "long_net4": 183.19454665453932,
+        "short_net4": 1170.3684652598972,
+        "closed": 6
+      }
+    }
+  }
+}

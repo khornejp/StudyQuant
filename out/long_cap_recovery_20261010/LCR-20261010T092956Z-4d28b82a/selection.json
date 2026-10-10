@@ -1,0 +1,129 @@
+{
+  "pick": "LCR-g-1.5-NONE-a4-x+0.0-h6",
+  "label": "LCR_DEV_BEST_INELIGIBLE",
+  "eligible_pool": false,
+  "pre_selection_dev_frame_sha256": "144217e83b927f7b40eee404b1305f134e410b122d0bc1b375d517e1be402ab7",
+  "sort_keys": {
+    "dev_pos_delta": false,
+    "dev_score": false,
+    "dev_cell_floor_pd": false,
+    "dev_abs_pearson": true,
+    "DEV-FULL_comb_mdd": true,
+    "config_id": true
+  },
+  "eligibility_counts": {
+    "dev_elig_cells": 12,
+    "dev_elig_closed": 0,
+    "dev_elig_fill": 48,
+    "dev_elig_posdays": 14,
+    "dev_eligible": 0
+  },
+  "ranked": [
+    {
+      "config_id": "LCR-g-1.5-NONE-a4-x+0.0-h6",
+      "dev_eligible": false,
+      "dev_pos_delta": 4,
+      "dev_score": -0.03728500082419952,
+      "dev_cell_floor_pd": 0.786510423745663,
+      "dev_abs_pearson": 0.0028282106665942423,
+      "DEV-FULL_comb_mdd": 3673.2443896603745
+    },
+    {
+      "config_id": "LCR-g-1.5-NONE-a4-x-0.5-h6",
+      "dev_eligible": false,
+      "dev_pos_delta": 4,
+      "dev_score": -0.03728500082419952,
+      "dev_cell_floor_pd": 0.786510423745663,
+      "dev_abs_pearson": 0.003367181971418928,
+      "DEV-FULL_comb_mdd": 3673.2443896603745
+    },
+    {
+      "config_id": "LCR-g-1.5-NONE-a4-x+0.0-h3",
+      "dev_eligible": false,
+      "dev_pos_delta": 3,
+      "dev_score": -0.04913276844722402,
+      "dev_cell_floor_pd": 0.15228129433812945,
+      "dev_abs_pearson": 0.0022318179798850265,
+      "DEV-FULL_comb_mdd": 3673.2443896603745
+    },
+    {
+      "config_id": "LCR-g-1.5-NONE-a4-x-0.5-h3",
+      "dev_eligible": false,
+      "dev_pos_delta": 3,
+      "dev_score": -0.04913276844722402,
+      "dev_cell_floor_pd": 0.15228129433812945,
+      "dev_abs_pearson": 0.0027248018412663905,
+      "DEV-FULL_comb_mdd": 3673.2443896603745
+    },
+    {
+      "config_id": "LCR-g-2.0-NONE-a4-x+0.0-h6",
+      "dev_eligible": false,
+      "dev_pos_delta": 1,
+      "dev_score": -0.03728500082419952,
+      "dev_cell_floor_pd": 0.15408478101841255,
+      "dev_abs_pearson": 0.002188194343019323,
+      "DEV-FULL_comb_mdd": 3673.2443896603745
+    },
+    {
+      "config_id": "LCR-g-2.0-NONE-a4-x-0.5-h6",
+      "dev_eligible": false,
+      "dev_pos_delta": 1,
+      "dev_score": -0.03728500082419952,
+      "dev_cell_floor_pd": 0.15408478101841255,
+      "dev_abs_pearson": 0.002188194343019323,
+      "DEV-FULL_comb_mdd": 3673.2443896603745
+    },
+    {
+      "config_id": "LCR-g-1.5-PREM-a4-x+0.0-h3",
+      "dev_eligible": false,
+      "dev_pos_delta": 1,
+      "dev_score": -0.07031886102461642,
+      "dev_cell_floor_pd": -0.034033537934577376,
+      "dev_abs_pearson": 0.0004719311310377955,
+      "DEV-FULL_comb_mdd": 3673.2443896603745
+    },
+    {
+      "config_id": "LCR-g-1.5-PREM-a4-x-0.5-h3",
+      "dev_eligible": false,
+      "dev_pos_delta": 1,
+      "dev_score": -0.07031886102461642,
+      "dev_cell_floor_pd": -0.034033537934577376,
+      "dev_abs_pearson": 0.0004719311310377955,
+      "DEV-FULL_comb_mdd": 3673.2443896603745
+    },
+    {
+      "config_id": "LCR-g-1.5-PREM-a4-x+0.0-h6",
+      "dev_eligible": false,
+      "dev_pos_delta": 1,
+      "dev_score": -0.07457000164839904,
+      "dev_cell_floor_pd": 0.46112744978797293,
+      "dev_abs_pearson": 0.0017825253286237568,
+      "DEV-FULL_comb_mdd": 3673.2443896603745
+    },
+    {
+      "config_id": "LCR-g-1.5-PREM-a4-x-0.5-h6",
+      "dev_eligible": false,
+      "dev_pos_delta": 1,
+      "dev_score": -0.07457000164839904,
+      "dev_cell_floor_pd": 0.46112744978797293,
+      "dev_abs_pearson": 0.0017825253286237568,
+      "DEV-FULL_comb_mdd": 3673.2443896603745
+    }
+  ],
+  "pick_dev_values": {
+    "dev_pos_delta": "4",
+    "dev_score": -0.03728500082419952,
+    "dev_cell_floor_pd": 0.786510423745663,
+    "dev_abs_pearson": 0.0028282106665942423,
+    "DEV-FULL_comb_mdd": 3673.2443896603745,
+    "dev_eligible": "False",
+    "dev_elig_cells": "True",
+    "dev_elig_closed": "False",
+    "dev_elig_fill": "True",
+    "dev_elig_posdays": "True"
+  },
+  "tamper": {
+    "tampered_test_columns": 35,
+    "pick_unchanged": true
+  }
+}

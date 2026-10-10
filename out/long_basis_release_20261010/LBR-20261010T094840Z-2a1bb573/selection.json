@@ -1,0 +1,129 @@
+{
+  "pick": "LBR-EITHER-b-0.5-d0.25-a2-h4",
+  "label": "LBR_DEV_PICK",
+  "eligible_pool": true,
+  "pre_selection_dev_frame_sha256": "66fa0d5565a6f7e37a2e231ce7acb01eb7cb1d707d82df1d3394c026bee095ff",
+  "sort_keys": {
+    "dev_pos_delta": false,
+    "dev_score": false,
+    "dev_cell_floor_pd": false,
+    "dev_abs_pearson": true,
+    "DEV-FULL_comb_mdd": true,
+    "config_id": true
+  },
+  "eligibility_counts": {
+    "dev_elig_cells": 23,
+    "dev_elig_closed": 48,
+    "dev_elig_fill": 48,
+    "dev_elig_posdays": 48,
+    "dev_eligible": 23
+  },
+  "ranked": [
+    {
+      "config_id": "LBR-EITHER-b-0.5-d0.25-a2-h4",
+      "dev_eligible": true,
+      "dev_pos_delta": 140,
+      "dev_score": -1.2647224650588746,
+      "dev_cell_floor_pd": 2.3985885197864896,
+      "dev_abs_pearson": 0.07114086688492233,
+      "DEV-FULL_comb_mdd": 5268.117500132986
+    },
+    {
+      "config_id": "LBR-EITHER-b-0.5-d0.50-a2-h4",
+      "dev_eligible": true,
+      "dev_pos_delta": 138,
+      "dev_score": -0.8706960528806704,
+      "dev_cell_floor_pd": 2.8733392993346114,
+      "dev_abs_pearson": 0.06114053524068221,
+      "DEV-FULL_comb_mdd": 4981.230943153091
+    },
+    {
+      "config_id": "LBR-PREM-b-0.5-d0.25-a2-h4",
+      "dev_eligible": true,
+      "dev_pos_delta": 116,
+      "dev_score": -1.3734834462094394,
+      "dev_cell_floor_pd": 2.2877314618935243,
+      "dev_abs_pearson": 0.04537585061169379,
+      "DEV-FULL_comb_mdd": 6497.912736537483
+    },
+    {
+      "config_id": "LBR-EITHER-b-0.5-d0.25-a1-h4",
+      "dev_eligible": true,
+      "dev_pos_delta": 111,
+      "dev_score": -1.9473489423338894,
+      "dev_cell_floor_pd": 1.8109590837617557,
+      "dev_abs_pearson": 0.08144652426834506,
+      "DEV-FULL_comb_mdd": 4925.627324651906
+    },
+    {
+      "config_id": "LBR-PREM-b-0.5-d0.50-a2-h4",
+      "dev_eligible": true,
+      "dev_pos_delta": 110,
+      "dev_score": -2.2829602870906713,
+      "dev_cell_floor_pd": 0.04810984450152923,
+      "dev_abs_pearson": 0.047246853329579556,
+      "DEV-FULL_comb_mdd": 6150.487962624894
+    },
+    {
+      "config_id": "LBR-EITHER-b-0.5-d0.50-a1-h4",
+      "dev_eligible": true,
+      "dev_pos_delta": 108,
+      "dev_score": -1.0766860490905321,
+      "dev_cell_floor_pd": 2.5029947402910144,
+      "dev_abs_pearson": 0.07175658113092048,
+      "DEV-FULL_comb_mdd": 5073.546273220817
+    },
+    {
+      "config_id": "LBR-PREM-b-0.5-d0.25-a1-h4",
+      "dev_eligible": true,
+      "dev_pos_delta": 91,
+      "dev_score": -1.2342418345956,
+      "dev_cell_floor_pd": 2.528019716463021,
+      "dev_abs_pearson": 0.045010426428074506,
+      "DEV-FULL_comb_mdd": 5706.5435804724975
+    },
+    {
+      "config_id": "LBR-FUND-b-0.5-d0.25-a2-h4",
+      "dev_eligible": true,
+      "dev_pos_delta": 91,
+      "dev_score": -2.0491319966577906,
+      "dev_cell_floor_pd": 0.6927917439880859,
+      "dev_abs_pearson": 0.04628661193626045,
+      "DEV-FULL_comb_mdd": 3752.3918366349662
+    },
+    {
+      "config_id": "LBR-FUND-b-0.5-d0.50-a2-h4",
+      "dev_eligible": true,
+      "dev_pos_delta": 86,
+      "dev_score": -1.4182098551720832,
+      "dev_cell_floor_pd": 1.2151291086042517,
+      "dev_abs_pearson": 0.03273956171026723,
+      "DEV-FULL_comb_mdd": 3689.0958103515422
+    },
+    {
+      "config_id": "LBR-PREM-b-0.5-d0.50-a1-h4",
+      "dev_eligible": true,
+      "dev_pos_delta": 84,
+      "dev_score": -1.1742011577555973,
+      "dev_cell_floor_pd": 2.0866503588689023,
+      "dev_abs_pearson": 0.04707592505003892,
+      "DEV-FULL_comb_mdd": 5466.6551252383515
+    }
+  ],
+  "pick_dev_values": {
+    "dev_pos_delta": "140",
+    "dev_score": -1.2647224650588746,
+    "dev_cell_floor_pd": 2.3985885197864896,
+    "dev_abs_pearson": 0.07114086688492233,
+    "DEV-FULL_comb_mdd": 5268.117500132986,
+    "dev_eligible": "True",
+    "dev_elig_cells": "True",
+    "dev_elig_closed": "True",
+    "dev_elig_fill": "True",
+    "dev_elig_posdays": "True"
+  },
+  "tamper": {
+    "tampered_test_columns": 35,
+    "pick_unchanged": true
+  }
+}

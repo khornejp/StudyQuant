@@ -1,0 +1,19 @@
+{
+  "pick": "LBR-EITHER-b-0.5-d0.25-a2-h4",
+  "label": "LBR_DEV_PICK",
+  "dev_eligible_pool": true,
+  "DEV-A_6of6": true,
+  "DEV-B_6of6": true,
+  "TEST_6of6": false,
+  "TEST_boot_all_pos": false,
+  "PASS": false,
+  "JanJul_6of6": false,
+  "JanJul_comb_pos_days_gt_s180": true,
+  "COMPLEMENT_PASS": false,
+  "verdict": "FAIL",
+  "test_boot": {
+    "20": -10.508123235608698,
+    "60": -8.58491156226229,
+    "120": -7.16250002825334
+  }
+}

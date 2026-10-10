@@ -1,0 +1,204 @@
+{
+  "run_id": "NM-B2-20261010T065219Z-97244bea",
+  "parent_run_id": "NM-B1-20261010",
+  "created_utc": "2026-10-10T06:55:11.049510+00:00",
+  "spec": "scratchpad codex_batch2_spec.md (Codex Batch-1 review + Batch-2 spec, 2026-10-10)",
+  "windows": {
+    "DEV-FULL": [
+      "2020-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "DEV-A": [
+      "2020-01-01 00:00:00+00:00",
+      "2024-01-01 00:00:00+00:00"
+    ],
+    "DEV-B": [
+      "2024-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "TEST": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ]
+  },
+  "oi_ls_score_start": "2021-01-01 00:00:00+00:00",
+  "data_cutoff": "2026-10-08 00:00:00+00:00",
+  "sources": {
+    "dev_market": "D:\\StudyQuant\\artifacts\\btcusdt_2020_2026h1.parquet",
+    "test_market": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\market_1m.parquet",
+    "dev_metrics": "D:\\StudyQuant\\artifacts\\metrics",
+    "test_metrics": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\technique_metrics.parquet",
+    "dev_premium": "D:\\StudyQuant\\artifacts\\premium_index_2020_2026h1",
+    "test_premium": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\technique_premium.parquet",
+    "dev_funding": "D:\\StudyQuant\\artifacts\\funding_2020_2026h1",
+    "test_funding": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\funding_model_input.parquet"
+  },
+  "input_sha256": {
+    "dev_market": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "dev_metrics_tree": "fb9591579dacfab0a93de72f120770496f6f04b2b6cebd58859e9449acc904bd",
+    "dev_premium_tree": "3e246393245cfb0bc1a6ed81e9c81320e144cb87822a8696f9695d1867f5121c",
+    "dev_funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "batch1_code": "8a329e4fc730ccd32d10d67216a2fc7581076c226c4813b7414afd2df9fdba1a",
+    "code": "97244bea96d70d0fdcce3d9d8132a683edcd98e79f3c591c8a1e3b960b72ec04",
+    "snap_market_1m.parquet": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59",
+    "snap_technique_metrics.parquet": "dd5afe89d138b0ec63f27de3738bcbde0ef75664e4288bfe8d95fa578a3e5408",
+    "snap_technique_premium.parquet": "5d02b5ba1015b28812fc08b1d9ca7232f1298d8556c5b55b40ce3ac2c2300c98",
+    "snap_funding_model_input.parquet": "ac0f660302dc805c421a9c79304b4af6fecb332b6b01704d908e1805297e6590",
+    "snap_manifest.json": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069"
+  },
+  "code_sha256": "97244bea96d70d0fdcce3d9d8132a683edcd98e79f3c591c8a1e3b960b72ec04",
+  "git": {
+    "head": "20538c4f4b7b644224f0edb74531ccf117afebbf",
+    "branch": "research/k45-audit-and-negative-results-20260930",
+    "dirty_files": 74
+  },
+  "data_gaps": {
+    "DEV-FULL": {
+      "metrics_5m_missing_from_2020-09-01": 3684,
+      "metrics_5m_rows": 561024,
+      "premium_missing_min": 201,
+      "minutes": 3156480,
+      "funding_events": 6576,
+      "funding_gaps_gt_8h05": 0,
+      "oi_bad_in_present": 469,
+      "global_ls_bad_in_present": 5776,
+      "top_ls_bad_in_present": 92175,
+      "taker_lsr_bad_in_present": 37272
+    },
+    "DEV-A": {
+      "metrics_5m_missing_from_2020-09-01": 505,
+      "metrics_5m_rows": 350496,
+      "premium_missing_min": 199,
+      "minutes": 2103840,
+      "funding_events": 4383,
+      "funding_gaps_gt_8h05": 0,
+      "oi_bad_in_present": 143,
+      "global_ls_bad_in_present": 5771,
+      "top_ls_bad_in_present": 92165,
+      "taker_lsr_bad_in_present": 37272
+    },
+    "DEV-B": {
+      "metrics_5m_missing_from_2020-09-01": 3179,
+      "metrics_5m_rows": 210528,
+      "premium_missing_min": 2,
+      "minutes": 1052640,
+      "funding_events": 2193,
+      "funding_gaps_gt_8h05": 0,
+      "oi_bad_in_present": 326,
+      "global_ls_bad_in_present": 5,
+      "top_ls_bad_in_present": 10,
+      "taker_lsr_bad_in_present": 0
+    },
+    "TEST": {
+      "metrics_5m_missing_from_2020-09-01": 9,
+      "metrics_5m_rows": 80640,
+      "premium_missing_min": 244,
+      "minutes": 403200,
+      "funding_events": 840,
+      "funding_gaps_gt_8h05": 0,
+      "oi_bad_in_present": 0,
+      "global_ls_bad_in_present": 0,
+      "top_ls_bad_in_present": 0,
+      "taker_lsr_bad_in_present": 0
+    },
+    "F": {
+      "oi_nan_5m": 71185,
+      "I_nan": 14
+    }
+  },
+  "frozen_hypotheses": {
+    "V": "multi-horizon (1h/4h/1d) vol-scaled momentum with a slow daily short gate nets >4 bps in DEV and TEST",
+    "E": "funding-rate surprise vs same-slot history mean-reverts (side -sign(z)) over 30m-8h",
+    "F": "strong taker flow + rising OI with weak price response = absorption; fade the flow",
+    "G": "4h trend gated by semivariance imbalance (upside/downside variance) improves VT",
+    "H": "rolling ridge on 4h microstructure/positioning features with conformal |residual| margin > 4 bps",
+    "I": "hour-of-week shrunk mean return persists out of sample",
+    "J": "premium-funding wedge before settlement mean-reverts (side -sign(z))",
+    "K": "carry-aware VT: vetoing / flattening funding-adverse sides before settlement improves VT"
+  },
+  "execution": {
+    "tick": 0.1,
+    "entry_offsets_bps": [
+      2,
+      5
+    ],
+    "penetration_bps": 0.5,
+    "penetration_stress_bps": [
+      1.0,
+      2.0
+    ],
+    "ttl_min": {
+      "trend": 60,
+      "event": 15
+    },
+    "exit_quote_bps": 2.0,
+    "requote_min": 60,
+    "cost_bps_rt": 4,
+    "report_only_bps_rt": 8,
+    "slippage": 0,
+    "terminal_open": "MTM at last close + reserved exit fee",
+    "funding": "actual events, -side*rate*1e4*weight, PESS minute timing"
+  },
+  "variant_counts": {
+    "total": 354,
+    "offset2": 177,
+    "offset5": 177,
+    "families": {
+      "V": {
+        "variants": 96,
+        "offset2": 48,
+        "dev_eligible": 0
+      },
+      "E": {
+        "variants": 18,
+        "offset2": 9,
+        "dev_eligible": 0
+      },
+      "F": {
+        "variants": 48,
+        "offset2": 24,
+        "dev_eligible": 0
+      },
+      "G": {
+        "variants": 64,
+        "offset2": 32,
+        "dev_eligible": 0
+      },
+      "H": {
+        "variants": 36,
+        "offset2": 18,
+        "dev_eligible": 0
+      },
+      "I": {
+        "variants": 24,
+        "offset2": 12,
+        "dev_eligible": 0
+      },
+      "J": {
+        "variants": 36,
+        "offset2": 18,
+        "dev_eligible": 0
+      },
+      "K": {
+        "variants": 32,
+        "offset2": 16,
+        "dev_eligible": 4
+      }
+    }
+  },
+  "adaptive_lineage": "RESELECTED_ADAPTIVE picks are chosen on TEST among DEV-eligible variants (max min(TEST long/day, short/day, offset5 long/day, short/day)); not independent OOS",
+  "interpretations": "Batch-2 new-model screen (2026-10-10): families V/E/F/G/H/I/J/K, 354 variants (177 offset2 + 177 offset5 twins).\n\nSpec: scratchpad codex_batch2_spec.md (Codex Batch-1 review + Batch-2 spec). Parent run NM-B1-20261010.\nEngine fixes vs Batch-1 (out/run_new_model_batch1_20261010.py):\n  * one continuous simulation 2020-01-01..2026-10-08; DEV-FULL/DEV-A/DEV-B/TEST are MTM cuts of one P&L stream\n    (positions and orders persist across splits; no forced exit/re-entry/cost at a split);\n  * no stale flip: after an exit fill the engine waits for the next regular decision and re-reads the latest target;\n  * open positions are never counted as closed trades / wins (closed_trades, entries, open_n, open_mtm separate);\n  * fill-model sensitivity: penetration {0.5,1,2} bp x offset {2,5} bps for the picks;\n  * entry weight is entry_weight_frozen (weight fixed at the entry decision while held);\n  * DEV score uses net per calendar day of the window (not per exposure day);\n  * closed side < 10 -> LOW_N, separate from the profit verdict;\n  * stationary bootstrap, mean block 60d main, 20/120d reported;\n  * MDD on 1m MTM equity; active months = months with exposure > 0;\n  * write-once run folder NM-B2-<UTC>-<codehash8>, registry rows keyed (idempotent).\nCausality: decision on closed bar i (T = open_time[i] + 1m); orders fill from bar i+1; every as-of input asserts\navailable_time <= T; trailing quantiles / robust z / z-score stats exclude the current observation.\nInterpretations (spec silent; recorded in the manifest):\n  * V/K weight sigma = 1h-bar sigma over the previous 30d (720 bars, current excluded), annualised; K-B1 base keeps\n    the Batch-1 1d sigma (current bar included, Batch-1 feature code reused unchanged). V/G z-score sigma excludes the\n    current bar. V/K decide hourly; G decides on closed 4h bars; H on closed 4h bars with trend TTL 60m.\n  * K: V base = balanced/db0.25/binary with no short gate; action 'veto' blocks new entries while adverse,\n    'flat30' adds a decision at settle-30m that flattens an adverse held side and blocks entries at that point.\n  * I: history window caps at {104,208} weeks; at least 52 weeks of history required before any signal.\n  * J: p480 = mean of the available premium minutes in the last 480; fail-closed if the newest premium is older\n    than 2m at T. E/J/K slots = UTC 00/08/16 settlement events.\n  * F/H (OI/LS) simulate and score from 2021-01-01; their DEV-FULL/DEV-A windows start there.\n  * H: train [R-910d, R-180d) with label end < R-180d (purge), calibration [R-180d, R-h]; refit at each month start R;\n    min 500 train / 200 calibration rows; features with all-NaN train get median 0; missing flags for every feature.\n",
+  "bootstrap": {
+    "type": "stationary",
+    "mean_block_days": [
+      20,
+      60,
+      120
+    ],
+    "main": 60,
+    "n": 10000,
+    "seed": 20261010,
+    "stat": "mean daily 1m-MTM net4 (bps/day)"
+  },
+  "runtime_sec": 172.2
+}

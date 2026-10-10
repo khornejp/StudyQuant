@@ -1,0 +1,470 @@
+"""LONG-BASIS-RELEASE (2026-10-10): basis-discount release long sleeve (LBR).
+
+Spec: scratchpad codex_newlong2.md section "3) 구현 명세" (Codex session 01a1252c-c28c-7a12-82aa-18a944e5b951).
+Comparator: Batch-5 run NM-B5-20261010T080025Z-c55285f2 LONG_DEV_PICK = G5-S180-c+0.0-W180-P65 long sleeve
+(re-simulated long-only, exact parity with the stored primary trades / daily / 6 cells / bootstrap asserted).
+Frozen hypothesis: a funding and/or premium discount (robust z <= cut) together with non-positive taker flow, followed
+within 4-8h by a price recovery (zr4 >= 0) and a taker rebound >= delta from its post-arm minimum, gives a long that is
+profitable after a 4 bps maker round trip and adds positive-P&L days where S180 is inactive.
+Engine and features: the LCR runner (out/run_long_cap_recovery_20261010.py) is imported unchanged via importlib and its
+causal `features` (dec4 = 239 + 240k, T = bar_time + 1m, zr4 / ztaker / zprem robust z 1080/540 excluding the current
+value, ztaker as-of age <= 10m, prem4 over T-4h < available_time <= T with >= 216 rows, zfund = Batch-5 strict fz over
+funding events < T, 90/30; w = W180-P65), its 6-cell runner, metrics, selection, tamper, parity and pair analysis are
+reused as-is; Batch-2/5 engines through it, unchanged (file hashes recorded).
+State machine (per logical config; NaN comparisons are False -> fail closed):
+  basis_hit = FUND zfund <= cut | PREM zprem <= cut | EITHER (FUND or PREM); setup = basis_hit & ztaker <= 0.
+  FLAT + setup -> ARMED (no entry at the setup decision). ARMED + setup -> re-arm (arm time and min_ztaker reset).
+  ARMED, 1 <= t-arm <= arm_bars, first decision with zr4 >= 0 & ztaker - min_ztaker_since_arm >= delta & w finite > 0
+  -> target 1, weight frozen. Interpretation: min_ztaker_since_arm = ztaker at the (latest) arm decision; a lower
+  ztaker inside the arm window that is not itself a setup does not move it. This is the rule that reproduces the spec's
+  golden counts (merged DEV 283, 2020-2025 0/59/34/64/51/75, 2026 Jan-Jul 65; grid DEV median 244); a running minimum
+  through t-1 gives 284 (2025: 76) and grid median 244.5.
+  No recovery by t-arm = arm_bars -> EXPIRED. HOLD: target 1 for max_hold_bars decisions from activation, then 0;
+  setups during HOLD are ignored and the exit decision never re-arms. Single position.
+  Interpretation: setup is checked before recovery, so a decision that satisfies both while ARMED re-arms (spec order).
+Execution, windows, selection, PASS, COMPLEMENT_PASS: identical to LCR (see that docstring).
+"""
+from __future__ import annotations
+import argparse, hashlib, importlib.util, itertools, json, sys, time
+from datetime import datetime, timezone
+from pathlib import Path
+import numpy as np, pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from btcusdt_quant.sim import provenance, registry  # noqa: E402
+from btcusdt_quant.sim.store import canonical  # noqa: E402
+
+LCR_PATH = ROOT / "out/run_long_cap_recovery_20261010.py"
+_s = importlib.util.spec_from_file_location("lcr_base", LCR_PATH)
+L = importlib.util.module_from_spec(_s)
+_s.loader.exec_module(L)
+b2, b3, b4, b5 = L.b2, L.b3, L.b4, L.b5
+OUT_BASE = ROOT / "out/long_basis_release_20261010"
+PARENT, PARENT_DIR, REGISTRY = L.PARENT, L.PARENT_DIR, L.REGISTRY
+MIN, WINDOWS, BLOCKS, PRIMARY, CELLS = L.MIN, L.WINDOWS, L.BLOCKS, L.PRIMARY, L.CELLS
+SUBWIN, ALLWIN, COMP_WIN = L.SUBWIN, L.ALLWIN, L.COMP_WIN
+cell_tag, sid = L.cell_tag, L.sid
+MODES, CUTS, DELTAS, ARMS, HOLDS = ("FUND", "PREM", "EITHER"), (-0.5, -1.0), (0.25, 0.50), (1, 2), (2, 4)
+GRID = list(itertools.product(MODES, CUTS, DELTAS, ARMS, HOLDS))
+FEAT = ("zr4", "ztaker", "zfund", "zprem")
+GOLDEN = ("EITHER", -1.0, 0.25, 2, 2)
+
+
+def cid(g) -> str:
+    md, b, d, a, h = g
+    return f"LBR-{md}-b{b:+.1f}-d{d:.2f}-a{a}-h{h}"
+
+
+def lbr_signal(f: dict, g) -> dict:
+    mode, cut, delta, arm_bars, max_hold = g
+    zt, wv = f["ztaker"], f["w"]
+    with np.errstate(invalid="ignore"):
+        fund, prem = f["zfund"] <= cut, f["zprem"] <= cut
+        hit = fund if mode == "FUND" else prem if mode == "PREM" else fund | prem
+        setup = hit & (zt <= 0)
+        rec_base = (f["zr4"] >= 0) & np.isfinite(wv) & (wv > 0)
+    n = len(zt)
+    side, w = np.zeros(n, int), np.zeros(n)
+    ev, state, arm, mt, act, wf, cur = [], 0, -1, np.nan, -1, 0.0, None
+    for k in range(n):
+        if state == 2:                                            # HOLD
+            if k - act >= max_hold:
+                state, cur["exit_idx"] = 0, k                       # exit decision never re-arms
+                continue
+            side[k], w[k] = 1, wf
+            continue
+        if setup[k]:
+            if state == 1:
+                cur.update(end_idx=k, outcome="REARMED")
+            state, arm, mt = 1, k, zt[k]
+            cur = {"arm_idx": k, "rearm": bool(ev and ev[-1]["outcome"] == "REARMED" and ev[-1]["end_idx"] == k),
+                   "end_idx": -1, "outcome": "OPEN", "exit_idx": -1, "min_ztaker": mt}
+            ev.append(cur)
+            continue
+        if state != 1:
+            continue
+        d = k - arm
+        with np.errstate(invalid="ignore"):
+            rec = rec_base[k] and (zt[k] - mt >= delta)
+        if 1 <= d <= arm_bars and rec:
+            state, act, wf = 2, k, float(wv[k])
+            cur.update(end_idx=k, outcome="RECOVERY", min_ztaker=mt)
+            side[k], w[k] = 1, wf
+            continue
+        if d >= arm_bars:
+            state = 0
+            cur.update(end_idx=k, outcome="EXPIRED")
+    return {"side": side, "w": w, "setup": setup, "events": ev}
+
+
+def check_signal(f: dict, sig: dict, g) -> dict:
+    """Structural asserts: recovery after arm, no re-entry without a new setup, hold cap, fail-closed setups."""
+    ev, side, setup = sig["events"], sig["side"], sig["setup"]
+    rec = [e for e in ev if e["outcome"] == "RECOVERY"]
+    starts = np.flatnonzero((side == 1) & (np.concatenate([[0], side[:-1]]) == 0))
+    assert len(starts) == len(rec) and all(e["end_idx"] == s for e, s in zip(rec, starts)), "activation != recovery"
+    prev_exit = -1
+    for e in rec:
+        assert 1 <= e["end_idx"] - e["arm_idx"] <= g[3], "recovery outside arm window"
+        assert e["arm_idx"] > prev_exit, "re-entry without a new setup"
+        assert setup[e["arm_idx"]] and side[e["arm_idx"]] == 0, "arm without setup / entry at setup"
+        prev_exit = e["exit_idx"] if e["exit_idx"] >= 0 else len(side)
+    runs = np.diff(np.concatenate([[0], side, [0]]))
+    assert np.all(np.flatnonzero(runs == -1) - np.flatnonzero(runs == 1) <= g[4]), "hold > max_hold"
+    assert not setup[~np.isfinite(f["ztaker"])].any()
+    assert np.all(sig["w"][side == 1] > 0) and np.all(sig["w"] <= 1) and np.all(sig["w"][side == 0] == 0)
+    return {"setups": int(setup.sum()), "arms": int(sum(not e["rearm"] for e in ev)),
+            "rearms": int(sum(e["rearm"] for e in ev)), "recoveries": len(rec),
+            "expired": int(sum(e["outcome"] == "EXPIRED" for e in ev)),
+            "rearmed_episodes": int(sum(e["outcome"] == "REARMED" for e in ev)),
+            "target1_decisions": int(side.sum()), "reentry_without_new_setup": 0}
+
+
+def activation_counts(bar: pd.DatetimeIndex, side: np.ndarray) -> dict:
+    """Golden-count helper: activations (target 0 -> 1) in DEV-FULL, per year 2020..2025 and 2026 Jan-Jul."""
+    st = (side == 1) & (np.concatenate([[0], side[:-1]]) == 0)
+    t = bar[st]
+    out = {"DEV": int((t < b2.SPLIT).sum()), **{str(y): int((t.year == y).sum()) for y in range(2020, 2026)}}
+    out["2026JanJul"] = int(((t >= b2.SPLIT) & (t < L.AUG)).sum())
+    return out
+
+
+def prefix_check(m, dec4, met, prem, f: dict, sigs: dict, trades: dict, cut=b5.CUT) -> dict:
+    """Truncated and future-tampered inputs: prefix features, targets and closed trades equal the full run."""
+    mp = b4.prefix_market(m, cut)
+    d = dec4[dec4 < mp.N]
+    kk = len(d)
+    end = cut.value
+    assert m.t[mp.N - 1] + MIN == end
+    fp = L.features(mp, d, b5.build_state(mp, d), met[met.available_time.array.asi8 <= end].reset_index(drop=True),
+                    prem[prem.available_time.array.asi8 <= end].reset_index(drop=True))
+    mt, met2, prem2 = L.tamper_inputs(m, met, prem, cut)
+    ft = L.features(mt, dec4, b5.build_state(mt, dec4), met2, prem2)
+    keys = [x for x in f if isinstance(f[x], np.ndarray)]
+    for f2 in (fp, ft):
+        for x in keys:
+            assert np.array_equal(f[x][:kk], f2[x][:kk], equal_nan=True), f"prefix feature {x}"
+    n_closed = 0
+    for g in GRID:
+        c = cid(g)
+        sp, stt = lbr_signal(fp, g), lbr_signal(ft, g)
+        for s2 in (sp, stt):
+            assert np.array_equal(sigs[c]["side"][:kk], s2["side"][:kk]), f"prefix target {c}"
+            assert np.array_equal(sigs[c]["w"][:kk], s2["w"][:kk]), f"prefix weight {c}"
+        tf = trades[c]
+        tp, _ = b2.simulate(mp, "state", d, sp["side"], sp["w"], *L._prim_args(), 0, mp.N)
+        cl = tp[~tp.open_at_end].reset_index(drop=True)
+        assert cl.equals(tf.iloc[:len(cl)].reset_index(drop=True)), f"prefix trades {c}"
+        if tp.open_at_end.any():
+            r0, r1 = tp[tp.open_at_end].iloc[0], tf.iloc[len(cl)]
+            assert all(r0[x] == r1[x] for x in ("side", "decision_idx", "entry_idx", "entry_px")), f"prefix open {c}"
+        tt, _ = b2.simulate(mt, "state", dec4, stt["side"], stt["w"], *L._prim_args(), 0, m.N)
+        done = tf[(~tf.open_at_end) & (tf.exit_idx < mp.N)].reset_index(drop=True)
+        assert done.equals(tt.iloc[:len(done)].reset_index(drop=True)), f"tamper trades {c}"
+        n_closed += len(cl)
+    return {"cut": str(cut), "decisions_compared": int(kk), "features_compared": keys,
+            "tamper": "x1.7 future o/h/l/c, oi, taker_lsr, premium, funding rate", "configs_checked": len(GRID),
+            "closed_trades_compared": int(n_closed)}
+
+
+def write_registry(fold: pd.DataFrame, sel: dict, hashes: dict, run_id: str, path: Path = REGISTRY) -> dict:
+    have = b2.registry_keys(path)
+    ih = hashlib.sha256(canonical(hashes).encode()).hexdigest()
+    added = skipped = 0
+    base = {"run_id": run_id, "parent_run_id": PARENT, "data_cutoff": str(b2.END),
+            "windows": {k: [str(a), str(b)] for k, (a, b) in WINDOWS.items()},
+            "costs": "4 bps rt maker flat, 0 slip, PESS funding; 8 bps report-only", "hypothesis": "LONG-BASIS-RELEASE"}
+
+    def put(key_obj, entry):
+        nonlocal added, skipped
+        key = hashlib.sha256(canonical({"batch": "LBR", **key_obj, "inputs": ih}).encode()).hexdigest()
+        if key in have:
+            skipped += 1
+            return
+        registry.record(path, {**entry, "idempotency_key": key, "input_hashes": hashes})
+        have.add(key)
+        added += 1
+
+    for s, g in fold[fold.window.isin(list(WINDOWS))].groupby("sim_id", sort=False):
+        put({"sim_id": s}, {"experiment": f"LBR {s}", "role": "trial", "config": {"sim_id": s, **base},
+                            "n_trials": 1, "n_simulations": 1,
+                            "result_summary": {f"{r.window}_{x}": getattr(r, x) for r in g.itertuples()
+                                               for x in ("net4", "net8", "closed", "fill")}})
+    put({"selection": True}, {"experiment": "LBR DEV-only selection", "role": "selection", "config": base,
+                              "n_trials": 0, "n_simulations": 0, "result_summary": sel})
+    return {"added": added, "skipped": skipped}
+
+
+def write_report(run_dir: Path, man: dict, wm, cm, comb, co, mon, ranked) -> None:
+    pick, P, T = man["pick"], cm.set_index("config_id").loc[man["pick"]], L.md_table
+    prim = cell_tag(*PRIMARY)
+    ev = cm[["setups", "arms", "rearms", "recoveries", "expired", "DEV-FULL_closed", "TEST_closed"]]
+    R = [f"# LONG-BASIS-RELEASE {man['run_id']}", "", f"Pick `{pick}` ({man['pick_label']}). "
+         f"PASS={man['decision']['PASS']} COMPLEMENT_PASS={man['decision']['COMPLEMENT_PASS']}. "
+         f"Eligible {man['n_dev_eligible']}/48. Sims {man['counts']['sims']}. Runtime {man['runtime_sec']}s.", "",
+         "## Selected, primary cell (offset 2 / pen 0.5) per window", "",
+         T(wm[wm.cell == prim].drop(columns=["config_id", "cell"])), "",
+         "## Selected, 6 cells net4 per window", "",
+         T(wm.pivot(index="window", columns="cell", values="net4").reindex(list(ALLWIN)).reset_index()), "",
+         "## Bootstrap p05 mean/day (selected, primary)", "",
+         T(pd.DataFrame([{"window": w, **{f"boot{bl}": P.get(f"{w}_boot{bl}", np.nan) for bl in BLOCKS}}
+                         for w in WINDOWS]), 3), "",
+         "## Eligibility counts", "", json.dumps(man["eligibility_counts"]), "",
+         "## Top 5 by DEV sort (eligible pool if any)", "",
+         T(ranked.head(5)[["config_id", "dev_eligible", "dev_pos_delta", "dev_score", "dev_cell_floor_pd",
+                           "dev_abs_pearson", "DEV-FULL_comb_mdd"]].merge(
+             cm[["config_id", "TEST_net4", "TEST_worst_cell", "TEST_boot60"]], on="config_id"), 3), "",
+         "## Top 5 by TEST worst cell (report only)", "",
+         T(cm.sort_values("TEST_worst_cell", ascending=False).head(5)[
+             ["config_id", "dev_eligible", "dev_score", "TEST_worst_cell", "TEST_net4", "TEST_closed",
+              "TEST_boot20", "TEST_boot60", "TEST_boot120"]], 3), "",
+         "## Combined-long vs S180 (primary)", "",
+         T(comb[comb.cell == prim][
+             ["window", "net4", "s180_net4", "delta_net4", "mdd", "s180_mdd", "delta_mdd", "sharpe", "s180_sharpe",
+              "closed", "funding", "pos_days", "delta_positive_days", "delta_nonzero_days", "boot20", "boot60",
+              "boot120"]], 2), "",
+         "## Correlation / overlap (primary)", "",
+         T(co[co.cell == prim][
+             ["window", "pearson", "spearman", "pearson_both_active", "new_exposure_min", "s180_exposure_min",
+              "both_exposure_min", "jaccard", "new_entries", "new_entry_while_s180_open",
+              "entry_decision_pm4h_overlap", "new_positive_days_when_s180_nonpositive"]], 3), "",
+         "## Monthly net4 (primary, months with new P&L)", "",
+         T(mon[(mon.cell == prim) & (mon.new_net4 != 0)][["month", "new_net4", "s180_net4", "combined_net4"]]), "",
+         "## Events (selected)", "", json.dumps(man["event_counts"][pick]), "",
+         "## Events across 48 configs (min / median / max)", "",
+         T(pd.DataFrame({"stat": ["min", "median", "max"], **{c: [ev[c].min(), ev[c].median(), ev[c].max()]
+                                                              for c in ev}}), 1), "",
+         "## Golden count", "", json.dumps(man["golden_count"]), "",
+         "## Checks", "", "```", json.dumps({k: man[k] for k in ("parity_s180", "prefix_check", "selection_tamper",
+                                                                 "funding_hand_check_max_abs", "gross_max",
+                                                                 "boundary_crossing_trades")}, indent=1,
+                                            default=str), "```"]
+    (run_dir / "report.md").write_text("\n".join(R) + "\n", encoding="utf-8")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--no-registry", action="store_true")
+    args = ap.parse_args(argv)
+    t0 = time.time()
+    code_hash = provenance.file_sha256(Path(__file__))
+    run_id = f"LBR-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{code_hash[:8]}"
+    run_dir = OUT_BASE / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)          # write-once
+    (run_dir / "trades").mkdir()
+    (run_dir / "daily").mkdir()
+    minutes, met, prem, funding = b2.load_all()
+    m = b2.Market.from_frames(minutes, funding)
+    del minutes
+    wb_main = b3.window_bounds(m)
+    wb = {**wb_main, **{k: (m.idx(a), m.idx(b)) for k, (a, b) in SUBWIN.items()}}
+    dec4 = np.arange(239, m.N, 240)
+    st = b5.build_state(m, dec4)
+    f = L.features(m, dec4, st, met, prem)
+    bar = pd.to_datetime(m.t[dec4], utc=True)
+    print(f"[feat] {time.time()-t0:.0f}s", flush=True)
+
+    assert len(GRID) == 48 and len({cid(g) for g in GRID}) == 48
+    sims = [sid(cid(g), o, p) for g in GRID for o, p in CELLS]
+    assert len(sims) == 288 and len(set(sims)) == 288
+    golden = activation_counts(bar, lbr_signal(f, GOLDEN)["side"])
+    print(f"[golden] {cid(GOLDEN)} {golden}", flush=True)
+    s_sig = L.s180_signal(st)
+    sR, s_pb, _ = L.run_cells(m, dec4, wb, s_sig)
+    parity = L.parity_s180(sR, s_pb, wb_main)
+    print(f"[s180] parity {parity} {time.time()-t0:.0f}s", flush=True)
+
+    sigs, ev_counts, rows, boot_rows, fold, R_all, trades, ev_rows = {}, {}, [], [], [], {}, {}, []
+    for g in GRID:
+        c = cid(g)
+        sg = lbr_signal(f, g)
+        sigs[c], ev_counts[c] = sg, check_signal(f, sg, g)
+        ev_counts[c]["activations"] = activation_counts(bar, sg["side"])
+        for e in sg["events"]:
+            rec = e["outcome"] == "RECOVERY"
+            ev_rows.append({"config_id": c, "arm_time": bar[e["arm_idx"]], "rearm": e["rearm"],
+                            "recovery_time": bar[e["end_idx"]] if rec else pd.NaT,
+                            "expiry_time": bar[e["end_idx"]] if e["outcome"] in ("EXPIRED", "REARMED") else pd.NaT,
+                            "exit_target_time": bar[e["exit_idx"]] if e["exit_idx"] >= 0 else pd.NaT,
+                            "outcome": e["outcome"], "min_ztaker": e["min_ztaker"], "target": int(rec)})
+        R, pb, cdaily = L.run_cells(m, dec4, wb, sg)
+        R_all[c] = R
+        trades[c] = pb.tr
+        row, boot = L.config_row(c, R, pb, s_pb, wb_main)
+        md, cut, dl, ab, mh = g
+        row.update(basis_mode=md, basis_cut=cut, recovery_delta=dl, arm_bars=ab, max_hold_bars=mh,
+                   **{k: v for k, v in ev_counts[c].items() if k != "activations"},
+                   TEST_cells_6of6=bool(row["TEST_cells_pos"] == 6),
+                   TEST_boot_all_pos=bool(all(boot[("TEST", bl)] > 0 for bl in BLOCKS)))
+        rows.append(row)
+        boot_rows += [{"config_id": c, "window": w, "scope": "new_primary", "block_days": bl, "p05_mean_day": x}
+                      for (w, bl), x in boot.items()]
+        for o, p in CELLS:
+            for w in ALLWIN:
+                e = R[(o, p)][w]
+                fold.append({"sim_id": sid(c, o, p), "config_id": c, "offset": o, "pen": p, "window": w,
+                             "net4": e["long_net4"], "net8": e["long_net8"], "gross": e["long_gross"],
+                             "funding": e["long_funding"], "entries": e["long_entries"], "closed": e["long_closed"],
+                             "open_n": e["long_open_n"], "open_mtm": e["long_open_mtm"], "win": e["long_win"],
+                             "fill": e["fill_notional_rate"], "mdd": e["mdd_1m"], "sharpe": e["sharpe"],
+                             "exposure_days": e["long_exp_days"], "turnover": e["turnover"],
+                             **{f"pnl_days_{x.split('_')[0]}": v for x, v in L.days_count(
+                                 cdaily[(o, p)][1][wb[w][0] // 1440:wb[w][1] // 1440]).items()}})
+        print(f"[sim] {c} DEV-A {row['DEV-A_net4']:.0f} DEV-B {row['DEV-B_net4']:.0f} closed "
+              f"{row['DEV-FULL_closed']} elig {row['dev_eligible']} {time.time()-t0:.0f}s", flush=True)
+    cm = pd.DataFrame(rows)
+    fold = pd.DataFrame(fold)
+    assert len(fold) == 288 * len(ALLWIN) and fold.sim_id.nunique() == 288
+
+    dev = L.dev_view(cm)
+    sel_hash = hashlib.sha256(pd.util.hash_pandas_object(dev, index=False).values.tobytes()).hexdigest()
+    pick, elig, ranked = L.select(dev)
+    tamper = L.tamper_invariance(cm, pick)
+    label = "LBR_DEV_PICK" if elig else "LBR_DEV_BEST_INELIGIBLE"
+    gp = next(g for g in GRID if cid(g) == pick)
+    print(f"[select] {pick} {label} {time.time()-t0:.0f}s", flush=True)
+
+    sg = sigs[pick]
+    wm_rows, corr_rows, comb_rows, mon_rows, boot_sel = [], [], [], [], []
+    gross_max, fund_hand, crossing = 0.0, None, {}
+    days = pd.date_range(b2.START, periods=m.N // 1440, freq="D")
+    for o, p in CELLS:
+        tag = cell_tag(o, p)
+        tr, od = b2.simulate(m, "state", dec4, sg["side"], sg["w"], o, b2.TTL_TREND, p, 0, m.N)
+        nb = b2.Book(m, tr, od, 0, m.N)
+        str_, sod = b2.simulate(m, "state", dec4, s_sig["side"], s_sig["w"], o, b2.TTL_TREND, p, 0, m.N)
+        sb = b2.Book(m, str_, sod, 0, m.N)
+        for w in ALLWIN:
+            assert L.same(nb.window(*wb[w]), R_all[pick][(o, p)][w]), "re-simulation != first pass"
+        hn, hs = L.held_minutes(nb), L.held_minutes(sb)
+        assert hn.max(initial=0) <= 1 + 1e-12 and hs.max(initial=0) <= 1 + 1e-12
+        gm = float((hn + hs).max())
+        assert gm <= 2 + 1e-12, "gross > 2"
+        gross_max = max(gross_max, gm)
+        cnt = np.zeros(m.N + 1, int)
+        np.add.at(cnt, nb.j0, 1)
+        np.add.at(cnt, np.where(nb.closed, nb.j1 + 1, m.N), -1)
+        assert np.cumsum(cnt).max(initial=0) <= 1, "more than one position"
+        crossing[tag] = int(sum(((nb.j0 < b_) & (np.where(nb.closed, nb.j1, m.N) >= b_)).sum()
+                                for _, (a_, b_) in wb_main.items() if b_ < m.N))
+        cr, cb = L.pair_rows(pick, tag, nb, sb, hn, hs, wb)
+        corr_rows += cr
+        comb_rows += cb
+        dn, ds = nb.daily(0, m.N), sb.daily(0, m.N)
+        cmb = (nb.pnl + sb.pnl).reshape(-1, 1440).sum(1)
+        assert np.allclose(cmb, dn + ds, rtol=0, atol=1e-9), "combined minute sum != daily sum"
+        pd.DataFrame({"day": days, "new_net4": dn, "s180_net4": ds, "combined_net4": dn + ds,
+                      "new_held": nb.held_day, "s180_held": sb.held_day}).to_parquet(
+            run_dir / f"daily/SELECTED_{tag}.parquet", index=False)
+        t2 = tr.assign(config_id=pick, cell=tag, net4_full=nb.net4_full, gross_full=nb.gross_full,
+                       funding_full=nb.fund_full)
+        t2["decision_time"] = pd.to_datetime(m.t[t2.decision_idx], utc=True)
+        t2["entry_time"] = pd.to_datetime(m.t[t2.entry_idx], utc=True)
+        t2["exit_time"] = pd.to_datetime(np.where(t2.exit_idx >= 0, m.t[np.maximum(t2.exit_idx, 0)],
+                                                  np.iinfo(np.int64).min), utc=True)
+        t2.to_parquet(run_dir / f"trades/SELECTED_{tag}.parquet", index=False)
+        for w, (a, b) in wb.items():
+            e = nb.window(a, b)
+            wm_rows.append({"config_id": pick, "cell": tag, "window": w,
+                            **L.window_metrics(e, nb.daily(a, b), L.trade_part(nb, a, b))})
+            if (o, p) == PRIMARY:
+                for bl in BLOCKS:
+                    x = b2.stationary_boot_p05(nb.daily(a, b), bl)
+                    boot_sel.append({"config_id": pick, "window": w, "scope": "selected_new_primary",
+                                     "block_days": bl, "p05_mean_day": x})
+                    wm_rows[-1][f"boot{bl}"] = x
+        mon = pd.DataFrame({"m": days.strftime("%Y-%m"), "n": dn, "s": ds}).groupby("m").sum()
+        mon_rows += [{"config_id": pick, "cell": tag, "month": k, "new_net4": r.n, "s180_net4": r.s,
+                      "combined_net4": r.n + r.s} for k, r in mon.iterrows()]
+        if (o, p) == PRIMARY:
+            fund_hand = L.funding_hand_check(m, nb)
+            assert fund_hand < 1e-9, f"funding hand parity {fund_hand}"
+    wm, co, comb, mon = (pd.DataFrame(x) for x in (wm_rows, corr_rows, comb_rows, mon_rows))
+    for cb in comb_rows:
+        if cb["cell"] == cell_tag(*PRIMARY):
+            boot_sel += [{"config_id": pick, "window": cb["window"], "scope": sc, "block_days": bl,
+                          "p05_mean_day": cb[f"{pre}boot{bl}"]} for bl in BLOCKS
+                         for sc, pre in (("combined_primary", ""), ("s180_primary", "s180_"))]
+    pre = prefix_check(m, dec4, met, prem, f, sigs, trades)
+    print(f"[prefix] {pre['closed_trades_compared']} trades {time.time()-t0:.0f}s", flush=True)
+
+    P = cm.set_index("config_id").loc[pick]
+    cell_pos = lambda w: all(R_all[pick][cl][w]["long_net4"] > 0 for cl in CELLS)  # noqa: E731
+    pw = {r["window"]: r for r in L.co_rows_primary(corr_rows)}
+    flags = {"dev_eligible_pool": elig, "DEV-A_6of6": cell_pos("DEV-A"), "DEV-B_6of6": cell_pos("DEV-B"),
+             "TEST_6of6": cell_pos("TEST"), "TEST_boot_all_pos": bool(P["TEST_boot_all_pos"])}
+    cflags = {"JanJul_6of6": cell_pos(COMP_WIN),
+              "JanJul_comb_pos_days_gt_s180": bool(pw[COMP_WIN]["comb_pos_days"] > pw[COMP_WIN]["s180_pos_days"])}
+    decision = {"pick": pick, "label": label, **flags, "PASS": all(flags.values()), **cflags,
+                "COMPLEMENT_PASS": all(cflags.values()),
+                "verdict": ("PASS" if all(flags.values()) else "FAIL") + (
+                    "" if elig else " (LBR_DEV_BEST_INELIGIBLE)"),
+                "test_boot": {bl: float(P[f"TEST_boot{bl}"]) for bl in BLOCKS}}
+    elig_counts = {k: int(cm[k].sum()) for k in ("dev_elig_cells", "dev_elig_closed", "dev_elig_fill",
+                                                 "dev_elig_posdays", "dev_eligible")}
+
+    hashes = {"lcr_code": provenance.file_sha256(LCR_PATH), "batch5_code": provenance.file_sha256(L.B5_PATH),
+              "batch2_code": provenance.file_sha256(L.B2_PATH),
+              "batch5_selected_long": provenance.file_sha256(PARENT_DIR / "selected_long.json"),
+              "batch5_trades_long": provenance.file_sha256(PARENT_DIR / "trades/LONG_DEV_PICK.parquet"),
+              "batch5_daily_long": provenance.file_sha256(PARENT_DIR / "daily/LONG_DEV_PICK.parquet"),
+              **{k: v for k, v in b5.input_hashes().items() if k != "code"}, "code": code_hash}
+    nat = lambda x: pd.to_datetime(np.where(x > np.iinfo(np.int64).min, x, np.iinfo(np.int64).min), utc=True)  # noqa
+    fs = pd.DataFrame({"bar_time": bar, "T": pd.to_datetime(f["T"], utc=True), **{x: f[x] for x in FEAT},
+                       "r4": f["r4"], "taker": f["taker"], "prem4": f["prem4"], "prem_n": f["prem_n"],
+                       "fund": f["fund"], "w": f["w"], "taker_available_time": nat(f["taker_avail"]),
+                       "prem_last_available_time": nat(f["prem_last_avail"]), "funding_time": nat(f["fund_time"]),
+                       **{f"target|{c}": s["side"] for c, s in sigs.items()}})
+    fs.to_parquet(run_dir / "feature_state.parquet", index=False)
+    pd.DataFrame(ev_rows).to_parquet(run_dir / "events.parquet", index=False)
+    fold.to_parquet(run_dir / "fold_metrics.parquet", index=False)
+    cm.to_parquet(run_dir / "config_metrics.parquet", index=False)
+    pd.DataFrame(boot_rows + boot_sel).to_parquet(run_dir / "bootstrap.parquet", index=False)
+    co.to_parquet(run_dir / "correlation_overlap.parquet", index=False)
+    comb.to_parquet(run_dir / "combined_long_metrics.parquet", index=False)
+    mon.to_parquet(run_dir / "monthly.parquet", index=False)
+    wm.to_parquet(run_dir / "selected_window_metrics.parquet", index=False)
+    sel = {"pick": pick, "label": label, "eligible_pool": elig, "pre_selection_dev_frame_sha256": sel_hash,
+           "sort_keys": dict(zip(L.SORT[0], L.SORT[1])), "eligibility_counts": elig_counts,
+           "ranked": ranked.head(10)[["config_id", "dev_eligible"] + L.SORT[0][:-1]].to_dict("records"),
+           "pick_dev_values": {k: P[k] for k in L.SORT[0][:-1] + ["dev_eligible", "dev_elig_cells",
+                                                                  "dev_elig_closed", "dev_elig_fill",
+                                                                  "dev_elig_posdays"]},
+           "tamper": tamper}
+    (run_dir / "selection.json").write_text(json.dumps(sel, indent=2, default=str), encoding="utf-8")
+    (run_dir / "decision.json").write_text(json.dumps(decision, indent=2, default=str), encoding="utf-8")
+    with (run_dir / "runs.jsonl").open("w", encoding="utf-8") as fh:
+        for s, g in fold[fold.window.isin(list(WINDOWS))].groupby("sim_id", sort=False):
+            fh.write(json.dumps({"sim_id": s, **{f"{r.window}_net4": r.net4 for r in g.itertuples()},
+                                 "selected": s.startswith(pick + "|")}) + "\n")
+    man = {"run_id": run_id, "parent_run_id": PARENT, "created_utc": datetime.now(timezone.utc).isoformat(),
+           "spec": "scratchpad codex_newlong2.md section 3 (Codex 01a1252c-c28c-7a12-82aa-18a944e5b951)",
+           "name": "LONG-BASIS-RELEASE", "frozen_hypothesis_and_interpretations": __doc__,
+           "source": "Binance USD-M BTCUSDT local: artifacts DEV (<2026-01-01) + r2_54 stageb_snapshot TEST",
+           "windows": {k: [str(a), str(b)] for k, (a, b) in ALLWIN.items()}, "data_cutoff": str(b2.END),
+           "counts": {"logical": len(GRID), "sims": len(sims), "n_trials": len(sims), "s180_comparator_sims": 6},
+           "max_hold_basis": "target activation decision (not fill)", "pick": pick, "pick_label": label,
+           "pick_params": dict(zip(("basis_mode", "basis_cut", "recovery_delta", "arm_bars", "max_hold_bars"), gp)),
+           "n_dev_eligible": int(cm.dev_eligible.sum()), "eligibility_counts": elig_counts, "decision": decision,
+           "golden_count": {"config_id": cid(GOLDEN), **golden}, "event_counts": ev_counts,
+           "parity_s180": parity, "prefix_check": pre, "selection_tamper": tamper,
+           "funding_hand_check_max_abs": fund_hand, "gross_max": gross_max, "boundary_crossing_trades": crossing,
+           "feature_coverage": {x: int(np.isfinite(f[x]).sum()) for x in FEAT} | {"decisions": int(len(dec4))},
+           "input_sha256": hashes, "git": b2.git_state(), "runtime_sec": None}
+    man["runtime_sec"] = round(time.time() - t0, 1)
+    write_report(run_dir, man, wm, cm, comb, co, mon, ranked)
+    if not args.no_registry:
+        man["registry"] = write_registry(fold, {"pick": pick, "label": label, "batch_trials": 288,
+                                                "batch_logical": 48, "PASS": decision["PASS"],
+                                                "COMPLEMENT_PASS": decision["COMPLEMENT_PASS"]}, hashes, run_id)
+        print(f"[registry] {man['registry']}", flush=True)
+    man["runtime_sec"] = round(time.time() - t0, 1)
+    (run_dir / "manifest.json").write_text(json.dumps(man, indent=2, default=str), encoding="utf-8")
+    print(f"[done] {run_id} pick={pick} PASS={decision['PASS']} COMP={decision['COMPLEMENT_PASS']} "
+          f"{man['runtime_sec']}s", flush=True)
+    return run_dir
+
+
+if __name__ == "__main__":
+    main()

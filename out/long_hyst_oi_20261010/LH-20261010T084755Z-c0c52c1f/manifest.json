@@ -1,0 +1,398 @@
+{
+  "run_id": "LH-20261010T084755Z-c0c52c1f",
+  "parent_run_id": "NM-B5-20261010T080025Z-c55285f2",
+  "created_utc": "2026-10-10T08:49:27.556379+00:00",
+  "spec": "scratchpad codex_long_fix.md (c) (Codex 01a124f0-445a-7381-96d0-b192e0cd0daa)",
+  "name": "LONG-HYST-OI",
+  "frozen_hypothesis_and_interpretations": "LONG-HYST-OI (2026-10-10): long-only S180 exit hysteresis x 24h open-interest entry gate.\n\nSpec: scratchpad codex_long_fix.md section \"(c) \uc815\ud655\ud55c grid\u00b7\uad6c\ud604 \uba85\uc138\" (Codex session\n01a124f0-445a-7381-96d0-b192e0cd0daa). Skeleton: out/run_long_breadth_20261010.py (copied, not edited).\nParent run NM-B5-20261010T080025Z-c55285f2 (LONG_DEV_PICK = G5-S180-c+0.0-W180-P65, long sleeve parity source).\nFrozen hypothesis: (1) keeping entry at score >= 0.50 AND SVI180 >= 0.10 but exiting only at a lower boundary merges\nthe short loss/re-entry cycles into one regime position; (2) requiring 24h OI growth (robust z) for new entries keeps\nonly rallies backed by new futures positions. Either should raise the DEV bootstrap floor and make TEST boot p05 > 0.\nFixed: long-only, trend (42,168,504), SVI 180, vol W180-P65, maker 4 bps rt, real funding PESS, offset {2,5} x pen\n{0.5,1,2}, TTL 60m, exit quote 2 bps, requote 60m, continuous 2020-01-01..2026-10-08 (exclusive) sim.\nGrid: exit (score_exit, svi_exit) {(0.50,0.10),(0.25,0.05),(0.00,0.00)} x OI gate {OFF, zOI24>=-0.5, zOI24>=0}\n= 9 logical, 54 sims.\nEngine: Batch-5 build_state/core_signal/prefix_checks + Batch-2 simulate/Book/bootstrap/asof_values + Batch-1\ntrailing_robust_z + Batch-3 window_bounds + Batch-4 prefix_market imported unchanged via importlib.\nTimes: bar_time = market_time[dec4] (open of the 4h bar's last 1m bar, = stored 'decision_time' of earlier runs);\ndecision_available_time T = bar_time + 1m. All inputs available_time <= T.\nOI: OI_T = latest met.oi with available_time <= T and T - available_time <= 10m; OI_24 = same at T-24h;\ndOI24 = log(OI_T / OI_24); zOI24 = robust z over the previous 1080 decisions (current excluded, >= 540 finite,\nMAD <= 0 or missing -> NaN). Gate fails closed on NaN.\nSignal (target state per decision): ready = score, SVI, weight finite. flat: target 1 iff ready & score >= 0.50 &\nSVI >= 0.10 & OI gate. target 1: stays 1 until not-ready OR score < score_exit OR SVI < svi_exit. The OI gate is\nevaluated only on flat->1 target transitions; a held target never drops because of OI. Interpretation: like\nBatch-5 the state lives on the target; if the entry order expires unfilled the simulator re-quotes while the target\nstays 1 without re-checking OI (count of such entries reported as gate_fail_fills).\nDEV-only selection: (1) DEV-A and DEV-B 6/6 exec cells long net4 > 0; (2) DEV-FULL primary closed >= 40 and fill\n>= 0.10; (3) dev_score = min DEV-A/DEV-B long boot p05 over 20/60/120; drop if < baseline -0.329384 (the\n(0.50,0.10,OFF) value, asserted); (4) maximise dev_score; (5) ties: DEV-B net4 desc, DEV-A net4 desc, DEV-FULL MDD\nasc, config id; (6) TEST columns never used. No eligible config -> LH_DEV_BEST_INELIGIBLE (rules 4-5 on all 9).\nTEST success: pick 6/6 cells TEST long net4 > 0 and TEST boot p05 20/60/120 all > 0 (no closed cutoff).\ntop1/top3 share: per-trade window net4 contribution (Book.window partition), largest k / window net4.\n",
+  "windows": {
+    "DEV-FULL": [
+      "2020-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "DEV-A": [
+      "2020-01-01 00:00:00+00:00",
+      "2024-01-01 00:00:00+00:00"
+    ],
+    "DEV-B": [
+      "2024-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "TEST": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ]
+  },
+  "data_cutoff": "2026-10-08 00:00:00+00:00",
+  "counts": {
+    "logical": 9,
+    "sims": 54,
+    "n_trials": 9
+  },
+  "pick": "LH-S180-W180P65-x0.50-0.10-oiOFF",
+  "pick_label": "LH_DEV_PICK",
+  "base_dev_score": -0.3293840344345051,
+  "n_dev_eligible": 6,
+  "n_pass_rule3": 1,
+  "pick_TEST": {
+    "cells_6of6": true,
+    "boot_all_pos": false,
+    "SUCCESS": false
+  },
+  "all_runs": [
+    {
+      "config_id": "LH-S180-W180P65-x0.50-0.10-oiOFF",
+      "dev_eligible": true,
+      "dev_score": -0.3293840344345051,
+      "DEV-FULL_net4": 22996.226652431793,
+      "DEV-FULL_closed": 101,
+      "DEV-FULL_boot20": 4.595160746194318,
+      "DEV-FULL_boot60": 4.46148126630438,
+      "DEV-FULL_boot120": 4.835263204646866,
+      "DEV-A_net4": 17190.001042230815,
+      "DEV-A_closed": 65,
+      "DEV-A_boot20": 4.029782534914298,
+      "DEV-A_boot60": 3.925959568925918,
+      "DEV-A_boot120": 4.266772193496873,
+      "DEV-B_net4": 5806.225610200977,
+      "DEV-B_closed": 36,
+      "DEV-B_boot20": -0.3293840344345051,
+      "DEV-B_boot60": 0.5293134009332062,
+      "DEV-B_boot120": 1.5884398115781755,
+      "TEST_net4": 1684.115629575647,
+      "TEST_closed": 14,
+      "TEST_boot20": -1.9574291390646517,
+      "TEST_boot60": -1.4703178501810246,
+      "TEST_boot120": -1.104645943239078,
+      "TEST_SUCCESS": false
+    },
+    {
+      "config_id": "LH-S180-W180P65-x0.50-0.10-oi-0.5",
+      "dev_eligible": true,
+      "dev_score": -0.37416243580377,
+      "DEV-FULL_net4": 17931.920907019212,
+      "DEV-FULL_closed": 86,
+      "DEV-FULL_boot20": 3.123941168096017,
+      "DEV-FULL_boot60": 3.477615790288946,
+      "DEV-FULL_boot120": 3.931531660598514,
+      "DEV-A_net4": 12208.17112662633,
+      "DEV-A_closed": 53,
+      "DEV-A_boot20": 2.0587008590613873,
+      "DEV-A_boot60": 2.5720030797545275,
+      "DEV-A_boot120": 3.313638429262904,
+      "DEV-B_net4": 5723.749780392882,
+      "DEV-B_closed": 33,
+      "DEV-B_boot20": -0.37416243580377,
+      "DEV-B_boot60": 0.5970904621262256,
+      "DEV-B_boot120": 1.675586109373066,
+      "TEST_net4": 1801.3223294186676,
+      "TEST_closed": 10,
+      "TEST_boot20": -1.4478837454228868,
+      "TEST_boot60": -0.8315698547267975,
+      "TEST_boot120": -0.3312374701101795,
+      "TEST_SUCCESS": false
+    },
+    {
+      "config_id": "LH-S180-W180P65-x0.50-0.10-oi+0.0",
+      "dev_eligible": true,
+      "dev_score": -0.5957403949446609,
+      "DEV-FULL_net4": 17258.27027718733,
+      "DEV-FULL_closed": 81,
+      "DEV-FULL_boot20": 2.817486535540603,
+      "DEV-FULL_boot60": 3.191864869720974,
+      "DEV-FULL_boot120": 3.6706958200126927,
+      "DEV-A_net4": 11678.983949826794,
+      "DEV-A_closed": 53,
+      "DEV-A_boot20": 1.6905443677693446,
+      "DEV-A_boot60": 2.2334857958749437,
+      "DEV-A_boot120": 2.9692193383846783,
+      "DEV-B_net4": 5579.286327360534,
+      "DEV-B_closed": 28,
+      "DEV-B_boot20": -0.5957403949446609,
+      "DEV-B_boot60": 0.3389478535918979,
+      "DEV-B_boot120": 1.4355742730705696,
+      "TEST_net4": 1783.4746795328372,
+      "TEST_closed": 10,
+      "TEST_boot20": -1.587017533729725,
+      "TEST_boot60": -1.0506568709352921,
+      "TEST_boot120": -0.6208216709696047,
+      "TEST_SUCCESS": false
+    },
+    {
+      "config_id": "LH-S180-W180P65-x0.25-0.05-oiOFF",
+      "dev_eligible": true,
+      "dev_score": -1.8338138522599259,
+      "DEV-FULL_net4": 22600.301412027402,
+      "DEV-FULL_closed": 47,
+      "DEV-FULL_boot20": 3.570850690456485,
+      "DEV-FULL_boot60": 3.9979293199054036,
+      "DEV-FULL_boot120": 4.453878168069816,
+      "DEV-A_net4": 16916.397239358477,
+      "DEV-A_closed": 31,
+      "DEV-A_boot20": 2.897674685618277,
+      "DEV-A_boot60": 3.25206337711289,
+      "DEV-A_boot120": 3.7840386355996505,
+      "DEV-B_net4": 5683.904172668925,
+      "DEV-B_closed": 16,
+      "DEV-B_boot20": -1.8338138522599259,
+      "DEV-B_boot60": -0.43556293901216947,
+      "DEV-B_boot120": 0.8402088660388356,
+      "TEST_net4": 1898.1169328543579,
+      "TEST_closed": 2,
+      "TEST_boot20": -1.89755720386239,
+      "TEST_boot60": -1.653202414956986,
+      "TEST_boot120": -1.229729240947148,
+      "TEST_SUCCESS": false
+    },
+    {
+      "config_id": "LH-S180-W180P65-x0.25-0.05-oi-0.5",
+      "dev_eligible": true,
+      "dev_score": -1.8338138522599259,
+      "DEV-FULL_net4": 18491.317206563683,
+      "DEV-FULL_closed": 42,
+      "DEV-FULL_boot20": 2.314298694878389,
+      "DEV-FULL_boot60": 3.063443625499424,
+      "DEV-FULL_boot120": 3.724084608699835,
+      "DEV-A_net4": 12807.41303389476,
+      "DEV-A_closed": 26,
+      "DEV-A_boot20": 1.0304749340949915,
+      "DEV-A_boot60": 2.1076961729083603,
+      "DEV-A_boot120": 2.9264322520943535,
+      "DEV-B_net4": 5683.904172668926,
+      "DEV-B_closed": 16,
+      "DEV-B_boot20": -1.8338138522599259,
+      "DEV-B_boot60": -0.43556293901216947,
+      "DEV-B_boot120": 0.8402088660388356,
+      "TEST_net4": 1898.1169328543579,
+      "TEST_closed": 2,
+      "TEST_boot20": -1.89755720386239,
+      "TEST_boot60": -1.653202414956986,
+      "TEST_boot120": -1.229729240947148,
+      "TEST_SUCCESS": false
+    },
+    {
+      "config_id": "LH-S180-W180P65-x0.25-0.05-oi+0.0",
+      "dev_eligible": true,
+      "dev_score": -1.9979972325986242,
+      "DEV-FULL_net4": 18389.31159394267,
+      "DEV-FULL_closed": 41,
+      "DEV-FULL_boot20": 2.2501573181685304,
+      "DEV-FULL_boot60": 2.9677216018303185,
+      "DEV-FULL_boot120": 3.5936842995122773,
+      "DEV-A_net4": 12926.643026537722,
+      "DEV-A_closed": 26,
+      "DEV-A_boot20": 1.0630909489013605,
+      "DEV-A_boot60": 2.117330166604826,
+      "DEV-A_boot120": 2.9516195699748953,
+      "DEV-B_net4": 5462.668567404951,
+      "DEV-B_closed": 15,
+      "DEV-B_boot20": -1.9979972325986242,
+      "DEV-B_boot60": -0.7384176495043865,
+      "DEV-B_boot120": 0.35337205640023106,
+      "TEST_net4": 1898.1169328543579,
+      "TEST_closed": 2,
+      "TEST_boot20": -1.89755720386239,
+      "TEST_boot60": -1.653202414956986,
+      "TEST_boot120": -1.229729240947148,
+      "TEST_SUCCESS": false
+    },
+    {
+      "config_id": "LH-S180-W180P65-x0.00-0.00-oiOFF",
+      "dev_eligible": false,
+      "dev_score": -3.9898427994092214,
+      "DEV-FULL_net4": 28353.78726077541,
+      "DEV-FULL_closed": 32,
+      "DEV-FULL_boot20": 2.93665001183743,
+      "DEV-FULL_boot60": 3.183632927280625,
+      "DEV-FULL_boot120": 3.697312865465382,
+      "DEV-A_net4": 24142.753502740175,
+      "DEV-A_closed": 20,
+      "DEV-A_boot20": 2.4112012931394773,
+      "DEV-A_boot60": 2.9573822174671345,
+      "DEV-A_boot120": 3.5187426364176417,
+      "DEV-B_net4": 4211.033758035232,
+      "DEV-B_closed": 12,
+      "DEV-B_boot20": -3.9898427994092214,
+      "DEV-B_boot60": -2.237855935136677,
+      "DEV-B_boot120": -0.8147306364090905,
+      "TEST_net4": 1922.0901472427659,
+      "TEST_closed": 1,
+      "TEST_boot20": -1.8427512081091006,
+      "TEST_boot60": -1.521966476803365,
+      "TEST_boot120": -1.1018458889520706,
+      "TEST_SUCCESS": false
+    },
+    {
+      "config_id": "LH-S180-W180P65-x0.00-0.00-oi-0.5",
+      "dev_eligible": false,
+      "dev_score": -3.9898427994092214,
+      "DEV-FULL_net4": 17310.351549737323,
+      "DEV-FULL_closed": 29,
+      "DEV-FULL_boot20": 2.05289149366583,
+      "DEV-FULL_boot60": 2.4824525835689095,
+      "DEV-FULL_boot120": 3.014791315749966,
+      "DEV-A_net4": 13099.317791702095,
+      "DEV-A_closed": 17,
+      "DEV-A_boot20": 1.7728792218637468,
+      "DEV-A_boot60": 2.286972685916328,
+      "DEV-A_boot120": 2.8137698048697333,
+      "DEV-B_net4": 4211.033758035232,
+      "DEV-B_closed": 12,
+      "DEV-B_boot20": -3.9898427994092214,
+      "DEV-B_boot60": -2.237855935136677,
+      "DEV-B_boot120": -0.8147306364090905,
+      "TEST_net4": 1922.0901472427659,
+      "TEST_closed": 1,
+      "TEST_boot20": -1.8427512081091006,
+      "TEST_boot60": -1.521966476803365,
+      "TEST_boot120": -1.1018458889520706,
+      "TEST_SUCCESS": false
+    },
+    {
+      "config_id": "LH-S180-W180P65-x0.00-0.00-oi+0.0",
+      "dev_eligible": false,
+      "dev_score": -4.1120999051781,
+      "DEV-FULL_net4": 17051.383029274937,
+      "DEV-FULL_closed": 28,
+      "DEV-FULL_boot20": 1.944464747121963,
+      "DEV-FULL_boot60": 2.3714944633467843,
+      "DEV-FULL_boot120": 2.8584978628097124,
+      "DEV-A_net4": 13035.81312672104,
+      "DEV-A_closed": 17,
+      "DEV-A_boot20": 1.722336011656485,
+      "DEV-A_boot60": 2.26024400502891,
+      "DEV-A_boot120": 2.798759300112003,
+      "DEV-B_net4": 4015.569902553898,
+      "DEV-B_closed": 11,
+      "DEV-B_boot20": -4.1120999051781,
+      "DEV-B_boot60": -2.4259394313038443,
+      "DEV-B_boot120": -1.041337818030767,
+      "TEST_net4": 1922.0901472427659,
+      "TEST_closed": 1,
+      "TEST_boot20": -1.8427512081091006,
+      "TEST_boot60": -1.521966476803365,
+      "TEST_boot120": -1.1018458889520706,
+      "TEST_SUCCESS": false
+    }
+  ],
+  "parity_b5_long_sleeve": {
+    "cells_max_abs_diff": 0.0,
+    "boot_max_abs_diff": 0.0,
+    "trades_equal": true,
+    "n_trades": 116,
+    "trades_net4_max_abs_diff": 0.0,
+    "daily_max_abs_diff": 0.0,
+    "TEST_net4": 1684.115629575647,
+    "DEV-FULL_net4": 22996.226652431793,
+    "TEST_closed": 14
+  },
+  "prefix_checks_market": {
+    "cut": "2026-01-01 00:00:00+00:00",
+    "decisions_compared": 13152,
+    "configs": {
+      "LH-S180-W180P65-x0.50-0.10-oiOFF": {
+        "prefix_closed_trades_equal": 101,
+        "prefix_open": 0
+      },
+      "LH-S180-W180P65-x0.25-0.05-oiOFF": {
+        "prefix_closed_trades_equal": 47,
+        "prefix_open": 0
+      },
+      "LH-S180-W180P65-x0.00-0.00-oiOFF": {
+        "prefix_closed_trades_equal": 32,
+        "prefix_open": 0
+      }
+    }
+  },
+  "prefix_checks_oi": {
+    "cut": "2026-01-01 00:00:00+00:00",
+    "decisions_compared": 13152,
+    "tamper": "oi x1.7 for available_time > cut",
+    "configs": {
+      "LH-S180-W180P65-x0.50-0.10-oi-0.5": {
+        "prefix_closed_trades_equal": 86,
+        "prefix_open": 0
+      },
+      "LH-S180-W180P65-x0.50-0.10-oi+0.0": {
+        "prefix_closed_trades_equal": 81,
+        "prefix_open": 0
+      },
+      "LH-S180-W180P65-x0.25-0.05-oi-0.5": {
+        "prefix_closed_trades_equal": 42,
+        "prefix_open": 0
+      },
+      "LH-S180-W180P65-x0.25-0.05-oi+0.0": {
+        "prefix_closed_trades_equal": 41,
+        "prefix_open": 0
+      },
+      "LH-S180-W180P65-x0.00-0.00-oi-0.5": {
+        "prefix_closed_trades_equal": 29,
+        "prefix_open": 0
+      },
+      "LH-S180-W180P65-x0.00-0.00-oi+0.0": {
+        "prefix_closed_trades_equal": 28,
+        "prefix_open": 0
+      }
+    }
+  },
+  "oi_no_forced_exit": {
+    "LH-S180-W180P65-x0.50-0.10-oi-0.5": {
+      "held_decisions_checked": 3034,
+      "gate_delayed_decisions": 524
+    },
+    "LH-S180-W180P65-x0.50-0.10-oi+0.0": {
+      "held_decisions_checked": 2980,
+      "gate_delayed_decisions": 578
+    },
+    "LH-S180-W180P65-x0.25-0.05-oi-0.5": {
+      "held_decisions_checked": 3493,
+      "gate_delayed_decisions": 489
+    },
+    "LH-S180-W180P65-x0.25-0.05-oi+0.0": {
+      "held_decisions_checked": 3467,
+      "gate_delayed_decisions": 515
+    },
+    "LH-S180-W180P65-x0.00-0.00-oi-0.5": {
+      "held_decisions_checked": 3868,
+      "gate_delayed_decisions": 523
+    },
+    "LH-S180-W180P65-x0.00-0.00-oi+0.0": {
+      "held_decisions_checked": 3848,
+      "gate_delayed_decisions": 543
+    }
+  },
+  "oi_coverage": {
+    "decisions": 14832,
+    "doi_finite": 13325,
+    "zoi_finite": 12785,
+    "first_zoi": "2020-12-01 19:59:00+00:00"
+  },
+  "input_sha256": {
+    "batch5_code": "c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428",
+    "batch5_selected_long": "8bc6af8e3c91b6f6079b6c3dc03e5230d24491317e3957b029c0da24388ba72f",
+    "batch5_trades_long": "57af886682ae5f79c3eea9becb6b01e2f2e84b2821ac91d51aaa04817dd5a74f",
+    "batch5_daily_long": "62940ec04f8f538c290f9a231fcab60cbd3c404c1f9632999ebd975e03b1b3a4",
+    "dev_market": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "dev_metrics_tree": "fb9591579dacfab0a93de72f120770496f6f04b2b6cebd58859e9449acc904bd",
+    "dev_premium_tree": "3e246393245cfb0bc1a6ed81e9c81320e144cb87822a8696f9695d1867f5121c",
+    "dev_funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "batch1_code": "8a329e4fc730ccd32d10d67216a2fc7581076c226c4813b7414afd2df9fdba1a",
+    "snap_market_1m.parquet": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59",
+    "snap_technique_metrics.parquet": "dd5afe89d138b0ec63f27de3738bcbde0ef75664e4288bfe8d95fa578a3e5408",
+    "snap_technique_premium.parquet": "5d02b5ba1015b28812fc08b1d9ca7232f1298d8556c5b55b40ce3ac2c2300c98",
+    "snap_funding_model_input.parquet": "ac0f660302dc805c421a9c79304b4af6fecb332b6b01704d908e1805297e6590",
+    "snap_manifest.json": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069",
+    "batch2_code": "97244bea96d70d0fdcce3d9d8132a683edcd98e79f3c591c8a1e3b960b72ec04",
+    "batch3_code": "7760a0d9140d9e254862a9377266175c933f26fd45ddd79d5d3d7d959b0c6181",
+    "batch4_code": "ec7d54099d2bae3c100e2f07f3cdacb0fd9bfcf9ff5f8f025a5e4b0857d42d6d",
+    "batch4_manifest": "4006556893d7356a286d3a963c362ffd50a01c571e4f2f9a861b64cb47e78d2a",
+    "batch4_controls_strict": "672fbfadda4814101b19ef61d82d1c4743ffb3fbbe025ad4483426dbc9806233",
+    "code": "c0c52c1f4e5fd859057f97c50bea522c0f9a1feb421c2dfeb229d747f9733ffa"
+  },
+  "git": {
+    "head": "20538c4f4b7b644224f0edb74531ccf117afebbf",
+    "branch": "research/k45-audit-and-negative-results-20260930",
+    "dirty_files": 87
+  },
+  "runtime_sec": 91.8
+}

@@ -1,0 +1,19 @@
+{
+  "pick": "LCR-g-1.5-NONE-a4-x+0.0-h6",
+  "label": "LCR_DEV_BEST_INELIGIBLE",
+  "dev_eligible_pool": false,
+  "DEV-A_6of6": true,
+  "DEV-B_6of6": true,
+  "TEST_6of6": false,
+  "TEST_boot_all_pos": false,
+  "PASS": false,
+  "JanJul_6of6": false,
+  "JanJul_comb_pos_days_gt_s180": false,
+  "COMPLEMENT_PASS": false,
+  "verdict": "FAIL (LCR_DEV_BEST_INELIGIBLE)",
+  "test_boot": {
+    "20": -5.812574987448654,
+    "60": -5.015581428531244,
+    "120": -4.44531571008184
+  }
+}

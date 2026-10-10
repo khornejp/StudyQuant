@@ -1,0 +1,663 @@
+{
+  "run_id": "LCR-20261010T092956Z-4d28b82a",
+  "parent_run_id": "NM-B5-20261010T080025Z-c55285f2",
+  "created_utc": "2026-10-10T09:36:02.986859+00:00",
+  "spec": "scratchpad codex_newlong.md section 2 (Codex 01a12515-36a1-7400-a078-adf4cce7e936)",
+  "name": "LONG-CAP-RECOVERY",
+  "frozen_hypothesis_and_interpretations": "LONG-CAP-RECOVERY (2026-10-10): sequential capitulation -> recovery long sleeve (LCR).\n\nSpec: scratchpad codex_newlong.md section \"2) \ub2e8\uc77c \ubc30\uce58 \uba85\uc138\" (Codex session 01a12515-36a1-7400-a078-adf4cce7e936).\nComparator: Batch-5 run NM-B5-20261010T080025Z-c55285f2 LONG_DEV_PICK = G5-S180-c+0.0-W180-P65 long sleeve\n(re-simulated long-only, exact parity with the stored primary trades / daily / 6 cells / bootstrap asserted).\nFrozen hypothesis: a strong price dislocation with falling OI and concentrated taker selling, followed within 8-16h by\na recovery of price, SVI and taker flow, gives a long rebound that is profitable after a 4 bps maker round trip, and it\nadds positive-P&L days in periods where S180 is inactive.\nEngine: Batch-2 simulate/Book/stationary_boot_p05/asof_values/load_all, Batch-1 trailing_robust_z, Batch-3\nwindow_bounds, Batch-4 prefix_market, Batch-5 build_state (score/SVI/W180-P65 weight/strict funding fz) are imported\nunchanged via importlib (file hashes recorded as inputs).\nTimes: dec4 = 239 + 240k; bar_time = market_time[dec4]; T = bar_time + 1m. Every input has available_time <= T.\nFeatures (all robust baselines exclude the current value; MAD <= 0 / stale / missing -> NaN):\n  r4 = log(C_t / C_{t-1}); gap = (logC_t - median(logC_{t-42..t-1})) / (1.4826 MAD(r4_{t-180..t-1}) sqrt(42)), both\n  windows must be fully finite; zr4 = robust z vs previous 1080 decisions (>= 540 finite); OI_T / OI_24 = latest OI with\n  available_time <= T (resp. <= T-24h) and age <= 10m, dOI24 = log(OI_T/OI_24), zOI24 robust z 1080/540;\n  taker = latest log(taker_lsr) (available_time <= T, age <= 10m), ztaker robust z 1080/540; prem4 = mean premium with\n  T-4h < available_time <= T, valid only with >= 216 finite rows, zprem robust z 1080/540; zfund = Batch-5 strict fz\n  (event j = max{ft < T}, robust z over events j-90..j-1, >= 30); SVI42 = Batch-5 G svi[42], dSVI = SVI42_t -\n  SVI42_{t-1}, zdSVI robust z 1080/540.\nState machine (per logical config; NaN comparisons are False -> a missing input never arms, recovers or exits):\n  shock = gap <= gap_cut & zOI24 <= -0.5 & ztaker <= -1.0 & discount (NONE / FUND zfund <= -0.5 / PREM zprem <= -1.0).\n  FLAT + shock -> ARMED (arm = t, min_gap = gap_t, min_ztaker = ztaker_t); no entry at a shock decision.\n  ARMED + shock -> re-arm (arm time and minima reset to the new shock; old episode outcome REARMED).\n  ARMED, 1 <= t-arm <= arm_bars, first decision with zr4 >= 0 & zdSVI >= 0 & gap - min_gap >= 0.50 &\n  ztaker - min_ztaker >= 0.50 & gap < 0 & weight finite > 0 -> target 1 (activation, weight frozen = W180-P65 at t).\n  Minima are running minima from the arm decision through t-1 (NaN ignored). No recovery by t-arm = arm_bars ->\n  EXPIRED (FLAT). HOLD: target 0 at the first later decision with gap >= exit_gap or t - activation >= max_hold_bars\n  (activation-based, not fill-based); shocks during HOLD are ignored and the exit decision never re-arms, so every\n  new entry needs a new shock after the exit decision.\nExecution: Batch-2 'state' simulator, offset {2,5} bps x penetration {0.5,1,2} bp, entry TTL 60m (target stays 1 ->\nthe simulator re-quotes at the next held-target decision with the frozen activation weight), exit quote 2 bps re-quoted\nevery 60m, maker 4 bps rt, 0 slippage, real funding PESS; net8 report-only. One continuous simulation\n[2020-01-01, 2026-10-08); windows are MTM cuts (no forced exit at a boundary).\nSelection (DEV-only; TEST columns dropped before the call, TEST tamper invariance asserted): eligible = DEV-A and\nDEV-B long net4 > 0 in 6/6 cells, DEV-FULL primary closed >= 40 and fill >= 0.10, combined-long (S180 + new, primary\ncell) positive days > S180 positive days in DEV-A and DEV-B. Sort: min(DEV-A/B positive-day delta) desc, dev_score\n(min DEV-A/B primary boot p05 over 20/60/120) desc, min(DEV-A/B x 6 cells net4/day) desc, |DEV-FULL primary daily\nPearson(new, S180)| asc, combined-long DEV-FULL MDD asc, config id. No eligible -> LCR_DEV_BEST_INELIGIBLE (same sort\nover all 48) and the batch is FAIL.\nPASS: selected eligible & DEV-A/DEV-B/TEST 6/6 cells long net4 > 0 & TEST primary boot p05 20/60/120 > 0\n(10,000 resamples, seed 20261010). COMPLEMENT_PASS (separate): [2026-01-01, 2026-08-01) new net4 6/6 > 0 and\ncombined-long positive days > S180 positive days there (primary cell).\nCombined-long = S180 long minute P&L + new minute P&L of the same exec cell; no rescale; each sleeve weight <= 1,\ngross <= 2 asserted.\n",
+  "source": "Binance USD-M BTCUSDT local: artifacts DEV (<2026-01-01) + r2_54 stageb_snapshot TEST",
+  "windows": {
+    "DEV-FULL": [
+      "2020-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "DEV-A": [
+      "2020-01-01 00:00:00+00:00",
+      "2024-01-01 00:00:00+00:00"
+    ],
+    "DEV-B": [
+      "2024-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "TEST": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ],
+    "TEST-JanJul": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-08-01 00:00:00+00:00"
+    ],
+    "TEST-AugSep": [
+      "2026-08-01 00:00:00+00:00",
+      "2026-10-01 00:00:00+00:00"
+    ],
+    "TEST-Oct": [
+      "2026-10-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ]
+  },
+  "data_cutoff": "2026-10-08 00:00:00+00:00",
+  "counts": {
+    "logical": 48,
+    "sims": 288,
+    "n_trials": 288,
+    "s180_comparator_sims": 6
+  },
+  "max_hold_basis": "target activation decision (not fill)",
+  "pick": "LCR-g-1.5-NONE-a4-x+0.0-h6",
+  "pick_label": "LCR_DEV_BEST_INELIGIBLE",
+  "pick_params": {
+    "gap_cut": -1.5,
+    "discount": "NONE",
+    "arm_bars": 4,
+    "exit_gap": 0.0,
+    "max_hold_bars": 6
+  },
+  "n_dev_eligible": 0,
+  "eligibility_counts": {
+    "dev_elig_cells": 12,
+    "dev_elig_closed": 0,
+    "dev_elig_fill": 48,
+    "dev_elig_posdays": 14,
+    "dev_eligible": 0
+  },
+  "decision": {
+    "pick": "LCR-g-1.5-NONE-a4-x+0.0-h6",
+    "label": "LCR_DEV_BEST_INELIGIBLE",
+    "dev_eligible_pool": false,
+    "DEV-A_6of6": true,
+    "DEV-B_6of6": true,
+    "TEST_6of6": false,
+    "TEST_boot_all_pos": false,
+    "PASS": false,
+    "JanJul_6of6": false,
+    "JanJul_comb_pos_days_gt_s180": false,
+    "COMPLEMENT_PASS": false,
+    "verdict": "FAIL (LCR_DEV_BEST_INELIGIBLE)",
+    "test_boot": {
+      "20": -5.812574987448654,
+      "60": -5.015581428531244,
+      "120": -4.44531571008184
+    }
+  },
+  "event_counts": {
+    "LCR-g-1.5-NONE-a2-x-0.5-h3": {
+      "shocks": 27,
+      "arms": 24,
+      "rearms": 2,
+      "recoveries": 5,
+      "expired": 19,
+      "rearmed_episodes": 2,
+      "target1_decisions": 15,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-NONE-a2-x-0.5-h6": {
+      "shocks": 27,
+      "arms": 22,
+      "rearms": 2,
+      "recoveries": 5,
+      "expired": 17,
+      "rearmed_episodes": 2,
+      "target1_decisions": 30,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-NONE-a2-x+0.0-h3": {
+      "shocks": 27,
+      "arms": 24,
+      "rearms": 2,
+      "recoveries": 5,
+      "expired": 19,
+      "rearmed_episodes": 2,
+      "target1_decisions": 15,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-NONE-a2-x+0.0-h6": {
+      "shocks": 27,
+      "arms": 22,
+      "rearms": 2,
+      "recoveries": 5,
+      "expired": 17,
+      "rearmed_episodes": 2,
+      "target1_decisions": 30,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-NONE-a4-x-0.5-h3": {
+      "shocks": 27,
+      "arms": 22,
+      "rearms": 4,
+      "recoveries": 15,
+      "expired": 7,
+      "rearmed_episodes": 4,
+      "target1_decisions": 41,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-NONE-a4-x-0.5-h6": {
+      "shocks": 27,
+      "arms": 20,
+      "rearms": 4,
+      "recoveries": 13,
+      "expired": 7,
+      "rearmed_episodes": 4,
+      "target1_decisions": 69,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-NONE-a4-x+0.0-h3": {
+      "shocks": 27,
+      "arms": 22,
+      "rearms": 4,
+      "recoveries": 15,
+      "expired": 7,
+      "rearmed_episodes": 4,
+      "target1_decisions": 45,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-NONE-a4-x+0.0-h6": {
+      "shocks": 27,
+      "arms": 20,
+      "rearms": 4,
+      "recoveries": 13,
+      "expired": 7,
+      "rearmed_episodes": 4,
+      "target1_decisions": 78,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-FUND-a2-x-0.5-h3": {
+      "shocks": 14,
+      "arms": 11,
+      "rearms": 2,
+      "recoveries": 3,
+      "expired": 8,
+      "rearmed_episodes": 2,
+      "target1_decisions": 9,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-FUND-a2-x-0.5-h6": {
+      "shocks": 14,
+      "arms": 9,
+      "rearms": 2,
+      "recoveries": 3,
+      "expired": 6,
+      "rearmed_episodes": 2,
+      "target1_decisions": 18,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-FUND-a2-x+0.0-h3": {
+      "shocks": 14,
+      "arms": 11,
+      "rearms": 2,
+      "recoveries": 3,
+      "expired": 8,
+      "rearmed_episodes": 2,
+      "target1_decisions": 9,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-FUND-a2-x+0.0-h6": {
+      "shocks": 14,
+      "arms": 9,
+      "rearms": 2,
+      "recoveries": 3,
+      "expired": 6,
+      "rearmed_episodes": 2,
+      "target1_decisions": 18,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-FUND-a4-x-0.5-h3": {
+      "shocks": 14,
+      "arms": 10,
+      "rearms": 3,
+      "recoveries": 6,
+      "expired": 4,
+      "rearmed_episodes": 3,
+      "target1_decisions": 17,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-FUND-a4-x-0.5-h6": {
+      "shocks": 14,
+      "arms": 8,
+      "rearms": 3,
+      "recoveries": 4,
+      "expired": 4,
+      "rearmed_episodes": 3,
+      "target1_decisions": 24,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-FUND-a4-x+0.0-h3": {
+      "shocks": 14,
+      "arms": 10,
+      "rearms": 3,
+      "recoveries": 6,
+      "expired": 4,
+      "rearmed_episodes": 3,
+      "target1_decisions": 18,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-FUND-a4-x+0.0-h6": {
+      "shocks": 14,
+      "arms": 8,
+      "rearms": 3,
+      "recoveries": 4,
+      "expired": 4,
+      "rearmed_episodes": 3,
+      "target1_decisions": 24,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-PREM-a2-x-0.5-h3": {
+      "shocks": 10,
+      "arms": 9,
+      "rearms": 1,
+      "recoveries": 3,
+      "expired": 6,
+      "rearmed_episodes": 1,
+      "target1_decisions": 9,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-PREM-a2-x-0.5-h6": {
+      "shocks": 10,
+      "arms": 8,
+      "rearms": 1,
+      "recoveries": 3,
+      "expired": 5,
+      "rearmed_episodes": 1,
+      "target1_decisions": 18,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-PREM-a2-x+0.0-h3": {
+      "shocks": 10,
+      "arms": 9,
+      "rearms": 1,
+      "recoveries": 3,
+      "expired": 6,
+      "rearmed_episodes": 1,
+      "target1_decisions": 9,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-PREM-a2-x+0.0-h6": {
+      "shocks": 10,
+      "arms": 8,
+      "rearms": 1,
+      "recoveries": 3,
+      "expired": 5,
+      "rearmed_episodes": 1,
+      "target1_decisions": 18,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-PREM-a4-x-0.5-h3": {
+      "shocks": 10,
+      "arms": 9,
+      "rearms": 1,
+      "recoveries": 6,
+      "expired": 3,
+      "rearmed_episodes": 1,
+      "target1_decisions": 17,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-PREM-a4-x-0.5-h6": {
+      "shocks": 10,
+      "arms": 8,
+      "rearms": 1,
+      "recoveries": 5,
+      "expired": 3,
+      "rearmed_episodes": 1,
+      "target1_decisions": 30,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-PREM-a4-x+0.0-h3": {
+      "shocks": 10,
+      "arms": 9,
+      "rearms": 1,
+      "recoveries": 6,
+      "expired": 3,
+      "rearmed_episodes": 1,
+      "target1_decisions": 18,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-1.5-PREM-a4-x+0.0-h6": {
+      "shocks": 10,
+      "arms": 8,
+      "rearms": 1,
+      "recoveries": 5,
+      "expired": 3,
+      "rearmed_episodes": 1,
+      "target1_decisions": 30,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-NONE-a2-x-0.5-h3": {
+      "shocks": 16,
+      "arms": 13,
+      "rearms": 2,
+      "recoveries": 5,
+      "expired": 8,
+      "rearmed_episodes": 2,
+      "target1_decisions": 15,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-NONE-a2-x-0.5-h6": {
+      "shocks": 16,
+      "arms": 11,
+      "rearms": 2,
+      "recoveries": 5,
+      "expired": 6,
+      "rearmed_episodes": 2,
+      "target1_decisions": 30,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-NONE-a2-x+0.0-h3": {
+      "shocks": 16,
+      "arms": 13,
+      "rearms": 2,
+      "recoveries": 5,
+      "expired": 8,
+      "rearmed_episodes": 2,
+      "target1_decisions": 15,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-NONE-a2-x+0.0-h6": {
+      "shocks": 16,
+      "arms": 11,
+      "rearms": 2,
+      "recoveries": 5,
+      "expired": 6,
+      "rearmed_episodes": 2,
+      "target1_decisions": 30,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-NONE-a4-x-0.5-h3": {
+      "shocks": 16,
+      "arms": 11,
+      "rearms": 4,
+      "recoveries": 8,
+      "expired": 3,
+      "rearmed_episodes": 4,
+      "target1_decisions": 23,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-NONE-a4-x-0.5-h6": {
+      "shocks": 16,
+      "arms": 9,
+      "rearms": 4,
+      "recoveries": 6,
+      "expired": 3,
+      "rearmed_episodes": 4,
+      "target1_decisions": 36,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-NONE-a4-x+0.0-h3": {
+      "shocks": 16,
+      "arms": 11,
+      "rearms": 4,
+      "recoveries": 8,
+      "expired": 3,
+      "rearmed_episodes": 4,
+      "target1_decisions": 24,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-NONE-a4-x+0.0-h6": {
+      "shocks": 16,
+      "arms": 9,
+      "rearms": 4,
+      "recoveries": 6,
+      "expired": 3,
+      "rearmed_episodes": 4,
+      "target1_decisions": 36,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-FUND-a2-x-0.5-h3": {
+      "shocks": 13,
+      "arms": 10,
+      "rearms": 2,
+      "recoveries": 3,
+      "expired": 7,
+      "rearmed_episodes": 2,
+      "target1_decisions": 9,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-FUND-a2-x-0.5-h6": {
+      "shocks": 13,
+      "arms": 8,
+      "rearms": 2,
+      "recoveries": 3,
+      "expired": 5,
+      "rearmed_episodes": 2,
+      "target1_decisions": 18,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-FUND-a2-x+0.0-h3": {
+      "shocks": 13,
+      "arms": 10,
+      "rearms": 2,
+      "recoveries": 3,
+      "expired": 7,
+      "rearmed_episodes": 2,
+      "target1_decisions": 9,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-FUND-a2-x+0.0-h6": {
+      "shocks": 13,
+      "arms": 8,
+      "rearms": 2,
+      "recoveries": 3,
+      "expired": 5,
+      "rearmed_episodes": 2,
+      "target1_decisions": 18,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-FUND-a4-x-0.5-h3": {
+      "shocks": 13,
+      "arms": 9,
+      "rearms": 3,
+      "recoveries": 6,
+      "expired": 3,
+      "rearmed_episodes": 3,
+      "target1_decisions": 17,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-FUND-a4-x-0.5-h6": {
+      "shocks": 13,
+      "arms": 7,
+      "rearms": 3,
+      "recoveries": 4,
+      "expired": 3,
+      "rearmed_episodes": 3,
+      "target1_decisions": 24,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-FUND-a4-x+0.0-h3": {
+      "shocks": 13,
+      "arms": 9,
+      "rearms": 3,
+      "recoveries": 6,
+      "expired": 3,
+      "rearmed_episodes": 3,
+      "target1_decisions": 18,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-FUND-a4-x+0.0-h6": {
+      "shocks": 13,
+      "arms": 7,
+      "rearms": 3,
+      "recoveries": 4,
+      "expired": 3,
+      "rearmed_episodes": 3,
+      "target1_decisions": 24,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-PREM-a2-x-0.5-h3": {
+      "shocks": 8,
+      "arms": 7,
+      "rearms": 1,
+      "recoveries": 3,
+      "expired": 4,
+      "rearmed_episodes": 1,
+      "target1_decisions": 9,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-PREM-a2-x-0.5-h6": {
+      "shocks": 8,
+      "arms": 6,
+      "rearms": 1,
+      "recoveries": 3,
+      "expired": 3,
+      "rearmed_episodes": 1,
+      "target1_decisions": 18,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-PREM-a2-x+0.0-h3": {
+      "shocks": 8,
+      "arms": 7,
+      "rearms": 1,
+      "recoveries": 3,
+      "expired": 4,
+      "rearmed_episodes": 1,
+      "target1_decisions": 9,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-PREM-a2-x+0.0-h6": {
+      "shocks": 8,
+      "arms": 6,
+      "rearms": 1,
+      "recoveries": 3,
+      "expired": 3,
+      "rearmed_episodes": 1,
+      "target1_decisions": 18,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-PREM-a4-x-0.5-h3": {
+      "shocks": 8,
+      "arms": 7,
+      "rearms": 1,
+      "recoveries": 5,
+      "expired": 2,
+      "rearmed_episodes": 1,
+      "target1_decisions": 14,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-PREM-a4-x-0.5-h6": {
+      "shocks": 8,
+      "arms": 6,
+      "rearms": 1,
+      "recoveries": 4,
+      "expired": 2,
+      "rearmed_episodes": 1,
+      "target1_decisions": 24,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-PREM-a4-x+0.0-h3": {
+      "shocks": 8,
+      "arms": 7,
+      "rearms": 1,
+      "recoveries": 5,
+      "expired": 2,
+      "rearmed_episodes": 1,
+      "target1_decisions": 15,
+      "reentry_without_new_shock": 0
+    },
+    "LCR-g-2.0-PREM-a4-x+0.0-h6": {
+      "shocks": 8,
+      "arms": 6,
+      "rearms": 1,
+      "recoveries": 4,
+      "expired": 2,
+      "rearmed_episodes": 1,
+      "target1_decisions": 24,
+      "reentry_without_new_shock": 0
+    }
+  },
+  "parity_s180": {
+    "cells_max_abs_diff": 0.0,
+    "boot_max_abs_diff": 0.0,
+    "trades_equal": true,
+    "n_trades": 116,
+    "trades_net4_max_abs_diff": 0.0,
+    "daily_max_abs_diff": 0.0
+  },
+  "prefix_check": {
+    "cut": "2026-01-01 00:00:00+00:00",
+    "decisions_compared": 13152,
+    "features_compared": [
+      "T",
+      "r4",
+      "gap",
+      "zr4",
+      "oi_T",
+      "oi_T_avail",
+      "oi_24",
+      "oi_24_avail",
+      "dOI24",
+      "zOI24",
+      "taker",
+      "taker_avail",
+      "ztaker",
+      "prem_n",
+      "prem4",
+      "prem_last_avail",
+      "zprem",
+      "fund",
+      "zfund",
+      "fund_time",
+      "SVI42",
+      "dSVI",
+      "zdSVI",
+      "w"
+    ],
+    "tamper": "x1.7 future o/h/l/c, oi, taker_lsr, premium, funding rate",
+    "configs_checked": 48,
+    "closed_trades_compared": 136
+  },
+  "selection_tamper": {
+    "tampered_test_columns": 35,
+    "pick_unchanged": true
+  },
+  "funding_hand_check_max_abs": 4.3520742565306136e-14,
+  "gross_max": 1.0,
+  "boundary_crossing_trades": {
+    "o2_p0.5": 0,
+    "o2_p1.0": 0,
+    "o2_p2.0": 0,
+    "o5_p0.5": 0,
+    "o5_p1.0": 0,
+    "o5_p2.0": 0
+  },
+  "feature_coverage": {
+    "gap": 14651,
+    "zr4": 14291,
+    "zOI24": 12785,
+    "ztaker": 11502,
+    "zfund": 10726,
+    "zprem": 14287,
+    "SVI42": 14790,
+    "zdSVI": 14249,
+    "decisions": 14832
+  },
+  "input_sha256": {
+    "batch5_code": "c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428",
+    "batch2_code": "97244bea96d70d0fdcce3d9d8132a683edcd98e79f3c591c8a1e3b960b72ec04",
+    "batch5_selected_long": "8bc6af8e3c91b6f6079b6c3dc03e5230d24491317e3957b029c0da24388ba72f",
+    "batch5_trades_long": "57af886682ae5f79c3eea9becb6b01e2f2e84b2821ac91d51aaa04817dd5a74f",
+    "batch5_daily_long": "62940ec04f8f538c290f9a231fcab60cbd3c404c1f9632999ebd975e03b1b3a4",
+    "dev_market": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "dev_metrics_tree": "fb9591579dacfab0a93de72f120770496f6f04b2b6cebd58859e9449acc904bd",
+    "dev_premium_tree": "3e246393245cfb0bc1a6ed81e9c81320e144cb87822a8696f9695d1867f5121c",
+    "dev_funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "batch1_code": "8a329e4fc730ccd32d10d67216a2fc7581076c226c4813b7414afd2df9fdba1a",
+    "snap_market_1m.parquet": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59",
+    "snap_technique_metrics.parquet": "dd5afe89d138b0ec63f27de3738bcbde0ef75664e4288bfe8d95fa578a3e5408",
+    "snap_technique_premium.parquet": "5d02b5ba1015b28812fc08b1d9ca7232f1298d8556c5b55b40ce3ac2c2300c98",
+    "snap_funding_model_input.parquet": "ac0f660302dc805c421a9c79304b4af6fecb332b6b01704d908e1805297e6590",
+    "snap_manifest.json": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069",
+    "batch3_code": "7760a0d9140d9e254862a9377266175c933f26fd45ddd79d5d3d7d959b0c6181",
+    "batch4_code": "ec7d54099d2bae3c100e2f07f3cdacb0fd9bfcf9ff5f8f025a5e4b0857d42d6d",
+    "batch4_manifest": "4006556893d7356a286d3a963c362ffd50a01c571e4f2f9a861b64cb47e78d2a",
+    "batch4_controls_strict": "672fbfadda4814101b19ef61d82d1c4743ffb3fbbe025ad4483426dbc9806233",
+    "code": "4d28b82aea606342a2b311379573288795852cdbf321a0603a26de97dd25f979"
+  },
+  "git": {
+    "head": "0aec6120d127bb1c5dcbe6099c25eda913e45494",
+    "branch": "research/k45-audit-and-negative-results-20260930",
+    "dirty_files": 95
+  },
+  "runtime_sec": 367.4,
+  "registry": {
+    "added": 289,
+    "skipped": 0
+  }
+}

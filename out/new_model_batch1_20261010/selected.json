@@ -1,0 +1,45 @@
+{
+  "vt_tsmom": {
+    "variant_id": "model=vt_tsmom|lookback_set=1d_4|deadband=0.25|target_vol=0.6|offset=2",
+    "dev_eligible": true,
+    "n_eligible": 6,
+    "kill_sides": [],
+    "insufficient_sides": [],
+    "stress_o5_net4": {
+      "DEV": 17274.820539314125,
+      "TEST": 1516.9085292978052
+    },
+    "verdict": "FAIL_BOOT"
+  },
+  "cascade_proxy": {
+    "variant_id": "model=cascade_proxy|q_ret=0.975|q_oi=0.1|q_range=0.975|vol_mult=3|hold=720|offset=2",
+    "dev_eligible": false,
+    "n_eligible": 0,
+    "kill_sides": [
+      "DEV-short",
+      "TEST-long",
+      "TEST-short"
+    ],
+    "insufficient_sides": [],
+    "stress_o5_net4": {
+      "DEV": 4553.369741343796,
+      "TEST": -1676.2820681590288
+    },
+    "verdict": "KILL"
+  },
+  "crowd_disagreement": {
+    "variant_id": "model=crowd_disagreement|gap=2.5|top_min=0.5|oi_filter=doi60>=0|hold=240|offset=2",
+    "dev_eligible": true,
+    "n_eligible": 16,
+    "kill_sides": [
+      "TEST-long",
+      "TEST-short"
+    ],
+    "insufficient_sides": [],
+    "stress_o5_net4": {
+      "DEV": 13838.236373889642,
+      "TEST": -1406.7018394217284
+    },
+    "verdict": "KILL"
+  }
+}

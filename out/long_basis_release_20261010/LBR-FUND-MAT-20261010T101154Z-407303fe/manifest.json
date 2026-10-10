@@ -1,0 +1,193 @@
+{
+  "run_id": "LBR-FUND-MAT-20261010T101154Z-407303fe",
+  "role": "materialize",
+  "created_utc": "2026-10-10T10:13:10.560818+00:00",
+  "review": "scratchpad codex_lbr_review.md section 4 steps 1-3 (Codex 01a12542-8ad0-7a73-ad99-13f14da365d6)",
+  "frozen_semantics": {
+    "min_ztaker": "arm-time ztaker (ztaker at latest arm decision; not running min)",
+    "order": "setup checked before recovery; ARMED + setup re-arms",
+    "rule": "no semantic change without a separate experiment",
+    "source_doc": "LBR-FUND materialization (2026-10-10): targeted 1-config x 6-cell replay of the RESELECTED LBR candidate.\n\nReview: scratchpad codex_lbr_review.md section 4 \"\ub2e4\uc74c \uc2e4\ud5d8\" steps 1-3 (Codex session 01a12542-8ad0-7a73-ad99-13f14da365d6).\nSource run: LBR-20261010T094840Z-2a1bb573 (48 configs x 6 cells; DEV pick LBR-EITHER-b-0.5-d0.25-a2-h4 FAILED).\nCandidate: LBR-FUND-b-1.0-d0.25-a1-h2 = (FUND, cut -1.0, delta 0.25, arm_bars 1, max_hold 2). It was RESELECTED after\nTEST was seen: TEST is now selection evidence, not an independent confirmation.\nFrozen semantics (step 1, no change without a separate experiment): the current LBR code as-is, i.e.\n  * min_ztaker_since_arm = ztaker at the (latest) arm decision (arm-time ztaker; not a running minimum);\n  * setup is checked before recovery: an ARMED decision that satisfies both setup and recovery re-arms.\nEverything is reused unchanged via importlib from out/run_long_basis_release_20261010.py (lbr_signal, check_signal,\nactivation_counts) and through it the LCR runner (features, run_cells, pair_rows, window_metrics, parity_s180, ...).\nG3 sleeves: G3_LONG = S180 long-only (G5-S180-c+0.0-W180-P65), G3_SHORT = short-only G5-F180-c+0.0-V-ENS\n(btcusdt_quant/paper/g3.py sleeve_signal rule: other side flat). Portfolio = plain P&L sum, each sleeve <= 1x, gross <= 3.\n"
+  },
+  "selection": {
+    "source_run": "LBR-20261010T094840Z-2a1bb573",
+    "source_dev_pick": "LBR-EITHER-b-0.5-d0.25-a2-h4",
+    "source_decision": {
+      "pick": "LBR-EITHER-b-0.5-d0.25-a2-h4",
+      "label": "LBR_DEV_PICK",
+      "dev_eligible_pool": true,
+      "DEV-A_6of6": true,
+      "DEV-B_6of6": true,
+      "TEST_6of6": false,
+      "TEST_boot_all_pos": false,
+      "PASS": false,
+      "JanJul_6of6": false,
+      "JanJul_comb_pos_days_gt_s180": true,
+      "COMPLEMENT_PASS": false,
+      "verdict": "FAIL",
+      "test_boot": {
+        "20": -10.508123235608698,
+        "60": -8.58491156226229,
+        "120": -7.16250002825334
+      }
+    },
+    "reselected": "LBR-FUND-b-1.0-d0.25-a1-h2",
+    "reselection_basis": "TEST results of the 48-config source grid (TEST worst cell / TEST net4 / TEST bootstrap), after the DEV pick failed PASS",
+    "test_used_for_selection": true,
+    "test_is_independent_confirmation": false,
+    "reselection_recorded_utc": "2026-10-10T10:13:06.711024+00:00"
+  },
+  "candidate": "LBR-FUND-b-1.0-d0.25-a1-h2",
+  "candidate_params": {
+    "basis_mode": "FUND",
+    "basis_cut": -1.0,
+    "recovery_delta": 0.25,
+    "arm_bars": 1,
+    "max_hold_bars": 2
+  },
+  "comparators": {
+    "G3_LONG": "G5-S180-c+0.0-W180-P65",
+    "G3_SHORT": "G5-F180-c+0.0-V-ENS"
+  },
+  "source": "Binance USD-M BTCUSDT local: artifacts DEV (<2026-01-01) + r2_54 stageb_snapshot TEST",
+  "data_cutoff": "2026-10-08 00:00:00+00:00",
+  "windows": {
+    "DEV-FULL": [
+      "2020-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "DEV-A": [
+      "2020-01-01 00:00:00+00:00",
+      "2024-01-01 00:00:00+00:00"
+    ],
+    "DEV-B": [
+      "2024-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "TEST": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ],
+    "TEST-JanJul": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-08-01 00:00:00+00:00"
+    ],
+    "TEST-AugSep": [
+      "2026-08-01 00:00:00+00:00",
+      "2026-10-01 00:00:00+00:00"
+    ],
+    "TEST-Oct": [
+      "2026-10-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ]
+  },
+  "counts": {
+    "logical": 1,
+    "cells": 6,
+    "n_trials": 0
+  },
+  "event_counts": {
+    "setups": 723,
+    "arms": 407,
+    "rearms": 241,
+    "recoveries": 175,
+    "expired": 232,
+    "rearmed_episodes": 241,
+    "target1_decisions": 350,
+    "reentry_without_new_setup": 0,
+    "activations": {
+      "DEV": 137,
+      "2020": 0,
+      "2021": 18,
+      "2022": 17,
+      "2023": 35,
+      "2024": 31,
+      "2025": 36,
+      "2026JanJul": 30
+    }
+  },
+  "parity": {
+    "fold_vs_source": {
+      "rows": 42,
+      "max_abs_diff": 0.0,
+      "primary_TEST_net4": 1562.6749968088288,
+      "primary_DEV-FULL_net4": 1724.0255886018092
+    },
+    "events_vs_source": true,
+    "s180": {
+      "cells_max_abs_diff": 0.0,
+      "boot_max_abs_diff": 0.0,
+      "trades_equal": true,
+      "n_trades": 116,
+      "trades_net4_max_abs_diff": 0.0,
+      "daily_max_abs_diff": 0.0
+    },
+    "short": {
+      "cells_max_abs_diff": 0.0,
+      "trades_equal": true,
+      "n_trades": 183,
+      "n_stored": 183,
+      "daily_max_abs_diff": 0.0
+    }
+  },
+  "funding_hand_check_max_abs": 1.021405182655144e-13,
+  "decision": {
+    "candidate": "LBR-FUND-b-1.0-d0.25-a1-h2",
+    "DEV-A_6of6": true,
+    "DEV-B_6of6": true,
+    "TEST_6of6": true,
+    "TEST_boot_all_pos": true,
+    "PASS_rule_values": true,
+    "JanJul_6of6": true,
+    "JanJul_comb_pos_days": 25,
+    "JanJul_s180_pos_days": 9,
+    "JanJul_comb_pos_days_gt_s180": true,
+    "COMPLEMENT_PASS": true,
+    "caveat": "candidate RESELECTED after TEST was seen; TEST/sub-window values are selection evidence, not out-of-sample confirmation",
+    "promotion": "paper-only shadow at most; never live"
+  },
+  "max_gross": {
+    "G3+CAND": 2.0,
+    "G3": 2.0
+  },
+  "input_sha256": {
+    "lbr_code": "2a1bb573d0ad1a492f50ea2ecc5e5897becad57623076d2dc4bf5b10f85597ee",
+    "lcr_code": "4d28b82aea606342a2b311379573288795852cdbf321a0603a26de97dd25f979",
+    "batch5_code": "c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428",
+    "batch2_code": "97244bea96d70d0fdcce3d9d8132a683edcd98e79f3c591c8a1e3b960b72ec04",
+    "src_manifest.json": "6b85d8d8317127b6a6fa6bad75df5c94e30b0dbb4dc2d369c8a9b21a22ea1e76",
+    "src_decision.json": "d10bcc37d362aa17c507d5ac1df47c3f6798fa7fc751cfd24e056b21dde70556",
+    "src_selection.json": "ff2836067688c47b7fa0c1c01418885966deb2fc519ce63fa34e647e49519325",
+    "src_fold_metrics.parquet": "4dfc5bd542e701245d80325ab17eb460bd11ac113b187ae89dfa99418e79fbaa",
+    "src_config_metrics.parquet": "0ad9669ce6360cb982c562a18eb1d835fed6fb75b09e968689f94f276ba4d3ba",
+    "batch5_selected_long": "8bc6af8e3c91b6f6079b6c3dc03e5230d24491317e3957b029c0da24388ba72f",
+    "batch5_selected_short": "78d72f2b82245938934ee1fe175c39457459bab5e10bdc9f1760d94eeba2cd3e",
+    "batch5_trades_short": "2a7e7c362448b5ee23318eb4761044bf0ce0f51980eae9b248efdb8d7078506b",
+    "batch5_daily_short": "57b0fff90dca53c76bc24e29d4910a022af0b91607f582ec35834aa48eb8ad15",
+    "dev_market": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "dev_metrics_tree": "fb9591579dacfab0a93de72f120770496f6f04b2b6cebd58859e9449acc904bd",
+    "dev_premium_tree": "3e246393245cfb0bc1a6ed81e9c81320e144cb87822a8696f9695d1867f5121c",
+    "dev_funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "batch1_code": "8a329e4fc730ccd32d10d67216a2fc7581076c226c4813b7414afd2df9fdba1a",
+    "snap_market_1m.parquet": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59",
+    "snap_technique_metrics.parquet": "dd5afe89d138b0ec63f27de3738bcbde0ef75664e4288bfe8d95fa578a3e5408",
+    "snap_technique_premium.parquet": "5d02b5ba1015b28812fc08b1d9ca7232f1298d8556c5b55b40ce3ac2c2300c98",
+    "snap_funding_model_input.parquet": "ac0f660302dc805c421a9c79304b4af6fecb332b6b01704d908e1805297e6590",
+    "snap_manifest.json": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069",
+    "batch3_code": "7760a0d9140d9e254862a9377266175c933f26fd45ddd79d5d3d7d959b0c6181",
+    "batch4_code": "ec7d54099d2bae3c100e2f07f3cdacb0fd9bfcf9ff5f8f025a5e4b0857d42d6d",
+    "batch4_manifest": "4006556893d7356a286d3a963c362ffd50a01c571e4f2f9a861b64cb47e78d2a",
+    "batch4_controls_strict": "672fbfadda4814101b19ef61d82d1c4743ffb3fbbe025ad4483426dbc9806233",
+    "code": "407303feadd37a2faf98f868f0f8f7088e681abc9b0031261487b93d1f29219a"
+  },
+  "git": {
+    "head": "e4577d93ef8255850b0df9f537ed86cfea22408e",
+    "branch": "research/k45-audit-and-negative-results-20260930",
+    "dirty_files": 98
+  },
+  "runtime_sec": 76.6,
+  "registry": {
+    "added": 1,
+    "idempotency_key": "a6935c2a1d23394f8bb757ec4270a7b0b947af8dfc02604d8f71edd8948e5c74"
+  }
+}

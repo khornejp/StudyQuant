@@ -1,0 +1,301 @@
+{
+  "run_id": "NM-B3-20261010T071709Z-7760a0d9",
+  "parent_run_id": "NM-B2-20261010T065219Z-97244bea",
+  "created_utc": "2026-10-10T07:20:26.861623+00:00",
+  "spec": "scratchpad codex_batch3.md section 2 (Codex, 2026-10-10)",
+  "frozen_hypothesis": "G short DEV-B loss comes from negative-funding / crowded-short regimes; gating only shorts on the latest funding state keeps G long and makes DEV-B and TEST short net4 > 0",
+  "windows": {
+    "DEV-FULL": [
+      "2020-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "DEV-A": [
+      "2020-01-01 00:00:00+00:00",
+      "2024-01-01 00:00:00+00:00"
+    ],
+    "DEV-B": [
+      "2024-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "TEST": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ]
+  },
+  "window_days": {
+    "DEV-FULL": 2192,
+    "DEV-A": 1461,
+    "DEV-B": 731,
+    "TEST": 280
+  },
+  "data_cutoff": "2026-10-08 00:00:00+00:00",
+  "sources": {
+    "dev_market": "D:\\StudyQuant\\artifacts\\btcusdt_2020_2026h1.parquet",
+    "test_market": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\market_1m.parquet",
+    "dev_funding": "D:\\StudyQuant\\artifacts\\funding_2020_2026h1",
+    "test_funding": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\funding_model_input.parquet",
+    "engine": "D:\\StudyQuant\\out\\run_new_model_batch2_20261010.py"
+  },
+  "input_sha256": {
+    "dev_market": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "dev_metrics_tree": "fb9591579dacfab0a93de72f120770496f6f04b2b6cebd58859e9449acc904bd",
+    "dev_premium_tree": "3e246393245cfb0bc1a6ed81e9c81320e144cb87822a8696f9695d1867f5121c",
+    "dev_funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "batch1_code": "8a329e4fc730ccd32d10d67216a2fc7581076c226c4813b7414afd2df9fdba1a",
+    "snap_market_1m.parquet": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59",
+    "snap_technique_metrics.parquet": "dd5afe89d138b0ec63f27de3738bcbde0ef75664e4288bfe8d95fa578a3e5408",
+    "snap_technique_premium.parquet": "5d02b5ba1015b28812fc08b1d9ca7232f1298d8556c5b55b40ce3ac2c2300c98",
+    "snap_funding_model_input.parquet": "ac0f660302dc805c421a9c79304b4af6fecb332b6b01704d908e1805297e6590",
+    "snap_manifest.json": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069",
+    "batch2_code": "97244bea96d70d0fdcce3d9d8132a683edcd98e79f3c591c8a1e3b960b72ec04",
+    "code": "7760a0d9140d9e254862a9377266175c933f26fd45ddd79d5d3d7d959b0c6181",
+    "parent_manifest": "fdac21ed4d90b52e069cf10b47a0a203b5a32d6546626e4ee2d747c180b2ec88"
+  },
+  "code_sha256": "7760a0d9140d9e254862a9377266175c933f26fd45ddd79d5d3d7d959b0c6181",
+  "git": {
+    "head": "20538c4f4b7b644224f0edb74531ccf117afebbf",
+    "branch": "research/k45-audit-and-negative-results-20260930",
+    "dirty_files": 75
+  },
+  "counts": {
+    "logical_configs": 120,
+    "simulations": 720,
+    "dev_eligible": 48
+  },
+  "bases": [
+    {
+      "base": 1,
+      "svi_w": 42,
+      "trend": "(42, 168, 504)",
+      "tv": 0.2
+    },
+    {
+      "base": 2,
+      "svi_w": 42,
+      "trend": "(42, 168, 504)",
+      "tv": 0.4
+    },
+    {
+      "base": 3,
+      "svi_w": 180,
+      "trend": "(42, 168, 504)",
+      "tv": 0.2
+    },
+    {
+      "base": 4,
+      "svi_w": 180,
+      "trend": "(42, 168, 504)",
+      "tv": 0.4
+    },
+    {
+      "base": 5,
+      "svi_w": 42,
+      "trend": "(6, 18, 42)",
+      "tv": 0.2
+    },
+    {
+      "base": 6,
+      "svi_w": 42,
+      "trend": "(6, 18, 42)",
+      "tv": 0.4
+    },
+    {
+      "base": 7,
+      "svi_w": 180,
+      "trend": "(6, 18, 42)",
+      "tv": 0.2
+    },
+    {
+      "base": 8,
+      "svi_w": 180,
+      "trend": "(6, 18, 42)",
+      "tv": 0.4
+    }
+  ],
+  "gates": [
+    "none",
+    "fz>=-0.5",
+    "fz>=0",
+    "fz>=0.5",
+    "fz>=0&daily_ready",
+    "fz>=0&daily<=0",
+    "fz>=0&daily<=-0.25",
+    "fr>=0&daily_ready"
+  ],
+  "actions": [
+    "state_flat",
+    "entry_veto"
+  ],
+  "db": 0.5,
+  "svi_g": 0.1,
+  "execution": {
+    "tick": 0.1,
+    "offsets_bps": [
+      2,
+      5
+    ],
+    "penetration_bps": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "ttl_min": 60,
+    "exit_quote_bps": 2.0,
+    "requote_min": 60,
+    "cost_bps_rt": 4,
+    "report_only_bps_rt": 8,
+    "slippage": 0,
+    "terminal_open": "MTM + reserved 2 bps exit",
+    "funding": "PESS",
+    "weight": "entry_weight_frozen min(1, tv/sigma_ann)",
+    "flat30": false
+  },
+  "selection": {
+    "DEV_ELIGIBLE": "offset{2,5} pen0.5 DEV-FULL/A/B long&short net4>0; primary DEV-FULL each side closed>=20 or exp_days>=180; primary DEV-FULL fill_notional_rate>=0.10",
+    "DEV_score": "min per-day over DEV-A/B x long/short x offset2/5 (pen0.5); ties primary DEV-FULL mdd_1m low, turnover low",
+    "RESELECTED_ADAPTIVE": "eligible; max min TEST per-day over long/short x offset x pen (12); chosen on TEST, not independent OOS"
+  },
+  "verdict_rules": {
+    "PROFIT_PASS": "eligible and TEST o2/o5 pen0.5 long&short net4>0",
+    "LOW_N": "primary TEST any side closed<10",
+    "STRONG": "PROFIT_PASS and not LOW_N and TEST all boot60 p05>0",
+    "ROBUST_PASS": "all 4 windows x 12 cells (offset x pen x side) net4>0",
+    "SIDE_STRONG": "ROBUST_PASS and TEST long & short boot60 p05>0",
+    "net8": "report only"
+  },
+  "bootstrap": {
+    "type": "stationary",
+    "blocks_days": [
+      20,
+      60,
+      120
+    ],
+    "n": 10000,
+    "seed": 20261010,
+    "stat": "mean daily 1m-MTM net4 (bps/day)"
+  },
+  "sanity_vs_batch2": {
+    "b2_variant": "family=G|svi_w=42|g=0.1|trend=(42, 168, 504)|db=0.5|tv=0.2|offset=2",
+    "b3_sim": "base=1|svi_w=42|trend=(42, 168, 504)|tv=0.2|gate=none|action=none|offset=2|pen=0.5",
+    "n_compared": 176,
+    "n_diff": 0,
+    "diffs": {},
+    "DEV-FULL_net4": 7680.800189320357,
+    "DEV-FULL_short_net4": -659.0525681570857,
+    "DEV-A_net4": 6949.406980156897,
+    "DEV-A_short_net4": 29.67353845398179,
+    "DEV-B_net4": 731.3932091634597,
+    "DEV-B_short_net4": -688.7261066110676,
+    "TEST_net4": 3038.1736540506836,
+    "TEST_short_net4": 1962.9734239402621
+  },
+  "gate_pass_fraction_all_4h_decisions": {
+    "DEV-FULL": {
+      "none": {
+        "pass_frac_all_4h": 1.0
+      },
+      "fz>=-0.5": {
+        "pass_frac_all_4h": 0.45088199513381993
+      },
+      "fz>=0": {
+        "pass_frac_all_4h": 0.3514294403892944
+      },
+      "fz>=0.5": {
+        "pass_frac_all_4h": 0.24703467153284672
+      },
+      "fz>=0&daily_ready": {
+        "pass_frac_all_4h": 0.3178984184914842
+      },
+      "fz>=0&daily<=0": {
+        "pass_frac_all_4h": 0.10112530413625304
+      },
+      "fz>=0&daily<=-0.25": {
+        "pass_frac_all_4h": 0.086830900243309
+      },
+      "fr>=0&daily_ready": {
+        "pass_frac_all_4h": 0.7347931873479319
+      }
+    },
+    "DEV-A": {
+      "none": {
+        "pass_frac_all_4h": 1.0
+      },
+      "fz>=-0.5": {
+        "pass_frac_all_4h": 0.433264887063655
+      },
+      "fz>=0": {
+        "pass_frac_all_4h": 0.34405658224960073
+      },
+      "fz>=0.5": {
+        "pass_frac_all_4h": 0.24446725986767054
+      },
+      "fz>=0&daily_ready": {
+        "pass_frac_all_4h": 0.29374857403604837
+      },
+      "fz>=0&daily<=0": {
+        "pass_frac_all_4h": 0.12240474560803102
+      },
+      "fz>=0&daily<=-0.25": {
+        "pass_frac_all_4h": 0.10985626283367557
+      },
+      "fr>=0&daily_ready": {
+        "pass_frac_all_4h": 0.6542322610084417
+      }
+    },
+    "DEV-B": {
+      "none": {
+        "pass_frac_all_4h": 1.0
+      },
+      "fz>=-0.5": {
+        "pass_frac_all_4h": 0.4860921112631099
+      },
+      "fz>=0": {
+        "pass_frac_all_4h": 0.36616507067943455
+      },
+      "fz>=0.5": {
+        "pass_frac_all_4h": 0.25216598267213863
+      },
+      "fz>=0&daily_ready": {
+        "pass_frac_all_4h": 0.36616507067943455
+      },
+      "fz>=0&daily<=0": {
+        "pass_frac_all_4h": 0.05859553123575011
+      },
+      "fz>=0&daily<=-0.25": {
+        "pass_frac_all_4h": 0.04081167350661195
+      },
+      "fr>=0&daily_ready": {
+        "pass_frac_all_4h": 0.8958048335613316
+      }
+    },
+    "TEST": {
+      "none": {
+        "pass_frac_all_4h": 1.0
+      },
+      "fz>=-0.5": {
+        "pass_frac_all_4h": 0.6654761904761904
+      },
+      "fz>=0": {
+        "pass_frac_all_4h": 0.4863095238095238
+      },
+      "fz>=0.5": {
+        "pass_frac_all_4h": 0.3005952380952381
+      },
+      "fz>=0&daily_ready": {
+        "pass_frac_all_4h": 0.4863095238095238
+      },
+      "fz>=0&daily<=0": {
+        "pass_frac_all_4h": 0.3863095238095238
+      },
+      "fz>=0&daily<=-0.25": {
+        "pass_frac_all_4h": 0.35
+      },
+      "fr>=0&daily_ready": {
+        "pass_frac_all_4h": 0.7351190476190477
+      }
+    }
+  },
+  "pre_run_diagnostic_note": "Codex read-only diagnostic (G DEV_PICK + fz>=0&daily_ready state_flat) was not an official result; this run is the logged rerun",
+  "interpretations": "Batch-3 (2026-10-10): family G3 = Batch-2 G long kept + funding-based short gate.\n\nSpec: scratchpad codex_batch3.md section 2 (Codex Batch-2 review + Batch-3 spec). Parent run NM-B2-20261010T065219Z-97244bea.\nFrozen hypothesis: G short losses in DEV-B come from negative-funding / crowded-short regimes; restricting only the short\nside with the latest funding state keeps G long and makes short net4 > 0 in both DEV-B and TEST.\n\nEngine: imported unchanged from out/run_new_model_batch2_20261010.py (simulate, Book, fill model, PESS funding,\nstationary bootstrap, data loading, G features); its file hash is an input hash. Batch-2 fixes applied here:\n  * evaluation windows fixed for every config: DEV-FULL 2192d, DEV-A 1461d, DEV-B 731d, TEST 280d (asserted);\n  * zero-weight NaN: blend() sums only positive-weight components (G3 itself has no blended score; kept for parity\n    of the engine contract and unit-tested).\nGrid: 8 G bases (SVI g=0.10, db=0.50) x (gate none + 7 short gates x {state_flat, entry_veto}) = 120 logical configs;\neach simulated at offset {2,5} bps x penetration {0.5,1,2} bp = 720 continuous simulations 2020-01-01..2026-10-08.\nInterpretations (spec silent; recorded in the manifest):\n  * decisions on closed 4h bars (minute index 239 + 240k), T = bar open + 1m; gate inputs as-of T (available <= T);\n  * funding_z = robust z of the latest published funding event vs the previous 90 events (current excluded, min 30),\n    i.e. Batch-2 fz90; latest_funding_rate = rate of that same event; funding time = Market.ft (as in Batch-2 K);\n  * daily_score = Batch-2 1d tsmom (30,90,180,360), sigma = std of the previous 30 daily log returns (current excluded),\n    taken from the latest completed 1d bar whose close minute <= decision minute;\n  * gate input missing (NaN) -> comparison False -> short fail-closed; long never gated;\n  * state_flat: short target -> 0 when the gate is false (held short exits passively, no entry);\n    entry_veto: only new short entries blocked; a held short keeps following the G base target;\n  * eligibility 'primary each side closed>=20 OR exposure>=180d' read on DEV-FULL (as Batch-2);\n  * signal diagnostics 'blocked_flat' = base-short decisions with gate false while no position is held\n    (pending unfilled entry orders not tracked); 'forced_exit' = closed shorts whose exit decision still had base short.\n",
+  "runtime_sec": 197.6
+}

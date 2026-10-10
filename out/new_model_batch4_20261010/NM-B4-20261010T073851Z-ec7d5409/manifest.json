@@ -1,0 +1,350 @@
+{
+  "run_id": "NM-B4-20261010T073851Z-ec7d5409",
+  "parent_run_id": "NM-B3-20261010T071709Z-7760a0d9",
+  "created_utc": "2026-10-10T07:42:45.351815+00:00",
+  "spec": "scratchpad codex_batch4_spec.md (Codex thread 01a124b2-450d-7912-9bf7-9dc192b924f6, 2026-10-10)",
+  "frozen_hypothesis": "G3 is more stable when every decision boundary (score/SVI/funding/target-vol) is a trailing quantile of recent market distribution (past data only), not an absolute constant; walk-forward periodically reselects the quantile meta-setting by recent two-sided net",
+  "windows": {
+    "DEV-FULL": [
+      "2020-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "DEV-A": [
+      "2020-01-01 00:00:00+00:00",
+      "2024-01-01 00:00:00+00:00"
+    ],
+    "DEV-B": [
+      "2024-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "TEST": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ]
+  },
+  "window_days": {
+    "DEV-FULL": 2192,
+    "DEV-A": 1461,
+    "DEV-B": 731,
+    "TEST": 280
+  },
+  "data_cutoff": "2026-10-08 00:00:00+00:00",
+  "sources": {
+    "dev_market": "D:\\StudyQuant\\artifacts\\btcusdt_2020_2026h1.parquet",
+    "test_market": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\market_1m.parquet",
+    "dev_funding": "D:\\StudyQuant\\artifacts\\funding_2020_2026h1",
+    "test_funding": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\funding_model_input.parquet",
+    "engine_batch2": "D:\\StudyQuant\\out\\run_new_model_batch2_20261010.py",
+    "batch3": "D:\\StudyQuant\\out\\run_new_model_batch3_20261010.py",
+    "batch3_run": "D:\\StudyQuant\\out\\new_model_batch3_20261010\\NM-B3-20261010T071709Z-7760a0d9"
+  },
+  "input_sha256": {
+    "dev_market": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "dev_metrics_tree": "fb9591579dacfab0a93de72f120770496f6f04b2b6cebd58859e9449acc904bd",
+    "dev_premium_tree": "3e246393245cfb0bc1a6ed81e9c81320e144cb87822a8696f9695d1867f5121c",
+    "dev_funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "batch1_code": "8a329e4fc730ccd32d10d67216a2fc7581076c226c4813b7414afd2df9fdba1a",
+    "snap_market_1m.parquet": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59",
+    "snap_technique_metrics.parquet": "dd5afe89d138b0ec63f27de3738bcbde0ef75664e4288bfe8d95fa578a3e5408",
+    "snap_technique_premium.parquet": "5d02b5ba1015b28812fc08b1d9ca7232f1298d8556c5b55b40ce3ac2c2300c98",
+    "snap_funding_model_input.parquet": "ac0f660302dc805c421a9c79304b4af6fecb332b6b01704d908e1805297e6590",
+    "snap_manifest.json": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069",
+    "batch2_code": "97244bea96d70d0fdcce3d9d8132a683edcd98e79f3c591c8a1e3b960b72ec04",
+    "batch3_code": "7760a0d9140d9e254862a9377266175c933f26fd45ddd79d5d3d7d959b0c6181",
+    "batch3_manifest": "35def39040036ab7579252e96e719b3bef71dea9fd1259ea3c439f0191868e4b",
+    "batch3_grid": "75871cfd518dd44d1f50058d14b50f13a61c235c1039a1eb92550a28585f1cb1",
+    "code": "ec7d54099d2bae3c100e2f07f3cdacb0fd9bfcf9ff5f8f025a5e4b0857d42d6d"
+  },
+  "code_sha256": "ec7d54099d2bae3c100e2f07f3cdacb0fd9bfcf9ff5f8f025a5e4b0857d42d6d",
+  "git": {
+    "head": "20538c4f4b7b644224f0edb74531ccf117afebbf",
+    "branch": "research/k45-audit-and-negative-results-20260930",
+    "dirty_files": 76
+  },
+  "counts": {
+    "adaptive_logical": 8,
+    "style_Q": 4,
+    "style_WF": 4,
+    "control_logical": 2,
+    "logical": 10,
+    "sims_adaptive": 48,
+    "sims_control": 12,
+    "sims": 60,
+    "sims_control_strict_report_only": 12,
+    "threshold_rows": 59328,
+    "refits": {
+      "WF-H365-C3": 20,
+      "WF-H365-C6": 10,
+      "WF-H730-C3": 16,
+      "WF-H730-C6": 8
+    },
+    "wf_score_rows": 216,
+    "dev_eligible_adaptive": 7
+  },
+  "adaptive_defs": {
+    "trend": [
+      6,
+      18,
+      42
+    ],
+    "svi_w": 180,
+    "sigma_bars": 180,
+    "inner_grid_W_q": [
+      [
+        180,
+        0.5
+      ],
+      [
+        180,
+        0.65
+      ],
+      [
+        365,
+        0.5
+      ],
+      [
+        365,
+        0.65
+      ]
+    ],
+    "style_Q": [
+      "Q-W180-P50",
+      "Q-W180-P65",
+      "Q-W365-P50",
+      "Q-W365-P65"
+    ],
+    "style_WF": {
+      "WF-H365-C3": {
+        "style": "WF",
+        "H": 365,
+        "C": 3
+      },
+      "WF-H365-C6": {
+        "style": "WF",
+        "H": 365,
+        "C": 6
+      },
+      "WF-H730-C3": {
+        "style": "WF",
+        "H": 730,
+        "C": 3
+      },
+      "WF-H730-C6": {
+        "style": "WF",
+        "H": 730,
+        "C": 6
+      }
+    },
+    "wf_warm_days": 365,
+    "wf_anchors": {
+      "WF-H365-C3": [
+        "2022-01-01 00:00:00+00:00",
+        "2022-04-01 00:00:00+00:00",
+        "2022-07-01 00:00:00+00:00",
+        "2022-10-01 00:00:00+00:00",
+        "2023-01-01 00:00:00+00:00",
+        "2023-04-01 00:00:00+00:00",
+        "2023-07-01 00:00:00+00:00",
+        "2023-10-01 00:00:00+00:00",
+        "2024-01-01 00:00:00+00:00",
+        "2024-04-01 00:00:00+00:00",
+        "2024-07-01 00:00:00+00:00",
+        "2024-10-01 00:00:00+00:00",
+        "2025-01-01 00:00:00+00:00",
+        "2025-04-01 00:00:00+00:00",
+        "2025-07-01 00:00:00+00:00",
+        "2025-10-01 00:00:00+00:00",
+        "2026-01-01 00:00:00+00:00",
+        "2026-04-01 00:00:00+00:00",
+        "2026-07-01 00:00:00+00:00",
+        "2026-10-01 00:00:00+00:00"
+      ],
+      "WF-H365-C6": [
+        "2022-01-01 00:00:00+00:00",
+        "2022-07-01 00:00:00+00:00",
+        "2023-01-01 00:00:00+00:00",
+        "2023-07-01 00:00:00+00:00",
+        "2024-01-01 00:00:00+00:00",
+        "2024-07-01 00:00:00+00:00",
+        "2025-01-01 00:00:00+00:00",
+        "2025-07-01 00:00:00+00:00",
+        "2026-01-01 00:00:00+00:00",
+        "2026-07-01 00:00:00+00:00"
+      ],
+      "WF-H730-C3": [
+        "2023-01-01 00:00:00+00:00",
+        "2023-04-01 00:00:00+00:00",
+        "2023-07-01 00:00:00+00:00",
+        "2023-10-01 00:00:00+00:00",
+        "2024-01-01 00:00:00+00:00",
+        "2024-04-01 00:00:00+00:00",
+        "2024-07-01 00:00:00+00:00",
+        "2024-10-01 00:00:00+00:00",
+        "2025-01-01 00:00:00+00:00",
+        "2025-04-01 00:00:00+00:00",
+        "2025-07-01 00:00:00+00:00",
+        "2025-10-01 00:00:00+00:00",
+        "2026-01-01 00:00:00+00:00",
+        "2026-04-01 00:00:00+00:00",
+        "2026-07-01 00:00:00+00:00",
+        "2026-10-01 00:00:00+00:00"
+      ],
+      "WF-H730-C6": [
+        "2023-01-01 00:00:00+00:00",
+        "2023-07-01 00:00:00+00:00",
+        "2024-01-01 00:00:00+00:00",
+        "2024-07-01 00:00:00+00:00",
+        "2025-01-01 00:00:00+00:00",
+        "2025-07-01 00:00:00+00:00",
+        "2026-01-01 00:00:00+00:00",
+        "2026-07-01 00:00:00+00:00"
+      ]
+    },
+    "boundaries": "db=Q_q|score|, g=Q_q|SVI|, tv=Q_q sigma_ann over previous 6W 4h decisions; fund_thr=Q_q funding rates in [ft_j-W, ft_j); no numeric cutoffs"
+  },
+  "controls": {
+    "CONTROL_B3_DEV_PICK": {
+      "params": {
+        "base": 8,
+        "svi_w": 180,
+        "trend": "(6, 18, 42)",
+        "tv": 0.4,
+        "gate": "fz>=0",
+        "action": "state_flat"
+      },
+      "role": "control (excluded from selection)",
+      "batch3_net4": [
+        15853.6464,
+        4391.6443,
+        2687.1584
+      ]
+    },
+    "CONTROL_B3_RESELECTED": {
+      "params": {
+        "base": 4,
+        "svi_w": 180,
+        "trend": "(42, 168, 504)",
+        "tv": 0.4,
+        "gate": "fz>=-0.5",
+        "action": "state_flat"
+      },
+      "role": "control (excluded from selection)",
+      "batch3_net4": [
+        24175.5691,
+        6440.8493,
+        4271.6089
+      ]
+    }
+  },
+  "control_vs_adaptive": "controls replay Batch-3 fixed-threshold G3; CONTROL_B3_RESELECTED was TEST-selected",
+  "test_selection_flag": {
+    "G3_ADAPT_RESELECTED": "chosen on TEST; never independent OOS"
+  },
+  "control_parity": {
+    "CONTROL_B3_DEV_PICK": {
+      "batch3_config_id": "base=8|svi_w=180|trend=(6, 18, 42)|tv=0.4|gate=fz>=0|action=state_flat",
+      "n_compared": 1056,
+      "n_diff": 0,
+      "diffs": {},
+      "net4_DEV-FULL/DEV-B/TEST": [
+        15853.646398918565,
+        4391.644287932743,
+        2687.1584448525614
+      ]
+    },
+    "CONTROL_B3_RESELECTED": {
+      "batch3_config_id": "base=4|svi_w=180|trend=(42, 168, 504)|tv=0.4|gate=fz>=-0.5|action=state_flat",
+      "n_compared": 1056,
+      "n_diff": 0,
+      "diffs": {},
+      "net4_DEV-FULL/DEV-B/TEST": [
+        24175.56911769631,
+        6440.849279493834,
+        4271.608891884411
+      ]
+    }
+  },
+  "control_strict_vs_codex": {
+    "CONTROL_B3_DEV_PICK_STRICT": {
+      "batch4": [
+        15416.57326329006,
+        11347.02681926721,
+        4069.5464440228516,
+        2589.633718807933
+      ],
+      "codex_ref": [
+        15416.6,
+        11347.0,
+        4069.5,
+        2589.6
+      ],
+      "max_abs_diff": 0.04644402285157412,
+      "TEST_long_short": [
+        967.3751146935512,
+        1622.2586041143813
+      ]
+    },
+    "CONTROL_B3_RESELECTED_STRICT": {
+      "batch4": [
+        24046.965697853208,
+        17819.91466051237,
+        6227.051037340838,
+        4288.2396896790015
+      ],
+      "codex_ref": [
+        24047.0,
+        17819.9,
+        6227.1,
+        4288.2
+      ],
+      "max_abs_diff": 0.04896265916249831,
+      "TEST_long_short": [
+        1671.3452037177399,
+        2616.8944859612616
+      ]
+    }
+  },
+  "picks": {
+    "Q_DEV_PICK": "Q-W180-P50",
+    "WF_DEV_PICK": "WF-H730-C6",
+    "G3_ADAPT_DEV_PICK": "Q-W180-P50",
+    "G3_ADAPT_RESELECTED": "Q-W365-P50"
+  },
+  "funding_rule": "strict: funding event usable only if funding_time < T (coordinator correction, Codex Batch-3 review HIGH); controls also replayed in original Batch-3 semantics for parity",
+  "execution": {
+    "tick": 0.1,
+    "offsets_bps": [
+      2,
+      5
+    ],
+    "penetration_bps": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "ttl_min": 60,
+    "exit_quote_bps": 2.0,
+    "requote_min": 60,
+    "cost_bps_rt": 4,
+    "report_only_bps_rt": 8,
+    "slippage": 0,
+    "terminal_open": "MTM + reserved 2 bps exit",
+    "funding": "PESS",
+    "weight": "entry_weight_frozen min(1, tv_t/sigma_ann_t)"
+  },
+  "selection": "Batch-3 eligible()/dev_score()/adapt_score()/verdict() unchanged; adaptive 8 only",
+  "bootstrap": {
+    "type": "stationary",
+    "blocks_days": [
+      20,
+      60,
+      120
+    ],
+    "n": 10000,
+    "seed": 20261010,
+    "stat": "mean daily 1m-MTM net4 (bps/day)"
+  },
+  "causality_asserts": "1-14 per spec section 13 (runtime)",
+  "interpretations": "Batch-4 (2026-10-10): G3-ADAPT = Batch-3 G3 structure with every decision boundary a trailing quantile.\n\nSpec: scratchpad codex_batch4_spec.md (Codex thread 01a124b2-450d-7912-9bf7-9dc192b924f6). Parent run\nNM-B3-20261010T071709Z-7760a0d9 (control parity source).\nFrozen hypothesis: G3 is more stable when every decision boundary (score / SVI / funding / target-vol) is a trailing\nquantile of the recent market distribution (past data only), not an absolute constant. Walk-forward periodically\nreselects the quantile meta-setting (W, q) by recent two-sided net.\n\nEngine: Batch-2 simulate/Book/bootstrap/G features and Batch-3 eligible/dev_score/adapt_score/verdict/gate_inputs/\ng3_signal are imported unchanged (importlib); their file hashes are input hashes.\nInterpretations (spec silent or ambiguous; most causal reading chosen):\n  * 4h history H_t(W) = the 6*W previous 4h decisions (positions i-6W .. i-1); with contiguous 4h bars their decision\n    times are exactly [T-W, T) (asserted). Quantile = numpy/pandas 'linear'. Ready = all 6W samples finite and the\n    current score/SVI/sigma finite; long needs 4h-ready, short needs 4h-ready AND funding-ready.\n  * funding sample = events with time in [ft[j_t]-W, ft[j_t]) (searchsorted 'left' on both ends, so an event with\n    the same timestamp as j_t is excluded too); funding-ready = ft[j_t]-W >= first funding event time and >= 1 sample.\n  * 'ready' column in adaptive_thresholds = 4h-ready AND funding-ready; ready_4h / ready_funding also stored.\n  * WF tie 'all-side net4/day mean' = mean over offset 2/5 (pen 0.5) of all-side net4/day in [R-H, R);\n    tie mdd_1m / turnover = offset 2 pen 0.5 all-side in [R-H, R).\n  * WF applied to decisions with T in [R, next_R) (last next_R = cutoff); T before the first refit -> side 0.\n  * runtime assert 9: for every refit anchor R the four inner paths are re-simulated on a market truncated at R\n    (minutes < R, funding events < R); window gross/funding/entries/closed must match the full run and net4 must\n    match after adding back the reserved 2 bps exit fee of positions still open at R (the only prefix-run artefact).\n  * funding causality (coordinator correction from Codex Batch-3 review): an event is usable only if\n    funding_time < T (strict); j_t = max{j: ft_j < T}; DEV funding_time is the archive settlement time. Controls run\n    twice: original Batch-3 semantics (publish <= T, parity check, in grid/registry as the 12 control sims) and\n    strict semantics (report-only replay CONTROL_*_STRICT: controls_strict.parquet, bootstrap_controls_strict.parquet,\n    registry role control_strict n_trials 0).\n  * signal diagnostics: des = score/SVI side without the funding condition, gate = funding-ready & fund >= thr\n    (adaptive) or the Batch-3 mask (controls); Batch-3 diagnostics() reused.\n  * bootstrap for all 10 logical configs (primary offset 2 pen 0.5): 4 windows x all/long/short x 3 blocks = 360.\n",
+  "runtime_sec": 234.1
+}

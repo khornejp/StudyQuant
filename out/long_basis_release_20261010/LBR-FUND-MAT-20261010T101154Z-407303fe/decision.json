@@ -1,0 +1,15 @@
+{
+  "candidate": "LBR-FUND-b-1.0-d0.25-a1-h2",
+  "DEV-A_6of6": true,
+  "DEV-B_6of6": true,
+  "TEST_6of6": true,
+  "TEST_boot_all_pos": true,
+  "PASS_rule_values": true,
+  "JanJul_6of6": true,
+  "JanJul_comb_pos_days": 25,
+  "JanJul_s180_pos_days": 9,
+  "JanJul_comb_pos_days_gt_s180": true,
+  "COMPLEMENT_PASS": true,
+  "caveat": "candidate RESELECTED after TEST was seen; TEST/sub-window values are selection evidence, not out-of-sample confirmation",
+  "promotion": "paper-only shadow at most; never live"
+}
