@@ -148,7 +148,11 @@ def _sum_from(cs: np.ndarray, i: np.ndarray, lo: np.ndarray) -> np.ndarray:
 SLEEVE_FLAGS = ("available", "signal_active", "pending", "open", "exit_pending", "trail_armed")
 
 
-def sleeve_channels(name: str, grid: pd.DataFrame, ledger: pd.DataFrame, c: np.ndarray, T: np.ndarray) -> pd.DataFrame:
+MTM_LONG = (("90d", 129600), ("180d", 259200))      # router lookbacks (opt-in; the frozen state store omits them)
+
+
+def sleeve_channels(name: str, grid: pd.DataFrame, ledger: pd.DataFrame, c: np.ndarray, T: np.ndarray,
+                    long_mtm: bool = False) -> pd.DataFrame:
     """Per-sleeve state at T from its observation-safe grid and ledger; only minutes with minute_time + 1m <= T are
     indexed. Availability (Codex fix round 2): while the sleeve is unavailable every channel is neutral (flags 0,
     numbers NaN -> masked); P&L-derived statistics (MTM, vol, drawdown, closed-trade stats, unrealized) only use the
@@ -190,7 +194,7 @@ def sleeve_channels(name: str, grid: pd.DataFrame, ledger: pd.DataFrame, c: np.n
     # realized canonical P&L (unit allocation), available minutes of the current epoch only
     net = np.where(av, g("net4").astype(float), 0.0)
     cs = _cum(net)
-    for nm, w in (("24h", 1440), ("7d", 10080), ("30d", 43200), ("1h", 60)):
+    for nm, w in (("24h", 1440), ("7d", 10080), ("30d", 43200), ("1h", 60)) + (MTM_LONG if long_mtm else ()):
         col = pre + (f"mtm_{nm}" if nm != "1h" else "net4_1h")
         out[col] = np.where(on, _sum_from(cs, i, np.maximum(i - w + 1, e0)), np.nan)
     edges = t[0] + HOUR * np.arange((t[-1] + MIN - t[0]) // HOUR + 1, dtype=np.int64) if len(t) else np.zeros(0, np.int64)

@@ -2651,10 +2651,176 @@ def cmd_pilot_e2(args) -> None:
     log(f"pilot (e2) {'PASS' if rep['pilot_pass'] else 'FAIL'} U*={U} {rep['pass_criteria']} boots {rep['boot_positive_count']}")
 
 
+# ================================================================ causal 7-sleeve regime router (information check)
+ROUTER_WINDOWS = {"F1": ("2022-01-01", "2023-01-01"), "F2": ("2023-01-01", "2024-01-01"),
+                  "F3": ("2024-01-01", "2025-01-01"), "F4": ("2025-01-01", "2026-01-01")}
+
+
+def router_features(cd, T: np.ndarray, grid_cache: dict) -> dict:
+    """Per sleeve causal unit-net4 lookback sums (30/90/180 d, availability epoch only) and availability at T."""
+    from btcusdt_quant.rl import allocator_state as ast
+    T_max = int(T.max())
+    out = {}
+    for s in SLEEVES:
+        rel = PRE / ("g3_family/" + cd.cell + "/" + s if s in G3_FAMILY else "common/" + s)
+        key = str(rel)
+        if key not in grid_cache:
+            gcols = [c for c in sp.OBS_COLUMNS["grid"] if c not in ("sleeve_id", "exec_cell")]
+            grid_cache[key] = (sp.read_observation(rel, "grid", T_max, columns=gcols),
+                               sp.read_observation(rel, "ledger", T_max))
+        g, led = grid_cache[key]
+        f = ast.sleeve_channels(s, g, led, cd.c[:len(g)], T, long_mtm=True)
+        out[s] = {"avail": f[f"{s}_available"].to_numpy() == 1,
+                  **{lb: f[f"{s}_{col}"].to_numpy(float) for lb, col in
+                     (("30d", "mtm_30d"), ("90d", "mtm_90d"), ("180d", "mtm_180d"))}}
+    return out
+
+
+def run_router(cd, feats: dict, Tf: np.ndarray, lookback: str, a: int, b: int) -> dict:
+    from btcusdt_quant.rl import allocator_router as AR, allocator_vec_env as AV, allocator_ppo as AP
+    H = 3600 * 10**9
+    L = (b - a) // H
+    env = AV.VecAllocatorEnv(cd, 1, static_weights=C1C4_W)
+    obs = env.reset(np.array([a]), L)
+    z = np.zeros((1, len(SLEEVES)), np.int64)
+    k0 = int(np.searchsorted(Tf, a))
+    if Tf[k0] != a:
+        raise SystemExit("router feature grid misaligned")
+    sc = np.stack([feats[s][lookback] for s in SLEEVES], 1)
+    av = np.stack([feats[s]["avail"] for s in SLEEVES], 1)
+    ser, sel = np.zeros(L), np.zeros(len(SLEEVES))
+    gmax, ident, avail_mismatch = 0.0, 0.0, 0
+    for i in range(L):
+        lv = AR.router_levels(sc[k0 + i:k0 + i + 1], av[k0 + i:k0 + i + 1])
+        me = obs["masks"][0]
+        avail_mismatch += int((av[k0 + i] != me[0, :, 4]).sum())
+        lv = np.where(me[np.arange(1)[:, None], np.arange(len(SLEEVES))[None, :], lv], lv, 0)
+        sel += (lv[0] > 0)
+        obs, r, done, info = env.step(lv, z, z)
+        ex, dd, to = AP.reward_parts(info)
+        ident = max(ident, float(np.abs(r - (ex - dd - to)).max()))
+        gmax = max(gmax, float(info["gross_reserved"][0]))
+        ser[i] = info["net_rl"][0]
+    c1c4, mdd_c = AP.comparator_book(cd, a, L, 1, C1C4_W)
+    g3, mdd_g = AP.comparator_book(cd, a, L, 1, G3_ONLY_W)
+    return {"rl": ser, "C1C4": c1c4, "G3_ONLY": g3, "mdd_rl": float(env.rl.mdd[0]), "mdd_C1C4": mdd_c,
+            "mdd_G3_ONLY": mdd_g, "trades": int(env.rl.new_alloc[0]), "selection_hours": sel.tolist(), "hours": L,
+            "gross_reserved_max": gmax, "identity_err": ident, "avail_mismatch": avail_mismatch}
+
+
+def series_mdd(x: np.ndarray) -> float:
+    eq = np.r_[0.0, np.cumsum(x)]
+    return float((np.maximum.accumulate(eq) - eq).max())
+
+
+def cell_metrics(rs: list, boot: bool) -> dict:
+    """rs: one or more consecutive window results (stitched)."""
+    rl = np.concatenate([r["rl"] for r in rs])
+    c1, g3 = np.concatenate([r["C1C4"] for r in rs]), np.concatenate([r["G3_ONLY"] for r in rs])
+    best = "C1C4" if c1.sum() >= g3.sum() else "G3_ONLY"
+    base = c1 if best == "C1C4" else g3
+    out = {"net_router": float(rl.sum()), "net_C1C4": float(c1.sum()), "net_G3_ONLY": float(g3.sum()),
+           "max_baseline": best, "excess_vs_max": float(rl.sum() - base.sum()),
+           "excess_vs_C1C4": float(rl.sum() - c1.sum()), "excess_vs_G3_ONLY": float(rl.sum() - g3.sum()),
+           "mdd_router": series_mdd(rl), "mdd_C1C4": series_mdd(c1), "mdd_G3_ONLY": series_mdd(g3),
+           "trades": int(sum(r["trades"] for r in rs)),
+           "differs_from_C1C4": bool(np.abs(rl - c1).max() > 1e-9), "differs_from_G3_ONLY": bool(np.abs(rl - g3).max() > 1e-9)}
+    out["mdd_max_baseline"] = out[f"mdd_{best}"]
+    if boot:
+        d = (rl - base).reshape(-1, 24).sum(1)
+        out["boot_p05"] = {str(bl): boot_p05(d, bl) for bl in (20, 60, 120)}
+    return out
+
+
+def cmd_router(args) -> None:
+    from btcusdt_quant.rl import allocator_env as AE
+    t0 = time.time()
+    RD = OUT / "router"
+    RD.mkdir(parents=True, exist_ok=True)
+    ts = lambda x: pd.Timestamp(x, tz="UTC").value  # noqa: E731
+    cells = list(SMOKE_COUNTS)
+    lbs = ("30d", "90d", "180d")
+    res = {lb: {w: {} for w in ROUTER_WINDOWS} for lb in lbs}
+    grid_cache: dict = {}
+    contracts = {"identity_err_max": 0.0, "gross_reserved_max": 0.0, "avail_mismatch": 0}
+    for cell in cells:
+        cd = AE.load_cell(cell, fold="F4", allow_test=False)     # P&L data are fold-independent; no observations used
+        Tf = cd.T1h[(cd.T1h >= ts("2022-01-01")) & (cd.T1h < ts("2026-01-01"))]
+        feats = router_features(cd, Tf, grid_cache)
+        for k in [k for k in grid_cache if "g3_family" in k]:
+            del grid_cache[k]
+        for lb in lbs:
+            for w, (a, b) in ROUTER_WINDOWS.items():
+                r = run_router(cd, feats, Tf, lb, ts(a), ts(b))
+                res[lb][w][cell] = r
+                contracts["identity_err_max"] = max(contracts["identity_err_max"], r["identity_err"])
+                contracts["gross_reserved_max"] = max(contracts["gross_reserved_max"], r["gross_reserved_max"])
+                contracts["avail_mismatch"] += r["avail_mismatch"]
+        log(f"router {cell} done {time.time() - t0:.0f}s")
+    rep: dict = {"spec": {"lookbacks": lbs, "top_k": 2, "level": 1.0, "cadence_h": 1, "windows": ROUTER_WINDOWS,
+                          "selection": "F1-F3 stitched min_cell[router - max(C1C4, G3_ONLY)]; ties: min-cell boot "
+                                       "p05 (60d), lower max-cell MDD, longer lookback",
+                          "score_input": "causal unit net4 sum over the lookback (sleeve_channels mtm, availability "
+                                         "epoch only)", "keep_hold_fixed": True,
+                          "data": "F4 cell load (router uses no model observations; P&L rows fold-independent)"},
+                 "per_window": {}, "selection": {}}
+    sel_rows = []
+    for lb in lbs:
+        rep["per_window"][lb] = {w: {c: cell_metrics([res[lb][w][c]], boot=True) for c in cells} for w in ROUTER_WINDOWS}
+        st = {c: cell_metrics([res[lb][w][c] for w in ("F1", "F2", "F3")], boot=True) for c in cells}
+        row = {"lookback": lb, "score": min(x["excess_vs_max"] for x in st.values()),
+               "min_boot60": min(x["boot_p05"]["60"] for x in st.values()),
+               "max_mdd": max(x["mdd_router"] for x in st.values()), "cells": st}
+        sel_rows.append(row)
+    order = sorted(sel_rows, key=lambda r: (-r["score"], -r["min_boot60"], r["max_mdd"], -int(r["lookback"][:-1])))
+    chosen = order[0]["lookback"]
+    rep["selection"] = {"rows": [{k: v for k, v in r.items() if k != "cells"} for r in sel_rows],
+                        "stitched_cells": {r["lookback"]: r["cells"] for r in sel_rows}, "chosen": chosen}
+    F4 = {c: cell_metrics([res[chosen]["F4"][c]], boot=True) for c in cells}
+    rep["F4"] = F4
+    sel_freq = {}
+    for lb in lbs:
+        for w in ROUTER_WINDOWS:
+            tot = np.sum([res[lb][w][c]["selection_hours"] for c in cells], axis=0)
+            hrs = sum(res[lb][w][c]["hours"] for c in cells)
+            sel_freq.setdefault(lb, {})[w] = {s: round(float(tot[i] / hrs), 4) for i, s in enumerate(SLEEVES)}
+    rep["selection_frequency"] = sel_freq
+    rep["contracts"] = {"reward_identity<=1e-6": contracts["identity_err_max"] <= 1e-6,
+                        "gross_reserved<=2": contracts["gross_reserved_max"] <= C_GROSS + 1e-12,
+                        "router_avail==env_mask": contracts["avail_mismatch"] == 0,
+                        "economic_difference_vs_both_baselines_6of6": all(
+                            x["differs_from_C1C4"] and x["differs_from_G3_ONLY"] for x in F4.values()),
+                        "test_accessed": False, "raw": contracts}
+    boots = [p for x in F4.values() for p in x["boot_p05"].values()]
+    rep["pass_criteria"] = {
+        "net4>max(C1C4,G3_ONLY)_6of6": all(x["excess_vs_max"] > 0 for x in F4.values()),
+        "mdd<mdd(max-net baseline)_6of6": all(x["mdd_router"] < x["mdd_max_baseline"] for x in F4.values()),
+        "boot_p05>0_18of18": all(p > 0 for p in boots),
+        "contracts": all(v for k, v in rep["contracts"].items() if k not in ("test_accessed", "raw"))}
+    rep["boot_positive_count"] = f"{sum(p > 0 for p in boots)}/{len(boots)}"
+    rep["mdd_gate_baseline"] = {c: x["max_baseline"] for c, x in F4.items()}
+    rep["router_pass"] = bool(all(rep["pass_criteria"].values()))
+    rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
+               runtime_sec=round(time.time() - t0, 1),
+               code_sha256={k: sha(ROOT / f"btcusdt_quant/rl/{k}.py") for k in ("allocator_router", "allocator_state",
+                                                                                 "allocator_vec_env", "allocator_env")})
+    dump(RD / "router_report.json", rep)
+    registry.record(REGISTRY, {"experiment": "RL allocator causal regime router (lookback selection F1-F3)",
+                               "role": "trial", "n_trials": len(lbs), "n_simulations": len(lbs) * 4 * len(cells),
+                               "config": rep["spec"],
+                               "result_summary": {"chosen": chosen, "scores": {r["lookback"]: r["score"] for r in sel_rows}}})
+    registry.record(REGISTRY, {"experiment": f"RL allocator causal regime router F4 2025 eval ({chosen})",
+                               "role": "evaluation", "n_trials": 0, "n_simulations": len(cells),
+                               "config": {"lookback": chosen},
+                               "result_summary": {"pass": rep["router_pass"], "boot": rep["boot_positive_count"]}})
+    log(f"router {'PASS' if rep['router_pass'] else 'FAIL'} chosen {chosen} {rep['pass_criteria']} boots "
+        f"{rep['boot_positive_count']}")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
-                                       "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2"))
+                                       "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -2684,6 +2850,8 @@ def main(argv=None) -> None:
         return cmd_pilot_g3(args)
     if args.command == "pilot-e2":
         return cmd_pilot_e2(args)
+    if args.command == "router":
+        return cmd_router(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
