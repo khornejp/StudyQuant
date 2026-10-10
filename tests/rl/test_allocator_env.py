@@ -238,3 +238,21 @@ def test_missing_partition_fails_closed(tmp_path):
     (root / "precompute/common/market/market_2021.parquet").unlink()
     with pytest.raises(E.SchemaError, match="partition set mismatch"):
         E.load_cell("o2_p0.5", root=root)
+
+
+@real
+def test_vec_env_matches_scalar_env(cell):
+    mod = load_script()
+    rng = np.random.default_rng(11)
+    H = 3600 * 10**9
+    starts = TS("2023-03-01") + 24 * H * np.array([0, 17, 140, 400, 610, 800])
+    rep = mod.vec_parity(cell, 6, 240, starts, rng, [0.25, 0.5, 0.25, 0.25, 0.25, 0.25, 0.25])
+    assert rep["mask_mismatch"] == 0 and rep["obs_max_abs"] <= 1e-6 and rep["events"] > 0
+    assert rep["net_max_abs"] <= 1e-9 and rep["reward_max_abs"] <= 1e-9 and rep["equity_max_abs"] <= 1e-9
+    from btcusdt_quant.rl import allocator_vec_env as V
+    v = V.VecAllocatorEnv(cell, 2)
+    with pytest.raises(ValueError):
+        v.reset(np.array([TS("2020-06-01"), TS("2023-01-01")]), 24)        # A2 r1 usable window
+    v.reset(np.array([TS("2023-01-01"), TS("2023-02-01")]), 24)
+    with pytest.raises(ValueError):
+        v.step(np.zeros((2, 7)), np.zeros((2, 7), int), np.zeros((2, 7), int))   # float actions rejected

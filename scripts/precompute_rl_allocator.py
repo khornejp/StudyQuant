@@ -1895,9 +1895,118 @@ def cmd_amend2(_args) -> None:
     log(f"amendment A2 r1 written sha256 {sha(AMEND2R1)}")
 
 
+# ================================================================ vectorized env: parity vs scalar + benchmark
+def vec_random_actions(rng, me, mp, mo, p_exit=0.05, p_tight=0.15, p_cancel=0.2):
+    """Legal random batch actions (same distribution as random_action, vectorized)."""
+    N, S, _ = me.shape
+    u = rng.random((N, S, me.shape[2]))
+    entry = np.argmax(np.where(me, u, -1.0), axis=2)
+    pend = np.where(mp[:, :, 1] & (rng.random((N, S)) < p_cancel), 1, 0)
+    r = rng.random((N, S))
+    op = np.where(mo[:, :, 3] & (r < p_exit), 3, 0)
+    t2 = mo[:, :, 2] & (r >= p_exit) & (r < p_exit + p_tight)
+    t1 = mo[:, :, 1] & (r >= p_exit) & (r < p_exit + p_tight)
+    pick = rng.random((N, S)) < 0.5
+    op = np.where((op == 0) & t1 & t2, np.where(pick, 1, 2), op)
+    op = np.where((op == 0) & t1, 1, op)
+    op = np.where((op == 0) & t2, 2, op)
+    return entry.astype(np.int64), pend.astype(np.int64), op.astype(np.int64)
+
+
+def vec_parity(cd, n_envs: int, steps: int, starts, rng, static_w, cadence_h: int = 1) -> dict:
+    """Run the vectorized batch and n scalar envs on the same random legal actions; compare masks, observations,
+    nets, rewards per step."""
+    from btcusdt_quant.rl import allocator_contracts as AC, allocator_env as AE, allocator_vec_env as AV
+    H = cadence_h * 3600 * 10**9
+    venv = AV.VecAllocatorEnv(cd, n_envs, cadence_h=cadence_h, static_weights=static_w)
+    obs = venv.reset(starts, steps)
+    envs = [AE.AllocatorEnv(cd, cadence_h=cadence_h, static_weights=static_w) for _ in range(n_envs)]
+    so = [e.reset(int(s), int(s) + steps * H) for e, s in zip(envs, starts)]
+    rep = {"envs": n_envs, "steps": steps, "mask_mismatch": 0, "obs_max_abs": 0.0, "net_max_abs": 0.0,
+           "reward_max_abs": 0.0, "events": 0}
+    for _ in range(steps):
+        me, mp, mo = obs["masks"]
+        for n in range(n_envs):
+            m = so[n]["masks"]
+            rep["mask_mismatch"] += int(not ((m.entry == me[n]).all() and (m.pending == mp[n]).all()
+                                             and (m.open == mo[n]).all()))
+            for key in ("static", "seq", "seq_nan", "seq_pad", "account"):
+                rep["obs_max_abs"] = max(rep["obs_max_abs"], float(np.abs(so[n][key] - obs[key][n]).max()))
+        ent, pen, op = vec_random_actions(rng, me, mp, mo)
+        rep["events"] += int((op > 0).sum() + (pen > 0).sum())
+        obs, rew, done, info = venv.step(ent, pen, op)
+        for n in range(n_envs):
+            o, r, d, inf = envs[n].step(AC.Action(tuple(int(x) for x in ent[n]), tuple(int(x) for x in pen[n]),
+                                                  tuple(int(x) for x in op[n])))
+            so[n] = o
+            rep["net_max_abs"] = max(rep["net_max_abs"], abs(inf["net_rl"] - info["net_rl"][n]),
+                                     abs(inf["net_st"] - info["net_st"][n]))
+            rep["reward_max_abs"] = max(rep["reward_max_abs"], abs(r - rew[n]))
+    rep["equity_max_abs"] = float(max(abs(e.rl.equity - venv.rl.equity[n]) for n, e in enumerate(envs)))
+    return rep
+
+
+def vec_bench(cd, n_envs: int, steps: int, rng, cadence_h: int = 1) -> float:
+    from btcusdt_quant.rl import allocator_vec_env as AV
+    lo, hi = cd.usable_from, pd.Timestamp("2025-09-01", tz="UTC").value
+    step = cadence_h * 3600 * 10**9
+    starts = lo + step * rng.integers(0, (hi - lo) // step - steps, n_envs)
+    v = AV.VecAllocatorEnv(cd, n_envs, cadence_h=cadence_h, static_weights=[0.25] * 7)
+    obs = v.reset(starts, steps)
+    t0, n = time.time(), 0
+    while True:
+        obs, r, done, info = v.step(*vec_random_actions(rng, *obs["masks"]))
+        n += 1
+        if done:
+            break
+    return n_envs * n / (time.time() - t0)
+
+
+def cmd_vec_check(args) -> None:
+    from btcusdt_quant.rl import allocator_env as AE
+    t0 = time.time()
+    rep: dict = {"parity": {}, "bench_1h": {}, "bench_4h": {}}
+    H = 3600 * 10**9
+    for cell in [CELL_TAG[c] for c in CELLS]:
+        cd = AE.load_cell(cell, allow_test=False)
+        rng = np.random.default_rng(SEED + len(rep["parity"]))
+        days = rng.choice(np.arange(0, (pd.Timestamp("2025-11-01", tz="UTC").value - cd.usable_from) // (24 * H)),
+                          16, replace=False)
+        starts = cd.usable_from + 24 * H * days
+        rep["parity"][cell] = vec_parity(cd, 16, 720, starts, rng, [0.25, 0.25, 0.25, 0.5, 0.25, 0.25, 0.25])
+        log(f"vec parity {cell} {rep['parity'][cell]}")
+    cd = AE.load_cell(CELL_TAG[PRIMARY], cadence_h=4, allow_test=False)
+    rng = np.random.default_rng(SEED)
+    starts4 = cd.usable_from + 4 * H * rng.choice(np.arange(0, 6000), 8, replace=False)
+    rep["parity_4h"] = vec_parity(cd, 8, 540, starts4, rng, [0.25] * 7, cadence_h=4)
+    cd = AE.load_cell(CELL_TAG[PRIMARY], allow_test=False)
+    for n in (32, 128, 256):
+        rep["bench_1h"][str(n)] = round(vec_bench(cd, n, 2160, np.random.default_rng(n)), 1)
+    cd4 = AE.load_cell(CELL_TAG[PRIMARY], cadence_h=4, allow_test=False)
+    rep["bench_4h"]["128"] = round(vec_bench(cd4, 128, 540, np.random.default_rng(4), cadence_h=4), 1)
+    P = list(rep["parity"].values()) + [rep["parity_4h"]]
+    rep["gates"] = {"mask_mismatch==0": all(p["mask_mismatch"] == 0 for p in P),
+                    "obs<=1e-6": all(p["obs_max_abs"] <= 1e-6 for p in P),
+                    "net<=1e-9": all(p["net_max_abs"] <= 1e-9 for p in P),
+                    "reward<=1e-9": all(p["reward_max_abs"] <= 1e-9 for p in P),
+                    "equity<=1e-9": all(p["equity_max_abs"] <= 1e-9 for p in P),
+                    "bench128_1h>=4630": rep["bench_1h"]["128"] >= 4630,
+                    "bench128_1h>=9804_target": rep["bench_1h"]["128"] >= 9804}
+    rep.update(policy="random legal (entry uniform over legal levels, EXIT 5%, TIGHTEN 15%, CANCEL 20%)",
+               record_minutes="off (vectorized env never records minutes)", git_head=git("rev-parse", "HEAD"),
+               code_sha256={"allocator_vec_env": sha(ROOT / "btcusdt_quant/rl/allocator_vec_env.py")},
+               created_utc=datetime.now(timezone.utc).isoformat(), runtime_sec=round(time.time() - t0, 1))
+    dump(OUT / "env" / "vec_check.json", rep)
+    ok = all(v for k, v in rep["gates"].items() if not k.endswith("_target"))
+    log(f"vec-check {'PASS' if ok else 'FAIL'} gates {rep['gates']} bench {rep['bench_1h']} {rep['bench_4h']}")
+    if not ok:
+        raise SystemExit("VEC CHECK FAIL")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check"))
+    ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
+                                       "vec-check"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--only", default="g3,c,ax")
     ap.add_argument("--no-registry", action="store_true")
@@ -1915,6 +2024,8 @@ def main(argv=None) -> None:
         return cmd_signals(args)
     if args.command == "env-check":
         return cmd_env_check(args)
+    if args.command == "vec-check":
+        return cmd_vec_check(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
