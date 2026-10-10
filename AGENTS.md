@@ -10,3 +10,4 @@
 - External skills are research aids, not evidence of predictive improvement. Do not mix spot or DEX data into futures experiments without an explicit, causally valid plan.
 - Record source, timestamp, data cutoff, frozen hypothesis, and out-of-sample result for each experiment. Prefer existing local data before collecting more.
 - Test with existing data. Do not label data as "contaminated" or add contamination notes because an earlier experiment used the same window; do not wait for future data to test.
+- Reselecting or modifying candidates after seeing test results is allowed. Goal: a profitable model by any technique (model, horizon, entry/exit, sizing, signals); only the maker 4 bps round-trip cost is fixed. Iterate with Codex until it is profitable. Log every test run.
