@@ -2122,7 +2122,8 @@ def cmd_smoke(args) -> None:
     log(f"smoke r2: cells loaded {time.time() - t0:.0f}s; fold {fold} train {train} val {val}; cfg {cfg}")
 
     def trainer():
-        return AP.Trainer(cells, SMOKE_COUNTS, static_w, train, val, cfg, seed=0, fold=fold)
+        return AP.Trainer(cells, SMOKE_COUNTS, static_w, train, val, cfg, seed=0, fold=fold,
+                          comparators={"G3_ONLY": [1.0, 1.0, 0, 0, 0, 0, 0]})
 
     rep: dict = {"spec": {"fold": fold, "seed": 0, "train": list(train), "val": list(val), "counts": SMOKE_COUNTS,
                           "cfg": dataclasses_asdict(cfg), "updates": n_up, "static_weights": static_w.tolist()},
@@ -2150,7 +2151,7 @@ def cmd_smoke(args) -> None:
     v = tr.validate()
     rep["val"]["0"] = val_summary(v)
     rep["val_sec"] = {"0": round(time.time() - t1, 1)}
-    best = {"key": v["worst_cell_excess"], "update": 0} if not v["all_flat"] else {"key": -math.inf, "update": -1}
+    best = {"key": v["score"], "update": 0} if not v["all_flat"] else {"key": -math.inf, "update": -1}
     if best["update"] == 0:
         torch.save({"model": tr.model.state_dict(), "update": 0, "key": best["key"], "identity": tr.identity}, SD / "best.pt")
     state7 = None
@@ -2170,8 +2171,8 @@ def cmd_smoke(args) -> None:
             v = tr.validate()
             rep["val"][str(u)] = val_summary(v)
             rep["val_sec"][str(u)] = round(time.time() - tv, 1)
-            if not v["all_flat"] and v["worst_cell_excess"] > best["key"]:
-                best = {"key": v["worst_cell_excess"], "update": u}
+            if not v["all_flat"] and v["score"] > best["key"]:
+                best = {"key": v["score"], "update": u}
                 torch.save({"model": tr.model.state_dict(), "update": u, "key": best["key"], "identity": tr.identity},
                            SD / "best.pt")
             if u == 10:                                               # batched vs serial parity + timings
@@ -2276,12 +2277,196 @@ def dataclasses_asdict(x):
     return dataclasses.asdict(x)
 
 
+# ================================================================ pilot (e): F4 G3-only heads (Codex spec)
+G3_ONLY_W = [1.0, 1.0, 0, 0, 0, 0, 0]
+C1C4_W = [0, 0, 0, 0, 0, 1.0, 1.0]
+PILOT_VAL_AT = (0, 20, 40, 60, 80, 100, 123)
+
+
+def boot_p05(daily: np.ndarray, block: int) -> float:
+    from btcusdt_quant.rl import allocator_baselines as BL
+    idx = BL.stationary_indices(len(daily), n_boot=BL.BOOT_N, block=block, seed=BL.BOOT_SEED)
+    return float(np.quantile(daily[idx].mean(axis=1), 0.05))
+
+
+def val_report(v: dict, with_boot: bool) -> dict:
+    out = {"score": v["score"], "flat_cells": v["flat_cells"], "cells": {}}
+    pooled = []
+    for c, r in v["cells"].items():
+        ser = v["_series"][c]
+        best_k = "static" if r["net_static"] >= r["net_C1C4"] else "C1C4"
+        d = (ser["rl"] - ser[best_k]).reshape(-1, 24).sum(1)
+        pooled.append(d)
+        x = {k: r[k] for k in ("net_rl", "net_static", "net_C1C4", "excess", "excess_vs_max_baseline", "mdd_rl",
+                               "mdd_static", "mdd_C1C4", "trades", "entry_deviation_ratio", "open_nonhold_ratio",
+                               "deviate_entries", "nonhold_open", "reward", "dd_pen", "to_pen", "identity_err",
+                               "gross_reserved_max")}
+        x.update(net_G3_ONLY=r["net_static"], mdd_G3_ONLY=r["mdd_static"], paired_baseline=best_k)
+        if with_boot:
+            x["boot_p05"] = {str(bl): boot_p05(d, bl) for bl in (20, 60, 120)}
+        out["cells"][c] = x
+    if with_boot:
+        pm = np.mean(pooled, axis=0)
+        out["pooled_boot_p05"] = {str(bl): boot_p05(pm, bl) for bl in (20, 60, 120)}
+    return out
+
+
+def cmd_pilot_g3(args) -> None:
+    import torch
+    from btcusdt_quant.rl import allocator_env as AE, allocator_ppo as AP
+    t0 = time.time()
+    PD = OUT / "pilot_g3"
+    PD.mkdir(parents=True, exist_ok=True)
+    fold = "F4"
+    train, val = FOLDS_A2[fold]
+    cells = {c: AE.load_cell(c, fold=fold, allow_test=False) for c in SMOKE_COUNTS}
+    cfg = AP.AllocPPOConfig(total_updates=123, lr=1e-3, entry_bias=2.5, open_bias=2.5, ent_coef=0.001,
+                            ent_decay_frac=0.8, target_kl=0.01, active_sleeves=("G3_LONG", "G3_SHORT"),
+                            ckpt_score="max_baseline")
+    seeds = [int(x) for x in str(getattr(args, "seeds", "0,1,2")).split(",")]
+    comps = {"C1C4": C1C4_W}
+
+    def trainer(seed):
+        return AP.Trainer(cells, SMOKE_COUNTS, G3_ONLY_W, train, val, cfg, seed=seed, fold=fold, comparators=comps)
+
+    rep: dict = {"spec": {"fold": fold, "train": list(train), "val": list(val), "counts": SMOKE_COUNTS,
+                          "cfg": dataclasses_asdict(cfg), "seeds": seeds, "reward_comparator": G3_ONLY_W,
+                          "score_baselines": {"G3_ONLY": G3_ONLY_W, "C1C4": C1C4_W}, "val_at": PILOT_VAL_AT,
+                          "val_device": "cpu batched"}, "seeds": {}}
+    try:
+        AP.Trainer(cells, SMOKE_COUNTS, G3_ONLY_W, FOLDS_A2["F3"][0], FOLDS_A2["F3"][1], cfg, seed=0, fold="F3")
+        fold_refused = False
+    except ValueError:
+        fold_refused = True
+    best_models, contracts_u = [], []
+    state7 = None
+    for seed in seeds:
+        ts = time.time()
+        tr = trainer(seed)
+        R = {"updates": [], "val": {}, "val_sec": {}}
+        v = tr.validate(device="cpu")
+        R["val"]["0"] = val_report(v, with_boot=False)
+        if seed == seeds[0]:                                  # batched vs serial (CPU) at u0
+            vs = tr.validate(batched=False, device="cpu")
+            same = all(all(np.array_equal(x[0], y[0]) and np.array_equal(x[1], y[1])
+                           for x, y in zip(v["_actions"][c], vs["_actions"][c])) for c in v["cells"])
+            num = max(abs(v["cells"][c][k] - vs["cells"][c][k]) for c in v["cells"] for k in ("net_rl", "mdd_rl"))
+            rep["val_parity"] = {"actions_equal": same, "net_mdd_max_abs": num}
+        u0_reward_zero = all(c["reward"] == 0.0 for c in v["cells"].values())
+        best = {"score": v["score"], "update": 0, "state": copy_state(tr)} if not v["all_flat"] else \
+            {"score": -math.inf, "update": -1, "state": None}
+        for u in range(1, cfg.total_updates + 1):
+            tu = time.time()
+            rec = tr.run_update()
+            rec["sec"] = round(time.time() - tu, 2)
+            if u not in PILOT_VAL_AT:
+                rec.pop("heads", None)
+            R["updates"].append(rec)
+            if seed == seeds[0] and u == 7:
+                state7 = tr.state_dict()
+            if u in PILOT_VAL_AT:
+                tv = time.time()
+                v = tr.validate(device="cpu")
+                R["val"][str(u)] = val_report(v, with_boot=False)
+                R["val_sec"][str(u)] = round(time.time() - tv, 1)
+                if not v["all_flat"] and v["score"] > best["score"]:
+                    best = {"score": v["score"], "update": u, "state": copy_state(tr)}
+                log(f"pilot seed {seed} u{u}: score {v['score']:.1f} dev "
+                    f"{np.mean([c['entry_deviation_ratio'] for c in v['cells'].values()]):.4f} "
+                    f"ent {rec['entropy_active_heads']:.3f} kl {rec['approx_kl']:.4f} ev {rec['explained_var']:.3f}")
+        R["best"] = {"score": best["score"], "update": best["update"]}
+        m = AP.AllocatorActorCritic(hidden=cfg.hidden, static_weights=G3_ONLY_W, entry_bias=cfg.entry_bias,
+                                    open_bias=cfg.open_bias)
+        m.load_state_dict(best["state"])
+        m.eval()
+        best_models.append(m)
+        torch.save({"model": best["state"], "identity": tr.identity, "update": best["update"], "score": best["score"]},
+                   PD / f"best_seed{seed}.pt")
+        tr.model.load_state_dict(best["state"])
+        vb = tr.validate(device="cpu")
+        R["best_val"] = val_report(vb, with_boot=True)
+        contracts_u.append({"illegal": sum(x["illegal"] for x in R["updates"]),
+                            "nonfinite": sum(x["nonfinite"] for x in R["updates"]),
+                            "identity_err": max([x["identity_err"] for x in R["updates"]]
+                                                + [c["identity_err"] for vv in R["val"].values() for c in vv["cells"].values()]),
+                            "gross": max([x["gross_reserved_max"] for x in R["updates"]]
+                                         + [c["gross_reserved_max"] for vv in R["val"].values() for c in vv["cells"].values()]),
+                            "u0_reward_zero": u0_reward_zero})
+        R["curves"] = {k: [x[k] for x in R["updates"]] for k in ("entropy_active_heads", "approx_kl", "approx_kl_max",
+                                                                 "explained_var", "kl_early_stop", "reward",
+                                                                 "net_excess", "nonzero_entry_ratio", "new_alloc")}
+        R["runtime_sec"] = round(time.time() - ts, 1)
+        rep["seeds"][str(seed)] = R
+        registry.record(REGISTRY, {"experiment": f"RL allocator pilot (e) F4 G3-only heads seed {seed}", "role": "trial",
+                                   "n_trials": 1, "n_simulations": 1,
+                                   "config": {"fold": fold, "seed": seed, "cfg": dataclasses_asdict(cfg),
+                                              "reward_comparator": "G3_ONLY", "score": "min_cell[RL - max(C1C4, G3_ONLY)]"},
+                                   "result_summary": {"best_update": best["update"], "best_score": best["score"],
+                                                      "val_scores": {k: x["score"] for k, x in R["val"].items()}}})
+        log(f"pilot seed {seed} done best u{best['update']} score {best['score']:.1f} {R['runtime_sec']}s")
+    # split resume (first seed): 3 updates, disk checkpoint, fresh trainer, 4 updates == main run at update 7
+    tb = trainer(seeds[0])
+    for _ in range(3):
+        tb.run_update()
+    torch.save(tb.state_dict(), PD / "split_u3.pt")
+    del tb
+    tc = trainer(seeds[0])
+    tc.load_state_dict(torch.load(PD / "split_u3.pt", map_location="cpu", weights_only=False))
+    for _ in range(4):
+        tc.run_update()
+    s7 = tc.state_dict()
+    split_ok = all(AP.tensors_equal(state7[k], s7[k]) for k in ("model", "opt", "env", "torch_rng", "cuda_rng", "update"))
+    c4 = {c: AE.load_cell(c, fold=fold, cadence_h=4, allow_test=False) for c in ("o2_p0.5", "o5_p2.0")}
+    cfg4 = AP.AllocPPOConfig(**{**dataclasses_asdict(cfg), "cadence_h": 4, "n_steps": 32})
+    t4 = AP.Trainer(c4, {"o2_p0.5": 8, "o5_p2.0": 8}, G3_ONLY_W, train, val, cfg4, seed=0, fold=fold)
+    r4 = t4.run_update()
+    ok4 = cfg4.episode_steps == 540 and r4["illegal"] == 0 and r4["nonfinite"] == 0
+    # ensemble of the per-seed best checkpoints
+    te = trainer(seeds[0])
+    ve = te.validate(device="cpu", policy=AP.ensemble_policy(best_models))
+    E = val_report(ve, with_boot=True)
+    rep["ensemble"] = E
+    rep["contracts"] = {
+        "illegal_actions==0": all(c["illegal"] == 0 for c in contracts_u),
+        "nan_inf==0": all(c["nonfinite"] == 0 for c in contracts_u),
+        "reward_identity<=1e-6": all(c["identity_err"] <= 1e-6 for c in contracts_u)
+        and all(c["identity_err"] <= 1e-6 for c in E["cells"].values()),
+        "gross_reserved<=2": all(c["gross"] <= C_GROSS + 1e-12 for c in contracts_u),
+        "update0_val_reward==0": all(c["u0_reward_zero"] for c in contracts_u),
+        "split_resume_exact": split_ok, "fold_mismatch_refused": fold_refused,
+        "val_batched==serial": rep["val_parity"]["actions_equal"] and rep["val_parity"]["net_mdd_max_abs"] == 0.0,
+        "cadence_4h_ok": ok4}
+    cells_e = E["cells"].values()
+    rep["pass_criteria"] = {
+        "contracts_9of9": all(rep["contracts"].values()),
+        "ensemble_differs_from_baseline": sum(c["deviate_entries"] + c["nonhold_open"] for c in cells_e) > 0,
+        "net4>0_6of6": all(c["net_rl"] > 0 for c in cells_e),
+        "net4>max(C1C4,G3_ONLY)_6of6": all(c["excess_vs_max_baseline"] > 0 for c in cells_e),
+        "mdd<=G3_ONLY_6of6": all(c["mdd_rl"] <= c["mdd_G3_ONLY"] for c in cells_e),
+        "boot_p05>0_all_cells_20_60_120": all(p > 0 for c in cells_e for p in c["boot_p05"].values())}
+    rep["pilot_pass"] = bool(all(rep["pass_criteria"].values()))
+    rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
+               runtime_sec=round(time.time() - t0, 1), test_accessed=False,
+               boot_note="paired daily excess vs the cell's larger baseline (C1C4 or G3_ONLY); gate = every cell "
+                         "and every block; pooled (mean over cells) reported too",
+               code_sha256={k: sha(ROOT / f"btcusdt_quant/rl/{k}.py") for k in ("allocator_model", "allocator_ppo",
+                                                                                 "allocator_vec_env", "allocator_env")})
+    dump(PD / "pilot_report.json", rep)
+    log(f"pilot (e) {'PASS' if rep['pilot_pass'] else 'FAIL'} {rep['pass_criteria']} contracts {rep['contracts']}")
+
+
+def copy_state(tr):
+    import copy as _c
+    return {k: v.detach().cpu().clone() for k, v in _c.deepcopy(tr.model.state_dict()).items()}
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
-                                       "vec-check", "baselines", "smoke"))
+                                       "vec-check", "baselines", "smoke", "pilot-g3"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
+    ap.add_argument("--seeds", default="0,1,2")
     ap.add_argument("--only", default="g3,c,ax")
     ap.add_argument("--no-registry", action="store_true")
     ap.add_argument("--allow-test-parity", action="store_true",
@@ -2304,6 +2489,8 @@ def main(argv=None) -> None:
         return cmd_baselines(args)
     if args.command == "smoke":
         return cmd_smoke(args)
+    if args.command == "pilot-g3":
+        return cmd_pilot_g3(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)

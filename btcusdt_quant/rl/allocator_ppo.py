@@ -55,6 +55,8 @@ class AllocPPOConfig:
     episode_days: int = 90
     entry_bias: float = 4.0
     open_bias: float = 4.0
+    active_sleeves: tuple | None = None   # heads restricted to these sleeves; others fixed OFF / HOLD (allocation 0)
+    ckpt_score: str = "max_baseline"      # "max_baseline": min_cell[net_rl - max(static, comparators)]; "static"
 
     @property
     def episode_steps(self) -> int:
@@ -143,7 +145,7 @@ def sample(logits: torch.Tensor) -> torch.Tensor:
 
 class Trainer:
     def __init__(self, cells: dict, counts: dict, static_w, train: tuple, val: tuple, cfg: AllocPPOConfig,
-                 seed: int, fold: str, device: str | None = None, env=None):
+                 seed: int, fold: str, device: str | None = None, env=None, comparators: dict | None = None):
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         torch.use_deterministic_algorithms(True, warn_only=True)
         torch.backends.cudnn.benchmark = False
@@ -163,9 +165,25 @@ class Trainer:
                                           open_bias=cfg.open_bias).to(self.device)
         self.opt = torch.optim.AdamW(self.model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
         self.update = 0
+        self.comparators = {k: np.asarray(v, float) for k, v in (comparators or {}).items()}
+        act = C.SLEEVES if cfg.active_sleeves is None else tuple(cfg.active_sleeves)
+        if not set(act) <= set(C.SLEEVES):
+            raise ValueError(f"unknown active sleeves {act}")
+        self.inactive = torch.as_tensor([s not in act for s in C.SLEEVES], device=self.device)
         self.identity = {"fold": fold, "cadence_h": cfg.cadence_h, "counts": dict(counts), "train": list(train),
                          "val": list(val), "static_weights": [float(x) for x in static_w], "seed": seed,
-                         "cfg": asdict(cfg), "cells": {c: cd.identity for c, cd in sorted(cells.items())}}
+                         "cfg": asdict(cfg), "comparators": {k: v.tolist() for k, v in self.comparators.items()},
+                         "cells": {c: cd.identity for c, cd in sorted(cells.items())}}
+
+    def restrict(self, t: dict) -> dict:
+        """Inactive sleeves: entry OFF only, open HOLD only (single-legal heads: no log-prob / entropy)."""
+        if not bool(self.inactive.any()):
+            return t
+        inact = self.inactive.to(t["m_entry"].device)
+        me, mo = t["m_entry"].clone(), t["m_open"].clone()
+        me[:, inact, 1:] = False
+        mo[:, inact, 1:] = False
+        return {**t, "m_entry": me, "m_open": mo}
 
     # ---------------------------------------------------------------- state
     def state_dict(self) -> dict:
@@ -200,7 +218,7 @@ class Trainer:
             for _ in range(cfg.n_steps):
                 o = env.observation()
                 log["nonfinite"] += int(sum((~np.isfinite(o[k])).sum() for k in OBS_KEYS))
-                t = to_t(o, dev)
+                t = self.restrict(to_t(o, dev))
                 le, lo, v = forward(self.model, t)
                 ae, ao = sample(le), sample(lo)
                 lp, _, _ = joint(le, lo, t["m_entry"], t["m_open"], ae, ao)
@@ -223,7 +241,7 @@ class Trainer:
                 buf["values"].append(v)
                 buf["rewards"].append(torch.as_tensor(rew, dtype=torch.float32, device=dev))
                 buf["dones"].append(torch.as_tensor(done, dtype=torch.float32, device=dev))
-            last_v = forward(self.model, to_t(env.observation(), dev))[2]
+            last_v = forward(self.model, self.restrict(to_t(env.observation(), dev)))[2]
         after = env.counters()
         for k in COUNTERS:
             d = after[k] - before[k]
@@ -317,32 +335,44 @@ class Trainer:
         return out
 
     # ---------------------------------------------------------------- validation
-    def validate(self, batched: bool = True, device=None) -> dict:
-        """Deterministic argmax over the full validation window, one continuous episode per cell. batched: all cells
-        advance together and share one forward per step (B = number of cells); otherwise B = 1 per cell."""
+    def validate(self, batched: bool = True, device=None, policy=None) -> dict:
+        """Deterministic policy over the full validation window, one continuous episode per cell. batched: all cells
+        advance together and share one forward per step (B = number of cells); otherwise B = 1 per cell. policy(t) ->
+        (entry idx, open idx) tensors; default argmax of this trainer's model. Comparator static books run alongside
+        (RL actions OFF) on the same data; per-step series are returned for paired bootstrap."""
         device = torch.device(device) if device is not None else self.device
         model = self.model if device == self.device else copy.deepcopy(self.model).to(device)
+        if policy is None:
+            def policy(t):
+                le, lo, _ = forward(model, t)
+                return le.argmax(-1), lo.argmax(-1)
         cad = self.cfg.cadence_h
         a, b = (pd.Timestamp(x, tz="UTC").value for x in self.val_win)
         L = (b - a) // (cad * HOUR)
         names = list(self.cells)
         envs = {c: AV.VecAllocatorEnv(self.cells[c], 1, cadence_h=cad, static_weights=self.static_w) for c in names}
+        cmp_env = {(c, k): AV.VecAllocatorEnv(self.cells[c], 1, cadence_h=cad, static_weights=w)
+                   for c in names for k, w in self.comparators.items()}
         obs = {c: envs[c].reset(np.array([a]), L) for c in names}
+        for e in cmp_env.values():
+            e.reset(np.array([a]), L)
+        z = np.zeros((1, len(C.SLEEVES)), np.int64)
         acc = {c: {"net_rl": 0.0, "net_static": 0.0, "reward": 0.0, "dd_pen": 0.0, "to_pen": 0.0,
                    "nonzero_entries": 0, "active_entries": 0, "deviate_entries": 0, "nonhold_open": 0,
                    "active_open": 0, "gross_reserved_max": 0.0, "identity_err": 0.0} for c in names}
+        series = {c: {"rl": np.zeros(L), "static": np.zeros(L), **{k: np.zeros(L) for k in self.comparators}}
+                  for c in names}
         actions = {c: [] for c in names}
         static_idx = torch.as_tensor([C.LEVELS.index(float(w)) for w in self.static_w], device=device)
         groups = [names] if batched else [[c] for c in names]
         with torch.no_grad():
-            for _ in range(L):
+            for step in range(L):
                 for grp in groups:
                     oo = {k: np.concatenate([obs[c][k] for c in grp]) for k in OBS_KEYS}
                     oo["m_entry"] = np.concatenate([obs[c]["masks"][0] for c in grp])
                     oo["m_open"] = np.concatenate([obs[c]["masks"][2] for c in grp])
-                    t = to_t(oo, device)
-                    le, lo, _ = forward(model, t)
-                    ae, ao = le.argmax(-1), lo.argmax(-1)
+                    t = self.restrict(to_t(oo, device))
+                    ae, ao = policy(t)
                     act_e = t["m_entry"].sum(-1) >= 2
                     act_o = t["m_open"].sum(-1) >= 2
                     ae_n, ao_n = ae.cpu().numpy().astype(np.int64), ao.cpu().numpy().astype(np.int64)
@@ -354,7 +384,7 @@ class Trainer:
                         r_["active_open"] += int(act_o[j].sum())
                         r_["nonhold_open"] += int(((ao[j] > 0) & act_o[j]).sum())
                         actions[c].append((ae_n[j].copy(), ao_n[j].copy()))
-                        o, r, done, info = envs[c].step(ae_n[j:j + 1], np.zeros((1, 7), np.int64), ao_n[j:j + 1])
+                        o, r, done, info = envs[c].step(ae_n[j:j + 1], z, ao_n[j:j + 1])
                         ex, dd, to = reward_parts(info)
                         r_["identity_err"] = max(r_["identity_err"], float(np.abs(r - (ex - dd - to)).max()))
                         r_["net_rl"] += float(info["net_rl"][0])
@@ -363,6 +393,11 @@ class Trainer:
                         r_["dd_pen"] += float(dd[0])
                         r_["to_pen"] += float(to[0])
                         r_["gross_reserved_max"] = max(r_["gross_reserved_max"], float(info["gross_reserved"][0]))
+                        series[c]["rl"][step] = info["net_rl"][0]
+                        series[c]["static"][step] = info["net_st"][0]
+                        for k in self.comparators:
+                            _, _, _, ci = cmp_env[(c, k)].step(z, z, z)
+                            series[c][k][step] = ci["net_st"][0]
                         obs[c] = o
         res = {}
         for c in names:
@@ -370,13 +405,46 @@ class Trainer:
             r_["excess"] = r_["net_rl"] - r_["net_static"]
             r_["trades"] = int(envs[c].rl.new_alloc[0])
             r_["mdd_rl"], r_["mdd_static"] = float(envs[c].rl.mdd[0]), float(envs[c].st.mdd[0])
+            for k in self.comparators:
+                r_[f"net_{k}"] = float(series[c][k].sum())
+                r_[f"mdd_{k}"] = float(cmp_env[(c, k)].st.mdd[0])
+            r_["max_baseline"] = max([r_["net_static"]] + [r_[f"net_{k}"] for k in self.comparators])
+            r_["excess_vs_max_baseline"] = r_["net_rl"] - r_["max_baseline"]
             r_["all_flat"] = r_["trades"] == 0
             r_["entry_deviation_ratio"] = r_["deviate_entries"] / max(r_["active_entries"], 1)
             r_["open_nonhold_ratio"] = r_["nonhold_open"] / max(r_["active_open"], 1)
             res[c] = r_
-        return {"cells": res, "worst_cell_excess": min(r["excess"] for r in res.values()),
-                "all_flat": all(r["all_flat"] for r in res.values()),
-                "flat_cells": int(sum(r["all_flat"] for r in res.values())), "_actions": actions}
+        out = {"cells": res, "worst_cell_excess": min(r["excess"] for r in res.values()),
+               "all_flat": all(r["all_flat"] for r in res.values()),
+               "flat_cells": int(sum(r["all_flat"] for r in res.values())), "_actions": actions, "_series": series}
+        out["score"] = checkpoint_score(res, self.cfg.ckpt_score)
+        return out
+
+
+def checkpoint_score(cells: dict, mode: str = "max_baseline") -> float:
+    """Checkpoint key: min over cells of RL net4 minus the best baseline ("max_baseline": max of the env static book
+    and every comparator) or minus the env static book only ("static")."""
+    if mode == "static":
+        return min(r["net_rl"] - r["net_static"] for r in cells.values())
+    if mode == "max_baseline":
+        return min(r["net_rl"] - r["max_baseline"] for r in cells.values())
+    raise ValueError(f"unknown checkpoint score {mode!r}")
+
+
+def ensemble_policy(models: list):
+    """Design section 5: sleeve-wise median of the members' argmax entry levels; EXIT when a majority exits,
+    otherwise the most conservative non-exit open action is HOLD."""
+    def pol(t):
+        es, os_ = [], []
+        for m in models:
+            le, lo, _ = forward(m, t)
+            es.append(le.argmax(-1))
+            os_.append(lo.argmax(-1))
+        e = torch.stack(es).sort(0).values[len(models) // 2]
+        o = torch.stack(os_)
+        ex = (o == C.OPEN_ACTIONS.index("EXIT")).sum(0) * 2 > len(models)
+        return e, torch.where(ex, torch.full_like(e, C.OPEN_ACTIONS.index("EXIT")), torch.zeros_like(e))
+    return pol
 
 
 def tensors_equal(a, b) -> bool:

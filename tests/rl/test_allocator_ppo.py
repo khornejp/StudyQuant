@@ -84,3 +84,40 @@ def test_single_update_moves_logprob_with_advantage():
     rec = tr.run_update()
     p1, _ = prob_level1(tr)
     assert rec["grad_steps"] == 4 and not rec["kl_early_stop"] and p1 > p0
+
+
+def test_checkpoint_score_uses_max_baseline():
+    cells = {"a": {"net_rl": 100.0, "net_static": 50.0, "max_baseline": 120.0},
+             "b": {"net_rl": 300.0, "net_static": 250.0, "max_baseline": 250.0}}
+    assert AP.checkpoint_score(cells, "max_baseline") == -20.0          # cell a loses to its comparator
+    assert AP.checkpoint_score(cells, "static") == 50.0
+    try:
+        AP.checkpoint_score(cells, "bogus")
+        raise AssertionError("unknown mode accepted")
+    except ValueError:
+        pass
+
+
+def test_inactive_sleeves_are_fixed_and_ensemble_median():
+    cfg = AP.AllocPPOConfig(n_steps=4, minibatch=64, active_sleeves=("G3_LONG", "G3_SHORT"))
+    tr = AP.Trainer({}, {"toy": N}, [1.0, 1.0, 0, 0, 0, 0, 0], ("a", "b"), ("c", "d"), cfg, seed=0, fold="F4",
+                    device="cpu", env=ToyEnv())
+    t = tr.restrict(AP.to_t(tr.env.observation(), tr.device))
+    assert not t["m_entry"][:, 2:, 1:].any() and t["m_entry"][:, 0].all()
+    rec = tr.run_update()
+    assert rec["heads"]["C1v2"]["entry_active"] == 0 and rec["heads"]["G3_LONG"]["entry_active"] == 4 * N
+    # ensemble: median level, majority exit
+    class M(torch.nn.Module):
+        def __init__(self, e, o):
+            super().__init__()
+            self.e, self.o = e, o
+
+        def forward(self, *a):
+            le = torch.full((1, 7, 5), -1.0)
+            le[0, 0, self.e] = 1.0
+            lo = torch.full((1, 7, 4), -1.0)
+            lo[0, 0, self.o] = 1.0
+            return le, lo, torch.zeros(1)
+    pol = AP.ensemble_policy([M(0, 3), M(4, 3), M(2, 0)])
+    e, o = pol({k: None for k in ("seq", "seq_nan", "seq_pad", "static", "account", "m_entry", "m_open")})
+    assert e[0, 0] == 2 and o[0, 0] == 3
