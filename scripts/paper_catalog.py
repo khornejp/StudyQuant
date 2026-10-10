@@ -17,6 +17,7 @@ from btcusdt_quant.paper import catalog, detector, g3, leverage  # noqa: E402
 from btcusdt_quant.paper.config import load_config  # noqa: E402
 from btcusdt_quant.paper.store import (PaperStore, exclusive_lock, refuse_missing_funding_backfill,  # noqa: E402,F401
                                        refuse_pending_switch, utc_text)
+from btcusdt_quant.paper.trade_ids import migrate as migrate_trade_ids  # noqa: E402
 
 CYCLE_SECONDS = 60            # predictions and live decisions every minute
 SIGNAL_EVERY = 5              # dashboard condition history is heavier; refresh every 5 cycles
@@ -374,6 +375,7 @@ def main() -> None:
     with PaperStore(config.sqlite_path) as store:
         refuse_pending_switch(store)
         refuse_missing_funding_backfill(store)
+        migrate_trade_ids(store.connection)
         count = 0
         while True:
             try:

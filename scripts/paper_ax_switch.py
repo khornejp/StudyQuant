@@ -76,7 +76,7 @@ def retired_hashes(store, books) -> dict:
                                           (table,)).fetchone()
         frame = (pd.read_sql_query(f"SELECT * FROM {table} WHERE book IN ({marks})", connection, params=names)
                  if exists and names else pd.DataFrame())
-        frame = frame.drop(columns=[c for c in ("id",) if c in frame])
+        frame = frame.drop(columns=[c for c in ("id", "trade_id") if c in frame])   # trade_id: derived, added later
         text = frame.sort_values(list(frame.columns)).to_csv(index=False) if len(frame) else ""
         out[table] = {"rows": int(len(frame)), "sha256": hashlib.sha256(text.encode()).hexdigest()}
     return out

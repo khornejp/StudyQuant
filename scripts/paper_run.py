@@ -16,6 +16,7 @@ from btcusdt_quant.paper.config import load_config
 from btcusdt_quant.paper.engine import PaperEngine
 from btcusdt_quant.paper.notify import TelegramNotifier
 from btcusdt_quant.paper.store import PaperStore, refuse_pending_switch
+from btcusdt_quant.paper.trade_ids import migrate as migrate_trade_ids
 
 
 def main() -> None:
@@ -38,6 +39,7 @@ def main() -> None:
         sys.exit(f"paper_run already running for {config.sqlite_path}")
     with PaperStore(config.sqlite_path) as store:
         refuse_pending_switch(store)
+        migrate_trade_ids(store.connection)
         collector = Collector(PaperEngine(store, config), f"{config.data_root}/raw")
         notifier = TelegramNotifier(store.path, config)
         completed = 0
