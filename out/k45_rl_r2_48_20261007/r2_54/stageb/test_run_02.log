@@ -1,0 +1,32 @@
+{
+ "long": {
+  "holm_p_le_0.05": false,
+  "bootstrap_lower_gt_0": false,
+  "net4_gt_0": false,
+  "n_eff_ge_100": true,
+  "positions_ge_100": true,
+  "pass": false,
+  "net8_report_only": -2010.024826054796,
+  "holm": {
+   "p": 0.43685631436856315,
+   "p_adj": 0.8737126287371263,
+   "rank": 1,
+   "opened": true
+  }
+ },
+ "short": {
+  "holm_p_le_0.05": false,
+  "bootstrap_lower_gt_0": false,
+  "net4_gt_0": true,
+  "n_eff_ge_100": true,
+  "positions_ge_100": true,
+  "pass": false,
+  "net8_report_only": 85.9722217119971,
+  "holm": {
+   "p": 0.43685631436856315,
+   "p_adj": 0.8737126287371263,
+   "rank": 2,
+   "opened": true
+  }
+ }
+}

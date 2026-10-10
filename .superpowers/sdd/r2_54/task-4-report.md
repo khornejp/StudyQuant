@@ -157,3 +157,59 @@ All 8 items are fixed with tests written first. Unlock was not run, and the test
   - No ledger, P&L, IC, bootstrap, oracle or A3 output was computed or viewed.
   - It is logged as ABORTED_BY_COORDINATOR_HOLD and counted as test run 1.
 - Manifest sha after the abort record: `28074c5f…`.
+
+## Round 3 (amendment A6) and test run 2
+
+- Freeze sha is `136cb62d` (A6: A5 suspended; R2-52A, k 1/1.5/2, A1–A4 in force).
+- `check_freeze` now requires A6. The registry check counts the 127 R2-54 trials; the registry total is now 5694.
+- Validation re-freeze now keeps the test-run log; the first attempt had wiped the list and was redone.
+- Rerun: all 240 rows are identical to the A4 run (max diff 0). Selection, gates, trace `d1534eaf` and checkpoint `521aae3b` are unchanged.
+- Commit `4b5caaa`. Full suite: 995 passed, 2 skipped.
+
+### Test run 2 (both sides; structure V5_continuous / 4h / CatBoost / k 2.0)
+
+Setup checks:
+- pre-2026 feature parity: identical;
+- 40 weekly checkpoints per side, 0 fallbacks, 0 blocked decisions;
+- 0 NO_ENTRY_E rows.
+
+| | long | short |
+|---|---|---|
+| cum 4 bps net | **−562.0** | **+1,290.0** |
+| cum 8 bps net (report only) | −2,010.0 | +86.0 |
+| completed positions | 362 | 301 |
+| data-end close | 0 | 0 |
+| fees / funding (bps) | 1,448 / −69.6 | 1,204 / +64.6 |
+| exit mix: flag | 239 (+2,192) | 205 (+2,111) |
+| exit mix: stop | 73 (−12,087) | 53 (−7,633) |
+| exit mix: trail | 50 (+9,333) | 43 (+6,812) |
+| win rate / mean hold | 47.5% / 469 min | 49.8% / 349 min |
+
+Statistics. IC is side-independent, so both sides share one value:
+- IC 0.00364.
+- Bootstrap: lower bound −0.0280, p = 0.437 (n = 26,768).
+- Holm-adjusted p = 0.874 for each side.
+- N_eff = 1,673.
+
+Gates (A4):
+- long FAIL: Holm, bootstrap lower bound and 4 bps net all fail.
+- short FAIL: Holm and bootstrap lower bound fail; 4 bps net > 0 passes.
+
+Monthly 4 bps P&L (Jan..Oct):
+- long: −429, −1,423, +803, −21, +91, −947, +132, +1,399, +52, −219
+- short: +1,651, +198, −217, −642, +452, +1,793, −1,262, −206, −278, −199
+
+Oracles (4 bps net, NON_SELECTABLE):
+
+| oracle | long | short |
+|---|---|---|
+| perfect return | +51,292 | +51,221 |
+| hindsight best horizon | +51,676 | +51,961 |
+| sign-only, train median | +50,395 | +50,665 |
+
+A3 taker diagnostic (10-01..10-07, identical continuous replay):
+- Both sides: yhat difference 0 and every position identical.
+- The swap is real: 2,004 of 2,016 taker values changed (max 2.45e-3).
+- The model uses only `v2_d_taker_lsr_1d` (importance 0.17). The REST differences cross no CatBoost split border.
+
+Records: manifest sha `3c05d908…`; `test_runs.jsonl` sha `5072ea7a…`; artifacts in `stageb/test/run_02/`.
