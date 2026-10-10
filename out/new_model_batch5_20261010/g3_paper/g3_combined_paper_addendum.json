@@ -1,6 +1,6 @@
 {
-  "book": "G3_COMBINED",
-  "status": "staged (config/paper.g3_staged.toml, start __T_ADD__ placeholder); not live",
+  "book": "G3_COMBINED = paper books G3_LONG (long sleeve) + G3_SHORT (short sleeve)",
+  "status": "staged (config/paper.g3_staged.toml, G3_LONG / G3_SHORT start __T_ADD__ placeholder); not live",
   "verdict_codex": "paper only, no real capital, no x3 (Codex B5 review, session 01a124e0-8cc4-76b2-9038-1e5868334e7e: 조건부 YES live paper 후보; 실자본·x3 NO)",
   "frozen_hypothesis": "normalised score/SVI keep fixed boundaries; funding gate uses previous-90-event robust-z raw boundary median90 + c*1.4826*MAD90 (c in {-0.5,0}); only target vol adapts (trailing sigma_ann quantile or V-ENS mean); 0.5 F42 + 0.5 S180 long ensemble dilutes long profit concentration; maker 4 bps rt",
   "source_run": {
@@ -64,20 +64,30 @@
     "not_ready": "sleeve flat, weight 0"
   },
   "capital": "common NAV; each sleeve <= 1x, gross <= 2x (net = wL - wS); P&L is the plain sum of sleeve bps of NAV; no x3 overlay",
-  "state_machines": "two independent sleeves (separate batch-2 simulate runs on the sleeve-masked target)",
+  "state_machines": "two independent sleeves, each an incremental state machine over closed 1m bars (FLAT -> ENTRY_PENDING -> OPEN -> EXIT_PENDING -> FLAT) = minute-by-minute batch-2 simulate(kind='state'); flat start at the book start, no inherited position",
   "paper_implementation": {
     "module": "btcusdt_quant/paper/g3.py",
-    "module_sha256": "43903d3de68aa90791e766d8e30b948056334925256711d33690c1d3736d7365",
-    "engine": "out/run_new_model_batch5_20261010.py (+ batch4/3/2/1) imported unchanged (sha256 c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428)",
-    "inputs": "DEV market artifacts/btcusdt_2020_2026h1.parquet < 2026-01-01 + R2-54 FINAL snapshot market_1m [2026-01-01, 2026-10-08) + live klines_1m >= 2026-10-08; DEV funding artifacts/funding_2020_2026h1 < 2026-01-01 + live funding table >= 2026-01-01 and < data end; missing minute -> book not updated (fail closed)",
-    "recompute": "whole history recomputed every catalog cycle from a flat start at the book start (decisions with T >= start)",
-    "db_rows": "trades (closed sleeve trades, PESS, candidate G3_LONG:/G3_SHORT:<config id>, exit_reason TARGET_CHANGE), daily_pnl (PESS, 1m MTM net4 incl. open trades and reserved 2 bps exit fee), catalog_g3_state (one row per sleeve); no positions row, no OPT rows, no x3 / Telegram / dashboard",
-    "parity_script_sha256": "d86e3a644546196997a69b9bb6abece351203690f48f233733319deb6352c4a2"
+    "module_sha256": "c20275a8b49fce98ef780fd33f3494a02befe317b4dcca431945f89507c5efa2",
+    "code_hash": "6cfc25f83d82407a6ff91368974d6542944424c38f54c2ad34734bcf8177244d",
+    "engine": "out/run_new_model_batch5_20261010.py (+ batch4/3/2/1) imported unchanged (sha256 c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428); build_state / core_signal only",
+    "signal_inputs": "4h decision-bar closes since 2020-01-01 (DEV artifacts/btcusdt_2020_2026h1.parquet < 2026-01-01 + R2-54 FINAL snapshot [2026-01-01, 2026-10-08) cached as ~15k floats; live klines_1m >= 2026-10-08) + all funding events (DEV archive < 2026-01-01, live funding table >= 2026-01-01, < data end); identical to the research inputs, so signals are bit-exact; computed only on cycles that contain a 4h decision bar",
+    "storage": {
+      "g3_events": "append-only (INSERT OR IGNORE, PK book/event_time/event_type): DECISION, ENTRY_ORDER, ENTRY_FILL, ENTRY_EXPIRED, EXIT_ORDER, EXIT_REQUOTE, EXIT_FILL; payload + code_hash + config_hash + observed_at",
+      "g3_state": "resume point per sleeve book (state machine + last processed bar), written in the same transaction as its events",
+      "trades": "closed trades appended once (INSERT OR IGNORE), PESS, candidate = config id, exit_reason TARGET_CHANGE; batch-2 Book net4",
+      "daily_pnl": "derived from the stored ledger (batch-2 Book 1m MTM net4 incl. open trade + reserved 2 bps exit fee), upsert per UTC day since the start day; never deleted",
+      "g3_health": "last_success, last_error, last_error_at, last_bar, stale (data end - next bar > 5 min)"
+    },
+    "fail_closed": "missing minute -> the sleeve stops before the gap, the cycle transaction rolls back, g3_health error + stale; missing 4h bar or signal -> error",
+    "not_written": "positions, OPT rows, x3, Telegram, dashboard",
+    "full_replay": "verification only: scripts/paper_g3_parity.py"
   },
   "parity": {
     "script": "scripts/paper_g3_parity.py",
+    "script_sha256": "f339a533cfd92f3442d60b681cd57105195fe5f97ccbe1727ebbb03aa7a500ab",
     "report": "out/new_model_batch5_20261010/g3_paper/paper_g3_parity.json",
     "match": true,
+    "python": "venv_btcusdt (pandas 2.3.3, numpy 1.26.4)",
     "sleeve_vs_combined": {
       "n_compared": 48,
       "max_abs_diff": 0.0,
@@ -89,57 +99,93 @@
       "DEV-B": 8637.42735088278,
       "TEST": 3299.0488348639283
     },
-    "full_replay": {
-      "market_equal": true,
-      "combined_pnl_1m_equal": true,
-      "max_gross": 2.0,
-      "overlap_minutes": 1,
-      "sleeves": {
-        "long": {
-          "decisions": 14832,
+    "incremental_flat_start_2026": {
+      "cycles": 220,
+      "combined_TEST_net4": 3299.0488348639337,
+      "books": {
+        "G3_LONG": {
+          "decisions": [
+            1681,
+            1681
+          ],
           "side_equal": true,
           "weight_max_abs_diff": 0.0,
-          "trades": [
-            116,
-            116
+          "orders": [
+            17,
+            17
           ],
-          "closed": 115,
-          "trades_equal": true,
           "orders_equal": true,
-          "pnl_1m_equal": true,
-          "window_max_abs_diff": 0.0
+          "trades": [
+            15,
+            15
+          ],
+          "closed": 14,
+          "trades_equal": true,
+          "trades_table_net_max_abs_diff": 0.0,
+          "pnl_1m_max_abs_diff": 0.0,
+          "TEST_net4": [
+            1684.1156295756487,
+            1684.115629575647
+          ]
         },
-        "short": {
-          "decisions": 14832,
+        "G3_SHORT": {
+          "decisions": [
+            1681,
+            1681
+          ],
           "side_equal": true,
           "weight_max_abs_diff": 0.0,
-          "trades": [
-            183,
-            183
+          "orders": [
+            24,
+            24
           ],
-          "closed": 183,
-          "trades_equal": true,
           "orders_equal": true,
-          "pnl_1m_equal": true,
-          "window_max_abs_diff": 0.0
+          "trades": [
+            21,
+            21
+          ],
+          "closed": 21,
+          "trades_equal": true,
+          "trades_table_net_max_abs_diff": 0.0,
+          "pnl_1m_max_abs_diff": 0.0,
+          "TEST_net4": [
+            1614.9332052882853,
+            1614.9332052882808
+          ]
         }
       },
-      "stored_ledger_daily_max_abs_diff": 3.126388037344441e-13
-    },
-    "flat_start_2026": {
-      "TEST_net4": 3299.0488348639337,
-      "ledger": {
-        "long": {
-          "trades": 15,
-          "closed": 14,
-          "first_entry": "2026-04-22 16:10:00+00:00"
-        },
-        "short": {
-          "trades": 21,
-          "closed": 21,
-          "first_entry": "2026-01-29 16:04:00+00:00"
-        }
+      "event_counts": {
+        "G3_LONG|DECISION": 1681,
+        "G3_LONG|ENTRY_EXPIRED": 2,
+        "G3_LONG|ENTRY_FILL": 15,
+        "G3_LONG|ENTRY_ORDER": 17,
+        "G3_LONG|EXIT_FILL": 14,
+        "G3_LONG|EXIT_ORDER": 14,
+        "G3_SHORT|DECISION": 1681,
+        "G3_SHORT|ENTRY_EXPIRED": 3,
+        "G3_SHORT|ENTRY_FILL": 21,
+        "G3_SHORT|ENTRY_ORDER": 24,
+        "G3_SHORT|EXIT_FILL": 21,
+        "G3_SHORT|EXIT_ORDER": 21,
+        "G3_SHORT|EXIT_REQUOTE": 1
       }
+    },
+    "stored_ledger": {
+      "G3_LONG": {
+        "closed": [
+          14,
+          14
+        ],
+        "match": true
+      },
+      "G3_SHORT": {
+        "closed": [
+          21,
+          21
+        ],
+        "match": true
+      },
+      "match": true
     },
     "live_db_overlap": {
       "klines_overlap_rows": 142560,
@@ -150,14 +196,15 @@
         840
       ],
       "funding_rows_differing": 0
-    },
-    "python": "venv_btcusdt (pandas 2.3.3, numpy 1.26.4)"
+    }
   },
   "risks": [
-    "recompute-from-history: a late or revised funding / kline row changes past decisions (no decision freeze table)",
+    "no x3 / dashboard / Telegram: G3 is visible in the DB only (g3_events, g3_state, g3_health, trades, daily_pnl)",
+    "daily_pnl is derived (upsert): a revised funding row can change a past day's MTM; decisions, orders, fills and closed trades are immutable",
     "TEST long sleeve 14 closed, top1 trade 59.29% of long net (Codex); long boot60 TEST negative",
     "MAD0 fallback drives DEV short selection (DEV-FULL short 5787.7475 vs 4661.7445 with MAD0 blocked); TEST impact 0",
-    "paper_catalog cycle +~1.6 s (live dry run 1.78/1.58/1.53 s); archive minutes 2020-01-01..2026-10-08 cached in process (dry-run process RSS 1.37 GB incl. its own DB frames)"
+    "live dry run (live DB read-only, temp paper DB, start 2026-10-08): catch-up cycle 0.71 s, 1m cycles 0.04-0.05 s; process peak working set 444 MB, RSS 370 MB (206 MB of it the DB frames)"
   ],
-  "observed_through": "2026-10-08 (snapshot); live dry run on artifacts/live DB to 2026-10-10T08:35Z ok"
+  "observed_through": "2026-10-08 (snapshot); live dry run to 2026-10-10T09:23Z ok",
+  "fix_round_1": "Codex review of 0aec612 (live apply NO, 3 P1): flat start + incremental append-only state machine, per-sleeve books (no UNIQUE collision), 4h-only signal history (memory), g3_health"
 }

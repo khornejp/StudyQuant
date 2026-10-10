@@ -235,16 +235,13 @@ def recompute_books(store: PaperStore, config, end: pd.Timestamp, ctx=None, fund
         ctx, funding, _ = load_context(store)
     decisions = read_decisions(store)
     names = active_books(config)
-    results, signals, g3_results = {}, {}, {}
+    results, signals, g3_starts = {}, {}, {}
     end_price = float(ctx.minutes.close.iloc[-1])
     for name in names:
-        if name in g3.BOOKS:      # G3 sleeves: research accounting, no x3, no catalog signals / AX state
+        if name in g3.BOOKS:      # G3 sleeves: incremental, append-only (g3.run_cycle below); no x3 / signals
             start = pd.Timestamp(config.book_start_times.get(name, config.start_time))
             if start < end:
-                try:
-                    g3_results[name] = g3.run_book(name, ctx.minutes, funding, start, end)
-                except Exception:
-                    log.exception("g3 book %s failed", name)
+                g3_starts[name] = start
             continue
         if with_signals:
             try:     # conditions are shown before a book's T0 too
@@ -314,18 +311,6 @@ def recompute_books(store: PaperStore, config, end: pd.Timestamp, ctx=None, fund
             else:
                 connection.execute(f"RELEASE {savepoint}")
                 published += 1
-        for index, (name, result) in enumerate(g3_results.items()):
-            savepoint = f"g3_book_{index}"
-            connection.execute(f"SAVEPOINT {savepoint}")
-            try:
-                g3.publish(connection, name, result)
-            except Exception:
-                connection.execute(f"ROLLBACK TO {savepoint}")
-                connection.execute(f"RELEASE {savepoint}")
-                log.exception("g3 publish %s failed", name)
-            else:
-                connection.execute(f"RELEASE {savepoint}")
-                published += 1
         if with_signals:
             for index, (name, frame) in enumerate(signals.items()):
                 savepoint = f"catalog_signal_{index}"
@@ -347,6 +332,11 @@ def recompute_books(store: PaperStore, config, end: pd.Timestamp, ctx=None, fund
                     log.exception("catalog signal publish %s failed", name)
                 else:
                     connection.execute(f"RELEASE {savepoint}")
+    if g3_starts:       # own transactions per sleeve; errors land in g3_health
+        try:
+            published += g3.run_cycle(store, g3_starts, ctx.minutes, funding, end, config.hash)
+        except Exception:
+            log.exception("g3 cycle failed")
     return published
 
 
