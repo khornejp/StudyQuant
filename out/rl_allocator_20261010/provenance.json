@@ -176,5 +176,9 @@
     "code_commit": "49cc642",
     "gate_fix_commit": "b972465",
     "report_sha256": "1afdebb66f41ec84ca9bb21d0c0378b4b179c23c89a8f045546fd153d354d00e"
+  },
+  "round16_long_pullback": {
+    "code_commit": "62dc5e6",
+    "report_sha256": "cf0aca70958eb6ce1233e053f3d1e050de49b4f3401db0b7afb2b0112f01af15"
   }
 }
