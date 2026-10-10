@@ -2869,7 +2869,7 @@ def cmd_regime_short(args) -> None:
         c2 = m.c.copy()
         k = int(np.searchsorted(m.t, a_va - RS.HOLD_MIN * sp.MIN))
         c2[k:] *= 1.7
-        fr2 = np.where(m.ft >= a_va - RS.HOLD_MIN * sp.MIN, m.fr * 1.7, m.fr)
+        fr2 = np.where(m.ft > a_va - RS.HOLD_MIN * sp.MIN, m.fr * 1.7, m.fr)   # strictly after the embargo point
         y2, _ = RS.short_labels(m.t, c2, m.ft, fr2, d)
         lam2, _ = RS.cv_lambda(X[tr], y2[tr], T[tr], lend[tr])
         w2, b02 = RS.ridge(RS.apply_norm(X[tr], *RS.fit_norm(X[tr])), y2[tr], lam2)
