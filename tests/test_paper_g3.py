@@ -233,7 +233,7 @@ def test_staged_config_is_the_axc0_staged_config_plus_g3_without_x3(tmp_path) ->
     assert (staged.leverage_books, staged.telegram_books, staged.comparison_books) == (
         base.leverage_books, base.telegram_books, base.comparison_books)
     assert staged.book_start_times == {**base.book_start_times, "G3_LONG": T_ADD, "G3_SHORT": T_ADD}
-    assert load_config(ROOT / "config/paper.toml").books == base.books[:28]
+    assert load_config(ROOT / "config/paper.toml").books == staged.books          # applied live 2026-10-10T12:00Z
     with pytest.raises(ValueError):
         load_config(STAGED)                     # the placeholder can never be loaded as a live config
 

@@ -1,0 +1,38 @@
+{
+  "utc_applied": "2026-10-10T11:59:01Z",
+  "T_ADD": "2026-10-10T12:00:00Z",
+  "stop_utc": "2026-10-10T11:52:01Z",
+  "last_processed_kline_before_stop": "2026-10-10T11:50:00+00:00",
+  "books_added": [
+    "B3_AXC0",
+    "K04_AXC0",
+    "G3_LONG",
+    "G3_SHORT"
+  ],
+  "config_hash_before": "9f05d167127a6ade43c33001bccd081742aa8de0f7f7576998c9887c91c9be9b",
+  "config_hash_after": "91dbfddad68d82357ba67237dff8cafc6e7b2cdb0c94a7e023ec7b7c1bbbf847",
+  "config_file_sha256_before": "0472f4747597221732dd11a3408675e890f8b104b70b92fd93f3a530f6156cbc",
+  "config_file_sha256_after": "df627bd7aba535ee39a83653134459fe4772a189e3fb4ac90c7f6a611a463057",
+  "staged_source": "config/paper.g3_staged.toml",
+  "staged_sha256": "9cc3de41f6c43ed515a1dbcaa649256958472ca71234956369ad272b3edabc91",
+  "db_backup": "artifacts/live/live.pre_axc0_g3.sqlite (sqlite backup API, integrity ok, g3 tables 0)",
+  "config_backup": "config/paper.pre_axc0_g3.toml",
+  "addenda": [
+    "out/k45_rl_r2_48_20261007/r2_55/axc0_paper_addendum.json",
+    "out/new_model_batch5_20261010/g3_paper/g3_combined_paper_addendum.json"
+  ],
+  "code_head": "3c14ff6e8bcb658eec1cc7814e1e53d9536f1b72",
+  "post_check_12_07Z": {
+    "meta.config_hash": "91dbfddad68d",
+    "g3_health": "G3_LONG/G3_SHORT stale=0 last_error=null last_bar 12:06",
+    "g3_events": "G3_LONG DECISION 12:00, ENTRY_ORDER 12:00, ENTRY_FILL 12:02 @82820.1 w=1.0; G3_SHORT DECISION 12:00 FLAT",
+    "g3_behavior_hash": {
+      "G3_LONG": "725e5c789aa9",
+      "G3_SHORT": "594605c573e6"
+    },
+    "axc0": "catalog_signals rows B3_AXC0 1344, K04_AXC0 1344; leverage_state B3_AXC0_x3, K04_AXC0_x3 created; catalog log no errors"
+  },
+  "approvals": "AXC0: Codex code review blockers resolved + artifact hash match (replay review cancelled after 3h). G3: Codex round-5 live apply YES (8a2b187), doc fix 9d2f4c6.",
+  "rollback": "stop supervisors then children; restore config/paper.pre_axc0_g3.toml and artifacts/live/live.pre_axc0_g3.sqlite; start scripts/windows/start_paper.cmd",
+  "note": "paper only; no real capital; G3 1x no x3/Telegram; avoid git checkout/stash in live tree (G3 behavior hash fail-closed)"
+}
