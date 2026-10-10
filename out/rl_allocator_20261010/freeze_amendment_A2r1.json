@@ -1,0 +1,68 @@
+{
+  "id": "A2",
+  "revision": 1,
+  "status": "FROZEN",
+  "created_utc": "2026-10-10T14:39:37.729308+00:00",
+  "supersedes": {
+    "path": "out/rl_allocator_20261010/freeze_amendment_A2.json",
+    "sha256": "28fef9f07c199b7afe2cd368450a70c4173dbe45071930e4c3e4cd338440f4e2",
+    "status": "SUPERSEDED (usable from 2021-12-01, folds F1..F3) by user change 2026-10-10"
+  },
+  "amends": {
+    "freeze_sha256_lf": "ad6a6550f10fa244000c63cb01639ae812095208226245caec1dcdb6adb98fe3",
+    "amendment_A1_sha256": "d8335ca8b21dddb2c5611e67a347012dca32dd0aa97e8f07c382400a2968fffb"
+  },
+  "source": "user instruction 2026-10-10 (relayed by coordinator): RL usable data starts 2021-01-30 00:00 UTC (G3_SHORT first availability; weekly MA20/50 features valid since 2020-12-21); G3 warm-up unavailability accepted",
+  "dev_usable_window": [
+    "2021-01-30",
+    "2026-01-01"
+  ],
+  "folds": {
+    "F1": {
+      "train": [
+        "2021-01-30",
+        "2022-01-01"
+      ],
+      "val": [
+        "2022-01-01",
+        "2023-01-01"
+      ]
+    },
+    "F2": {
+      "train": [
+        "2021-01-30",
+        "2023-01-01"
+      ],
+      "val": [
+        "2023-01-01",
+        "2024-01-01"
+      ]
+    },
+    "F3": {
+      "train": [
+        "2021-01-30",
+        "2024-01-01"
+      ],
+      "val": [
+        "2024-01-01",
+        "2025-01-01"
+      ]
+    },
+    "F4": {
+      "train": [
+        "2021-01-30",
+        "2025-01-01"
+      ],
+      "val": [
+        "2025-01-01",
+        "2026-01-01"
+      ]
+    }
+  },
+  "dropped_folds": "A1 F1 (train 2020, val 2021); A1 F2..F5 become F1..F4 with train starting 2021-01-30",
+  "normalizers": "median/IQR per A2 fold train window only (state/normalizers.json keys F1..F4)",
+  "pre_usable_rows": "state/precompute rows before 2021-01-30 are kept on disk but never used for training, selection, normalizers or static DEV-best scoring; the env refuses episodes starting before 2021-01-30 unless allow_pre_usable=True (canonical parity checks only)",
+  "static_dev_best": "scored on A2 fold train windows only; TEST never scored",
+  "availability": "B3/K04 available from 2023-09-01; C1v2/C4v2 from 2020-10-01 (LS + 720h warm-up); LBR as is (no imputation, masked); G3 warm-up unavailability accepted",
+  "unchanged": "sleeves, exec cells, action space, gross cap, costs, reward, TEST window and guard"
+}

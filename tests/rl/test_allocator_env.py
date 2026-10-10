@@ -111,8 +111,8 @@ def test_fixed_schema_and_cell_history(cell):
 
 @real
 def test_c_unavailable_hard_mask_and_cap_zero(cell):
-    with pytest.raises(ValueError, match="usable"):                       # A2: no episodes before 2021-12-01
-        start(E.AllocatorEnv(cell), "2021-11-01", "2021-12-15")
+    with pytest.raises(ValueError, match="usable"):                       # A2 r1: no episodes before 2021-01-30
+        start(E.AllocatorEnv(cell), "2021-01-29", "2021-02-15")
     env = start(E.AllocatorEnv(cell, static_weights=[0, 0, 0, 0, 0, 1.0, 1.0], allow_pre_usable=True),
                 "2020-08-01", "2020-11-15")
     m = env.obs0["masks"]

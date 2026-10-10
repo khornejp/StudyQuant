@@ -132,7 +132,7 @@ class CellData:
     seq_norm: dict                   # col -> (median, scale)
     avail_T: np.ndarray              # [len(T1h), 7] sleeve availability seen at T
     feature_order: list
-    usable_from: int = 0             # amendment A2: first usable decision time (ns)
+    usable_from: int = 0             # amendment A2 r1: first usable decision time (ns), 2021-01-30
 
     @property
     def logc(self) -> np.ndarray:
@@ -239,7 +239,7 @@ class AllocatorEnv:
         if start_T % step or end_T % step or end_T <= start_T:
             raise ValueError("episode bounds must be on the cadence grid")
         if start_T < d.usable_from and not self.allow_pre_usable:
-            raise ValueError("episode starts before the A2 usable window (2021-12-01)")
+            raise ValueError("episode starts before the A2 usable window (2021-01-30)")
         self.Ts = np.arange((end_T - start_T) // step + 1, dtype=np.int64) * step + start_T
         ti = np.searchsorted(d.T1h, self.Ts[:-1])
         if np.any(ti >= len(d.T1h)) or np.any(d.T1h[np.minimum(ti, len(d.T1h) - 1)] != self.Ts[:-1]):

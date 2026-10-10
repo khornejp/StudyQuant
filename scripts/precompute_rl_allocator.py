@@ -867,11 +867,13 @@ def out_g3(G, files, avail_rep):
         log(f"wrote {s} {tag}")
 
 
-# amendment A2 (user 2026-10-10): ma20-based features -> RL data usable from 2021-12-01; three folds
-USABLE_FROM = "2021-12-01"
-FOLDS_A2 = {"F1": (("2021-12-01", "2023-01-01"), ("2023-01-01", "2024-01-01")),
-            "F2": (("2021-12-01", "2024-01-01"), ("2024-01-01", "2025-01-01")),
-            "F3": (("2021-12-01", "2025-01-01"), ("2025-01-01", "2026-01-01"))}
+# amendment A2 r1 (user 2026-10-10, supersedes the 2021-12-01 A2): RL data usable from 2021-01-30 00:00 UTC
+# (G3_SHORT first availability; weekly MA20/50 valid since 2020-12-21); four expanding folds
+USABLE_FROM = "2021-01-30"
+FOLDS_A2 = {"F1": (("2021-01-30", "2022-01-01"), ("2022-01-01", "2023-01-01")),
+            "F2": (("2021-01-30", "2023-01-01"), ("2023-01-01", "2024-01-01")),
+            "F3": (("2021-01-30", "2024-01-01"), ("2024-01-01", "2025-01-01")),
+            "F4": (("2021-01-30", "2025-01-01"), ("2025-01-01", "2026-01-01"))}
 FOLDS = {"F1": (("2020-01-01", "2021-01-01"), ("2021-01-01", "2022-01-01")),   # A1 folds (precompute report only)
          "F2": (("2020-01-01", "2022-01-01"), ("2022-01-01", "2023-01-01")),
          "F3": (("2020-01-01", "2023-01-01"), ("2023-01-01", "2024-01-01")),
@@ -1764,7 +1766,7 @@ def cmd_env_check(args) -> None:
                 worst_tot, worst_min = max(worst_tot, abs(tot - ref)), max(worst_min, dmin)
         # random legal policies (all 7 sleeves) vs slow replay; static-equal actions -> reward 0
         rng = np.random.default_rng(SEED + CELLS.index(next(c for c in CELLS if CELL_TAG[c] == cell)))
-        starts = [ts("2021-12-01"), ts("2022-06-01"), ts("2023-11-01"), ts("2024-08-01"), ts("2025-05-01"),
+        starts = [ts("2021-03-01"), ts("2022-06-01"), ts("2023-11-01"), ts("2024-08-01"), ts("2025-05-01"),
                   ts("2026-02-01")]
         rr = {"episodes": 0, "steps": 0, "max_minute_diff": 0.0, "max_total_diff": 0.0, "max_gross": 0.0,
               "max_gross_reserved": 0.0, "steps_sum_vs_minutes": 0.0, "events": 0, "pending_steps": 0,
@@ -1863,31 +1865,34 @@ def cmd_env_check(args) -> None:
 
 
 # ================================================================ freeze amendment A2 (user 2026-10-10)
-AMEND2 = OUT / "freeze_amendment_A2.json"
+AMEND2 = OUT / "freeze_amendment_A2.json"          # SUPERSEDED (2021-12-01 version)
+AMEND2R1 = OUT / "freeze_amendment_A2r1.json"      # final A2
 
 
 def cmd_amend2(_args) -> None:
-    if AMEND2.exists():
-        raise SystemExit(f"{AMEND2} exists (write-once)")
+    if AMEND2R1.exists():
+        raise SystemExit(f"{AMEND2R1} exists (write-once)")
     doc = {
-        "id": "A2", "status": "FROZEN", "created_utc": datetime.now(timezone.utc).isoformat(),
+        "id": "A2", "revision": 1, "status": "FROZEN", "created_utc": datetime.now(timezone.utc).isoformat(),
+        "supersedes": {"path": "out/rl_allocator_20261010/freeze_amendment_A2.json", "sha256": sha(AMEND2),
+                       "status": "SUPERSEDED (usable from 2021-12-01, folds F1..F3) by user change 2026-10-10"},
         "amends": {"freeze_sha256_lf": sha(FREEZE), "amendment_A1_sha256": sha(AMEND)},
-        "source": "user instruction 2026-10-10 (relayed by coordinator): project features include ma20; RL "
-                  "training/evaluation data starts 2021-12-01; G3 warm-up unavailability accepted",
+        "source": "user instruction 2026-10-10 (relayed by coordinator): RL usable data starts 2021-01-30 00:00 UTC "
+                  "(G3_SHORT first availability; weekly MA20/50 features valid since 2020-12-21); G3 warm-up "
+                  "unavailability accepted",
         "dev_usable_window": [USABLE_FROM, "2026-01-01"],
         "folds": {f: {"train": list(w[0]), "val": list(w[1])} for f, w in FOLDS_A2.items()},
-        "dropped_folds": "A1 F1 (val 2021) and F2 (val 2022); A1 F3..F5 are renumbered F1..F3 with train starting "
-                         "2021-12-01",
-        "normalizers": "median/IQR per A2 fold train window only (state/normalizers.json keys F1..F3)",
-        "pre_usable_rows": "state/precompute rows before 2021-12-01 are kept on disk but never used for training, "
+        "dropped_folds": "A1 F1 (train 2020, val 2021); A1 F2..F5 become F1..F4 with train starting 2021-01-30",
+        "normalizers": "median/IQR per A2 fold train window only (state/normalizers.json keys F1..F4)",
+        "pre_usable_rows": "state/precompute rows before 2021-01-30 are kept on disk but never used for training, "
                            "selection, normalizers or static DEV-best scoring; the env refuses episodes starting "
-                           "before 2021-12-01 unless allow_pre_usable=True (canonical parity checks only)",
+                           "before 2021-01-30 unless allow_pre_usable=True (canonical parity checks only)",
         "static_dev_best": "scored on A2 fold train windows only; TEST never scored",
         "availability": "B3/K04 available from 2023-09-01; C1v2/C4v2 from 2020-10-01 (LS + 720h warm-up); LBR as "
                         "is (no imputation, masked); G3 warm-up unavailability accepted",
         "unchanged": "sleeves, exec cells, action space, gross cap, costs, reward, TEST window and guard"}
-    dump(AMEND2, doc)
-    log(f"amendment A2 written sha256 {sha(AMEND2)}")
+    dump(AMEND2R1, doc)
+    log(f"amendment A2 r1 written sha256 {sha(AMEND2R1)}")
 
 
 def main(argv=None) -> None:
