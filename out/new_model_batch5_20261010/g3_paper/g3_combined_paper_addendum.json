@@ -67,7 +67,7 @@
   "state_machines": "two independent sleeves, each an incremental state machine over closed 1m bars (FLAT -> ENTRY_PENDING -> OPEN -> EXIT_PENDING -> FLAT) = minute-by-minute batch-2 simulate(kind='state'); flat start at the book start, no inherited position",
   "paper_implementation": {
     "module": "btcusdt_quant/paper/g3.py",
-    "module_sha256": "02815823e751bf0022eafdf854f36777ece6bfe52739f72eadc2a5ae4d0c7ced",
+    "module_sha256": "bed11f79e56d52290dec33d5af7d3db201fa1e774a2e29abfd92884dcdb5106c",
     "engine": "out/run_new_model_batch5_20261010.py (+ batch4/3/2/1) imported unchanged (sha256 c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428); build_state / core_signal only",
     "signal_inputs": "4h decision-bar closes since 2020-01-01 (DEV artifacts/btcusdt_2020_2026h1.parquet < 2026-01-01 + R2-54 FINAL snapshot [2026-01-01, 2026-10-08) cached as ~15k floats; live klines_1m >= 2026-10-08) + all funding events (DEV archive < 2026-01-01, live funding table >= 2026-01-01, < data end); identical to the research inputs, so signals are bit-exact; computed only on cycles that contain a 4h decision bar",
     "storage": {
@@ -94,7 +94,7 @@
       "run_new_model_batch4_20261010.py",
       "run_new_model_batch5_20261010.py"
     ],
-    "code_hash": "ebf6af09b128dc1717d52a45834e117a7bdd9b79c854d394b76ff33bdf64352a",
+    "code_hash": "092cc282b8c7a3dc40bb6e1cf9f0ef4276f8d96f7cc9b13b15b27ed23c26b432",
     "behavior_hash": "sha256(json{code_hash, verified input hashes, book, sleeve params, execution params, book start}); stored in g3_state.state.behavior_hash and in every g3_events.code_hash",
     "migration": "scripts/paper_g3_migrate.py --book G3_LONG|G3_SHORT: --apply (same start only; MIGRATION event, state re-stamped) or --reset (changed start; RESET event with the old state, flat at the new start, new epoch; new start must be on a UTC day after the old last bar) (sha256 7f2f0178f29f440433e2d44c59d7fc779ca4b5ed8269442ac9462b89735600a0)",
     "input_verification": {
@@ -236,5 +236,6 @@
   "fix_round_1": "Codex review of 0aec612 (live apply NO, 3 P1): flat start + incremental append-only state machine, per-sleeve books (no UNIQUE collision), 4h-only signal history (memory), g3_health",
   "fix_round_2": "Codex re-review of e4577d9: behavior hash over the full dependency chain + sleeve / execution params + book start, stored in g3_state at first start; resume mismatch fails closed (g3_health last_error behavior_hash_mismatch, stale 1); explicit migration scripts/paper_g3_migrate.py (MIGRATION event); health written in the state transaction on success; accounting only over processed bars (a gap stops the sleeve before it)",
   "fix_round_3": "Codex re-review of f6667be: fixed signal inputs verified against the NM-B5 manifest and in the behavior hash; CRLF-independent code hash; start-change migration rejected, explicit --reset; gap wording corrected",
-  "fix_round_4": "Codex re-review of 1bb4382: reset epochs (ledger / Book / daily from the current epoch only), strict reset start (later UTC day, > last bar + 1m), loud duplicate events (epoch in PK, plain INSERT)"
+  "fix_round_4": "Codex re-review of 1bb4382: reset epochs (ledger / Book / daily from the current epoch only), strict reset start (later UTC day, > last bar + 1m), loud duplicate events (epoch in PK, plain INSERT)",
+  "live_apply_precondition": "live DB must have no pre-existing g3_* tables (g3_events, g3_state, g3_health); the first G3 cycle creates them, each sleeve starts FLAT at its book start"
 }

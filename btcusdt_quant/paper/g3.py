@@ -7,7 +7,8 @@ SHORT_DEV_PICK G5-F180-c+0.0-V-ENS short side only; each sleeve <= 1x of the com
 Live engine (Codex fix round 1): each sleeve starts FLAT at its book start and is an incremental state machine over
 closed 1m bars (FLAT -> ENTRY_PENDING -> OPEN -> EXIT_PENDING -> FLAT), the minute-by-minute form of batch-2
 simulate(kind="state"). Every decision / order / requote / fill / expiry is appended once, as first observed, to
-g3_events (INSERT OR IGNORE, code + config hash); g3_state holds the resume point; closed trades are appended to
+g3_events (plain INSERT keyed by book / epoch / time / type: a duplicate aborts the cycle; behavior + config hash);
+g3_state holds the resume point; closed trades are appended to
 trades. Signals come from the research build_state / core_signal on the 4h close series since 2020-01-01 (about
 16k bars + all funding events: the exact research input, no 1m archive in memory). Order time T = closed 4h bar open
 + 1m; funding strictly before T; MAD90 = 0 -> threshold = median90. A missing minute stops the sleeve at the gap
