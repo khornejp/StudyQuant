@@ -2003,10 +2003,100 @@ def cmd_vec_check(args) -> None:
         raise SystemExit("VEC CHECK FAIL")
 
 
+# ================================================================ step 6: static baselines (analytic scorer)
+def unit_series(cd, start: int, end: int):
+    """Per-step unit net4 / turnover of each sleeve's static book (weight 1, availability-gated, flat start,
+    terminal mark + fee) from the vectorized env; one env per sleeve."""
+    from btcusdt_quant.rl import allocator_vec_env as AV
+    H = 3600 * 10**9
+    L = (end - start) // H
+    v = AV.VecAllocatorEnv(cd, len(SLEEVES), static_weights=np.eye(len(SLEEVES)))
+    v.reset(np.full(len(SLEEVES), start), L)
+    z = np.zeros((len(SLEEVES), len(SLEEVES)), np.int64)
+    net, turn = np.zeros((L, len(SLEEVES))), np.zeros((L, len(SLEEVES)))
+    for k in range(L):
+        _, _, done, info = v.step(z, z, z)
+        net[k], turn[k] = info["net_st"], info["turnover_st"]
+    day = ((v.Ts[0, :-1] - start) // (24 * H)).astype(np.int64)
+    return net, turn, day
+
+
+def cmd_baselines(args) -> None:
+    from btcusdt_quant.rl import allocator_baselines as BL, allocator_env as AE, allocator_vec_env as AV
+    t0 = time.time()
+    W = BL.candidate_grid()
+    named = BL.named_baselines()
+    BD = OUT / "baselines"
+    BD.mkdir(parents=True, exist_ok=True)
+    ts = lambda x: pd.Timestamp(x, tz="UTC").value  # noqa: E731
+    cells = [CELL_TAG[c] for c in CELLS]
+    scores = {f: {"train": {}, "val": {}} for f in FOLDS_A2}
+    named_scores = {f: {"train": {}, "val": {}} for f in FOLDS_A2}
+    units = {}
+    boot_cache = {}
+    parity = {"vectors": 0, "runs": 0, "max_net_diff": 0.0, "max_mdd_diff": 0.0, "max_turnover_diff": 0.0}
+    rng = np.random.default_rng(SEED)
+    sample = rng.choice(len(W), 48, replace=False)
+    PW = np.vstack([W[sample], np.vstack(list(named.values()))])          # 48 grid + 2 named = 50 vectors
+    parity["vectors"] = len(PW)
+    for cell in cells:
+        cd = AE.load_cell(cell, allow_test=False)
+        for f, (tr, va) in FOLDS_A2.items():
+            for nm, (a, b) in (("train", tr), ("val", va)):
+                net, turn, day = unit_series(cd, ts(a), ts(b))
+                units[(cell, f, nm)] = (net, turn)
+                D = int(day.max()) + 1
+                if D not in boot_cache:
+                    boot_cache[D] = BL.stationary_indices(D)
+                scores[f][nm][cell] = BL.score(net, turn, day, W, boot_cache[D])
+                named_scores[f][nm][cell] = BL.score(net, turn, day, np.vstack(list(named.values())), boot_cache[D])
+                if nm == "train":                               # scorer <-> env parity on 50 vectors
+                    L = (ts(b) - ts(a)) // (3600 * 10**9)
+                    v = AV.VecAllocatorEnv(cd, len(PW), static_weights=PW)
+                    v.reset(np.full(len(PW), ts(a)), L)
+                    z = np.zeros((len(PW), len(SLEEVES)), np.int64)
+                    to = np.zeros(len(PW))
+                    for _ in range(L):
+                        _, _, _, info = v.step(z, z, z)
+                        to += info["turnover_st"]
+                    sc = BL.score(net, turn, day, PW, boot_cache[D])
+                    parity["runs"] += len(PW)
+                    parity["max_net_diff"] = max(parity["max_net_diff"], float(np.abs(sc.net4 - v.st.equity).max()))
+                    parity["max_mdd_diff"] = max(parity["max_mdd_diff"], float(np.abs(sc.mdd - v.st.mdd).max()))
+                    parity["max_turnover_diff"] = max(parity["max_turnover_diff"], float(np.abs(sc.turnover - to).max()))
+                log(f"baselines {cell} {f} {nm} days {D}")
+    sel = {}
+    for f in FOLDS_A2:
+        rk = BL.rank(scores[f]["train"], W)
+        rk.to_parquet(BD / f"ranking_{f}_train.parquet", index=False)
+        best = int(rk.cand.iloc[0])
+        w_best = W[best]
+        def metrics(fr: dict, i: int) -> dict:
+            return {c: {k: float(fr[c][k].iloc[i]) for k in ("net4", "boot_p05", "mdd", "turnover")} for c in cells}
+        sel[f] = {"train": list(FOLDS_A2[f][0]), "val": list(FOLDS_A2[f][1]),
+                  "weights": dict(zip(SLEEVES, w_best.tolist())), "rank_keys_top": rk.head(5).to_dict("records"),
+                  "selected_train": metrics(scores[f]["train"], best), "selected_val": metrics(scores[f]["val"], best),
+                  "named": {k: {"train": metrics(named_scores[f]["train"], i), "val": metrics(named_scores[f]["val"], i)}
+                            for i, k in enumerate(named)},
+                  "n_candidates": int(len(W)), "ties_at_top": int((rk[["min_net4", "min_boot_p05", "max_mdd",
+                                                                       "mean_turnover"]].iloc[:2].nunique() == 1).all())}
+    parity["gate_1e-6"] = bool(max(parity["max_net_diff"], parity["max_mdd_diff"], parity["max_turnover_diff"]) <= 1e-6)
+    rep = {"name": "static baselines (design section 4) - A2 r1 folds, train windows only", "selection": sel,
+           "named_baselines": {k: v.tolist() for k, v in named.items()}, "parity_scorer_vs_env": parity,
+           "ranking_rule": BL.__doc__, "bootstrap": {"n": BL.BOOT_N, "block_days": BL.BOOT_BLOCK, "seed": BL.BOOT_SEED},
+           "test_scored": False, "git_head": git("rev-parse", "HEAD"),
+           "code_sha256": {"allocator_baselines": sha(ROOT / "btcusdt_quant/rl/allocator_baselines.py")},
+           "created_utc": datetime.now(timezone.utc).isoformat(), "runtime_sec": round(time.time() - t0, 1)}
+    dump(BD / "static_selection.json", rep)
+    log(f"baselines done parity {parity} selected { {f_: sel[f_]['weights'] for f_ in sel} }")
+    if not parity["gate_1e-6"]:
+        raise SystemExit("SCORER PARITY FAIL")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
-                                       "vec-check"))
+                                       "vec-check", "baselines"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--only", default="g3,c,ax")
     ap.add_argument("--no-registry", action="store_true")
@@ -2026,6 +2116,8 @@ def main(argv=None) -> None:
         return cmd_env_check(args)
     if args.command == "vec-check":
         return cmd_vec_check(args)
+    if args.command == "baselines":
+        return cmd_baselines(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
