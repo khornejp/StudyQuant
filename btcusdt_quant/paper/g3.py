@@ -56,9 +56,30 @@ def engine():
     return module
 
 
-@lru_cache(maxsize=1)
+# every source file the live G3 path executes: g3, its paper / sim helpers and the batch-5 engine with the batch-4/3/2/1
+# files it loads dynamically (importlib)
+DEPS = (Path(__file__), ROOT / "btcusdt_quant/paper/store.py", ROOT / "btcusdt_quant/funding_source.py",
+        *(ROOT / f"btcusdt_quant/sim/{n}.py" for n in ("data", "provenance", "registry", "store")),
+        *(ROOT / f"out/run_new_model_batch{i}_20261010.py" for i in range(1, 6)))
+MISMATCH = "behavior_hash_mismatch"
+
+
 def code_hash() -> str:
-    return hashlib.sha256(Path(__file__).read_bytes() + ENGINE.read_bytes()).hexdigest()
+    """sha256 over the dependency chain (file name + bytes of every DEPS file); read fresh on every call."""
+    h = hashlib.sha256()
+    for path in DEPS:
+        h.update(Path(path).name.encode() + b"\0")
+        h.update(Path(path).read_bytes())
+    return h.hexdigest()
+
+
+def behavior_hash(book: str, start: pd.Timestamp, code: str | None = None) -> str:
+    """Everything that decides a sleeve's path: code chain, sleeve params, execution params, book start (config)."""
+    spec = {"code": code or code_hash(), "book": book, "sleeve": SLEEVES[book],
+            "execution": {"offset_bps": OFFSET_BPS, "pen_bps": PEN_BPS, "ttl_min": TTL_MIN,
+                          "exit_quote_bps": EXIT_QUOTE_BPS, "requote_min": REQUOTE_MIN},
+            "start": utc_text(pd.Timestamp(start))}
+    return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
 
 
 def sleeve_id(book: str) -> str:
@@ -135,9 +156,10 @@ def signals(minutes: pd.DataFrame, funding: pd.DataFrame, end: pd.Timestamp,
 
 
 # ---------------------------------------------------------------- sleeve state machine
-def initial_state(start: pd.Timestamp) -> dict:
+def initial_state(start: pd.Timestamp, behavior: str | None = None) -> dict:
     """FLAT, nothing inherited; the first bar processed is the decision bar whose T = start (if on the 4h grid)."""
-    return {"status": "FLAT", "last_bar": int(pd.Timestamp(start).value) - 2 * MIN, "start": int(pd.Timestamp(start).value)}
+    out = {"status": "FLAT", "last_bar": int(pd.Timestamp(start).value) - 2 * MIN, "start": int(pd.Timestamp(start).value)}
+    return out if behavior is None else {**out, "behavior_hash": behavior}
 
 
 def _limit(close: float, side: int, bps: float) -> float:
@@ -147,6 +169,10 @@ def _limit(close: float, side: int, bps: float) -> float:
 def _fills(o: float, h: float, l: float, lim: float, buy: bool) -> bool:
     """batch-2 first_fill for one bar: pen bp trade-through, gap-through rejects."""
     return (o >= lim and l <= lim * (1 - PEN_BPS / 1e4)) if buy else (o <= lim and h >= lim * (1 + PEN_BPS / 1e4))
+
+
+def _flat(s: dict) -> dict:
+    return {k: s[k] for k in ("last_bar", "start", "behavior_hash") if k in s} | {"status": "FLAT"}
 
 
 def step(state: dict, book: str, t, o, h, l, c, sig: dict) -> tuple[dict, list[tuple[int, str, dict]]]:
@@ -165,14 +191,14 @@ def step(state: dict, book: str, t, o, h, l, c, sig: dict) -> tuple[dict, list[t
                                                   "decision_time": s["dec_time"]}))
             elif tj >= s["deadline"]:
                 events.append((tj, "ENTRY_EXPIRED", {"side": s["side"], "price": s["lim"], "decision_time": s["dec_time"]}))
-                s = {"status": "FLAT", "last_bar": s["last_bar"], "start": s["start"]}
+                s = _flat(s)
         elif s["status"] == "EXIT_PENDING":
             if _fills(o[k], h[k], l[k], s["lim"], s["side"] < 0):
                 trade = {"side": s["side"], "weight": s["w"], "decision_time": s["dec_time"],
                          "entry_time": s["entry_time"], "entry_px": s["entry_px"],
                          "exit_decision_time": s["exit_dec_time"], "exit_time": tj, "exit_px": s["lim"]}
                 events.append((tj, "EXIT_FILL", trade))
-                s = {"status": "FLAT", "last_bar": s["last_bar"], "start": s["start"]}
+                s = _flat(s)
             elif tj >= s["quote_base"] + REQUOTE_MIN * MIN:
                 s.update(quote_base=tj, lim=_limit(c[k], -s["side"], EXIT_QUOTE_BPS))
                 events.append((tj, "EXIT_REQUOTE", {"price": s["lim"]}))
@@ -268,9 +294,15 @@ def ensure_tables(connection) -> None:
         connection.execute(sql)
 
 
-def load_state(connection, book: str, start: pd.Timestamp) -> dict:
+def load_state(connection, book: str, start: pd.Timestamp, behavior: str) -> dict:
+    """Stored resume state; a new book starts FLAT and records its behavior hash."""
     row = connection.execute("SELECT state FROM g3_state WHERE book=?", (book,)).fetchone()
-    return json.loads(row[0]) if row else initial_state(start)
+    return json.loads(row[0]) if row else initial_state(start, behavior)
+
+
+class BehaviorMismatch(RuntimeError):
+    """Stored sleeve state was produced by other code / params / start: never continued silently
+    (scripts/paper_g3_migrate.py is the explicit path)."""
 
 
 def closed_trades(connection, book: str) -> list[dict]:
@@ -283,9 +315,12 @@ def _iso(ns: int) -> str:
     return utc_text(pd.Timestamp(int(ns), tz="UTC"))
 
 
-def advance(connection, book: str, start: pd.Timestamp, minutes: pd.DataFrame, sig_fn, end: pd.Timestamp) -> tuple:
+def advance(connection, book: str, start: pd.Timestamp, minutes: pd.DataFrame, sig_fn, end: pd.Timestamp,
+            behavior: str) -> tuple:
     """New bars for one sleeve: contiguous from state['last_bar'] + 1m, cut at the first gap (fail closed)."""
-    state = load_state(connection, book, start)
+    state = load_state(connection, book, start, behavior)
+    if state.get("behavior_hash") != behavior:
+        raise BehaviorMismatch(MISMATCH)
     t = _ns(minutes.open_time)
     a = int(np.searchsorted(t, state["last_bar"] + MIN))
     b = int(np.searchsorted(t, end.value))
@@ -305,6 +340,15 @@ def advance(connection, book: str, start: pd.Timestamp, minutes: pd.DataFrame, s
     return new, events, gap
 
 
+def write_health(connection, book: str, error: str | None, last: int, end: pd.Timestamp, now: str,
+                 stale: bool | None = None) -> None:
+    stale = int(end.value - (last + MIN) > STALE_MIN * MIN) if stale is None else int(stale)
+    old = connection.execute("SELECT last_success, last_error, last_error_at FROM g3_health WHERE book=?",
+                             (book,)).fetchone() or (None, None, None)
+    connection.execute("INSERT OR REPLACE INTO g3_health VALUES (?,?,?,?,?,?,?)", (
+        book, old[0] if error else now, error or old[1], now if error else old[2], _iso(last), stale, now))
+
+
 def run_cycle(store, starts: dict[str, pd.Timestamp], minutes: pd.DataFrame, funding: pd.DataFrame,
               end: pd.Timestamp, config_hash: str, live_from: pd.Timestamp | None = None) -> int:
     """One paper cycle for the G3 sleeve books in `starts` (book -> start, start < end). Appends events / trades,
@@ -319,17 +363,23 @@ def run_cycle(store, starts: dict[str, pd.Timestamp], minutes: pd.DataFrame, fun
             cache["sig"] = signals(minutes, funding, end, live_from)
         return cache["sig"]
 
-    done = 0
+    done, code = 0, code_hash()
     for book, start in starts.items():
+        behavior = behavior_hash(book, start, code)
         error = None
         try:
             with store.transaction() as connection:
-                state, events, error = advance(connection, book, start, minutes, sig_fn, end)
+                state, events, error = advance(connection, book, start, minutes, sig_fn, end, behavior)
                 trades = closed_trades(connection, book) + [p for _, kind, p in events if kind == "EXIT_FILL"]
-                bk, m, tr = book_of(trades, state, minutes, funding, start, end)
+                done_to = pd.Timestamp(state["last_bar"] + MIN, tz="UTC")     # accounting only over processed bars
+                if done_to > pd.Timestamp(start).floor("D"):
+                    bk, m, tr = book_of(trades, state, minutes, funding, start, done_to)
+                else:
+                    bk = m = None
+                    tr = pd.DataFrame({"open_at_end": []})
                 for t_, kind, payload in events:
                     connection.execute("INSERT OR IGNORE INTO g3_events VALUES (?,?,?,?,?,?,?)",
-                                       (book, _iso(t_), kind, json.dumps(payload), code_hash(), config_hash, now))
+                                       (book, _iso(t_), kind, json.dumps(payload), behavior, config_hash, now))
                 for k in np.flatnonzero(~tr.open_at_end.to_numpy(bool)):
                     r = trades[k]
                     connection.execute(
@@ -340,22 +390,20 @@ def run_cycle(store, starts: dict[str, pd.Timestamp], minutes: pd.DataFrame, fun
                          float(r["entry_px"]), float(r["exit_px"]), float(bk.gross_full[k]), float(4 * bk.w[k]),
                          float(bk.fund_full[k]), float(bk.net4_full[k]), (r["exit_time"] - r["entry_time"]) / MIN,
                          "TARGET_CHANGE"))
-                connection.executemany("INSERT OR REPLACE INTO daily_pnl(book,boundary,date,gross_bps,cost_bps,"
-                                       "funding_bps,net_bps) VALUES(?,?,?,?,?,?,?)", daily_rows(book, bk, m))
+                if bk is not None:
+                    connection.executemany("INSERT OR REPLACE INTO daily_pnl(book,boundary,date,gross_bps,cost_bps,"
+                                           "funding_bps,net_bps) VALUES(?,?,?,?,?,?,?)", daily_rows(book, bk, m))
                 connection.execute("INSERT OR REPLACE INTO g3_state VALUES (?,?,?,?)",
                                    (book, json.dumps(state), _iso(state["last_bar"]), now))
+                write_health(connection, book, error, state["last_bar"], end, now)     # same transaction
         except Exception as exc:     # the stored state stays at the last clean cycle
-            error = f"{type(exc).__name__}: {exc}"
-        with store.transaction() as connection:
-            row = connection.execute("SELECT state FROM g3_state WHERE book=?", (book,)).fetchone()
-            last = json.loads(row[0])["last_bar"] if row else initial_state(start)["last_bar"]
-            stale = int(end.value - (last + MIN) > STALE_MIN * MIN)
-            old = connection.execute("SELECT last_success, last_error, last_error_at FROM g3_health WHERE book=?",
-                                     (book,)).fetchone() or (None, None, None)
-            connection.execute("INSERT OR REPLACE INTO g3_health VALUES (?,?,?,?,?,?,?)", (
-                book, old[0] if error else now, error or old[1], now if error else old[2], _iso(last), stale, now))
+            error = MISMATCH if isinstance(exc, BehaviorMismatch) else f"{type(exc).__name__}: {exc}"
+            with store.transaction() as connection:
+                row = connection.execute("SELECT state FROM g3_state WHERE book=?", (book,)).fetchone()
+                last = json.loads(row[0])["last_bar"] if row else initial_state(start)["last_bar"]
+                write_health(connection, book, error, last, end, now, stale=True if error == MISMATCH else None)
         done += error is None
     return done
 
 
-__all__ = ["BOOKS", "NAMES", "SLEEVES", "book_of", "initial_state", "run_cycle", "signals", "sleeve_signal", "step"]
+__all__ = ["BOOKS", "DEPS", "NAMES", "SLEEVES", "behavior_hash", "book_of", "code_hash", "initial_state", "run_cycle", "signals", "sleeve_signal", "step"]

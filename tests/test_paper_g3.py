@@ -202,7 +202,8 @@ def test_gap_stops_the_sleeve_and_flags_health(synthetic, tmp_path, monkeypatch)
         health = pd.read_sql_query("SELECT * FROM g3_health", store.connection)
         state = store.connection.execute("SELECT last_bar FROM g3_state").fetchall()
     assert (health.stale == 1).all() and health.last_error.notna().all()
-    assert {r[0] for r in state} == {pd.Timestamp(minutes.open_time.iloc[1999]).isoformat()}   # not advanced
+    assert {r[0] for r in state} == {pd.Timestamp(minutes.open_time.iloc[2999]).isoformat()}   # stops before the gap
+    assert health.last_error.str.startswith("gap after").all()
 
 
 @needs_engine
@@ -280,3 +281,155 @@ def test_snapshot_parity_incremental_paper_equals_research() -> None:
     assert p["books"]["G3_LONG"]["trades"] == [15, 15] and p["books"]["G3_LONG"]["closed"] == 14
     assert p["books"]["G3_SHORT"]["trades"] == [21, 21] and p["books"]["G3_SHORT"]["closed"] == 21
     assert report["stored_ledger"]["match"] and report["match"]
+
+
+# ---------------------------------------------------------------- fix round 2: restart integrity, health, boundaries
+def _events(path) -> pd.DataFrame:
+    c = sqlite3.connect(path)
+    try:
+        return pd.read_sql_query("SELECT book, event_time, event_type, payload FROM g3_events "
+                                 "ORDER BY book, event_time, event_type", c)
+    finally:
+        c.close()
+
+
+def _health(path) -> pd.DataFrame:
+    c = sqlite3.connect(path)
+    try:
+        return pd.read_sql_query("SELECT * FROM g3_health ORDER BY book", c)
+    finally:
+        c.close()
+
+
+@needs_engine
+def test_dependency_byte_change_fails_closed_until_explicit_migration(synthetic, tmp_path, monkeypatch) -> None:
+    s = synthetic
+    copies = []
+    for path in g3.DEPS:
+        copy = tmp_path / "deps" / Path(path).name
+        copy.parent.mkdir(exist_ok=True)
+        copy.write_bytes(Path(path).read_bytes())
+        copies.append(copy)
+    monkeypatch.setattr(g3, "DEPS", tuple(copies))
+    monkeypatch.setattr(g3, "signals", lambda minutes, funding, end, live_from=None: s.sig)
+    minutes = _cycle_inputs(s, days=6)
+    path, starts = tmp_path / "p.sqlite", {b: START for b in g3.SLEEVES}
+    e1, e2 = START + pd.Timedelta(days=2), START + pd.Timedelta(days=4)
+    with PaperStore(path) as store:
+        assert g3.run_cycle(store, starts, minutes, s.fund, e1, "cfg") == 2
+    before = _events(path)
+    batch2 = tmp_path / "deps" / "run_new_model_batch2_20261010.py"
+    raw = bytearray(batch2.read_bytes())
+    raw[-2] = ord(" ") if raw[-2] != ord(" ") else ord("\n")       # one byte in a dynamically loaded dependency
+    batch2.write_bytes(bytes(raw))
+    with PaperStore(path) as store:
+        assert g3.run_cycle(store, starts, minutes, s.fund, e2, "cfg") == 0
+        state = {b: json.loads(x) for b, x in store.connection.execute("SELECT book, state FROM g3_state")}
+    h = _health(path)
+    assert (h.last_error == g3.MISMATCH).all() and (h.stale == 1).all()
+    assert _events(path).equals(before) and {v["last_bar"] for v in state.values()} == {int((e1 - MIN).value)}
+    with PaperStore(path) as store:                      # a different book start is a mismatch too
+        assert g3.run_cycle(store, {b: START + pd.Timedelta(hours=4) for b in g3.SLEEVES}, minutes, s.fund, e2,
+                            "cfg") == 0
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import paper_g3_migrate
+    with PaperStore(path) as store:
+        for b in g3.SLEEVES:
+            assert paper_g3_migrate.migrate(store, b, START, "cfg", "test", apply=True)["applied"]
+        assert g3.run_cycle(store, starts, minutes, s.fund, e2, "cfg") == 2
+    after = _events(path)
+    assert (after.event_type == "MIGRATION").sum() == 2 and len(after) > len(before) + 2
+    assert _health(path).stale.eq(0).all()
+
+
+@needs_engine
+def test_health_is_written_with_the_state_or_alone_on_failure(synthetic, tmp_path, monkeypatch) -> None:
+    s = synthetic
+    monkeypatch.setattr(g3, "signals", lambda minutes, funding, end, live_from=None: s.sig)
+    minutes = _cycle_inputs(s, days=4)
+    path, starts = tmp_path / "p.sqlite", {b: START for b in g3.SLEEVES}
+    with PaperStore(path) as store:
+        g3.run_cycle(store, starts, minutes, s.fund, START + pd.Timedelta(days=1), "cfg")
+        rows = store.connection.execute("SELECT s.updated_at, h.updated_at, s.last_bar, h.last_bar, h.last_success "
+                                        "FROM g3_state s JOIN g3_health h USING(book)").fetchall()
+        assert len(rows) == 2 and all(r[0] == r[1] == r[4] and r[2] == r[3] for r in rows)
+        monkeypatch.setattr(g3, "daily_rows", lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
+        assert g3.run_cycle(store, starts, minutes, s.fund, START + pd.Timedelta(days=2), "cfg") == 0
+        rows = store.connection.execute("SELECT s.last_bar, h.last_bar, h.last_error FROM g3_state s "
+                                        "JOIN g3_health h USING(book)").fetchall()
+    assert all(r[0] == r[1] and r[2] == "RuntimeError: boom" for r in rows)       # state not advanced
+
+
+@needs_engine
+def test_4h_boundary_waits_for_late_minutes_and_stops_at_missing_ones(synthetic, tmp_path, monkeypatch) -> None:
+    s = synthetic
+    monkeypatch.setattr(g3, "signals", lambda minutes, funding, end, live_from=None: s.sig)
+    start = pd.Timestamp("2020-12-01T04:00Z")
+    minutes = _cycle_inputs(s, days=3)
+    starts = {b: start for b in g3.SLEEVES}
+    clean, late = tmp_path / "clean.sqlite", tmp_path / "late.sqlite"
+    end = start + pd.Timedelta(hours=9)
+    with PaperStore(clean) as store:
+        g3.run_cycle(store, starts, minutes, s.fund, end, "cfg")
+    t = minutes.open_time
+    with PaperStore(late) as store:
+        g3.run_cycle(store, starts, minutes, s.fund, start - MIN, "cfg")          # bar 03:59 not closed yet
+        assert not (_events(late).event_type == "DECISION").any()
+        g3.run_cycle(store, starts, minutes.loc[t != start - MIN], s.fund, start + 5 * MIN, "cfg")   # 03:59 missing
+        assert not (_events(late).event_type == "DECISION").any()
+        assert _health(late).last_error.str.startswith("gap").all()
+        g3.run_cycle(store, starts, minutes.loc[t != start + 3 * MIN], s.fund, start + 10 * MIN, "cfg")  # 04:03 hole
+        dec = _events(late).loc[lambda e: e.event_type == "DECISION"]
+        assert list(dec.event_time.unique()) == [start.isoformat()]
+        assert json.loads(dec.payload.iloc[0])["close"] == float(minutes.loc[t == start - MIN, "close"].iloc[0])
+        g3.run_cycle(store, starts, minutes, s.fund, end, "cfg")                   # late minute arrived
+    assert _events(late).equals(_events(clean))
+
+
+@needs_engine
+def test_t_add_first_decision_is_the_first_4h_t_at_or_after_start(synthetic, tmp_path, monkeypatch) -> None:
+    s = synthetic
+    always = {T: {"G3_LONG": (1, 1.0), "G3_SHORT": (-1, 1.0)} for T in s.sig}
+    monkeypatch.setattr(g3, "signals", lambda minutes, funding, end, live_from=None: always)
+    minutes = _cycle_inputs(s, days=2)
+    for start, first in (("2020-12-01T02:00Z", "2020-12-01T04:00:00+00:00"),
+                         ("2020-12-01T04:00Z", "2020-12-01T04:00:00+00:00"),
+                         ("2020-12-01T04:01Z", "2020-12-01T08:00:00+00:00")):
+        path = tmp_path / f"{start[11:13]}{start[14:16]}.sqlite"
+        with PaperStore(path) as store:
+            g3.run_cycle(store, {b: pd.Timestamp(start) for b in g3.SLEEVES}, minutes, s.fund,
+                         pd.Timestamp("2020-12-01T12:00Z"), "cfg")
+        ev = _events(path)
+        assert ev.event_time.min() == first and (ev.event_time >= pd.Timestamp(start).isoformat()).all()
+        orders = ev.loc[ev.event_type == "ENTRY_ORDER"]
+        assert set(orders.groupby("book").event_time.min()) == {first}            # flat before, entry at first T
+
+
+@needs_engine
+def test_signals_compact_path_equals_research_and_funding_at_t_is_excluded(synthetic, monkeypatch) -> None:
+    """g3.signals on 4h archive closes + live klines == research build_state on the full 1m market; a live funding
+    row published exactly at T is not used for T (strict funding_time < T); a missing 4h bar fails closed."""
+    s = synthetic
+    b2 = g3.engine().b2
+    live_from = pd.Timestamp("2020-11-01T00:00Z")
+    minutes, fund = s.minutes, s.fund
+    t = minutes.open_time.array.asi8
+    arch = (t < live_from.value) & ((t + g3.MIN) % g3.H4 == 0)
+    fk = fund.time.array.asi8 < live_from.value
+    monkeypatch.setattr(g3, "_archive", lambda lf: (t[arch], minutes.close.to_numpy()[arch],
+                                                     fund.time.array.asi8[fk], fund.rate.to_numpy()[fk]))
+    monkeypatch.setattr(b2, "SPLIT", live_from)
+    end = pd.Timestamp(s.m.t[-1], tz="UTC") + MIN
+    assert g3.signals(minutes, fund, end, live_from) == s.sig                     # bit-exact, every T
+    T = pd.Timestamp("2021-01-05T04:00Z")      # synthetic events sit at 00/08/16 + 3 ms
+    extra = pd.concat([fund, pd.DataFrame({"time": [T], "rate": [-1.0]})], ignore_index=True)
+    seen = {}
+    build = g3.engine().build_state
+    monkeypatch.setattr(g3.engine(), "build_state", lambda m, dec4: seen.setdefault("st", build(m, dec4)))
+    with_row = g3.signals(minutes, extra, end, live_from)
+    st = seen["st"]
+    k = int(np.flatnonzero(st["T"] == T.value)[0])
+    assert st["ftime"][k] < T.value and st["fund"][k] != -1.0 and st["fund"][k + 1] == -1.0
+    assert with_row[T.value] == s.sig[T.value]
+    with pytest.raises(ValueError, match="missing 4h decision bar"):
+        g3.signals(minutes.loc[minutes.open_time != pd.Timestamp("2021-01-05T03:59Z")], fund, end, live_from)

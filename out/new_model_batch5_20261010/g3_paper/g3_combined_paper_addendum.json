@@ -67,8 +67,7 @@
   "state_machines": "two independent sleeves, each an incremental state machine over closed 1m bars (FLAT -> ENTRY_PENDING -> OPEN -> EXIT_PENDING -> FLAT) = minute-by-minute batch-2 simulate(kind='state'); flat start at the book start, no inherited position",
   "paper_implementation": {
     "module": "btcusdt_quant/paper/g3.py",
-    "module_sha256": "c20275a8b49fce98ef780fd33f3494a02befe317b4dcca431945f89507c5efa2",
-    "code_hash": "6cfc25f83d82407a6ff91368974d6542944424c38f54c2ad34734bcf8177244d",
+    "module_sha256": "9da75a620970376c9b437830805521945cb998db9a439df347578bf29dff4637",
     "engine": "out/run_new_model_batch5_20261010.py (+ batch4/3/2/1) imported unchanged (sha256 c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428); build_state / core_signal only",
     "signal_inputs": "4h decision-bar closes since 2020-01-01 (DEV artifacts/btcusdt_2020_2026h1.parquet < 2026-01-01 + R2-54 FINAL snapshot [2026-01-01, 2026-10-08) cached as ~15k floats; live klines_1m >= 2026-10-08) + all funding events (DEV archive < 2026-01-01, live funding table >= 2026-01-01, < data end); identical to the research inputs, so signals are bit-exact; computed only on cycles that contain a 4h decision bar",
     "storage": {
@@ -80,11 +79,28 @@
     },
     "fail_closed": "missing minute -> the sleeve stops before the gap, the cycle transaction rolls back, g3_health error + stale; missing 4h bar or signal -> error",
     "not_written": "positions, OPT rows, x3, Telegram, dashboard",
-    "full_replay": "verification only: scripts/paper_g3_parity.py"
+    "full_replay": "verification only: scripts/paper_g3_parity.py",
+    "code_hash_deps": [
+      "g3.py",
+      "store.py",
+      "funding_source.py",
+      "data.py",
+      "provenance.py",
+      "registry.py",
+      "store.py",
+      "run_new_model_batch1_20261010.py",
+      "run_new_model_batch2_20261010.py",
+      "run_new_model_batch3_20261010.py",
+      "run_new_model_batch4_20261010.py",
+      "run_new_model_batch5_20261010.py"
+    ],
+    "code_hash": "84e168186e33a1dd8c814112d4074328ec2a60440668c48f7a29335a3ee9ef21",
+    "behavior_hash": "sha256(json{code_hash, book, sleeve params, execution params, book start}); stored in g3_state.state.behavior_hash and in every g3_events.code_hash",
+    "migration": "scripts/paper_g3_migrate.py --book G3_LONG|G3_SHORT [--apply] (sha256 5c4a5c516c1225238d1c014507e3b48727965a2587c1a6d52383be2c84d476d3)"
   },
   "parity": {
     "script": "scripts/paper_g3_parity.py",
-    "script_sha256": "f339a533cfd92f3442d60b681cd57105195fe5f97ccbe1727ebbb03aa7a500ab",
+    "script_sha256": "f3cd448a5a13671e4b8fa70286e5488f1769dc555a10020892e03851a836480c",
     "report": "out/new_model_batch5_20261010/g3_paper/paper_g3_parity.json",
     "match": true,
     "python": "venv_btcusdt (pandas 2.3.3, numpy 1.26.4)",
@@ -203,8 +219,9 @@
     "daily_pnl is derived (upsert): a revised funding row can change a past day's MTM; decisions, orders, fills and closed trades are immutable",
     "TEST long sleeve 14 closed, top1 trade 59.29% of long net (Codex); long boot60 TEST negative",
     "MAD0 fallback drives DEV short selection (DEV-FULL short 5787.7475 vs 4661.7445 with MAD0 blocked); TEST impact 0",
-    "live dry run (live DB read-only, temp paper DB, start 2026-10-08): catch-up cycle 0.71 s, 1m cycles 0.04-0.05 s; process peak working set 444 MB, RSS 370 MB (206 MB of it the DB frames)"
+    "live dry run (live DB read-only, temp paper DB, start 2026-10-08): catch-up cycle 0.71 s, 1m cycles 0.04-0.06 s; process peak working set 446 MB, RSS 373 MB (206 MB of it the DB frames)"
   ],
   "observed_through": "2026-10-08 (snapshot); live dry run to 2026-10-10T09:23Z ok",
-  "fix_round_1": "Codex review of 0aec612 (live apply NO, 3 P1): flat start + incremental append-only state machine, per-sleeve books (no UNIQUE collision), 4h-only signal history (memory), g3_health"
+  "fix_round_1": "Codex review of 0aec612 (live apply NO, 3 P1): flat start + incremental append-only state machine, per-sleeve books (no UNIQUE collision), 4h-only signal history (memory), g3_health",
+  "fix_round_2": "Codex re-review of e4577d9: behavior hash over the full dependency chain + sleeve / execution params + book start, stored in g3_state at first start; resume mismatch fails closed (g3_health last_error behavior_hash_mismatch, stale 1); explicit migration scripts/paper_g3_migrate.py (MIGRATION event); health written in the state transaction on success; accounting only over processed bars (a gap stops the sleeve before it)"
 }

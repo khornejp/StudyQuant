@@ -189,7 +189,8 @@ def compare(rep: dict, ref: dict, m, st, lo: int, k: pd.DataFrame, f: pd.DataFra
     out["combined_TEST_vs_3299.0488"] = total - PRIMARY_REF["TEST"]
     out["event_counts"] = rep["events"].groupby(["book", "event_type"]).size().to_dict()
     out["event_counts"] = {f"{a_}|{b_}": int(v) for (a_, b_), v in out["event_counts"].items()}
-    out["event_hashes"] = sorted(set(rep["events"].code_hash)) == [g3.code_hash()]
+    out["event_hashes"] = all(set(rep["events"].loc[rep["events"].book == b, "code_hash"]) == {g3.behavior_hash(b, start)}
+                              for b in g3.SLEEVES)
     out["health"] = rep["health"].to_dict("records")
     out["match"] = bool(ok and abs(out["combined_TEST_vs_3299.0488"]) <= 5e-5 and out["event_hashes"]
                         and (rep["health"].stale == 0).all() and rep["health"].last_error.isna().all())
