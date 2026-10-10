@@ -118,5 +118,11 @@
       "git_head": "341d2bb920313b010c96e8bc533cb4f8c4238257",
       "note": "run head 341d2bb = 55d1517 + unrelated commit by another agent; rl code identical"
     }
+  },
+  "round6_smoke": {
+    "code_commit": "c3282b9",
+    "report_sha256": "92f4512059ce6b61db084e5fdb07b7de0ba2e2e4939ec5ab9fc287f84d3c16ca",
+    "git_head": "c3282b92b60425ff819194126f7adad413d8790a",
+    "smoke_pass": true
   }
 }
