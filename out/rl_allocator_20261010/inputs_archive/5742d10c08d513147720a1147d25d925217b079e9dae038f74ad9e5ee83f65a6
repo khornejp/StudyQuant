@@ -1,0 +1,168 @@
+"""Shared scheduled-settlement funding cashflow rules for K45 experiments."""
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+import zipfile
+
+import numpy as np
+import pandas as pd
+
+
+FUNDING_ARCHIVE = Path("artifacts/funding_2020_2026h1")
+BOUNDARIES = frozenset({"PESS", "OPT", "INCL"})
+CONVENTIONS = frozenset({"R2_6_COST", "R2_14_CASHFLOW"})
+_EIGHT_HOURS_NS = pd.Timedelta(hours=8).value
+
+
+@lru_cache(maxsize=None)
+def _load_settlements(path_text: str, expected_rows: int | None) -> pd.DataFrame:
+    path = Path(path_text)
+    archives = sorted(path.glob("BTCUSDT-fundingRate-*.zip")) if path.is_dir() else [path]
+    if not archives:
+        raise FileNotFoundError(f"no funding archives: {path}")
+    frames = []
+    for archive_path in archives:
+        with zipfile.ZipFile(archive_path) as archive:
+            names = [name for name in archive.namelist() if name.lower().endswith(".csv")]
+            if len(names) != 1:
+                raise ValueError(f"expected one CSV in {archive_path}")
+            frame = pd.read_csv(
+                archive.open(names[0]),
+                usecols=["calc_time", "funding_interval_hours", "last_funding_rate"],
+            )
+        frames.append(frame)
+    raw = pd.concat(frames, ignore_index=True)
+    if not pd.to_numeric(raw.funding_interval_hours, errors="raise").eq(8).all():
+        raise ValueError("non-8h funding interval")
+    raw_time = pd.to_datetime(raw.calc_time, unit="ms", utc=True)
+    raw_ns = raw_time.astype("int64").to_numpy()
+    scheduled_ns = ((raw_ns + _EIGHT_HOURS_NS // 2) // _EIGHT_HOURS_NS) * _EIGHT_HOURS_NS
+    scheduled = pd.to_datetime(scheduled_ns, utc=True)
+    error = np.abs(raw_ns - scheduled_ns)
+    if np.any(error > pd.Timedelta(seconds=60).value):
+        raise ValueError(f"funding timestamp exceeds 60s tolerance: {error.max()}ns")
+    result = pd.DataFrame({
+        "time": scheduled,
+        "rate": pd.to_numeric(raw.last_funding_rate, errors="raise").to_numpy(float),
+        "raw_calc_time": raw_time,
+    }).sort_values("time", kind="stable").reset_index(drop=True)
+    if result.time.duplicated().any():
+        raise ValueError("duplicate scheduled funding timestamp")
+    if expected_rows is not None and len(result) != expected_rows:
+        raise ValueError(f"funding row count {len(result)} != {expected_rows}")
+    result.attrs["_time_ns"] = result.time.array.asi8
+    result.attrs["_rates"] = result.rate.to_numpy(float)
+    return result
+
+
+def load_settlements(path: Path = FUNDING_ARCHIVE, expected_rows: int | None = 7_119) -> pd.DataFrame:
+    """Load archive rows and normalize raw calc_time to nearest UTC 00/08/16 settlement."""
+    return _load_settlements(str(Path(path).resolve()), expected_rows).copy()
+
+
+def cashflow_bps(side: int, rate: float) -> float:
+    """Funding cashflow in bps. Positive means received."""
+    return float(-side * rate * 1e4)
+
+
+def to_cashflow_bps(value: float, convention: str) -> float:
+    if convention not in CONVENTIONS:
+        raise ValueError(f"unknown funding convention: {convention}")
+    return float(-value if convention == "R2_6_COST" else value)
+
+
+def from_cashflow_bps(value: float, convention: str) -> float:
+    if convention not in CONVENTIONS:
+        raise ValueError(f"unknown funding convention: {convention}")
+    return float(-value if convention == "R2_6_COST" else value)
+
+
+def include_boundary_cashflow(edge: str, value: float, boundary: str) -> bool:
+    if boundary not in BOUNDARIES:
+        raise ValueError(f"unknown boundary: {boundary}")
+    if edge not in {"entry", "exit"}:
+        raise ValueError(f"unknown edge: {edge}")
+    return ((boundary == "PESS" and value < 0) or
+            (boundary == "OPT" and value > 0) or
+            (boundary == "INCL" and edge == "exit"))
+
+
+def trade_funding(side: int, entry_time: pd.Timestamp, exit_time: pd.Timestamp,
+                  settlements: pd.DataFrame, boundary: str) -> tuple[float, float]:
+    """Return strict-interior and included-boundary cashflows in bps."""
+    if boundary not in BOUNDARIES:
+        raise ValueError(f"unknown boundary: {boundary}")
+    if settlements.empty:
+        return 0.0, 0.0
+    entry = pd.Timestamp(entry_time)
+    exit_ = pd.Timestamp(exit_time)
+    if entry.tzinfo is None or exit_.tzinfo is None:
+        raise ValueError("entry_time and exit_time must be timezone-aware")
+    if exit_ < entry:
+        raise ValueError("exit_time precedes entry_time")
+    times = settlements.attrs.get("_time_ns")
+    rates = settlements.attrs.get("_rates")
+    if times is None or rates is None:
+        times = pd.DatetimeIndex(pd.to_datetime(settlements.time, utc=True)).as_unit("ns").asi8
+        rates = pd.to_numeric(settlements.rate, errors="raise").to_numpy(float)
+    entry_ns, exit_ns = entry.tz_convert("UTC").value, exit_.tz_convert("UTC").value
+    left = int(np.searchsorted(times, entry_ns, side="right"))
+    right = int(np.searchsorted(times, exit_ns, side="left"))
+    internal = float(-side * rates[left:right].sum() * 1e4)
+
+    positions = []
+    entry_position = int(np.searchsorted(times, entry_ns, side="left"))
+    exit_position = int(np.searchsorted(times, exit_ns, side="left"))
+    entry_matches = entry_position < len(times) and times[entry_position] == entry_ns
+    if entry_matches:
+        positions.append(("entry", entry_position))
+    if (exit_position < len(times) and times[exit_position] == exit_ns and
+            not (entry_matches and exit_position == entry_position)):
+        positions.append(("exit", exit_position))
+    boundary_cashflow = 0.0
+    for edge, position in positions:
+        value = cashflow_bps(side, rates[position])
+        if include_boundary_cashflow(edge, value, boundary):
+            boundary_cashflow += value
+    return internal, float(boundary_cashflow)
+
+
+def trade_funding_frame(sides, entry_times, exit_times, settlements: pd.DataFrame,
+                        boundary: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Vector form returning interior cashflow, included edge cashflow, and event count."""
+    if boundary not in BOUNDARIES:
+        raise ValueError(f"unknown boundary: {boundary}")
+    side = np.asarray(sides, float)
+    entries = pd.DatetimeIndex(pd.to_datetime(entry_times, utc=True)).as_unit("ns").asi8
+    exits = pd.DatetimeIndex(pd.to_datetime(exit_times, utc=True)).as_unit("ns").asi8
+    if not (len(side) == len(entries) == len(exits)):
+        raise ValueError("sides and times must have equal length")
+    if np.any(exits < entries):
+        raise ValueError("exit_time precedes entry_time")
+    times = settlements.attrs.get("_time_ns")
+    rates = settlements.attrs.get("_rates")
+    if times is None or rates is None:
+        times = pd.DatetimeIndex(pd.to_datetime(settlements.time, utc=True)).as_unit("ns").asi8
+        rates = pd.to_numeric(settlements.rate, errors="raise").to_numpy(float)
+    prefix = np.r_[0.0, np.cumsum(rates)]
+    left = np.searchsorted(times, entries, side="right")
+    right = np.searchsorted(times, exits, side="left")
+    internal = -side * (prefix[right] - prefix[left]) * 1e4
+    count = right - left
+    edge_cashflow = np.zeros(len(side), float)
+    for edge, values in (("entry", entries), ("exit", exits)):
+        positions = np.searchsorted(times, values, side="left")
+        valid = positions < len(times)
+        valid[valid] &= times[positions[valid]] == values[valid]
+        cashflow = np.zeros(len(side), float)
+        cashflow[valid] = -side[valid] * rates[positions[valid]] * 1e4
+        if boundary == "PESS":
+            include = valid & (cashflow < 0)
+        elif boundary == "OPT":
+            include = valid & (cashflow > 0)
+        else:
+            include = valid & (edge == "exit")
+        edge_cashflow[include] += cashflow[include]
+        count[include] += 1
+    return internal, edge_cashflow, count

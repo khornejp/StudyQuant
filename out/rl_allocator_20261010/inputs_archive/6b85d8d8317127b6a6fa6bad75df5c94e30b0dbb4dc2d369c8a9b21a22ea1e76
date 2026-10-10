@@ -1,0 +1,1151 @@
+{
+  "run_id": "LBR-20261010T094840Z-2a1bb573",
+  "parent_run_id": "NM-B5-20261010T080025Z-c55285f2",
+  "created_utc": "2026-10-10T09:55:07.267974+00:00",
+  "spec": "scratchpad codex_newlong2.md section 3 (Codex 01a1252c-c28c-7a12-82aa-18a944e5b951)",
+  "name": "LONG-BASIS-RELEASE",
+  "frozen_hypothesis_and_interpretations": "LONG-BASIS-RELEASE (2026-10-10): basis-discount release long sleeve (LBR).\n\nSpec: scratchpad codex_newlong2.md section \"3) \uad6c\ud604 \uba85\uc138\" (Codex session 01a1252c-c28c-7a12-82aa-18a944e5b951).\nComparator: Batch-5 run NM-B5-20261010T080025Z-c55285f2 LONG_DEV_PICK = G5-S180-c+0.0-W180-P65 long sleeve\n(re-simulated long-only, exact parity with the stored primary trades / daily / 6 cells / bootstrap asserted).\nFrozen hypothesis: a funding and/or premium discount (robust z <= cut) together with non-positive taker flow, followed\nwithin 4-8h by a price recovery (zr4 >= 0) and a taker rebound >= delta from its post-arm minimum, gives a long that is\nprofitable after a 4 bps maker round trip and adds positive-P&L days where S180 is inactive.\nEngine and features: the LCR runner (out/run_long_cap_recovery_20261010.py) is imported unchanged via importlib and its\ncausal `features` (dec4 = 239 + 240k, T = bar_time + 1m, zr4 / ztaker / zprem robust z 1080/540 excluding the current\nvalue, ztaker as-of age <= 10m, prem4 over T-4h < available_time <= T with >= 216 rows, zfund = Batch-5 strict fz over\nfunding events < T, 90/30; w = W180-P65), its 6-cell runner, metrics, selection, tamper, parity and pair analysis are\nreused as-is; Batch-2/5 engines through it, unchanged (file hashes recorded).\nState machine (per logical config; NaN comparisons are False -> fail closed):\n  basis_hit = FUND zfund <= cut | PREM zprem <= cut | EITHER (FUND or PREM); setup = basis_hit & ztaker <= 0.\n  FLAT + setup -> ARMED (no entry at the setup decision). ARMED + setup -> re-arm (arm time and min_ztaker reset).\n  ARMED, 1 <= t-arm <= arm_bars, first decision with zr4 >= 0 & ztaker - min_ztaker_since_arm >= delta & w finite > 0\n  -> target 1, weight frozen. Interpretation: min_ztaker_since_arm = ztaker at the (latest) arm decision; a lower\n  ztaker inside the arm window that is not itself a setup does not move it. This is the rule that reproduces the spec's\n  golden counts (merged DEV 283, 2020-2025 0/59/34/64/51/75, 2026 Jan-Jul 65; grid DEV median 244); a running minimum\n  through t-1 gives 284 (2025: 76) and grid median 244.5.\n  No recovery by t-arm = arm_bars -> EXPIRED. HOLD: target 1 for max_hold_bars decisions from activation, then 0;\n  setups during HOLD are ignored and the exit decision never re-arms. Single position.\n  Interpretation: setup is checked before recovery, so a decision that satisfies both while ARMED re-arms (spec order).\nExecution, windows, selection, PASS, COMPLEMENT_PASS: identical to LCR (see that docstring).\n",
+  "source": "Binance USD-M BTCUSDT local: artifacts DEV (<2026-01-01) + r2_54 stageb_snapshot TEST",
+  "windows": {
+    "DEV-FULL": [
+      "2020-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "DEV-A": [
+      "2020-01-01 00:00:00+00:00",
+      "2024-01-01 00:00:00+00:00"
+    ],
+    "DEV-B": [
+      "2024-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "TEST": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ],
+    "TEST-JanJul": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-08-01 00:00:00+00:00"
+    ],
+    "TEST-AugSep": [
+      "2026-08-01 00:00:00+00:00",
+      "2026-10-01 00:00:00+00:00"
+    ],
+    "TEST-Oct": [
+      "2026-10-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ]
+  },
+  "data_cutoff": "2026-10-08 00:00:00+00:00",
+  "counts": {
+    "logical": 48,
+    "sims": 288,
+    "n_trials": 288,
+    "s180_comparator_sims": 6
+  },
+  "max_hold_basis": "target activation decision (not fill)",
+  "pick": "LBR-EITHER-b-0.5-d0.25-a2-h4",
+  "pick_label": "LBR_DEV_PICK",
+  "pick_params": {
+    "basis_mode": "EITHER",
+    "basis_cut": -0.5,
+    "recovery_delta": 0.25,
+    "arm_bars": 2,
+    "max_hold_bars": 4
+  },
+  "n_dev_eligible": 23,
+  "eligibility_counts": {
+    "dev_elig_cells": 23,
+    "dev_elig_closed": 48,
+    "dev_elig_fill": 48,
+    "dev_elig_posdays": 48,
+    "dev_eligible": 23
+  },
+  "decision": {
+    "pick": "LBR-EITHER-b-0.5-d0.25-a2-h4",
+    "label": "LBR_DEV_PICK",
+    "dev_eligible_pool": true,
+    "DEV-A_6of6": true,
+    "DEV-B_6of6": true,
+    "TEST_6of6": false,
+    "TEST_boot_all_pos": false,
+    "PASS": false,
+    "JanJul_6of6": false,
+    "JanJul_comb_pos_days_gt_s180": true,
+    "COMPLEMENT_PASS": false,
+    "verdict": "FAIL",
+    "test_boot": {
+      "20": -10.508123235608698,
+      "60": -8.58491156226229,
+      "120": -7.16250002825334
+    }
+  },
+  "golden_count": {
+    "config_id": "LBR-EITHER-b-1.0-d0.25-a2-h2",
+    "DEV": 283,
+    "2020": 0,
+    "2021": 59,
+    "2022": 34,
+    "2023": 64,
+    "2024": 51,
+    "2025": 75,
+    "2026JanJul": 65
+  },
+  "event_counts": {
+    "LBR-FUND-b-0.5-d0.25-a1-h2": {
+      "setups": 1388,
+      "arms": 740,
+      "rearms": 483,
+      "recoveries": 324,
+      "expired": 416,
+      "rearmed_episodes": 483,
+      "target1_decisions": 648,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 264,
+        "2020": 0,
+        "2021": 61,
+        "2022": 30,
+        "2023": 56,
+        "2024": 57,
+        "2025": 60,
+        "2026JanJul": 46
+      }
+    },
+    "LBR-FUND-b-0.5-d0.25-a1-h4": {
+      "setups": 1388,
+      "arms": 667,
+      "rearms": 432,
+      "recoveries": 291,
+      "expired": 376,
+      "rearmed_episodes": 432,
+      "target1_decisions": 1164,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 236,
+        "2020": 0,
+        "2021": 53,
+        "2022": 28,
+        "2023": 48,
+        "2024": 51,
+        "2025": 56,
+        "2026JanJul": 41
+      }
+    },
+    "LBR-FUND-b-0.5-d0.25-a2-h2": {
+      "setups": 1388,
+      "arms": 612,
+      "rearms": 565,
+      "recoveries": 438,
+      "expired": 173,
+      "rearmed_episodes": 565,
+      "target1_decisions": 876,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 356,
+        "2020": 0,
+        "2021": 70,
+        "2022": 40,
+        "2023": 83,
+        "2024": 77,
+        "2025": 86,
+        "2026JanJul": 62
+      }
+    },
+    "LBR-FUND-b-0.5-d0.25-a2-h4": {
+      "setups": 1388,
+      "arms": 541,
+      "rearms": 483,
+      "recoveries": 388,
+      "expired": 152,
+      "rearmed_episodes": 483,
+      "target1_decisions": 1552,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 312,
+        "2020": 0,
+        "2021": 61,
+        "2022": 39,
+        "2023": 68,
+        "2024": 64,
+        "2025": 80,
+        "2026JanJul": 56
+      }
+    },
+    "LBR-FUND-b-0.5-d0.50-a1-h2": {
+      "setups": 1388,
+      "arms": 750,
+      "rearms": 492,
+      "recoveries": 301,
+      "expired": 449,
+      "rearmed_episodes": 492,
+      "target1_decisions": 602,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 245,
+        "2020": 0,
+        "2021": 52,
+        "2022": 28,
+        "2023": 56,
+        "2024": 52,
+        "2025": 57,
+        "2026JanJul": 43
+      }
+    },
+    "LBR-FUND-b-0.5-d0.50-a1-h4": {
+      "setups": 1388,
+      "arms": 676,
+      "rearms": 446,
+      "recoveries": 271,
+      "expired": 405,
+      "rearmed_episodes": 446,
+      "target1_decisions": 1084,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 219,
+        "2020": 0,
+        "2021": 45,
+        "2022": 25,
+        "2023": 48,
+        "2024": 47,
+        "2025": 54,
+        "2026JanJul": 39
+      }
+    },
+    "LBR-FUND-b-0.5-d0.50-a2-h2": {
+      "setups": 1388,
+      "arms": 613,
+      "rearms": 588,
+      "recoveries": 411,
+      "expired": 201,
+      "rearmed_episodes": 588,
+      "target1_decisions": 822,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 332,
+        "2020": 0,
+        "2021": 63,
+        "2022": 39,
+        "2023": 78,
+        "2024": 71,
+        "2025": 81,
+        "2026JanJul": 60
+      }
+    },
+    "LBR-FUND-b-0.5-d0.50-a2-h4": {
+      "setups": 1388,
+      "arms": 544,
+      "rearms": 507,
+      "recoveries": 367,
+      "expired": 176,
+      "rearmed_episodes": 507,
+      "target1_decisions": 1468,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 294,
+        "2020": 0,
+        "2021": 56,
+        "2022": 37,
+        "2023": 65,
+        "2024": 60,
+        "2025": 76,
+        "2026JanJul": 54
+      }
+    },
+    "LBR-FUND-b-1.0-d0.25-a1-h2": {
+      "setups": 723,
+      "arms": 407,
+      "rearms": 241,
+      "recoveries": 175,
+      "expired": 232,
+      "rearmed_episodes": 241,
+      "target1_decisions": 350,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 137,
+        "2020": 0,
+        "2021": 18,
+        "2022": 17,
+        "2023": 35,
+        "2024": 31,
+        "2025": 36,
+        "2026JanJul": 30
+      }
+    },
+    "LBR-FUND-b-1.0-d0.25-a1-h4": {
+      "setups": 723,
+      "arms": 378,
+      "rearms": 218,
+      "recoveries": 160,
+      "expired": 218,
+      "rearmed_episodes": 218,
+      "target1_decisions": 640,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 125,
+        "2020": 0,
+        "2021": 16,
+        "2022": 16,
+        "2023": 31,
+        "2024": 28,
+        "2025": 34,
+        "2026JanJul": 27
+      }
+    },
+    "LBR-FUND-b-1.0-d0.25-a2-h2": {
+      "setups": 723,
+      "arms": 347,
+      "rearms": 278,
+      "recoveries": 242,
+      "expired": 105,
+      "rearmed_episodes": 278,
+      "target1_decisions": 484,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 186,
+        "2020": 0,
+        "2021": 21,
+        "2022": 24,
+        "2023": 50,
+        "2024": 40,
+        "2025": 51,
+        "2026JanJul": 42
+      }
+    },
+    "LBR-FUND-b-1.0-d0.25-a2-h4": {
+      "setups": 723,
+      "arms": 312,
+      "rearms": 245,
+      "recoveries": 217,
+      "expired": 95,
+      "rearmed_episodes": 245,
+      "target1_decisions": 868,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 165,
+        "2020": 0,
+        "2021": 19,
+        "2022": 23,
+        "2023": 42,
+        "2024": 34,
+        "2025": 47,
+        "2026JanJul": 38
+      }
+    },
+    "LBR-FUND-b-1.0-d0.50-a1-h2": {
+      "setups": 723,
+      "arms": 410,
+      "rearms": 245,
+      "recoveries": 164,
+      "expired": 246,
+      "rearmed_episodes": 245,
+      "target1_decisions": 328,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 129,
+        "2020": 0,
+        "2021": 15,
+        "2022": 16,
+        "2023": 35,
+        "2024": 28,
+        "2025": 35,
+        "2026JanJul": 27
+      }
+    },
+    "LBR-FUND-b-1.0-d0.50-a1-h4": {
+      "setups": 723,
+      "arms": 380,
+      "rearms": 226,
+      "recoveries": 150,
+      "expired": 230,
+      "rearmed_episodes": 226,
+      "target1_decisions": 600,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 118,
+        "2020": 0,
+        "2021": 13,
+        "2022": 14,
+        "2023": 31,
+        "2024": 26,
+        "2025": 34,
+        "2026JanJul": 24
+      }
+    },
+    "LBR-FUND-b-1.0-d0.50-a2-h2": {
+      "setups": 723,
+      "arms": 345,
+      "rearms": 286,
+      "recoveries": 229,
+      "expired": 116,
+      "rearmed_episodes": 286,
+      "target1_decisions": 458,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 175,
+        "2020": 0,
+        "2021": 18,
+        "2022": 24,
+        "2023": 47,
+        "2024": 35,
+        "2025": 51,
+        "2026JanJul": 40
+      }
+    },
+    "LBR-FUND-b-1.0-d0.50-a2-h4": {
+      "setups": 723,
+      "arms": 311,
+      "rearms": 254,
+      "recoveries": 206,
+      "expired": 105,
+      "rearmed_episodes": 254,
+      "target1_decisions": 824,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 156,
+        "2020": 0,
+        "2021": 16,
+        "2022": 22,
+        "2023": 41,
+        "2024": 31,
+        "2025": 46,
+        "2026JanJul": 36
+      }
+    },
+    "LBR-PREM-b-0.5-d0.25-a1-h2": {
+      "setups": 1674,
+      "arms": 955,
+      "rearms": 501,
+      "recoveries": 395,
+      "expired": 560,
+      "rearmed_episodes": 501,
+      "target1_decisions": 790,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 335,
+        "2020": 1,
+        "2021": 64,
+        "2022": 34,
+        "2023": 62,
+        "2024": 78,
+        "2025": 96,
+        "2026JanJul": 56
+      }
+    },
+    "LBR-PREM-b-0.5-d0.25-a1-h4": {
+      "setups": 1674,
+      "arms": 858,
+      "rearms": 435,
+      "recoveries": 342,
+      "expired": 516,
+      "rearmed_episodes": 435,
+      "target1_decisions": 1368,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 286,
+        "2020": 1,
+        "2021": 55,
+        "2022": 31,
+        "2023": 54,
+        "2024": 60,
+        "2025": 85,
+        "2026JanJul": 52
+      }
+    },
+    "LBR-PREM-b-0.5-d0.25-a2-h2": {
+      "setups": 1674,
+      "arms": 745,
+      "rearms": 638,
+      "recoveries": 543,
+      "expired": 201,
+      "rearmed_episodes": 638,
+      "target1_decisions": 1086,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 461,
+        "2020": 1,
+        "2021": 82,
+        "2022": 47,
+        "2023": 97,
+        "2024": 99,
+        "2025": 135,
+        "2026JanJul": 74
+      }
+    },
+    "LBR-PREM-b-0.5-d0.25-a2-h4": {
+      "setups": 1674,
+      "arms": 643,
+      "rearms": 540,
+      "recoveries": 465,
+      "expired": 177,
+      "rearmed_episodes": 540,
+      "target1_decisions": 1860,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 391,
+        "2020": 1,
+        "2021": 68,
+        "2022": 42,
+        "2023": 85,
+        "2024": 77,
+        "2025": 118,
+        "2026JanJul": 66
+      }
+    },
+    "LBR-PREM-b-0.5-d0.50-a1-h2": {
+      "setups": 1674,
+      "arms": 967,
+      "rearms": 504,
+      "recoveries": 366,
+      "expired": 601,
+      "rearmed_episodes": 504,
+      "target1_decisions": 732,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 310,
+        "2020": 1,
+        "2021": 62,
+        "2022": 31,
+        "2023": 57,
+        "2024": 71,
+        "2025": 88,
+        "2026JanJul": 53
+      }
+    },
+    "LBR-PREM-b-0.5-d0.50-a1-h4": {
+      "setups": 1674,
+      "arms": 870,
+      "rearms": 443,
+      "recoveries": 320,
+      "expired": 550,
+      "rearmed_episodes": 443,
+      "target1_decisions": 1280,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 268,
+        "2020": 1,
+        "2021": 52,
+        "2022": 27,
+        "2023": 51,
+        "2024": 56,
+        "2025": 81,
+        "2026JanJul": 49
+      }
+    },
+    "LBR-PREM-b-0.5-d0.50-a2-h2": {
+      "setups": 1674,
+      "arms": 747,
+      "rearms": 654,
+      "recoveries": 512,
+      "expired": 234,
+      "rearmed_episodes": 654,
+      "target1_decisions": 1024,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 435,
+        "2020": 1,
+        "2021": 80,
+        "2022": 45,
+        "2023": 93,
+        "2024": 91,
+        "2025": 125,
+        "2026JanJul": 70
+      }
+    },
+    "LBR-PREM-b-0.5-d0.50-a2-h4": {
+      "setups": 1674,
+      "arms": 647,
+      "rearms": 552,
+      "recoveries": 441,
+      "expired": 205,
+      "rearmed_episodes": 552,
+      "target1_decisions": 1764,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 370,
+        "2020": 1,
+        "2021": 66,
+        "2022": 39,
+        "2023": 81,
+        "2024": 73,
+        "2025": 110,
+        "2026JanJul": 64
+      }
+    },
+    "LBR-PREM-b-1.0-d0.25-a1-h2": {
+      "setups": 689,
+      "arms": 425,
+      "rearms": 192,
+      "recoveries": 166,
+      "expired": 259,
+      "rearmed_episodes": 192,
+      "target1_decisions": 332,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 123,
+        "2020": 0,
+        "2021": 37,
+        "2022": 15,
+        "2023": 19,
+        "2024": 20,
+        "2025": 32,
+        "2026JanJul": 40
+      }
+    },
+    "LBR-PREM-b-1.0-d0.25-a1-h4": {
+      "setups": 689,
+      "arms": 389,
+      "rearms": 170,
+      "recoveries": 148,
+      "expired": 241,
+      "rearmed_episodes": 170,
+      "target1_decisions": 592,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 107,
+        "2020": 0,
+        "2021": 31,
+        "2022": 15,
+        "2023": 18,
+        "2024": 15,
+        "2025": 28,
+        "2026JanJul": 38
+      }
+    },
+    "LBR-PREM-b-1.0-d0.25-a2-h2": {
+      "setups": 689,
+      "arms": 352,
+      "rearms": 232,
+      "recoveries": 237,
+      "expired": 114,
+      "rearmed_episodes": 232,
+      "target1_decisions": 474,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 180,
+        "2020": 0,
+        "2021": 49,
+        "2022": 22,
+        "2023": 34,
+        "2024": 26,
+        "2025": 49,
+        "2026JanJul": 51
+      }
+    },
+    "LBR-PREM-b-1.0-d0.25-a2-h4": {
+      "setups": 689,
+      "arms": 316,
+      "rearms": 194,
+      "recoveries": 209,
+      "expired": 106,
+      "rearmed_episodes": 194,
+      "target1_decisions": 836,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 155,
+        "2020": 0,
+        "2021": 41,
+        "2022": 20,
+        "2023": 31,
+        "2024": 20,
+        "2025": 43,
+        "2026JanJul": 48
+      }
+    },
+    "LBR-PREM-b-1.0-d0.50-a1-h2": {
+      "setups": 689,
+      "arms": 431,
+      "rearms": 192,
+      "recoveries": 154,
+      "expired": 277,
+      "rearmed_episodes": 192,
+      "target1_decisions": 308,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 114,
+        "2020": 0,
+        "2021": 36,
+        "2022": 12,
+        "2023": 17,
+        "2024": 19,
+        "2025": 30,
+        "2026JanJul": 38
+      }
+    },
+    "LBR-PREM-b-1.0-d0.50-a1-h4": {
+      "setups": 689,
+      "arms": 394,
+      "rearms": 170,
+      "recoveries": 136,
+      "expired": 258,
+      "rearmed_episodes": 170,
+      "target1_decisions": 544,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 98,
+        "2020": 0,
+        "2021": 29,
+        "2022": 12,
+        "2023": 16,
+        "2024": 15,
+        "2025": 26,
+        "2026JanJul": 36
+      }
+    },
+    "LBR-PREM-b-1.0-d0.50-a2-h2": {
+      "setups": 689,
+      "arms": 354,
+      "rearms": 238,
+      "recoveries": 216,
+      "expired": 137,
+      "rearmed_episodes": 238,
+      "target1_decisions": 432,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 163,
+        "2020": 0,
+        "2021": 46,
+        "2022": 20,
+        "2023": 29,
+        "2024": 24,
+        "2025": 44,
+        "2026JanJul": 48
+      }
+    },
+    "LBR-PREM-b-1.0-d0.50-a2-h4": {
+      "setups": 689,
+      "arms": 319,
+      "rearms": 197,
+      "recoveries": 193,
+      "expired": 125,
+      "rearmed_episodes": 197,
+      "target1_decisions": 772,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 142,
+        "2020": 0,
+        "2021": 38,
+        "2022": 19,
+        "2023": 27,
+        "2024": 20,
+        "2025": 38,
+        "2026JanJul": 46
+      }
+    },
+    "LBR-EITHER-b-0.5-d0.25-a1-h2": {
+      "setups": 2348,
+      "arms": 1193,
+      "rearms": 812,
+      "recoveries": 534,
+      "expired": 659,
+      "rearmed_episodes": 812,
+      "target1_decisions": 1068,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 448,
+        "2020": 1,
+        "2021": 105,
+        "2022": 42,
+        "2023": 82,
+        "2024": 103,
+        "2025": 115,
+        "2026JanJul": 71
+      }
+    },
+    "LBR-EITHER-b-0.5-d0.25-a1-h4": {
+      "setups": 2348,
+      "arms": 1053,
+      "rearms": 704,
+      "recoveries": 462,
+      "expired": 591,
+      "rearmed_episodes": 704,
+      "target1_decisions": 1848,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 384,
+        "2020": 1,
+        "2021": 89,
+        "2022": 38,
+        "2023": 71,
+        "2024": 83,
+        "2025": 102,
+        "2026JanJul": 63
+      }
+    },
+    "LBR-EITHER-b-0.5-d0.25-a2-h2": {
+      "setups": 2348,
+      "arms": 919,
+      "rearms": 986,
+      "recoveries": 707,
+      "expired": 211,
+      "rearmed_episodes": 986,
+      "target1_decisions": 1414,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 590,
+        "2020": 1,
+        "2021": 129,
+        "2022": 57,
+        "2023": 120,
+        "2024": 130,
+        "2025": 153,
+        "2026JanJul": 96
+      }
+    },
+    "LBR-EITHER-b-0.5-d0.25-a2-h4": {
+      "setups": 2348,
+      "arms": 786,
+      "rearms": 834,
+      "recoveries": 597,
+      "expired": 188,
+      "rearmed_episodes": 834,
+      "target1_decisions": 2388,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 496,
+        "2020": 1,
+        "2021": 107,
+        "2022": 53,
+        "2023": 99,
+        "2024": 103,
+        "2025": 133,
+        "2026JanJul": 81
+      }
+    },
+    "LBR-EITHER-b-0.5-d0.50-a1-h2": {
+      "setups": 2348,
+      "arms": 1209,
+      "rearms": 822,
+      "recoveries": 500,
+      "expired": 709,
+      "rearmed_episodes": 822,
+      "target1_decisions": 1000,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 418,
+        "2020": 1,
+        "2021": 97,
+        "2022": 38,
+        "2023": 80,
+        "2024": 96,
+        "2025": 106,
+        "2026JanJul": 68
+      }
+    },
+    "LBR-EITHER-b-0.5-d0.50-a1-h4": {
+      "setups": 2348,
+      "arms": 1066,
+      "rearms": 720,
+      "recoveries": 435,
+      "expired": 631,
+      "rearmed_episodes": 720,
+      "target1_decisions": 1740,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 361,
+        "2020": 1,
+        "2021": 81,
+        "2022": 33,
+        "2023": 70,
+        "2024": 79,
+        "2025": 97,
+        "2026JanJul": 60
+      }
+    },
+    "LBR-EITHER-b-0.5-d0.50-a2-h2": {
+      "setups": 2348,
+      "arms": 919,
+      "rearms": 1013,
+      "recoveries": 667,
+      "expired": 251,
+      "rearmed_episodes": 1013,
+      "target1_decisions": 1334,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 556,
+        "2020": 1,
+        "2021": 121,
+        "2022": 53,
+        "2023": 114,
+        "2024": 122,
+        "2025": 145,
+        "2026JanJul": 91
+      }
+    },
+    "LBR-EITHER-b-0.5-d0.50-a2-h4": {
+      "setups": 2348,
+      "arms": 793,
+      "rearms": 849,
+      "recoveries": 573,
+      "expired": 219,
+      "rearmed_episodes": 849,
+      "target1_decisions": 2292,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 474,
+        "2020": 1,
+        "2021": 101,
+        "2022": 48,
+        "2023": 96,
+        "2024": 99,
+        "2025": 129,
+        "2026JanJul": 80
+      }
+    },
+    "LBR-EITHER-b-1.0-d0.25-a1-h2": {
+      "setups": 1183,
+      "arms": 635,
+      "rearms": 399,
+      "recoveries": 271,
+      "expired": 364,
+      "rearmed_episodes": 399,
+      "target1_decisions": 542,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 211,
+        "2020": 0,
+        "2021": 48,
+        "2022": 25,
+        "2023": 46,
+        "2024": 39,
+        "2025": 53,
+        "2026JanJul": 50
+      }
+    },
+    "LBR-EITHER-b-1.0-d0.25-a1-h4": {
+      "setups": 1183,
+      "arms": 576,
+      "rearms": 360,
+      "recoveries": 243,
+      "expired": 333,
+      "rearmed_episodes": 360,
+      "target1_decisions": 972,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 186,
+        "2020": 0,
+        "2021": 41,
+        "2022": 23,
+        "2023": 41,
+        "2024": 32,
+        "2025": 49,
+        "2026JanJul": 47
+      }
+    },
+    "LBR-EITHER-b-1.0-d0.25-a2-h2": {
+      "setups": 1183,
+      "arms": 510,
+      "rearms": 484,
+      "recoveries": 363,
+      "expired": 146,
+      "rearmed_episodes": 484,
+      "target1_decisions": 726,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 283,
+        "2020": 0,
+        "2021": 59,
+        "2022": 34,
+        "2023": 64,
+        "2024": 51,
+        "2025": 75,
+        "2026JanJul": 65
+      }
+    },
+    "LBR-EITHER-b-1.0-d0.25-a2-h4": {
+      "setups": 1183,
+      "arms": 451,
+      "rearms": 419,
+      "recoveries": 319,
+      "expired": 131,
+      "rearmed_episodes": 419,
+      "target1_decisions": 1276,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 243,
+        "2020": 0,
+        "2021": 50,
+        "2022": 31,
+        "2023": 55,
+        "2024": 41,
+        "2025": 66,
+        "2026JanJul": 61
+      }
+    },
+    "LBR-EITHER-b-1.0-d0.50-a1-h2": {
+      "setups": 1183,
+      "arms": 643,
+      "rearms": 402,
+      "recoveries": 258,
+      "expired": 385,
+      "rearmed_episodes": 402,
+      "target1_decisions": 516,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 202,
+        "2020": 0,
+        "2021": 45,
+        "2022": 23,
+        "2023": 45,
+        "2024": 36,
+        "2025": 53,
+        "2026JanJul": 47
+      }
+    },
+    "LBR-EITHER-b-1.0-d0.50-a1-h4": {
+      "setups": 1183,
+      "arms": 582,
+      "rearms": 366,
+      "recoveries": 229,
+      "expired": 353,
+      "rearmed_episodes": 366,
+      "target1_decisions": 916,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 176,
+        "2020": 0,
+        "2021": 37,
+        "2022": 20,
+        "2023": 40,
+        "2024": 30,
+        "2025": 49,
+        "2026JanJul": 44
+      }
+    },
+    "LBR-EITHER-b-1.0-d0.50-a2-h2": {
+      "setups": 1183,
+      "arms": 511,
+      "rearms": 497,
+      "recoveries": 341,
+      "expired": 169,
+      "rearmed_episodes": 497,
+      "target1_decisions": 682,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 265,
+        "2020": 0,
+        "2021": 55,
+        "2022": 32,
+        "2023": 58,
+        "2024": 46,
+        "2025": 74,
+        "2026JanJul": 62
+      }
+    },
+    "LBR-EITHER-b-1.0-d0.50-a2-h4": {
+      "setups": 1183,
+      "arms": 455,
+      "rearms": 430,
+      "recoveries": 304,
+      "expired": 150,
+      "rearmed_episodes": 430,
+      "target1_decisions": 1216,
+      "reentry_without_new_setup": 0,
+      "activations": {
+        "DEV": 231,
+        "2020": 0,
+        "2021": 46,
+        "2022": 29,
+        "2023": 52,
+        "2024": 39,
+        "2025": 65,
+        "2026JanJul": 59
+      }
+    }
+  },
+  "parity_s180": {
+    "cells_max_abs_diff": 0.0,
+    "boot_max_abs_diff": 0.0,
+    "trades_equal": true,
+    "n_trades": 116,
+    "trades_net4_max_abs_diff": 0.0,
+    "daily_max_abs_diff": 0.0
+  },
+  "prefix_check": {
+    "cut": "2026-01-01 00:00:00+00:00",
+    "decisions_compared": 13152,
+    "features_compared": [
+      "T",
+      "r4",
+      "gap",
+      "zr4",
+      "oi_T",
+      "oi_T_avail",
+      "oi_24",
+      "oi_24_avail",
+      "dOI24",
+      "zOI24",
+      "taker",
+      "taker_avail",
+      "ztaker",
+      "prem_n",
+      "prem4",
+      "prem_last_avail",
+      "zprem",
+      "fund",
+      "zfund",
+      "fund_time",
+      "SVI42",
+      "dSVI",
+      "zdSVI",
+      "w"
+    ],
+    "tamper": "x1.7 future o/h/l/c, oi, taker_lsr, premium, funding rate",
+    "configs_checked": 48,
+    "closed_trades_compared": 12870
+  },
+  "selection_tamper": {
+    "tampered_test_columns": 35,
+    "pick_unchanged": true
+  },
+  "funding_hand_check_max_abs": 6.616929226765933e-14,
+  "gross_max": 2.0,
+  "boundary_crossing_trades": {
+    "o2_p0.5": 0,
+    "o2_p1.0": 0,
+    "o2_p2.0": 0,
+    "o5_p0.5": 0,
+    "o5_p1.0": 0,
+    "o5_p2.0": 0
+  },
+  "feature_coverage": {
+    "zr4": 14291,
+    "ztaker": 11502,
+    "zfund": 10726,
+    "zprem": 14287,
+    "decisions": 14832
+  },
+  "input_sha256": {
+    "lcr_code": "4d28b82aea606342a2b311379573288795852cdbf321a0603a26de97dd25f979",
+    "batch5_code": "c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428",
+    "batch2_code": "97244bea96d70d0fdcce3d9d8132a683edcd98e79f3c591c8a1e3b960b72ec04",
+    "batch5_selected_long": "8bc6af8e3c91b6f6079b6c3dc03e5230d24491317e3957b029c0da24388ba72f",
+    "batch5_trades_long": "57af886682ae5f79c3eea9becb6b01e2f2e84b2821ac91d51aaa04817dd5a74f",
+    "batch5_daily_long": "62940ec04f8f538c290f9a231fcab60cbd3c404c1f9632999ebd975e03b1b3a4",
+    "dev_market": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "dev_metrics_tree": "fb9591579dacfab0a93de72f120770496f6f04b2b6cebd58859e9449acc904bd",
+    "dev_premium_tree": "3e246393245cfb0bc1a6ed81e9c81320e144cb87822a8696f9695d1867f5121c",
+    "dev_funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "batch1_code": "8a329e4fc730ccd32d10d67216a2fc7581076c226c4813b7414afd2df9fdba1a",
+    "snap_market_1m.parquet": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59",
+    "snap_technique_metrics.parquet": "dd5afe89d138b0ec63f27de3738bcbde0ef75664e4288bfe8d95fa578a3e5408",
+    "snap_technique_premium.parquet": "5d02b5ba1015b28812fc08b1d9ca7232f1298d8556c5b55b40ce3ac2c2300c98",
+    "snap_funding_model_input.parquet": "ac0f660302dc805c421a9c79304b4af6fecb332b6b01704d908e1805297e6590",
+    "snap_manifest.json": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069",
+    "batch3_code": "7760a0d9140d9e254862a9377266175c933f26fd45ddd79d5d3d7d959b0c6181",
+    "batch4_code": "ec7d54099d2bae3c100e2f07f3cdacb0fd9bfcf9ff5f8f025a5e4b0857d42d6d",
+    "batch4_manifest": "4006556893d7356a286d3a963c362ffd50a01c571e4f2f9a861b64cb47e78d2a",
+    "batch4_controls_strict": "672fbfadda4814101b19ef61d82d1c4743ffb3fbbe025ad4483426dbc9806233",
+    "code": "2a1bb573d0ad1a492f50ea2ecc5e5897becad57623076d2dc4bf5b10f85597ee"
+  },
+  "git": {
+    "head": "0aec6120d127bb1c5dcbe6099c25eda913e45494",
+    "branch": "research/k45-audit-and-negative-results-20260930",
+    "dirty_files": 97
+  },
+  "runtime_sec": 387.8,
+  "registry": {
+    "added": 289,
+    "skipped": 0
+  }
+}

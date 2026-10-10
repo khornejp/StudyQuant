@@ -1,1 +1,11 @@
 btcusdt_quant/paper/dashboard/vendor/* -text
+
+# RL allocator code: LF so manifest hashes match a fresh checkout
+btcusdt_quant/rl/sleeve_precompute.py text eol=lf
+btcusdt_quant/rl/allocator_state.py text eol=lf
+scripts/precompute_rl_allocator.py text eol=lf
+tests/rl/test_sleeve_precompute.py text eol=lf
+tests/rl/test_allocator_state.py text eol=lf
+out/rl_allocator_20261010/*.json text eol=lf
+out/rl_allocator_20261010/**/*.json text eol=lf
+out/rl_allocator_20261010/inputs_archive/* -text

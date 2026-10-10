@@ -1,0 +1,384 @@
+{
+  "id": "A1",
+  "status": "FROZEN",
+  "created_utc": "2026-10-10T12:37:24.942741+00:00",
+  "amends": {
+    "freeze": "out/rl_allocator_20261010/freeze.json",
+    "freeze_sha256_lf": "ad6a6550f10fa244000c63cb01639ae812095208226245caec1dcdb6adb98fe3",
+    "freeze_sha256_crlf_as_written": "78c5f91d1cb6571c945eb90316f1d5fed51f46fa96e5dfbb07bd185ea96ca3e4",
+    "freeze_commit": "3c14ff6",
+    "note": "same content; LF is canonical (git blob / fresh checkout)"
+  },
+  "review": {
+    "codex_session": "01a125b7-1030-7b91-998c-890070158908",
+    "verdict": "conditional NO-GO Step 4; Step 3 limited GO"
+  },
+  "observation_contract": {
+    "allowlist": {
+      "grid": [
+        "minute_time",
+        "available_time",
+        "sleeve_id",
+        "exec_cell",
+        "available",
+        "base_side",
+        "base_weight",
+        "signal_active",
+        "pending",
+        "open",
+        "exit_pending",
+        "entry_opportunity_id",
+        "base_mandatory_exit_time",
+        "R0_bps",
+        "R_t_bps",
+        "stop_level",
+        "trail_armed",
+        "gross_pnl",
+        "fee",
+        "funding",
+        "net4",
+        "feature_snapshot_id",
+        "snapshot_id_aux",
+        "closed_opp_id"
+      ],
+      "decisions": [
+        "entry_opportunity_id",
+        "decision_time",
+        "available_time",
+        "side",
+        "base_weight",
+        "feature_snapshot_id",
+        "base_mandatory_exit_time",
+        "segment"
+      ],
+      "ledger": [
+        "minute_time",
+        "available_time",
+        "minute_idx",
+        "entry_opportunity_id",
+        "gross_pnl",
+        "fee",
+        "funding",
+        "net4"
+      ]
+    },
+    "private": "outcomes_<year> (filled, tid, entry_idx/px, exit_*, exit_reason, trade P&L, e0/k/position metadata): replay/accounting only; read_observation refuses it",
+    "row_rule": "a row is observable at T only if available_time <= T; minute market rows only if minute_time + 1m <= T (the minute-T row is excluded, incl. C zero-latency decisions); funding only if funding_time < T",
+    "enforced_by": "sleeve_precompute.obs_columns/read_observation; allocator_state.sleeve_channels"
+  },
+  "renames": {
+    "base_exit_sched_time": "base_mandatory_exit_time (LBR activation + 2 bars exit decision close, C max_hold expiry; G3, B3/K04 = -1; never the realized exit)",
+    "opportunities_<year>": "decisions_<year> (observable) + outcomes_<year> (private)"
+  },
+  "native_timelines": {
+    "C1v2/C4v2": "signal = latest decision of the F leg (F3/V5 5 m LS events | F3-w30/V0 hourly) and of E1/V1a (minute) with decision_time <= minute open; book side = F leg if nonzero else E1; pending none (fill at the decision minute open); snapshot = F-leg event index, aux = E1 event index",
+    "B3_AXC0/K04_AXC0": "signal = first enterable row (allow_entry, side != 0, finite E0 > 0) of the latest 15 m decision group; pending = decision minute while flat (market order fills at the next open); snapshot = first table row of the latest group (segment table index)",
+    "closed_opp_id": "grid marks the exit-fill minute of each closed opportunity (causal trade-close flag)"
+  },
+  "availability": {
+    "G3_LONG/G3_SHORT/LBR_FUND": "available = the source signal inputs of the latest 4h decision are ready",
+    "C1v2/C4v2": "available from the first real LS minute + 720 h F-leg warm-up (before 2020-09 the legacy LS cache is zero-filled; ledger/parity unchanged, those minutes are masked)",
+    "B3_AXC0/K04_AXC0": "available 2023-09-01..2026-10-07 only; F1/F2 0 %, F3 val 2023-09.. only",
+    "reporting": "per sleeve and fold availability/exposure in precompute manifest; early folds are never described as a 7-sleeve comparison"
+  },
+  "terminal_rule": "every sleeve: a position open at a ledger end is marked to the last close and charged its exit fee (G3/LBR reserved 2 bps x w; native 2 bps per side). B3/K04 native segment ends 2025-12-31 23:59 (data_end close; 0 such closes B3/K04 in DEV), TEST restarts flat. Step 4 episode ends use the same rule.",
+  "test_unlock": "scripts/precompute_rl_allocator.py precompute refuses to start without --allow-test-parity; state writes TEST rows only with it; read_partitioned/read_observation need allow_test",
+  "line_endings": ".gitattributes pins eol=lf for the RL allocator code/tests; manifests record LF-file sha256 and the git commit of the code that produced them",
+  "inputs": {
+    "design": {
+      "path": ".superpowers/sdd/rl_allocator/codex_design_2026-10-10.md",
+      "sha256": "e253381a72110c7c22e90ba52792285842ac64ce70c98883998b7f4ebfba8da5",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/e253381a72110c7c22e90ba52792285842ac64ce70c98883998b7f4ebfba8da5"
+    },
+    "nm_b5_manifest": {
+      "path": "out/new_model_batch5_20261010/NM-B5-20261010T080025Z-c55285f2/manifest.json",
+      "sha256": "448613bcd7e65a18a1f1c1c9ed1756eddb40c1d9695b197637b7f0c8a6ba9382",
+      "tracked": true,
+      "git_index_blob": "37fbb6d9d413e2dbdf660459218374b19a88d8bf"
+    },
+    "nm_b5_selected_long": {
+      "path": "out/new_model_batch5_20261010/NM-B5-20261010T080025Z-c55285f2/selected_long.json",
+      "sha256": "8bc6af8e3c91b6f6079b6c3dc03e5230d24491317e3957b029c0da24388ba72f",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/8bc6af8e3c91b6f6079b6c3dc03e5230d24491317e3957b029c0da24388ba72f"
+    },
+    "nm_b5_selected_short": {
+      "path": "out/new_model_batch5_20261010/NM-B5-20261010T080025Z-c55285f2/selected_short.json",
+      "sha256": "78d72f2b82245938934ee1fe175c39457459bab5e10bdc9f1760d94eeba2cd3e",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/78d72f2b82245938934ee1fe175c39457459bab5e10bdc9f1760d94eeba2cd3e"
+    },
+    "nm_b5_trades_long": {
+      "path": "out/new_model_batch5_20261010/NM-B5-20261010T080025Z-c55285f2/trades/LONG_DEV_PICK.parquet",
+      "sha256": "57af886682ae5f79c3eea9becb6b01e2f2e84b2821ac91d51aaa04817dd5a74f",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/57af886682ae5f79c3eea9becb6b01e2f2e84b2821ac91d51aaa04817dd5a74f"
+    },
+    "nm_b5_trades_short": {
+      "path": "out/new_model_batch5_20261010/NM-B5-20261010T080025Z-c55285f2/trades/SHORT_DEV_PICK.parquet",
+      "sha256": "2a7e7c362448b5ee23318eb4761044bf0ce0f51980eae9b248efdb8d7078506b",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/2a7e7c362448b5ee23318eb4761044bf0ce0f51980eae9b248efdb8d7078506b"
+    },
+    "lbr_src_manifest": {
+      "path": "out/long_basis_release_20261010/LBR-20261010T094840Z-2a1bb573/manifest.json",
+      "sha256": "6b85d8d8317127b6a6fa6bad75df5c94e30b0dbb4dc2d369c8a9b21a22ea1e76",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/6b85d8d8317127b6a6fa6bad75df5c94e30b0dbb4dc2d369c8a9b21a22ea1e76"
+    },
+    "lbr_src_fold_metrics": {
+      "path": "out/long_basis_release_20261010/LBR-20261010T094840Z-2a1bb573/fold_metrics.parquet",
+      "sha256": "4dfc5bd542e701245d80325ab17eb460bd11ac113b187ae89dfa99418e79fbaa",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/4dfc5bd542e701245d80325ab17eb460bd11ac113b187ae89dfa99418e79fbaa"
+    },
+    "lbr_mat_manifest": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/manifest.json",
+      "sha256": "b27898bd33f6fe852dfabae7c4839e615d622a1340d77f00ebb45d4769d8c038",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/b27898bd33f6fe852dfabae7c4839e615d622a1340d77f00ebb45d4769d8c038"
+    },
+    "lbr_mat_portfolio_metrics": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/portfolio_metrics.parquet",
+      "sha256": "467dd549a7a857939e99c0966a3d787caedea2f54ef0b59b68e31e59534e982e",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/467dd549a7a857939e99c0966a3d787caedea2f54ef0b59b68e31e59534e982e"
+    },
+    "lbr_mat_trades_o2_p0.5": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/trades/CAND_o2_p0.5.parquet",
+      "sha256": "d0bc98c37414b8e0881a8dc213e85fe52047b54ccda35640bf6e3b6d0234c2bd",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/d0bc98c37414b8e0881a8dc213e85fe52047b54ccda35640bf6e3b6d0234c2bd"
+    },
+    "lbr_mat_trades_o2_p1.0": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/trades/CAND_o2_p1.0.parquet",
+      "sha256": "712e9dc0094d460191d9537c020e42dcba634a49f7dd159434e473fc975f2022",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/712e9dc0094d460191d9537c020e42dcba634a49f7dd159434e473fc975f2022"
+    },
+    "lbr_mat_trades_o2_p2.0": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/trades/CAND_o2_p2.0.parquet",
+      "sha256": "3327989736906fe0255cc29b4f0708599e670dbf729b8b68bf89f4e6dbbf8763",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/3327989736906fe0255cc29b4f0708599e670dbf729b8b68bf89f4e6dbbf8763"
+    },
+    "lbr_mat_trades_o5_p0.5": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/trades/CAND_o5_p0.5.parquet",
+      "sha256": "ef5b82157558fd34ef50ddba65feb261324d14d17635bbada2200991d2bb2d7f",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/ef5b82157558fd34ef50ddba65feb261324d14d17635bbada2200991d2bb2d7f"
+    },
+    "lbr_mat_trades_o5_p1.0": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/trades/CAND_o5_p1.0.parquet",
+      "sha256": "90de19b817fea882055bd779edbbbbd98b2be480a7d1683ae7589403d32c417d",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/90de19b817fea882055bd779edbbbbd98b2be480a7d1683ae7589403d32c417d"
+    },
+    "lbr_mat_trades_o5_p2.0": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/trades/CAND_o5_p2.0.parquet",
+      "sha256": "d2459fc6a761f66ff50cac8ff7990655217625b204adb77ac7caf148880c1907",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/d2459fc6a761f66ff50cac8ff7990655217625b204adb77ac7caf148880c1907"
+    },
+    "lbr_mat_daily_o2_p0.5": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/daily/CAND_o2_p0.5.parquet",
+      "sha256": "0c737971ff0ae82665bbe2b126f54c876156ad94393e2f2c784aa801384b0dc2",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/0c737971ff0ae82665bbe2b126f54c876156ad94393e2f2c784aa801384b0dc2"
+    },
+    "lbr_mat_daily_o2_p1.0": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/daily/CAND_o2_p1.0.parquet",
+      "sha256": "a466138a623a785c04c1a50f24890103d511705d07e57b2780d41d79a2bb673f",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/a466138a623a785c04c1a50f24890103d511705d07e57b2780d41d79a2bb673f"
+    },
+    "lbr_mat_daily_o2_p2.0": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/daily/CAND_o2_p2.0.parquet",
+      "sha256": "30bf94762b3443d8e6609b91b2fa1ded9f7be7dfe68f153b994653530c86713c",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/30bf94762b3443d8e6609b91b2fa1ded9f7be7dfe68f153b994653530c86713c"
+    },
+    "lbr_mat_daily_o5_p0.5": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/daily/CAND_o5_p0.5.parquet",
+      "sha256": "bbe85a923663e86dd5b30ebd023a66d27bc1b5e1cb07ee7b333cadd0651b8fe1",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/bbe85a923663e86dd5b30ebd023a66d27bc1b5e1cb07ee7b333cadd0651b8fe1"
+    },
+    "lbr_mat_daily_o5_p1.0": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/daily/CAND_o5_p1.0.parquet",
+      "sha256": "7adebe654233c4efeb4d0717ebf52e2f58c16ae1998b5f381cccce3878b451f7",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/7adebe654233c4efeb4d0717ebf52e2f58c16ae1998b5f381cccce3878b451f7"
+    },
+    "lbr_mat_daily_o5_p2.0": {
+      "path": "out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/daily/CAND_o5_p2.0.parquet",
+      "sha256": "e5507bf51d957d7a54982912386aa42f5615c32c32923cab257150c83b20573e",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/e5507bf51d957d7a54982912386aa42f5615c32c32923cab257150c83b20573e"
+    },
+    "r2_56_report": {
+      "path": "out/k45_rl_r2_48_20261007/r2_56/report.json",
+      "sha256": "729226723e21f728bfcb86e857e99e59387e4fdec27d1db11b364962fb25fe24",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/729226723e21f728bfcb86e857e99e59387e4fdec27d1db11b364962fb25fe24"
+    },
+    "r2_56_report_r0": {
+      "path": "out/k45_rl_r2_48_20261007/r2_56/report_r0.json",
+      "sha256": "4bb660209fa302d1da842b21e2a937136535468c6f193e3ae00d948c3c9fc4e5",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/4bb660209fa302d1da842b21e2a937136535468c6f193e3ae00d948c3c9fc4e5"
+    },
+    "r2_56_B3_positions": {
+      "path": "out/k45_rl_r2_48_20261007/r2_56/B3_AXC0_positions_2026.parquet",
+      "sha256": "4c4057ac98dfe709f202f801cfd8f9d60f32a2c336422cd81b45105492d0ee3a",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/4c4057ac98dfe709f202f801cfd8f9d60f32a2c336422cd81b45105492d0ee3a"
+    },
+    "r2_56_K04_positions": {
+      "path": "out/k45_rl_r2_48_20261007/r2_56/K04_AXC0_positions_2026.parquet",
+      "sha256": "e44ae18746146876a0aa96c5ec4c38539c125150a49e73859f5dc82a51108caf",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/e44ae18746146876a0aa96c5ec4c38539c125150a49e73859f5dc82a51108caf"
+    },
+    "r2_56_C1v2_trades": {
+      "path": "out/k45_rl_r2_48_20261007/r2_56/C1v2_trades_2020_2026.parquet",
+      "sha256": "260ca97600ccbfc4e792c4b82db685bd802a1e274462fc6e3faf929cc0b7e2b6",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/260ca97600ccbfc4e792c4b82db685bd802a1e274462fc6e3faf929cc0b7e2b6"
+    },
+    "r2_56_C4v2_trades": {
+      "path": "out/k45_rl_r2_48_20261007/r2_56/C4v2_trades_2020_2026.parquet",
+      "sha256": "9bbe821948079802d403b5ff89b92178649def6eab0db1875b913f2ad4d701d5",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/9bbe821948079802d403b5ff89b92178649def6eab0db1875b913f2ad4d701d5"
+    },
+    "r2_55_selected_k": {
+      "path": "out/k45_rl_r2_48_20261007/r2_55/selection/selected_k.csv",
+      "sha256": "0d252ef39b0db049bfaf7b411ede8de57528c129b5f6f4f1a49c45d96bf246d9",
+      "tracked": true,
+      "git_index_blob": "e1563e5e74bd196c41f5e19ed8225b3b9dac5c34"
+    },
+    "r2_55_freeze": {
+      "path": "out/k45_rl_r2_48_20261007/r2_55_k0607_c0_freeze.json",
+      "sha256": "93da69ce3175b9bf6cca59fb2f46b43d06ac0b81d226346b04bc09141696379d",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/93da69ce3175b9bf6cca59fb2f46b43d06ac0b81d226346b04bc09141696379d"
+    },
+    "stageb_snapshot_manifest": {
+      "path": "out/k45_rl_r2_48_20261007/r2_54/stageb_snapshot/manifest.json",
+      "sha256": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069",
+      "tracked": true,
+      "git_index_blob": "1b6574e1fc474f9adf61a8c1d9d1b0f3a65cfe7f"
+    },
+    "code:out/run_new_model_batch1_20261010.py": {
+      "path": "out/run_new_model_batch1_20261010.py",
+      "sha256": "8a329e4fc730ccd32d10d67216a2fc7581076c226c4813b7414afd2df9fdba1a",
+      "tracked": true,
+      "git_index_blob": "0fac916bdd4d9ae5d09078b49169cad2c8aaec94"
+    },
+    "code:out/run_new_model_batch2_20261010.py": {
+      "path": "out/run_new_model_batch2_20261010.py",
+      "sha256": "97244bea96d70d0fdcce3d9d8132a683edcd98e79f3c591c8a1e3b960b72ec04",
+      "tracked": true,
+      "git_index_blob": "6058137a86fbe57378149b16465973845d0a3f56"
+    },
+    "code:out/run_new_model_batch3_20261010.py": {
+      "path": "out/run_new_model_batch3_20261010.py",
+      "sha256": "7760a0d9140d9e254862a9377266175c933f26fd45ddd79d5d3d7d959b0c6181",
+      "tracked": true,
+      "git_index_blob": "43671c4fa91e5a8ef6afa9c8a8c493b0fa37efb3"
+    },
+    "code:out/run_new_model_batch4_20261010.py": {
+      "path": "out/run_new_model_batch4_20261010.py",
+      "sha256": "ec7d54099d2bae3c100e2f07f3cdacb0fd9bfcf9ff5f8f025a5e4b0857d42d6d",
+      "tracked": true,
+      "git_index_blob": "5d4dfefa5159193ec705b46523fa10f10ee65ae4"
+    },
+    "code:out/run_new_model_batch5_20261010.py": {
+      "path": "out/run_new_model_batch5_20261010.py",
+      "sha256": "c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428",
+      "tracked": true,
+      "git_index_blob": "dd807c7ac85c7edc8ee6e1bb34188831712dc87f"
+    },
+    "code:out/run_long_cap_recovery_20261010.py": {
+      "path": "out/run_long_cap_recovery_20261010.py",
+      "sha256": "4d28b82aea606342a2b311379573288795852cdbf321a0603a26de97dd25f979",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/4d28b82aea606342a2b311379573288795852cdbf321a0603a26de97dd25f979"
+    },
+    "code:out/run_long_basis_release_20261010.py": {
+      "path": "out/run_long_basis_release_20261010.py",
+      "sha256": "2a1bb573d0ad1a492f50ea2ecc5e5897becad57623076d2dc4bf5b10f85597ee",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/2a1bb573d0ad1a492f50ea2ecc5e5897becad57623076d2dc4bf5b10f85597ee"
+    },
+    "code:out/run_lbr_fund_materialize_20261010.py": {
+      "path": "out/run_lbr_fund_materialize_20261010.py",
+      "sha256": "407303feadd37a2faf98f868f0f8f7088e681abc9b0031261487b93d1f29219a",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/407303feadd37a2faf98f868f0f8f7088e681abc9b0031261487b93d1f29219a"
+    },
+    "code:scripts/sim_r2_55.py": {
+      "path": "scripts/sim_r2_55.py",
+      "sha256": "0d7b3f164c5022fda16d9a272553fcb90f5fa2f58385d2a1396a1bfcfae92f11",
+      "tracked": true,
+      "git_index_blob": "bf3789254eebe209822df6728b94124c9ec35b50"
+    },
+    "code:scripts/sim_r2_56_replay.py": {
+      "path": "scripts/sim_r2_56_replay.py",
+      "sha256": "dd8b4cfd6bfa43f527b0d3679d2b0e0bbd8bace28f7df38aa05a7c654feaa477",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/dd8b4cfd6bfa43f527b0d3679d2b0e0bbd8bace28f7df38aa05a7c654feaa477"
+    },
+    "code:scripts/sim_r2_56_fix1.py": {
+      "path": "scripts/sim_r2_56_fix1.py",
+      "sha256": "ae5740e17342d44cd86681c757f84de15a9df889373a368f70181369527e977d",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/ae5740e17342d44cd86681c757f84de15a9df889373a368f70181369527e977d"
+    },
+    "code:scripts/sim_adaptive_exit.py": {
+      "path": "scripts/sim_adaptive_exit.py",
+      "sha256": "74b1b41e6c1c0dd55cc1e3e2b038638502d1feb6cecb632e0246947c5f1219af",
+      "tracked": true,
+      "git_index_blob": "22e9280ed5c984e9332d15ef7bf553706d92e091"
+    },
+    "code:btcusdt_quant/sim/core.py": {
+      "path": "btcusdt_quant/sim/core.py",
+      "sha256": "a32b0b674c17b40ebcdc6aad177a26fa7cfdd408cdd2a47dffc7593b0915b6bb",
+      "tracked": true,
+      "git_index_blob": "438e45f39c41daee6daffe14b1c5733a15817b00"
+    },
+    "code:btcusdt_quant/sim/reference.py": {
+      "path": "btcusdt_quant/sim/reference.py",
+      "sha256": "a3737bf8151b5214e6080a0a89a46d8fd6839b35c0516a4e8dfe5b15320b4d9d",
+      "tracked": true,
+      "git_index_blob": "db9f9ff07121a1fda0254f0fe7219d2a7ac0cfd5"
+    },
+    "code:btcusdt_quant/sim/costs.py": {
+      "path": "btcusdt_quant/sim/costs.py",
+      "sha256": "53a7271a21101124f358f3c41ed6d2b9ba2e2883cd01a49193b59125ee0eba7f",
+      "tracked": true,
+      "git_index_blob": "6ec6e4d705196da118f35d78b3ca423d42c75d21"
+    },
+    "code:btcusdt_quant/sim/strategies/legacy.py": {
+      "path": "btcusdt_quant/sim/strategies/legacy.py",
+      "sha256": "baeec6d9f5bab437ce467560a88113c6e2aa7dcf26dd3365f45bb98079f582b8",
+      "tracked": true,
+      "git_index_blob": "334796189abbccef6300e7b28b90c509cfb608f0"
+    },
+    "code:out/run_k45_decision_cadence_r2_37.py": {
+      "path": "out/run_k45_decision_cadence_r2_37.py",
+      "sha256": "107fdfa78b5436ae8e395707dde71e35446a5b54cbd7e5df25029497bbb32b3e",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/107fdfa78b5436ae8e395707dde71e35446a5b54cbd7e5df25029497bbb32b3e"
+    },
+    "code:out/k45_funding.py": {
+      "path": "out/k45_funding.py",
+      "sha256": "5742d10c08d513147720a1147d25d925217b079e9dae038f74ad9e5ee83f65a6",
+      "tracked": false,
+      "archive": "out/rl_allocator_20261010/inputs_archive/5742d10c08d513147720a1147d25d925217b079e9dae038f74ad9e5ee83f65a6"
+    }
+  },
+  "inputs_note": "sha256 = bytes hashed at freeze time (working tree). Untracked inputs: byte-exact archive copy (tracked in git). Tracked inputs: git index blob id at amendment time."
+}

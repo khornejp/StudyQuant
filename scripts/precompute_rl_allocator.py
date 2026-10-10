@@ -80,7 +80,7 @@ def load(name: str, rel: str):
 
 def dump(path: Path, obj) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8", newline="\n")
 
 
 # ================================================================ step 1: freeze
@@ -316,7 +316,7 @@ def g3_family(args, rec: dict) -> dict:
             r[f"{tag_}_invariant"] = bool(eq)
             need(eq, f"{s} {tag_} invariance at {cut}", r)
     log("G3 family prefix/tamper ok")
-    return dict(m=m, mk=mk, dec4=dec4, b2=b2, sleeves=out, st=st, f=f)
+    return dict(m=m, mk=mk, dec4=dec4, b2=b2, sleeves=out, st=st, f=f, lbr_events=sigs["LBR_FUND"]["events"])
 
 
 # ================================================================ C1v2 / C4v2
@@ -327,7 +327,14 @@ def c_family(args, rec: dict) -> dict:
     rows_ls, _ = F.ls_rows()
     market, features, fund, *_ = F.inputs(rows_ls)
     leg, books = F.books_for(market, features)
+    bars = r237.hourly_bars(market)                       # same calls as books_for: the full decision timeline
+    full = {**r237.build_f3_signals(market, features, bars)[1], **r237.build_e1_signals(market, bars)[1]}
     t = market.open_time.array.asi8.copy()
+    # LS archive starts 2020-09; before it the legacy cache is zero-filled and the F leg trades on fake LS.
+    # Sleeve available from the first real LS minute + the F-leg quantile warm-up (720 hourly decisions).
+    ls = features.global_ls_account.to_numpy(float)
+    first_ls = int(t[np.argmax(np.isfinite(ls) & (ls != 0))])
+    c_avail = t >= first_ls + 720 * 60 * sp.MIN
     mk = {"t": t, "o": market.open.to_numpy(float), "h": market.high.to_numpy(float),
           "l": market.low.to_numpy(float), "c": market.close.to_numpy(float)}
     ft, fr = pd.DatetimeIndex(fund.time).as_unit("ns").asi8, fund.rate.to_numpy(float)
@@ -359,7 +366,7 @@ def c_family(args, rec: dict) -> dict:
             need(abs(got - n_ref) <= ATOL_TOT and cnt == t_ref, f"{s} {w} net4/trades vs R2-56 report", r)
         r["TEST_design_ref"] = REF[(s, "TEST")]
         need(abs(r["TEST_net4"] - REF[(s, "TEST")]) <= 5e-6, f"{s} TEST vs design 6dp", r)
-        out[(s, "native")] = dict(tr=tr, bk=bk, rows=rows, net=net)
+        out[(s, "native")] = dict(tr=tr, bk=bk, rows=rows, net=net, sig=c_signal(t, full, s), avail=c_avail)
     log("C family parity ok")
     # prefix / future tamper at 2026-01-01 (market o/h/l/c and LS x1.7 after the cut; truncation)
     cut = A
@@ -385,7 +392,23 @@ def c_family(args, rec: dict) -> dict:
             r[f"{tag_}_rows_compared"], r[f"{tag_}_invariant"] = int(a_.sum()), bool(eq)
             need(eq, f"{s} {tag_} invariance at {cut}", r)
     log("C family prefix/tamper ok")
-    return dict(market=market, fund=fund, mk=mk, ft=ft, fr=fr, r237=r237, sleeves=out)
+    return dict(market=market, fund=fund, mk=mk, ft=ft, fr=fr, r237=r237, sleeves=out,
+                f_events={s: full[C_LEGS[s]] for s in ("C1v2", "C4v2")})
+
+
+C_LEGS = {"C1v2": ("F3", "V5"), "C4v2": ("F3-w30", "V0")}
+
+
+def c_signal(t: np.ndarray, full: dict, s: str) -> dict:
+    """Per-minute causal C signal: each leg's latest decision (decision_time <= minute open; R2-37 zero-latency
+    contract), book side = F leg if nonzero else E1/V1a (single book FIRST priority). No pending state exists: the
+    source fills at the decision minute open."""
+    (tf, sf), (te, se) = full[C_LEGS[s]], full[("E1", "V1a")]
+    tf, te = pd.DatetimeIndex(tf).as_unit("ns").asi8, pd.DatetimeIndex(te).as_unit("ns").asi8
+    a = sp.event_ffill(t, tf, sf, 0, np.int8)
+    b = sp.event_ffill(t, te, se, 0, np.int8)
+    return {"side": np.where(a != 0, a, b).astype(np.int8), "pending": np.zeros(len(t), bool),
+            "snap": sp.event_index(t, tf), "aux": sp.event_index(t, te)}
 
 
 def c_trades(bk: pd.DataFrame, t: np.ndarray) -> pd.DataFrame:
@@ -451,7 +474,7 @@ def ax_family(args, rec: dict) -> dict:
             need(r[f"{g['seg']}_minute_max_abs_vs_core"] <= ATOL_MIN, f"{s} {g['seg']} minute ledger vs core", r)
             r[f"{g['seg']}_net4"] = float(net.sum())
             r[f"{g['seg']}_positions"] = int(len(tr))
-            g.update(tr=tr, rows=rows, net=net, t=tt)
+            g.update(tr=tr, rows=rows, net=net, t=tt, sig=ax_signal(tt, g, tr))
             rr.append(g)
         ref_t = rep0["candidates"][s]
         ref_n = rep0["native"][s]
@@ -495,6 +518,29 @@ def ax_family(args, rec: dict) -> dict:
         out[(s, "native")] = dict(segs=rr)
         log(f"{s} parity ok")
     return dict(sleeves=out)
+
+
+def ax_signal(t: np.ndarray, g: dict, tr: pd.DataFrame) -> dict:
+    """Per-minute causal AXC0 signal from the source decision table (15 m groups, executed at decision + 1 m):
+    side of the first row the core would open on (allow_entry, side != 0, finite E0 > 0) of the latest decision group
+    with decision_time <= minute open; pending = that group's entry decision at this minute while flat at its open
+    (order waits for the next-minute open). snapshot = first table row of the latest group (segment table index)."""
+    tb = g["table"].reset_index(drop=True)
+    dt = pd.DatetimeIndex(tb.decision_time).as_unit("ns").asi8
+    ok = tb.allow_entry.to_numpy(bool) & (tb.side.to_numpy() != 0) & np.isfinite(tb.e0_bps.to_numpy(float))         & (tb.e0_bps.to_numpy(float) > 0)
+    first = np.r_[True, dt[1:] != dt[:-1]]
+    gid = np.cumsum(first) - 1
+    g_t, g_row = dt[first], np.flatnonzero(first)
+    g_side = np.zeros(len(g_t), np.int8)
+    cand = np.flatnonzero(ok)
+    pick = pd.Series(cand).groupby(gid[cand]).first()
+    g_side[pick.index.to_numpy()] = tb.side.to_numpy()[pick.to_numpy()]
+    side = sp.event_ffill(t, g_t, g_side, 0, np.int8)
+    k = sp.event_index(t, g_t)
+    openm = sp.interval_mask(len(t), tr.e.to_numpy(), tr.x.to_numpy())
+    at_dec = (k >= 0) & (g_t[np.maximum(k, 0)] == t)
+    return {"side": side, "pending": at_dec & (side != 0) & ~openm, "snap": np.where(k >= 0, g_row[np.maximum(k, 0)], -1),
+            "aux": np.full(len(t), -1)}
 
 
 def ax_trades(trades: pd.DataFrame, t: np.ndarray, g: dict, ax) -> pd.DataFrame:
@@ -696,29 +742,63 @@ def write_part(frame: pd.DataFrame, d: Path, stem: str, tcol: str = "minute_time
     return out
 
 
-def grid_frame(n, t, s, cell_id, *, side_sig, w_sig, active, pending, open_, exit_pending, opp, sched, R0, Rt,
-               lvl, armed, rows, snap, available) -> pd.DataFrame:
+DECISION_COLS = sp.OBS_COLUMNS["decisions"]
+
+
+def grid_frame(n, t, s, cell_id, *, side_sig, w_sig, active, pending, open_, exit_pending, opp, mand, R0, Rt,
+               lvl, armed, rows, snap, aux, available, closed) -> pd.DataFrame:
     g = np.bincount(rows["minute"], rows["gross"], minlength=n)[:n]
     fe = np.bincount(rows["minute"], rows["fee"], minlength=n)[:n]
     fu = np.bincount(rows["minute"], rows["funding"], minlength=n)[:n]
-    return pd.DataFrame({
+    f = pd.DataFrame({
         "minute_time": t, "sleeve_id": np.full(n, SLEEVE_ID[s], np.int8), "exec_cell": np.full(n, cell_id, np.int8),
         "available": available, "base_side": side_sig.astype(np.int8), "base_weight": w_sig.astype(np.float32),
         "signal_active": active, "pending": pending, "open": open_, "exit_pending": exit_pending,
-        "entry_opportunity_id": opp.astype(np.int32), "base_exit_sched_time": sched.astype(np.int64),
+        "entry_opportunity_id": opp.astype(np.int32), "base_mandatory_exit_time": mand.astype(np.int64),
         "R0_bps": R0.astype(np.float32), "R_t_bps": Rt.astype(np.float32), "stop_level": lvl.astype(np.float32),
         "trail_armed": armed.astype(np.int8), "gross_pnl": g, "fee": fe, "funding": fu, "net4": g + fe + fu,
-        "available_time": t + sp.MIN, "feature_snapshot_id": snap.astype(np.int32)})
+        "available_time": t + sp.MIN, "feature_snapshot_id": snap.astype(np.int32),
+        "snapshot_id_aux": aux.astype(np.int32), "closed_opp_id": closed.astype(np.int32)})
+    sp.obs_columns("grid", f.columns)
+    return f
 
 
 def ledger_frame(rows, t, opp_of_tid) -> pd.DataFrame:
-    return pd.DataFrame({"minute_time": t[rows["minute"]], "minute_idx": rows["minute"],
-                         "entry_opportunity_id": opp_of_tid[rows["tid"]].astype(np.int32),
+    return pd.DataFrame({"minute_time": t[rows["minute"]], "available_time": t[rows["minute"]] + sp.MIN,
+                         "minute_idx": rows["minute"], "entry_opportunity_id": opp_of_tid[rows["tid"]].astype(np.int32),
                          "tid": rows["tid"].astype(np.int32), "gross_pnl": rows["gross"], "fee": rows["fee"],
                          "funding": rows["funding"], "net4": rows["gross"] + rows["fee"] + rows["funding"]})
 
 
-def out_g3(G, files):
+def split_opp(opp: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Physical split: decisions (observation-safe, allowlisted) vs outcomes (private replay/accounting)."""
+    dec = opp[[c for c in DECISION_COLS if c in opp]].copy()
+    sp.obs_columns("decisions", dec.columns)
+    out = opp[["entry_opportunity_id"] + [c for c in opp.columns if c not in DECISION_COLS]].copy()
+    out["decision_time"] = opp.decision_time.to_numpy()          # partition key only
+    return dec, out
+
+
+def write_sleeve(dd: Path, gf, rows, t, opp, opp_tid) -> dict:
+    dec, outc = split_opp(opp)
+    return {"grid": write_part(gf, dd, "grid"), "ledger": write_part(ledger_frame(rows, t, opp_tid), dd, "ledger"),
+            "decisions": write_part(dec, dd, "decisions", "decision_time"),
+            "outcomes": write_part(outc, dd, "outcomes", "decision_time"), "n_opportunities": int(len(opp))}
+
+
+def g3_ready(G, s: str) -> np.ndarray:
+    """Per 4h decision: the sleeve's signal inputs are ready (not-ready decisions are forced flat by the source)."""
+    st, f = G["st"], G["f"]
+    with np.errstate(invalid="ignore"):
+        if s == "G3_LONG":
+            return np.isfinite(st["score"][(42, 168, 504)]) & np.isfinite(st["svi"][180]) & np.isfinite(st["w"]["W180-P65"])
+        if s == "G3_SHORT":
+            return (np.isfinite(st["score"][(6, 18, 42)]) & np.isfinite(st["svi"][180]) & np.isfinite(st["w"]["V-ENS"])
+                    & (st["j"] >= 0) & np.isfinite(st["med"]))
+        return np.isfinite(f["zr4"]) & np.isfinite(f["ztaker"]) & np.isfinite(f["zfund"]) & np.isfinite(f["w"])
+
+
+def out_g3(G, files, avail_rep):
     m, dec4 = G["m"], G["dec4"]
     n, t = m.N, m.t
     sig_min = np.searchsorted(dec4, np.arange(n), "left") - 1          # latest decision with dec4 < i (closed)
@@ -726,35 +806,32 @@ def out_g3(G, files):
         tr, od = d["tr"], d["od"].reset_index(drop=True)
         cell_id = [CELL_TAG[c] for c in CELLS].index(tag)
         k = (od.decision_idx.to_numpy() - 239) // 240
+        dec = od.decision_idx.to_numpy(np.int64)
         opp = pd.DataFrame({"entry_opportunity_id": np.arange(len(od), dtype=np.int32),
-                            "decision_idx": od.decision_idx.to_numpy(np.int64),
-                            "decision_time": t[od.decision_idx.to_numpy()],
-                            "available_time": t[od.decision_idx.to_numpy()] + sp.MIN,
+                            "decision_time": t[dec] + sp.MIN, "available_time": t[dec] + sp.MIN,
                             "side": od.side.to_numpy(np.int8), "base_weight": od.weight.to_numpy(float),
-                            "filled": od.filled.to_numpy(bool), "feature_snapshot_id": k.astype(np.int32)})
+                            "feature_snapshot_id": k.astype(np.int32), "segment": "ALL",
+                            "decision_idx": dec, "filled": od.filled.to_numpy(bool)})
         fill_opp = np.flatnonzero(opp.filled.to_numpy())
-        if len(fill_opp) != len(tr) or not np.array_equal(od.decision_idx.to_numpy()[fill_opp], tr.decision_idx.to_numpy()):
+        if len(fill_opp) != len(tr) or not np.array_equal(dec[fill_opp], tr.decision_idx.to_numpy()):
             raise Fail(f"{s} {tag} order->trade map")
         opp["tid"] = -1
         opp.loc[fill_opp, "tid"] = tr.tid.to_numpy()
         for c in ("entry_idx", "entry_px", "exit_decision_idx", "exit_idx", "exit_px", "open_at_end"):
             opp[c] = np.nan if c.endswith("px") else (-1 if c != "open_at_end" else False)
             opp.loc[fill_opp, c] = tr[c].to_numpy()
-        if s == "LBR_FUND":
-            sched = np.full(len(opp), -1, np.int64)
-            kk = opp.feature_snapshot_id.to_numpy() + 2
+        mand = np.full(len(opp), -1, np.int64)
+        if s == "LBR_FUND":                                   # max_hold 2 bars: exit decision bar close, known at T
+            kk = k + 2
             okk = kk < len(dec4)
-            sched[okk] = t[dec4[kk[okk]]] + sp.MIN            # exit decision bar close (max_hold 2 bars)
-        else:
-            sched = np.full(len(opp), -1, np.int64)
-        opp["base_exit_sched_time"] = sched
+            mand[okk] = t[dec4[kk[okk]]] + sp.MIN
+        opp["base_mandatory_exit_time"] = mand
         tot = pd.DataFrame({"tid": d["rows"]["tid"], "g": d["rows"]["gross"], "f": d["rows"]["fee"],
                             "u": d["rows"]["funding"]}).groupby("tid").sum()
         for nm, c in (("gross_pnl", "g"), ("fee", "f"), ("funding", "u")):
             opp[nm] = 0.0
             opp.loc[fill_opp, nm] = tot[c].reindex(tr.tid).to_numpy()
         opp["net4"] = opp.gross_pnl + opp.fee + opp.funding
-        dec = opp.decision_idx.to_numpy()
         j0 = np.where(opp.filled, opp.entry_idx, -1).astype(np.int64)
         pend_end = np.where(opp.filled, j0 - 1, np.minimum(dec + 60, n - 1))
         oa, ob = tr.entry_idx.to_numpy(), np.where(tr.open_at_end, n - 1, tr.exit_idx).astype(np.int64)
@@ -763,29 +840,54 @@ def out_g3(G, files):
         opp_min = sp.interval_fill(n, dec + 1, pend_end, oid, -1, np.int32)
         opp_open = sp.interval_fill(n, oa, ob, oid[fill_opp], -1, np.int32)
         opp_min = np.where(opp_open >= 0, opp_open, opp_min)
-        sched_min = np.full(n, -1, np.int64)
-        if s == "LBR_FUND":
-            sched_min = sp.interval_fill(n, oa, ob, sched[fill_opp], -1, np.int64)
+        mand_min = sp.interval_fill(n, dec + 1, pend_end, mand, -1, np.int64)
+        mand_min = np.where(opp_open >= 0, sp.interval_fill(n, oa, ob, mand[fill_opp], -1, np.int64), mand_min)
+        closed = np.full(n, -1, np.int64)
+        cl = ~tr.open_at_end.to_numpy(bool)
+        closed[tr.exit_idx.to_numpy()[cl].astype(np.int64)] = oid[fill_opp][cl]   # exit fill minute
         side_sig = np.where(sig_min >= 0, d["sig"]["side"][np.maximum(sig_min, 0)], 0)
         w_sig = np.where(sig_min >= 0, d["sig"]["w"][np.maximum(sig_min, 0)], 0.0)
+        ready = g3_ready(G, s)
+        avail = (sig_min >= 0) & ready[np.maximum(sig_min, 0)]
         openm = sp.interval_mask(n, oa, ob)
         w_open = sp.interval_fill(n, oa, ob, tr.entry_weight_frozen.to_numpy(), np.nan, float)
         w_sig = np.where(openm, w_open, w_sig)
         nanf = np.full(n, np.nan)
         gf = grid_frame(n, t, s, cell_id, side_sig=side_sig, w_sig=w_sig, active=side_sig != 0,
                         pending=sp.interval_mask(n, dec + 1, pend_end), open_=openm,
-                        exit_pending=sp.interval_mask(n, xa, ob), opp=opp_min, sched=sched_min, R0=nanf, Rt=nanf,
-                        lvl=nanf, armed=np.zeros(n), rows=d["rows"], snap=sig_min,
-                        available=np.ones(n, bool))
-        need_eq = float(np.abs(gf.net4.to_numpy() - d["net"]).max())
-        if need_eq > ATOL_MIN:
+                        exit_pending=sp.interval_mask(n, xa, ob), opp=opp_min, mand=mand_min, R0=nanf, Rt=nanf,
+                        lvl=nanf, armed=np.zeros(n), rows=d["rows"], snap=sig_min, aux=np.full(n, -1),
+                        available=avail, closed=closed)
+        if float(np.abs(gf.net4.to_numpy() - d["net"]).max()) > ATOL_MIN:
             raise Fail(f"{s} {tag} grid net4")
-        dd = PRE / "g3_family" / tag / s
-        files[f"g3_family/{tag}/{s}"] = {"grid": write_part(gf, dd, "grid"),
-                                         "ledger": write_part(ledger_frame(d["rows"], t, opp_of(opp, len(tr))), dd, "ledger"),
-                                         "opportunities": write_part(opp, dd, "opportunities", "decision_time"),
-                                         "n_opportunities": int(len(opp)), "n_trades": int(len(tr))}
+        if tag == CELL_TAG[PRIMARY]:
+            avail_rep[s] = availability(t, avail, gf.open.to_numpy())
+        files[f"g3_family/{tag}/{s}"] = write_sleeve(PRE / "g3_family" / tag / s, gf, d["rows"], t, opp,
+                                                     opp_of(opp, len(tr)))
         log(f"wrote {s} {tag}")
+
+
+FOLDS = {"F1": (("2020-01-01", "2021-01-01"), ("2021-01-01", "2022-01-01")),
+         "F2": (("2020-01-01", "2022-01-01"), ("2022-01-01", "2023-01-01")),
+         "F3": (("2020-01-01", "2023-01-01"), ("2023-01-01", "2024-01-01")),
+         "F4": (("2020-01-01", "2024-01-01"), ("2024-01-01", "2025-01-01")),
+         "F5": (("2020-01-01", "2025-01-01"), ("2025-01-01", "2026-01-01"))}
+
+
+def availability(t, avail, openm) -> dict:
+    out = {"first_available": str(pd.Timestamp(int(t[np.argmax(avail)]), tz="UTC")) if avail.any() else None,
+           "available_minutes": int(avail.sum()), "grid_minutes": int(len(t)),
+           "open_while_unavailable_minutes": int((openm & ~avail).sum())}
+    for f, wins in FOLDS.items():
+        for nm, (a, b) in zip(("train", "val"), wins):
+            lo = np.searchsorted(t, pd.Timestamp(a, tz="UTC").value)
+            hi = np.searchsorted(t, pd.Timestamp(b, tz="UTC").value)
+            out[f"{f}_{nm}_available_pct"] = round(100 * float(avail[lo:hi].mean()), 3)
+            out[f"{f}_{nm}_exposure_pct"] = round(100 * float(openm[lo:hi].mean()), 3)
+    lo = np.searchsorted(t, sp.TEST_START.value)
+    out["TEST_available_pct"] = round(100 * float(avail[lo:].mean()), 3)
+    out["TEST_exposure_pct"] = round(100 * float(openm[lo:].mean()), 3)
+    return out
 
 
 def opp_of(opp: pd.DataFrame, ntr: int) -> np.ndarray:
@@ -795,22 +897,26 @@ def opp_of(opp: pd.DataFrame, ntr: int) -> np.ndarray:
     return o
 
 
-def native_out(s, t_glob, segs, files, kind):
-    """segs: list of dict(t, tr, rows, mk?, R state...) on their own minute arrays; mapped onto the global grid."""
+def native_out(s, t_glob, segs, files, avail_rep):
+    """segs: dict(t, tr, rows, sig, seg[, mm, e_min]) on their own minute arrays, mapped onto the global grid."""
     n = len(t_glob)
     rows_all, opps, R0, Rt, lvl, arm = [], [], np.full(n, np.nan), np.full(n, np.nan), np.full(n, np.nan), np.zeros(n)
-    side, w = np.zeros(n, np.int8), np.zeros(n)
+    side, pend = np.zeros(n, np.int8), np.zeros(n, bool)
     openm = np.zeros(n, bool)
     opp_min = np.full(n, -1, np.int32)
-    sched = np.full(n, -1, np.int64)
-    snap = np.full(n, -1, np.int32)
+    mand = np.full(n, -1, np.int64)
+    snap, aux = np.full(n, -1, np.int64), np.full(n, -1, np.int64)
     avail = np.zeros(n, bool)
+    closed = np.full(n, -1, np.int64)
     base = 0
     for g in segs:
         off = int(np.searchsorted(t_glob, g["t"][0]))
-        if not np.array_equal(t_glob[off:off + len(g["t"])], g["t"]):
+        L = len(g["t"])
+        if not np.array_equal(t_glob[off:off + L], g["t"]):
             raise Fail(f"{s} segment minutes not on the global grid")
-        avail[off:off + len(g["t"])] = True
+        avail[off:off + L] = g["avail"] if "avail" in g else True
+        side[off:off + L], pend[off:off + L] = g["sig"]["side"], g["sig"]["pending"]
+        snap[off:off + L], aux[off:off + L] = g["sig"]["snap"], g["sig"]["aux"]
         tr = g["tr"].reset_index(drop=True)
         oid = base + np.arange(len(tr))
         rr = {k: v.copy() for k, v in g["rows"].items()}
@@ -818,32 +924,29 @@ def native_out(s, t_glob, segs, files, kind):
         rr["tid"] = rr["tid"] + base
         rows_all.append(rr)
         e, x = tr.e.to_numpy() + off, tr.x.to_numpy() + off
+        closed[x] = oid                                       # exit fill minute (incl. data_end marks)
         for q in range(len(tr)):
             a, b = e[q], x[q]
             openm[a:b + 1] = True
             opp_min[a:b + 1] = oid[q]
-            side[a:b + 1] = tr.side.iloc[q]
-            w[a:b + 1] = 1.0
             if "sched_exit_ns" in tr:
-                sched[a:b + 1] = tr.sched_exit_ns.iloc[q]
+                mand[a:b + 1] = tr.sched_exit_ns.iloc[q]
             if "e0" in tr and np.isfinite(tr.e0.iloc[q]):
                 R0_, R_, _, A_, L_ = sp.adaptive_path(g["mm"].open.to_numpy(float), g["mm"].high.to_numpy(float),
                                                       g["mm"].low.to_numpy(float), g["e_min"][:, int(tr.e_col.iloc[q])],
                                                       int(tr.e.iloc[q]), int(tr.x.iloc[q]), int(tr.side.iloc[q]),
                                                       float(tr.px_in.iloc[q]), float(tr.k.iloc[q]), float(tr.e0.iloc[q]))
                 R0[a:b + 1], Rt[a:b + 1], arm[a:b + 1], lvl[a:b + 1] = R0_, R_, A_, L_
-        snap_seg = np.searchsorted(tr.e.to_numpy(), np.arange(len(g["t"])), "right") - 1
-        snap[off:off + len(g["t"])] = np.where(snap_seg >= 0, oid[np.maximum(snap_seg, 0)], -1)
         tot = pd.DataFrame({"tid": g["rows"]["tid"], "g": g["rows"]["gross"], "f": g["rows"]["fee"],
                             "u": g["rows"]["funding"]}).groupby("tid").sum().reindex(tr.tid, fill_value=0.0)
-        dec_t = (tr.decision_ns if "decision_ns" in tr else tr.entry_ns).to_numpy(np.int64)  # data closed through it
-        o = pd.DataFrame({"entry_opportunity_id": oid.astype(np.int32), "tid": oid, "segment": g.get("seg", "ALL"),
-                          "decision_time": dec_t, "available_time": dec_t,
-                          "side": tr.side.to_numpy(np.int8), "base_weight": tr.units.to_numpy(float), "filled": True,
+        dec_t = (tr.decision_ns if "decision_ns" in tr else tr.entry_ns).to_numpy(np.int64)  # data closed before it
+        o = pd.DataFrame({"entry_opportunity_id": oid.astype(np.int32), "decision_time": dec_t, "available_time": dec_t,
+                          "side": tr.side.to_numpy(np.int8), "base_weight": tr.units.to_numpy(float),
+                          "feature_snapshot_id": tr.snapshot_id.to_numpy(np.int64),
+                          "base_mandatory_exit_time": tr.sched_exit_ns.to_numpy() if "sched_exit_ns" in tr else -1,
+                          "segment": g.get("seg", "ALL"), "tid": oid, "filled": True,
                           "entry_idx": e, "entry_px": tr.px_in.to_numpy(), "exit_idx": x,
                           "exit_px": tr.px_out.to_numpy(), "exit_reason": tr.reason.to_numpy(),
-                          "base_exit_sched_time": tr.sched_exit_ns.to_numpy() if "sched_exit_ns" in tr else -1,
-                          "feature_snapshot_id": tr.snapshot_id.to_numpy(np.int64),
                           "gross_pnl": tot.g.to_numpy(), "fee": tot.f.to_numpy(), "funding": tot.u.to_numpy()})
         o["net4"] = o.gross_pnl + o.fee + o.funding
         for c in ("candidate", "e0", "k", "e_col", "entry_kind", "position_id"):
@@ -851,16 +954,16 @@ def native_out(s, t_glob, segs, files, kind):
                 o[c] = tr[c].to_numpy()
         opps.append(o)
         base += len(tr)
+    w = np.where(openm | (side != 0), 1.0, 0.0)
     rows = {k: np.concatenate([r[k] for r in rows_all]) for k in sp.ROW_COLS}
     opp = pd.concat(opps, ignore_index=True)
-    gf = grid_frame(n, t_glob, s, 0, side_sig=side, w_sig=w, active=openm, pending=np.zeros(n, bool), open_=openm,
-                    exit_pending=np.zeros(n, bool), opp=opp_min, sched=sched, R0=R0, Rt=Rt, lvl=lvl, armed=arm,
-                    rows=rows, snap=snap, available=avail)
-    dd = PRE / "common" / s
-    files[f"common/{s}"] = {"grid": write_part(gf, dd, "grid"),
-                            "ledger": write_part(ledger_frame(rows, t_glob, np.arange(len(opp))), dd, "ledger"),
-                            "opportunities": write_part(opp, dd, "opportunities", "decision_time"),
-                            "n_opportunities": int(len(opp))}
+    gf = grid_frame(n, t_glob, s, 0, side_sig=side, w_sig=w, active=side != 0, pending=pend, open_=openm,
+                    exit_pending=np.zeros(n, bool), opp=opp_min, mand=mand, R0=R0, Rt=Rt, lvl=lvl, armed=arm,
+                    rows=rows, snap=snap, aux=aux, available=avail, closed=closed)
+    avail_rep[s] = availability(t_glob, avail, openm)
+    avail_rep[s].update(signal_active_ne_open_minutes=int(((side != 0) != openm).sum()),
+                        pending_minutes=int(pend.sum()), distinct_snapshots=int(len(np.unique(snap[snap >= 0]))))
+    files[f"common/{s}"] = write_sleeve(PRE / "common" / s, gf, rows, t_glob, opp, np.arange(len(opp)))
     log(f"wrote {s}")
     return gf
 
@@ -915,68 +1018,399 @@ def cmd_precompute(args) -> None:
     except Fail as e:
         dump(OUT / "precompute_FAIL.json", {"failed": str(e), "records": rec})
         raise SystemExit(f"PARITY FAIL: {e}")
-    files = {}
+    files, avail_rep = {}, {}
     t_glob = G["m"].t
-    out_g3(G, files)
-    mk_common = pd.DataFrame({"minute_time": t_glob, **{k: G["mk"][k] for k in ("o", "h", "l", "c")}})
+    out_g3(G, files, avail_rep)
+    mk_common = pd.DataFrame({"minute_time": t_glob, "available_time": t_glob + sp.MIN,
+                              **{k: G["mk"][k] for k in ("o", "h", "l", "c")}})
     files["common/market"] = write_part(mk_common, PRE / "common" / "market", "market")
     files["common/funding_g3"] = write_part(pd.DataFrame({"minute_time": G["m"].ft, "rate": G["m"].fr}),
                                             PRE / "common" / "funding", "funding_g3")
+    files["signals/g3_state"], files["signals/lbr_features"] = g3_signal_files(G)
     if C:
         for s in ("C1v2", "C4v2"):
             d = C["sleeves"][(s, "native")]
-            native_out(s, t_glob, [dict(t=C["mk"]["t"], tr=d["tr"], rows=d["rows"], seg="ALL")], files, "log")
+            native_out(s, t_glob, [dict(t=C["mk"]["t"], tr=d["tr"], rows=d["rows"], sig=d["sig"], seg="ALL",
+                                        avail=d["avail"])],
+                       files, avail_rep)
         files["common/funding_c"] = write_part(pd.DataFrame({"minute_time": C["ft"], "rate": C["fr"]}),
                                                PRE / "common" / "funding", "funding_c")
+        for s, (tf, sf) in C["f_events"].items():
+            tf = pd.DatetimeIndex(tf).as_unit("ns").asi8
+            files[f"signals/{s}_F"] = write_part(pd.DataFrame({"decision_time": tf, "available_time": tf,
+                                                               "side": np.asarray(sf, np.int8)}),
+                                                 PRE / "signals", f"{s}_F", "decision_time")
     if X:
         for s in ("B3_AXC0", "K04_AXC0"):
-            native_out(s, t_glob, X["sleeves"][(s, "native")]["segs"], files, "log")
+            segs = X["sleeves"][(s, "native")]["segs"]
+            native_out(s, t_glob, segs, files, avail_rep)
+            tabs = []
+            for g in segs:
+                tb = g["table"].reset_index(drop=True)
+                dt = pd.DatetimeIndex(tb.decision_time).as_unit("ns").asi8
+                w = (dt >= g["a"].value) & (dt < g["b"].value)
+                ki = np.searchsorted(g["t"], dt[w])
+                tabs.append(pd.DataFrame({"decision_time": dt[w], "available_time": dt[w], "segment": g["seg"],
+                                          "feature_snapshot_id": np.flatnonzero(w), "component": tb.component[w].to_numpy(),
+                                          "side": tb.side[w].to_numpy(np.int8), "allow_entry": tb.allow_entry[w].to_numpy(),
+                                          "e0_bps": tb.e0_bps[w].to_numpy(float),
+                                          "k": g["km"][np.minimum(ki, len(g["km"]) - 1)]}))
+            files[f"signals/{s}_table"] = write_part(pd.concat(tabs, ignore_index=True), PRE / "signals",
+                                                     f"{s}_table", "decision_time")
         for g in X["sleeves"][("B3_AXC0", "native")]["segs"]:
             files[f"common/funding_ax_{g['seg']}"] = write_part(pd.DataFrame({"minute_time": g["ft"], "rate": g["fr"]}),
                                                                PRE / "common" / "funding", f"funding_ax_{g['seg']}")
     total_bytes = sum(p.stat().st_size for p in PRE.rglob("*.parquet"))
     runtime = round(time.time() - t_start, 1)
     manifest = {
-        "name": "RL allocator sleeve precompute (step 2)", "created_utc": datetime.now(timezone.utc).isoformat(),
+        "name": "RL allocator sleeve precompute (step 2, fix round 1)", "created_utc": datetime.now(timezone.utc).isoformat(),
         "freeze_sha256": sha(FREEZE), "data_cutoff": fz["data_cutoff"], "frozen_hypothesis": fz["frozen_hypothesis"],
         "code_sha256": {"script": sha(Path(__file__)), "module": sha(ROOT / "btcusdt_quant/rl/sleeve_precompute.py")},
-        "git_head": git("rev-parse", "HEAD"), "runtime_sec": runtime, "parity": rec, "counterfactual": cf,
-        "adaptive_stop_check": stops, "files": files, "total_bytes": total_bytes,
+        "git_head": git("rev-parse", "HEAD"),
+        "git_dirty_own_files": git("status", "--porcelain", "--", "btcusdt_quant/rl", "scripts/precompute_rl_allocator.py",
+                                   "tests/rl"),
+        "test_unlock": "--allow-test-parity (integrity parity only)", "runtime_sec": runtime, "parity": rec,
+        "counterfactual": cf, "adaptive_stop_check": stops, "availability": avail_rep, "files": files,
+        "total_bytes": total_bytes,
         "layout": {"common/<sleeve>": "B3_AXC0, K04_AXC0, C1v2, C4v2 (native fill, one cell)",
                    "g3_family/<cell>/<sleeve>": "G3_LONG, G3_SHORT, LBR_FUND x 6 cells",
-                   "grid_<year>": "per minute state + canonical P&L (float64 P&L, float32 state)",
-                   "ledger_<year>": "per (minute, opportunity) canonical rows: fast counterfactual replay input",
-                   "opportunities_<year>": "canonical entry opportunity schedule (env-only: realized exit fields are "
-                                           "future information and must never enter observations)",
-                   "observation_cache_1h": "placeholder (step 3)"},
-        "test_guard": "read_partitioned refuses *_2026 partitions without allow_test=True",
-        "notes": ["G3/LBR grid minutes 2020-01-01..2026-10-07; B3/K04 available 2023-09-01..2026-10-07 in two "
-                  "segments (native rolling-k ends with a data_end close at 2025-12-31 23:59; TEST restarts flat)",
-                  "base_exit_sched_time: LBR exit decision bar close (activation + 2 bars), C max_hold expiry; "
-                  "G3 and B3/K04 have no scheduled exit (-1)"]}
+                   "grid_<year>": "per-minute causal state + canonical P&L (observation-safe; row usable at T only if "
+                                  "available_time <= T)",
+                   "ledger_<year>": "per (minute, opportunity) realized canonical rows (replay input; observation-safe "
+                                    "by available_time)",
+                   "decisions_<year>": "canonical entry opportunities, decision-time columns only (observation-safe)",
+                   "outcomes_<year>": "PRIVATE: fill result, realized exits, reasons, trade P&L (replay/accounting "
+                                      "only; read_observation refuses it)",
+                   "signals/": "decision-time source features (G3 state, LBR features, AXC0 tables, C F-leg events)",
+                   "observation_cache_1h": "placeholder; step 3 writes out/rl_allocator_20261010/state/"},
+        "test_guard": "read_partitioned/read_observation refuse *_2026 partitions without allow_test=True; the "
+                      "precompute itself refuses to start without --allow-test-parity",
+        "notes": ["G3/LBR grid minutes 2020-01-01..2026-10-07; available = source signal inputs ready",
+                  "B3/K04 available 2023-09-01..2026-10-07 in two segments (native rolling-k segment ends with a "
+                  "data_end close at 2025-12-31 23:59; TEST restarts flat); unavailable before 2023-09-01",
+                  "terminal rule (all sleeves): a position open at a ledger end is marked to the last close and "
+                  "charged the exit fee (G3/LBR: reserved 2 bps x w; native: 2 bps per side at the last close)",
+                  "base_mandatory_exit_time: LBR exit decision bar close (activation + 2 bars), C max_hold expiry; "
+                  "G3 and B3/K04 -1; never the realized exit",
+                  "C decision_time = available_time = fill minute T (R2-37 zero-latency contract): observations at "
+                  "T must exclude the minute-T market row",
+                  "native pending: C has none (fill at the decision minute open); B3/K04 pending = decision minute "
+                  "while flat (market order executes at the next open)"]}
     dump(PRE / ("manifest.json" if args.only == {"g3", "c", "ax"} else "manifest_partial.json"), manifest)
     (PRE / "observation_cache_1h").mkdir(exist_ok=True)
     if not args.no_registry and args.only == {"g3", "c", "ax"}:
-        registry.record(REGISTRY, {"experiment": "RL allocator sleeve precompute (steps 1-2)", "role": "precompute",
-                                   "n_trials": 0, "n_simulations": 0,
+        registry.record(REGISTRY, {"experiment": "RL allocator sleeve precompute (steps 1-2, fix round 1)",
+                                   "role": "precompute", "n_trials": 0, "n_simulations": 0,
                                    "config": {"freeze_sha256": sha(FREEZE), "sleeves": list(SLEEVES),
                                               "cells": [CELL_TAG[c] for c in CELLS], "paths": args.paths,
-                                              "data_cutoff": fz["data_cutoff"]},
-                                   "input_hashes": fz["source_hashes"],
+                                              "data_cutoff": fz["data_cutoff"], "round": "fix1"},
+                                   "input_hashes": {k: v["sha256"] for k, v in fz["source_hashes"].items()},
                                    "result_summary": {k: {x: v.get(x) for x in ("DEV-FULL_net4", "TEST_net4")}
                                                       for k, v in rec.items() if isinstance(v, dict)}})
     log(f"done runtime {runtime}s bytes {total_bytes}")
 
 
-def main() -> None:
+def g3_signal_files(G) -> tuple[dict, dict]:
+    st, f = G["st"], G["f"]
+    T = st["T"]
+    g3 = pd.DataFrame({"decision_time": T, "available_time": T, "feature_snapshot_id": np.arange(len(T)),
+                       "score_F": st["score"][(6, 18, 42)], "score_S": st["score"][(42, 168, 504)],
+                       "svi42": st["svi"][42], "svi180": st["svi"][180], "sigma_ann": st["sig"],
+                       "w_W180_P65": st["w"]["W180-P65"], "w_V_ENS": st["w"]["V-ENS"], "funding_z90": st["fz"],
+                       "funding_rate_last": st["fund"]})
+    ev = G["lbr_events"]
+    armed, age = np.zeros(len(T), np.int8), np.full(len(T), np.nan)
+    for e in ev:
+        end = e["end_idx"] if e["end_idx"] >= 0 else len(T)
+        armed[e["arm_idx"]:end] = 1
+        age[e["arm_idx"]:end] = np.arange(end - e["arm_idx"])
+    lbr = pd.DataFrame({"decision_time": T, "available_time": T, "feature_snapshot_id": np.arange(len(T)),
+                        "zr4": f["zr4"], "ztaker": f["ztaker"], "zprem": f["zprem"], "zfund": f["zfund"], "w": f["w"],
+                        "armed": armed, "armed_age_bars": age})
+    return (write_part(g3, PRE / "signals", "g3_state", "decision_time"),
+            write_part(lbr, PRE / "signals", "lbr_features", "decision_time"))
+
+
+# ================================================================ step 3: state store
+STATE = OUT / "state"
+NATIVE_DIRS = {s: ("common", s) for s in NATIVE}
+G3_SIG_COLS = ("score_F", "score_S", "svi42", "svi180", "sigma_ann", "w_W180_P65", "w_V_ENS", "funding_z90")
+LBR_SIG_COLS = ("zr4", "ztaker", "zprem", "zfund", "w", "armed", "armed_age_bars")
+
+
+def _sig(stem: str, allow_test: bool, T_max: int) -> pd.DataFrame:
+    years = set(range(2020, pd.Timestamp(int(T_max), tz="UTC").year + 1))
+    f = sp.read_partitioned(PRE / "signals", stem, allow_test=allow_test, time_col="decision_time", years=years)
+    return f[f.available_time.to_numpy(np.int64) <= T_max].sort_values("available_time", kind="stable") \
+        .reset_index(drop=True)
+
+
+def _sleeve_inputs(rel: Path, T_max: int, allow_test: bool):
+    gcols = [c for c in sp.OBS_COLUMNS["grid"] if c not in ("sleeve_id", "exec_cell")]
+    g = sp.read_observation(rel, "grid", T_max, columns=gcols, allow_test=allow_test)
+    led = sp.read_observation(rel, "ledger", T_max, allow_test=allow_test)
+    return g, led
+
+
+def state_inputs(allow_test: bool, T_max: int, tamper_cut: int | None = None) -> dict:
+    """Raw inputs truncated at T_max (and optionally tampered strictly after tamper_cut)."""
+    b2 = load("nm_b2_state", "out/run_new_model_batch2_20261010.py")
+    minutes, met, prem, funding = b2.load_all()
+    t = minutes.open_time.array.asi8.copy()
+    keep = t + sp.MIN <= T_max
+    mk = {"t": t[keep], **{k: minutes[c].to_numpy(float)[keep] for k, c in
+                           (("o", "open"), ("h", "high"), ("l", "low"), ("c", "close"), ("v", "volume"),
+                            ("tb", "taker_buy_base_volume"))}}
+    met = met.assign(available_time=met.available_time.array.asi8)
+    prem = prem.assign(available_time=prem.available_time.array.asi8)
+    met = met[met.available_time <= T_max].reset_index(drop=True)
+    prem = prem[prem.available_time <= T_max].reset_index(drop=True)
+    ft, fr = funding.time.array.asi8.copy(), funding.rate.to_numpy(float)
+    fk = ft < T_max
+    ft, fr = ft[fk], fr[fk]
+    sp.guard_times(mk["t"], allow_test, "state market")
+    if tamper_cut is not None:
+        aft = mk["t"] >= tamper_cut                          # includes the minute-T row (minute_time == T)
+        for k in ("o", "h", "l", "c", "v", "tb"):
+            mk[k] = np.where(aft, mk[k] * 1.7, mk[k])
+        met.loc[met.available_time > tamper_cut, ["oi", "global_ls", "top_ls", "taker_lsr"]] *= 1.7
+        prem.loc[prem.available_time > tamper_cut, "premium"] *= 1.7
+        fr = np.where(ft >= tamper_cut, fr * 1.7, fr)
+    return {"mk": mk, "met": met, "prem": prem, "ft": ft, "fr": fr}
+
+
+def _tamper_frame(f: pd.DataFrame, cut: int, cols) -> pd.DataFrame:
+    f = f.copy()
+    m = f.available_time.to_numpy(np.int64) > cut
+    for c in cols:
+        if c not in f:
+            continue
+        x = f[c]
+        if x.dtype == bool:
+            f.loc[m, c] = ~x[m]
+        elif np.issubdtype(x.dtype, np.integer):
+            f.loc[m, c] = x[m] + 1
+        else:
+            f.loc[m, c] = x[m] * 1.7 + 0.3
+    return f
+
+
+def build_state_frames(inp: dict, T: np.ndarray, allow_test: bool, T_max: int, cells, tamper_cut=None) -> pd.DataFrame:
+    from btcusdt_quant.rl import allocator_state as ast
+    mk = inp["mk"]
+    common = ast.common_channels(mk, inp["met"], inp["prem"], inp["ft"], inp["fr"], T)
+    tam = (lambda f, cols: _tamper_frame(f, tamper_cut, cols)) if tamper_cut is not None else (lambda f, cols: f)
+    g3s = tam(_sig("g3_state", allow_test, T_max), G3_SIG_COLS)
+    lbr = tam(_sig("lbr_features", allow_test, T_max), LBR_SIG_COLS)
+    parts = [common, ast.asof_features(g3s, T, G3_SIG_COLS, "g3_"), ast.asof_features(lbr, T, LBR_SIG_COLS, "lbr_")]
+    for s in ("B3_AXC0", "K04_AXC0"):
+        tab = tam(_sig(f"{s}_table", allow_test, T_max), ("e0_bps", "k", "side", "allow_entry"))
+        parts.append(ast.ax_table_features(tab, T, f"{s}_"))
+    for s in ("C1v2", "C4v2"):
+        parts.append(ast.asof_features(tam(_sig(f"{s}_F", allow_test, T_max), ("side",)), T, ("side",), f"{s}_F_"))
+    gcols_t = [c for c in sp.OBS_COLUMNS["grid"] if c not in ("minute_time", "available_time", "sleeve_id", "exec_cell")]
+    lcols_t = ("gross_pnl", "fee", "funding", "net4")
+    for s in NATIVE:
+        g, led = _sleeve_inputs(PRE / "common" / s, T_max, allow_test)
+        g, led = tam(g, gcols_t), tam(led, lcols_t)
+        parts.append(drop_na_channels(s, ast.sleeve_channels(s, g, led, mk["c"], T)))
+        log(f"state {s}")
+    base = pd.concat(parts, axis=1)
+    out = []
+    for tag in cells:
+        cp = []
+        for s in G3_FAMILY:
+            g, led = _sleeve_inputs(PRE / "g3_family" / tag / s, T_max, allow_test)
+            g, led = tam(g, gcols_t), tam(led, lcols_t)
+            cp.append(drop_na_channels(s, ast.sleeve_channels(s, g, led, mk["c"], T)))
+        f = pd.concat([base] + cp, axis=1)
+        f.insert(1, "exec_cell", tag)
+        out.append(f)
+        log(f"state cell {tag}")
+    return pd.concat(out, ignore_index=True)
+
+
+def drop_na_channels(s: str, f: pd.DataFrame) -> pd.DataFrame:
+    """Structurally inapplicable channels (static rule, identical for DEV/TEST builds)."""
+    drop = []
+    if s not in ("B3_AXC0", "K04_AXC0"):
+        drop += [f"{s}_{c}" for c in ("R0_bps", "Rt_over_R0", "stop_dist_bps", "trail_armed")]
+    if s not in ("LBR_FUND", "C1v2", "C4v2"):
+        drop.append(f"{s}_to_mandatory_exit_h")
+    if s not in G3_FAMILY:
+        drop.append(f"{s}_exit_pending")
+    return f.drop(columns=drop)
+
+
+def frames_equal(a: pd.DataFrame, b: pd.DataFrame) -> tuple[bool, list]:
+    bad = [c for c in a.columns if not (a[c].dtype == object and a[c].equals(b[c]))
+           and not (a[c].dtype != object and np.array_equal(a[c].to_numpy(), b[c].to_numpy(), equal_nan=True))]
+    return not bad, bad
+
+
+def cmd_state(args) -> None:
+    from btcusdt_quant.rl import allocator_state as ast
+    if not (PRE / "manifest.json").exists():
+        raise SystemExit("run precompute first")
+    t0 = time.time()
+    STATE.mkdir(parents=True, exist_ok=True)
+    cells = [CELL_TAG[c] for c in CELLS]
+    dev_end = sp.TEST_START.value - ast.HOUR                     # last DEV decision time 2025-12-31 23:00
+    start = pd.Timestamp("2020-01-01", tz="UTC")
+    T_dev = ast.hour_grid(start, pd.Timestamp(dev_end, tz="UTC"))
+    inp = state_inputs(False, dev_end)
+    dev = build_state_frames(inp, T_dev, False, dev_end, cells)
+    log(f"DEV state rows {len(dev)}")
+    rep = {"dev_rows_1h": int(len(dev)), "T_dev": [str(pd.Timestamp(T_dev[0], tz="UTC")),
+                                                  str(pd.Timestamp(T_dev[-1], tz="UTC"))],
+           "columns": list(dev.columns)}
+    # real-data future tamper (cut 2025-06-01, primary cell): rows T <= cut identical
+    cut = pd.Timestamp("2025-06-01", tz="UTC").value
+    Tw = T_dev[(T_dev > cut - 10 * 86400 * 10**9) & (T_dev <= cut + 5 * 86400 * 10**9)]
+    a = build_state_frames(state_inputs(False, dev_end), Tw, False, dev_end, [CELL_TAG[PRIMARY]])
+    b = build_state_frames(state_inputs(False, dev_end, tamper_cut=cut), Tw, False, dev_end, [CELL_TAG[PRIMARY]],
+                           tamper_cut=cut)
+    pre = a["T"].to_numpy() <= cut
+    eq, bad = frames_equal(a[pre].reset_index(drop=True), b[pre].reset_index(drop=True))
+    post_changed = [c for c in a.columns if c not in ("T", "exec_cell") and not np.array_equal(
+        a.loc[~pre, c].to_numpy(), b.loc[~pre, c].to_numpy(), equal_nan=True)]
+    rep["tamper"] = {"cut": "2025-06-01", "rows_compared": int(pre.sum()), "equal": eq, "diff_cols": bad,
+                     "cols_changed_after_cut": len(post_changed)}
+    if not eq:
+        raise SystemExit(f"STATE TAMPER FAIL {bad}")
+    log(f"tamper ok {rep['tamper']}")
+    dev.to_parquet(STATE / "state_1h.parquet", index=False, compression="zstd")
+    dev4 = dev[dev["T"].to_numpy() % (4 * ast.HOUR) == 0].reset_index(drop=True)
+    dev4.to_parquet(STATE / "state_4h.parquet", index=False, compression="zstd")
+    norms = {}
+    for nm, fr_ in (("1h", dev), ("4h", dev4)):
+        norms[nm] = {f: ast.fit_normalizer(fr_, *FOLDS[f][0]) for f in FOLDS}
+    dump(STATE / "normalizers.json", norms)
+    if args.allow_test_parity:
+        sp.require_unlock(True, "TEST state rows")
+        T_all = ast.hour_grid(start, sp.DATA_END)
+        full = build_state_frames(state_inputs(True, sp.DATA_END.value), T_all, True, sp.DATA_END.value, cells)
+        fd = full[full["T"].to_numpy() <= dev_end].reset_index(drop=True)
+        eq2, bad2 = frames_equal(dev.sort_values(["exec_cell", "T"]).reset_index(drop=True),
+                                 fd.sort_values(["exec_cell", "T"]).reset_index(drop=True))
+        rep["dev_prefix_vs_full"] = {"equal": eq2, "diff_cols": bad2}
+        if not eq2:
+            raise SystemExit(f"STATE PREFIX FAIL {bad2}")
+        test = full[full["T"].to_numpy() > dev_end].reset_index(drop=True)
+        test.to_parquet(STATE / "state_1h_TEST.parquet", index=False, compression="zstd")
+        test[test["T"].to_numpy() % (4 * ast.HOUR) == 0].reset_index(drop=True).to_parquet(
+            STATE / "state_4h_TEST.parquet", index=False, compression="zstd")
+        rep["test_rows_1h"] = int(len(test))
+    rep["files"] = {p.name: {"bytes": p.stat().st_size, "sha256": sha(p)} for p in sorted(STATE.glob("*"))
+                    if p.is_file() and p.name != "manifest.json"}
+    rep.update(created_utc=datetime.now(timezone.utc).isoformat(), git_head=git("rev-parse", "HEAD"),
+               code_sha256={"script": sha(Path(__file__)), "allocator_state": sha(ROOT / "btcusdt_quant/rl/allocator_state.py"),
+                            "sleeve_precompute": sha(ROOT / "btcusdt_quant/rl/sleeve_precompute.py")},
+               precompute_manifest_sha256=sha(PRE / "manifest.json"), runtime_sec=round(time.time() - t0, 1),
+               rules={"market": "minute_time + 1m <= T (minute-T row excluded)", "grid/ledger/signals": "available_time <= T",
+                      "metrics/premium": "available_time <= T", "funding": "funding_time < T",
+                      "normalizer": "median/IQR on fold train rows only", "history": "allocator_state.history 32 x 1h",
+                      "dev_build": "inputs truncated at the last DEV T before any computation"})
+    dump(STATE / "manifest.json", rep)
+    log(f"state done {rep['runtime_sec']}s")
+
+
+# ================================================================ freeze amendment A1 (Codex review fix round 1)
+AMEND = OUT / "freeze_amendment_A1.json"
+ARCHIVE = OUT / "inputs_archive"
+
+
+def cmd_amend(_args) -> None:
+    """Write-once amendment: observation contract, renames, TEST unlock, terminal rule, availability, provenance.
+    Untracked frozen inputs are copied byte-exact into a content-addressed archive (inputs_archive/<sha256>)."""
+    import shutil
+    if AMEND.exists():
+        raise SystemExit(f"{AMEND} exists (write-once)")
+    fz = check_freeze()
+    ARCHIVE.mkdir(parents=True, exist_ok=True)
+    inputs = {}
+    for k, v in fz["source_hashes"].items():
+        tracked = subprocess.run(["git", "ls-files", "--error-unmatch", v["path"]], cwd=ROOT,
+                                 capture_output=True).returncode == 0
+        rec = {"path": v["path"], "sha256": v["sha256"], "tracked": tracked}
+        if tracked:
+            rec["git_index_blob"] = git("ls-files", "-s", v["path"]).split()[1]
+        else:
+            dst = ARCHIVE / v["sha256"]
+            if not dst.exists():
+                shutil.copyfile(ROOT / v["path"], dst)
+            if sha(dst) != v["sha256"]:
+                raise SystemExit(f"archive copy mismatch {k}")
+            rec["archive"] = str(dst.relative_to(ROOT)).replace("\\", "/")
+        inputs[k] = rec
+    doc = {
+        "id": "A1", "status": "FROZEN", "created_utc": datetime.now(timezone.utc).isoformat(),
+        "amends": {"freeze": "out/rl_allocator_20261010/freeze.json", "freeze_sha256_lf": sha(FREEZE),
+                   "freeze_sha256_crlf_as_written": "78c5f91d1cb6571c945eb90316f1d5fed51f46fa96e5dfbb07bd185ea96ca3e4",
+                   "freeze_commit": "3c14ff6", "note": "same content; LF is canonical (git blob / fresh checkout)"},
+        "review": {"codex_session": "01a125b7-1030-7b91-998c-890070158908", "verdict": "conditional NO-GO Step 4; "
+                   "Step 3 limited GO"},
+        "observation_contract": {
+            "allowlist": {k: list(v) for k, v in sp.OBS_COLUMNS.items()},
+            "private": "outcomes_<year> (filled, tid, entry_idx/px, exit_*, exit_reason, trade P&L, e0/k/position "
+                       "metadata): replay/accounting only; read_observation refuses it",
+            "row_rule": "a row is observable at T only if available_time <= T; minute market rows only if "
+                        "minute_time + 1m <= T (the minute-T row is excluded, incl. C zero-latency decisions); "
+                        "funding only if funding_time < T",
+            "enforced_by": "sleeve_precompute.obs_columns/read_observation; allocator_state.sleeve_channels"},
+        "renames": {"base_exit_sched_time": "base_mandatory_exit_time (LBR activation + 2 bars exit decision close, "
+                                            "C max_hold expiry; G3, B3/K04 = -1; never the realized exit)",
+                    "opportunities_<year>": "decisions_<year> (observable) + outcomes_<year> (private)"},
+        "native_timelines": {
+            "C1v2/C4v2": "signal = latest decision of the F leg (F3/V5 5 m LS events | F3-w30/V0 hourly) and of E1/V1a "
+                         "(minute) with decision_time <= minute open; book side = F leg if nonzero else E1; "
+                         "pending none (fill at the decision minute open); snapshot = F-leg event index, aux = E1 "
+                         "event index",
+            "B3_AXC0/K04_AXC0": "signal = first enterable row (allow_entry, side != 0, finite E0 > 0) of the latest "
+                                "15 m decision group; pending = decision minute while flat (market order fills at "
+                                "the next open); snapshot = first table row of the latest group (segment table "
+                                "index)",
+            "closed_opp_id": "grid marks the exit-fill minute of each closed opportunity (causal trade-close flag)"},
+        "availability": {
+            "G3_LONG/G3_SHORT/LBR_FUND": "available = the source signal inputs of the latest 4h decision are ready",
+            "C1v2/C4v2": "available from the first real LS minute + 720 h F-leg warm-up (before 2020-09 the legacy "
+                         "LS cache is zero-filled; ledger/parity unchanged, those minutes are masked)",
+            "B3_AXC0/K04_AXC0": "available 2023-09-01..2026-10-07 only; F1/F2 0 %, F3 val 2023-09.. only",
+            "reporting": "per sleeve and fold availability/exposure in precompute manifest; early folds are never "
+                         "described as a 7-sleeve comparison"},
+        "terminal_rule": "every sleeve: a position open at a ledger end is marked to the last close and charged its "
+                         "exit fee (G3/LBR reserved 2 bps x w; native 2 bps per side). B3/K04 native segment ends "
+                         "2025-12-31 23:59 (data_end close; 0 such closes B3/K04 in DEV), TEST restarts flat. Step 4 "
+                         "episode ends use the same rule.",
+        "test_unlock": "scripts/precompute_rl_allocator.py precompute refuses to start without --allow-test-parity; "
+                       "state writes TEST rows only with it; read_partitioned/read_observation need allow_test",
+        "line_endings": ".gitattributes pins eol=lf for the RL allocator code/tests; manifests record LF-file sha256 "
+                        "and the git commit of the code that produced them",
+        "inputs": inputs,
+        "inputs_note": "sha256 = bytes hashed at freeze time (working tree). Untracked inputs: byte-exact archive "
+                       "copy (tracked in git). Tracked inputs: git index blob id at amendment time."}
+    dump(AMEND, doc)
+    log(f"amendment written sha256 {sha(AMEND)}; archived {sum('archive' in v for v in inputs.values())} files")
+
+
+def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=("freeze", "precompute"))
+    ap.add_argument("command", choices=("freeze", "amend", "precompute", "state"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--only", default="g3,c,ax")
     ap.add_argument("--no-registry", action="store_true")
-    args = ap.parse_args()
+    ap.add_argument("--allow-test-parity", action="store_true",
+                    help="explicit TEST unlock: precompute integrity parity / TEST state rows only")
+    args = ap.parse_args(argv)
     args.only = set(args.only.split(","))
-    cmd_freeze(args) if args.command == "freeze" else cmd_precompute(args)
+    if args.command == "freeze":
+        return cmd_freeze(args)
+    if args.command == "amend":
+        return cmd_amend(args)
+    if args.command == "precompute":
+        sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
+        return cmd_precompute(args)
+    return cmd_state(args)
 
 
 if __name__ == "__main__":

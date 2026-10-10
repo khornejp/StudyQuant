@@ -1,0 +1,421 @@
+"""R2-56 fix round 1: C1v2 / C1rv2 / C4v2 / SWITCHv2 on one LS series with availability applied exactly once.
+
+Why: the current Q3 feature cache already applies create_time+5m < T (btcusdt_quant/metrics_source.py, commit 85f0547)
+and R2-37 applies feature_time+5m < T again, so the round-0 replay delayed LS once in H1 but twice in Q3/Oct.
+
+Fix: one minute LS series in the LEGACY cache form (value of the latest 5m row with raw create_time <= t, visible while
+t - create_time <= 40 min, NaN row -> NaN) built from raw global LS for 2020..2026-10-07:
+  - 2020-09..2025-12: Binance metrics archive zips (artifacts/metrics, hash-verified vs R2-55 input hash)
+  - 2026-01..10-07:   R2-54 FINAL snapshot futures_global_ls_5m (manifest hash-verified)
+R2-37 then applies its availability once: V0 uses the row with create_time+5m < T; V5/V5r evaluate each 5m row at
+create_time+5m (= its logical_available_at). The legacy series must equal the frozen historical feature cache
+(2020-01..2026-06) exactly, NaN pattern included, else abort.
+
+All inputs hash-verified before any run; any parity check vs a frozen reference must have abs_diff == 0.
+B3/K04 results are carried unchanged from round 0 (report_r0.json).
+
+Usage: venv_btcusdt\\Scripts\\python.exe scripts\\sim_r2_56_fix1.py
+"""
+from __future__ import annotations
+import hashlib, importlib.util, json, shutil, sys, time
+from datetime import datetime, timezone
+from pathlib import Path
+import numpy as np, pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT)); sys.path.insert(0, str(ROOT / "scripts"))
+from btcusdt_quant.sim import data, provenance, registry  # noqa: E402
+import sim_strategy_rolling as plan2  # noqa: E402
+import sim_r2_55 as r255  # noqa: E402
+import sim_r2_56_replay as rp  # noqa: E402  (also redirects r237.log)
+from out import run_k45_decision_cadence_r2_37 as r237  # noqa: E402
+from out import run_k45_ls_ratio_timing_r2_35 as r235  # noqa: E402
+from out import run_k45_classic_rules_r2_14 as r214  # noqa: E402
+from out import run_k45_hold_a_eval_r2_27 as r227  # noqa: E402
+from out import k45_funding  # noqa: E402
+
+O = rp.O
+OUT = rp.OUT
+SNAP = rp.SNAP
+A, B, NA, NB = rp.A, rp.B, rp.NA, rp.NB
+R237 = rp.R237
+R245_MANIFEST = ROOT / "out/k45_vol_gated_backtest_r2_45_20261007/manifest.json"
+SPECS = {"C1v2": ("C1", "F_V5+E_V1a", "F3", "V5", "C1_F_V5+E_V1a"),
+         "C1rv2": ("C1", "F_V5r+E_V1a", "F3", "V5r", "C1_F_V5r+E_V1a"),
+         "C4v2": ("C4", "F_V0+E_V1a", "F3-w30", "V0", "C4_F_V0+E_V1a")}
+EXPECT = {"metrics_before_2026": "02fc9bfe9d88c7aad6fb04e3568df04e7ced3cbcd9d738dbd1953ce39646a150",
+          "funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+          "r245_prediction_tree": "975e4914fd541a33d122911d873a9760a3f6bb1e06c7a7b4ba8a583a6919abba"}
+STALE = pd.Timedelta(minutes=40)        # metrics_source.METRICS_STALENESS_CAP
+log = rp.log
+
+
+def sha(path: Path) -> str:
+    return provenance.file_sha256(path)
+
+
+# ---------------------------------------------------------------- input verification
+def verify_inputs() -> dict:
+    out = {}
+    snap = r255.stageb_runner().verify_snapshot(read_frames=False)       # every snapshot artifact hash
+    out["snapshot_manifest_sha256"] = snap["manifest_sha256"]
+    out["snapshot_artifacts"] = {k: snap["artifacts_verified"][k] for k in
+                                 ("market_1m", "futures_global_ls_5m", "funding_live_table", "stage_a_2026")}
+    m37 = json.loads((R237 / "manifest.json").read_text(encoding="utf-8"))
+    for rec in m37["source"]:
+        p = Path(rec["path"]) if Path(rec["path"]).is_absolute() else ROOT / rec["path"]
+        if "features_2026q3" in rec["path"] or "market_2026q3" in rec["path"]:
+            continue                     # not used in v2 (2026 comes from the snapshot)
+        if sha(p) != rec["sha256"]:
+            raise SystemExit(f"R2-37 source hash mismatch: {rec['path']}")
+        out[f"r237_source:{Path(rec['path']).name}"] = rec["sha256"]
+    files = data.archive_files(data.METRICS_DIR, NB)
+    got = plan2._files_hash(files)
+    if got != EXPECT["metrics_before_2026"]:
+        raise SystemExit(f"metrics archive hash {got}")
+    out["metrics_archive_before_2026"] = got
+    got = provenance.tree_sha256(ROOT / "artifacts/funding_2020_2026h1", "*")["sha256"]
+    if got != EXPECT["funding_tree"]:
+        raise SystemExit(f"funding tree hash {got}")
+    out["funding_tree"] = got
+    spec = importlib.util.spec_from_file_location("r245", ROOT / "out/run_k45_vol_gated_backtest_r2_45.py")
+    r245 = importlib.util.module_from_spec(spec); sys.modules["r245"] = r245; spec.loader.exec_module(r245)
+    tree = r245.tree_record(r245.PRED_ROOT, "fold_*_predictions.parquet")
+    frozen = json.loads(R245_MANIFEST.read_text(encoding="utf-8"))["prediction_tree"]["tree_sha256"]
+    if tree["tree_sha256"] != frozen or frozen != EXPECT["r245_prediction_tree"]:
+        raise SystemExit("R2-44 w730_raw prediction tree hash mismatch")
+    out["r244_prediction_tree"] = {"files": tree["count"], "tree_sha256": frozen}
+    return out
+
+
+# ---------------------------------------------------------------- LS series
+def ls_rows() -> tuple[pd.DataFrame, dict]:
+    """Raw 5m global LS rows (create_time, value) 2020-09 .. 2026-10-07 23:55, validated."""
+    hist = data.load_metrics(end=NB)
+    hraw = hist.available_time - pd.Timedelta(minutes=5)
+    hist = pd.DataFrame({"create": hraw.dt.round("5min"), "raw": hraw, "v": hist.global_ls.astype(float),
+                         "src": "archive_zip"})
+    zip_jitter = (hist.raw - hist.create).abs()
+    checks_hist_ge_2026 = int((hist.create >= NB).sum())     # a 2025-12-31 zip may carry the 2026-01-01 00:00 row
+    hist = hist.loc[hist.create < NB]
+    g = pd.read_parquet(SNAP / "futures_global_ls_5m.parquet")
+    raw = rp.U(g.create_time)
+    create = raw.dt.round("5min")
+    jitter = float((raw - create).abs().max().total_seconds())
+    avail = rp.U(g.logical_available_at)
+    checks = {"snapshot_rows": int(len(g)), "snapshot_create_jitter_max_s": jitter,
+              "snapshot_sources": g.source.value_counts().to_dict(), "snapshot_symbols": sorted(set(g.symbol)),
+              "snapshot_value_nan": int(g.long_short_ratio.isna().sum()),
+              "zip_rows_dropped_create_ge_2026": checks_hist_ge_2026}
+    assert jitter <= 60, "create_time jitter > 60 s"
+    assert set(g.symbol) == {"BTCUSDT"}
+    assert set(g.source) <= {"archive", "rest"}
+    # logical_available_at = raw create_time + 5m exactly (availability column check)
+    lag = (avail - raw)
+    checks["snapshot_available_minus_create"] = sorted({str(x) for x in lag.unique()})
+    assert (lag == pd.Timedelta(minutes=5)).all(), "logical_available_at != create_time + 5m"
+    assert not create.duplicated().any(), "duplicate 5m create_time in snapshot"
+    snap = pd.DataFrame({"create": create, "raw": raw, "v": g.long_short_ratio.astype(float), "src": "snapshot_" + g.source})
+    snap = snap.loc[(snap.create >= NB) & (snap.create < B)]
+    # 2026 H1 overlap: archive zips (not hash-frozen, so checked against the frozen snapshot only)
+    zips26 = data.load_metrics()
+    zips26 = zips26.loc[zips26.available_time - pd.Timedelta(minutes=5) >= NB]
+    j = pd.DataFrame({"create": (zips26.available_time - pd.Timedelta(minutes=5)).dt.round("5min"),
+                      "z": zips26.global_ls.to_numpy()}
+                     ).merge(snap, on="create", how="outer")
+    jj = j.loc[(j.create < pd.Timestamp("2026-07-01", tz="UTC"))]
+    checks["h1_zip_vs_snapshot"] = {"rows_zip": int(jj.z.notna().sum()), "rows_snap": int(jj.v.notna().sum()),
+                                    "max_abs": float((jj.z - jj.v).abs().max())}
+    assert jj.z.notna().sum() == jj.v.notna().sum() and (jj.z - jj.v).abs().max() < 1e-9
+    rows = pd.concat([hist, snap], ignore_index=True)
+    assert not rows.raw.duplicated().any(), "duplicate raw create_time"
+    rows = rows.sort_values("raw").reset_index(drop=True)
+    extra = rows.create.duplicated(keep=False)
+    checks["offgrid_extra_rows"] = {"rows": int(extra.sum()), "value_nan": int(rows.v[extra].isna().sum()),
+                                    "examples": [str(x) for x in rows.raw[extra].head(10)]}
+    checks["zip_offgrid_rows"] = int((zip_jitter > pd.Timedelta(0)).sum())
+    checks["zip_create_jitter_max_s_all"] = float(zip_jitter.max().total_seconds())
+    checks["zip_create_jitter_max_s"] = float(zip_jitter[zip_jitter.index.isin(hist.index[hist.v.notna()])].max()
+                                              .total_seconds())                    # rows carrying a LS value
+    assert checks["zip_create_jitter_max_s"] <= 60, "archive create_time jitter > 60 s"
+    grid = rows.create.drop_duplicates().reset_index(drop=True)
+    gap = grid.diff().dropna()
+    gaps = grid.loc[gap.index[gap != pd.Timedelta(minutes=5)]]
+    checks["rows_total"] = int(len(rows))
+    checks["first_create"], checks["last_create"] = str(rows.create.iloc[0]), str(rows.create.iloc[-1])
+    checks["value_nan_rows"] = int(rows.v.isna().sum())
+    checks["gaps_5m"] = [{"after": str(grid[i - 1]), "next": str(grid[i]),
+                          "missing_rows": int((grid[i] - grid[i - 1]) / pd.Timedelta(minutes=5)) - 1}
+                         for i in gaps.index]
+    per_day = grid.groupby(grid.dt.floor("D")).size()
+    checks["days"] = int(len(per_day))
+    checks["days_not_288"] = {str(k.date()): int(v) for k, v in per_day[per_day != 288].items()}
+    yr = rows.loc[rows.create >= NB]
+    assert len(yr) == len(snap) and yr.src.str.startswith("snapshot_").all(), "2026 rows must all come from the snapshot"
+    checks["rows_2026"] = int(len(yr)); checks["rows_2026_full_grid"] = 280 * 288
+    return rows, checks
+
+
+def legacy_minutes(rows: pd.DataFrame, t: np.ndarray) -> np.ndarray:
+    """Frozen legacy cache rule (reverse-engineered, verified exact on 2020-01..2026-06): value of the latest row with
+    raw create_time <= t (NaN row -> NaN); no row within 40 min (or before the first row) -> 0.0; float32 storage."""
+    c = rows.raw.dt.tz_convert(None).to_numpy("datetime64[ns]").astype("int64")
+    pos = np.searchsorted(c, t, side="right") - 1
+    ok = pos >= 0
+    age = np.where(ok, t - c[np.maximum(pos, 0)], 0)
+    keep = ok & (age <= STALE.value)
+    out = np.zeros(len(t))
+    out[keep] = rows.v.to_numpy(float)[pos[keep]]
+    return out.astype(np.float32).astype(float)
+
+
+# ---------------------------------------------------------------- inputs and books
+def inputs(rows: pd.DataFrame):
+    hist_market, hist_merged, hist_funding = r214.load_inputs()
+    hist_features = hist_merged[r214.REGISTRY_COLUMNS].copy()
+    for f in (hist_market, hist_features):
+        f["open_time"] = pd.to_datetime(f.open_time, utc=True).astype("datetime64[ns, UTC]")
+    # legacy rebuild must equal the frozen historical cache exactly (values and NaN pattern)
+    rebuilt = legacy_minutes(rows, hist_features.open_time.dt.tz_convert(None).astype("datetime64[ns]")
+                             .astype("int64").to_numpy())
+    cache = hist_features.global_ls_account.to_numpy(float)
+    nan_eq = bool((np.isnan(rebuilt) == np.isnan(cache)).all())
+    both = ~np.isnan(rebuilt) & ~np.isnan(cache)
+    maxabs = float(np.abs(rebuilt[both] - cache[both]).max())
+    cache_check = {"minutes": int(len(cache)), "nan_pattern_equal": nan_eq, "nan_minutes": int(np.isnan(cache).sum()),
+                   "zero_fill_minutes": int((cache == 0).sum()), "max_abs_diff": maxabs,
+                   "exact_equal": bool(np.array_equal(rebuilt, cache, equal_nan=True))}
+    if not cache_check["exact_equal"]:
+        raise SystemExit(f"legacy LS rebuild != frozen historical cache: {cache_check}")
+    sm = pd.read_parquet(SNAP / "market_1m.parquet")
+    sm["open_time"] = rp.U(sm.open_time)
+    j = hist_market.merge(sm, on="open_time", suffixes=("", "_s"))
+    diff = {c: float((j[c] - j[c + "_s"]).abs().max()) for c in ("open", "high", "low", "close", "volume")}
+    if max(diff.values()) != 0.0 or len(j) != 181 * 1440:
+        raise SystemExit(f"snapshot market != frozen market on 2026 H1: {diff} rows {len(j)}")
+    m26 = sm.loc[(sm.open_time >= NB) & (sm.open_time < B)].copy()
+    for c in hist_market.columns.difference(m26.columns):
+        m26[c] = np.nan
+    market = pd.concat([hist_market.loc[hist_market.open_time < NB], m26[hist_market.columns]], ignore_index=True)
+    assert (market.open_time.diff().dropna() == pd.Timedelta(minutes=1)).all() and market.open_time.iloc[-1] == B - pd.Timedelta(minutes=1)
+    ns = market.open_time.dt.tz_convert(None).astype("datetime64[ns]").astype("int64").to_numpy()
+    features = pd.DataFrame({"open_time": market.open_time, "global_ls_account": legacy_minutes(rows, ns)})
+    z = features.global_ls_account.to_numpy()
+    w26 = (market.open_time >= NB).to_numpy()
+    cache_check["series_2026"] = {"minutes": int(w26.sum()), "zero_fill_minutes": int((z[w26] == 0).sum()),
+                                  "nan_minutes": int(np.isnan(z[w26]).sum())}
+    # funding: frozen archive < 2026, snapshot funding_live_table for 2026 (checked vs R2-37 combined Jan..Sep)
+    ft = pd.read_parquet(SNAP / "funding_live_table.parquet")
+    raw = rp.U(ft.time)
+    step = pd.Timedelta(hours=8).value
+    rns = raw.astype("int64").to_numpy()
+    sched = ((rns + step // 2) // step) * step
+    assert np.abs(rns - sched).max() <= pd.Timedelta(seconds=60).value
+    f26 = pd.DataFrame({"time": pd.to_datetime(sched, utc=True), "rate": ft.rate.to_numpy(float), "raw_calc_time": raw})
+    f26 = f26.loc[(f26.time >= NB) & (f26.time < B)]
+    comb = r227.combine_funding(hist_funding)
+    c26 = comb.loc[comb.time >= NB].reset_index(drop=True)
+    head = f26.iloc[:len(c26)].reset_index(drop=True)
+    fund_check = {"snapshot_2026_rows": int(len(f26)), "r237_combined_2026_rows": int(len(c26)),
+                  "time_equal": bool((head.time.values == c26.time.values).all()),
+                  "rate_max_abs": float(np.abs(head.rate.to_numpy() - c26.rate.to_numpy()).max()),
+                  "oct_rows": int((f26.time >= pd.Timestamp("2026-10-01", tz="UTC")).sum()),
+                  "oct_source": sorted(set(ft.loc[raw >= pd.Timestamp("2026-10-01", tz="UTC"), "source"]))}
+    if not fund_check["time_equal"] or fund_check["rate_max_abs"] != 0.0 or len(f26) != 840:
+        raise SystemExit(f"funding check failed {fund_check}")
+    old = comb.loc[comb.time < NB, ["time", "rate", "raw_calc_time"]]
+    fund = pd.concat([old, f26], ignore_index=True).sort_values("time").reset_index(drop=True)
+    assert not fund.time.duplicated().any()
+    return market, features, fund, hist_market, hist_features, hist_funding, {
+        "legacy_cache_check_2020_2026h1": cache_check, "market_snapshot_vs_frozen_h1": diff, "funding": fund_check}
+
+
+def books_for(market, features) -> tuple[dict, dict]:
+    bars = r237.hourly_bars(market)
+    f3f, _ = r237.build_f3_signals(market, features, bars)
+    e1f, _ = r237.build_e1_signals(market, bars)
+    leg = rp.legs({**f3f, **e1f}, market)
+    books = {n: r237.combo_book(leg[(fs, fv)], leg[("E1", "V1a")], f"{fs}/{fv}", "E1/V1a")
+             for n, (_, _, fs, fv, _) in SPECS.items()}
+    return leg, books
+
+
+def h1_parity(market: pd.DataFrame, fund: pd.DataFrame) -> dict:
+    """HOLD_B frozen reference must be reproduced with abs_diff == 0: R2-37 HOLD_B used the history ledger that
+    ends 2026-06-30 23:59 (data_end close), so the v2 trades are cut the same way."""
+    ref = pd.read_parquet(R237 / "backtest_metrics.parquet")
+    s, e = r235.SEGMENTS["HOLD_B"]
+    hm = market.loc[market.open_time < e].reset_index(drop=True)
+    hf = fund.loc[fund.time < e]
+    out = {}
+    bars = r237.hourly_bars(hm)
+    feats = pd.DataFrame({"open_time": hm.open_time, "global_ls_account": FEATURES.global_ls_account.iloc[:len(hm)].to_numpy()})
+    f3f, _ = r237.build_f3_signals(hm, feats, bars)
+    e1f, _ = r237.build_e1_signals(hm, bars)
+    leg = rp.legs({**f3f, **e1f}, hm)
+    for name, (strategy, variant, fs, fv, _) in SPECS.items():
+        bk = r237.combo_book(leg[(fs, fv)], leg[("E1", "V1a")], f"{fs}/{fv}", "E1/V1a")
+        pnl0, units = r237.fast_ledger(bk, hm, hf, "PESS")
+        daily, _ = r237.segment_daily(pnl0, units, hm, s, e, 4.0)
+        want = float(ref.loc[(ref.strategy == strategy) & (ref.variant == variant) & (ref.segment == "HOLD_B")
+                             & (ref.boundary == "PESS") & (ref.cost_bps == 4.0), "total_net_bps"].iloc[0])
+        got = float(daily.sum())
+        out[name] = {"replay": got, "reference": want, "abs_diff": abs(got - want), "match": got == want}
+        log(f"H1 parity {name}: {out[name]}")
+    if not all(v["match"] for v in out.values()):
+        raise SystemExit(f"HOLD_B parity failed: {out}")
+    return out
+
+
+FEATURES: pd.DataFrame
+
+
+def main() -> None:
+    global FEATURES
+    started = time.time()
+    r0_path = OUT / "report_r0.json"
+    if not r0_path.exists():
+        shutil.copyfile(OUT / "report.json", r0_path)
+        shutil.copyfile(OUT / "report.md", OUT / "report_r0.md")
+    r0 = json.loads(r0_path.read_text(encoding="utf-8"))
+    log("verify inputs")
+    hashes = verify_inputs()
+    rows, ls_checks = ls_rows()
+    market, features, fund, hist_market, hist_features, hist_funding, data_checks = inputs(rows)
+    FEATURES = features
+    parity = h1_parity(market, fund)
+    leg, books = books_for(market, features)
+    rp.STAGE_A = SNAP / "stage_a_2026.parquet"          # hash-verified snapshot byte copy
+    reg = rp.regime_m()
+    sw, info = rp.switch_book(leg, reg)
+    books["SWITCHv2"] = sw
+    old_name = {**{n: s[4] for n, s in SPECS.items()}, "SWITCHv2": "SWITCH_C1C4"}
+    report = {"experiment": "R2-56 fix1: C1v2/C1rv2/C4v2/SWITCHv2 single-delay LS replay", "window": [str(A), str(B)],
+              "costs": "4 bps round trip maker flat, no slippage, PESS funding; 8 bps report-only",
+              "input_hashes": hashes, "ls_validation": ls_checks, "data_checks": data_checks,
+              "parity_hold_b": parity, "candidates": {}, "native": {}, "old_vs_new": {}}
+    entries = {}
+    for name, bk in books.items():
+        report["candidates"][name] = rp.c_ledger(bk, market, fund, A, B, name)
+        report["native"][name] = rp.c_ledger(bk, market, fund, NA, NB, name)
+        bk.to_parquet(OUT / f"{name}_trades_2020_2026.parquet")
+        entries[name] = set(pd.DatetimeIndex(bk.loc[bk.entry_time >= A, "entry_time"]))
+        new, old = report["candidates"][name], r0["candidates"][old_name[name]]
+        nn, on = report["native"][name], r0["native"][old_name[name]]
+        months = sorted(set(new["monthly_net_4bps"]) | set(old["monthly_net_4bps"]))
+        h1 = lambda d: sum(v for k, v in d.items() if k <= "2026-06")
+        q3 = lambda d: sum(v for k, v in d.items() if "2026-07" <= k <= "2026-09")
+        report["old_vs_new"][name] = {
+            "old_id": old_name[name],
+            "native_2023_2025": {"old": on["net_4bps"], "new": nn["net_4bps"], "diff": nn["net_4bps"] - on["net_4bps"]},
+            "2026_H1": {"old": h1(old["monthly_net_4bps"]), "new": h1(new["monthly_net_4bps"]),
+                        "diff": h1(new["monthly_net_4bps"]) - h1(old["monthly_net_4bps"])},
+            "2026_Q3": {"old": q3(old["monthly_net_4bps"]), "new": q3(new["monthly_net_4bps"]),
+                        "diff": q3(new["monthly_net_4bps"]) - q3(old["monthly_net_4bps"])},
+            "2026_Oct": {"old": old["monthly_net_4bps"].get("2026-10", 0.0), "new": new["monthly_net_4bps"].get("2026-10", 0.0)},
+            "2026_total": {"old": old["net_4bps"], "new": new["net_4bps"], "diff": new["net_4bps"] - old["net_4bps"]},
+            "2026_net_8bps": {"old": old["net_8bps"], "new": new["net_8bps"]},
+            "2026_trades": {"old": old["trades"], "new": new["trades"]},
+            "monthly_diff": {m: new["monthly_net_4bps"].get(m, 0.0) - old["monthly_net_4bps"].get(m, 0.0) for m in months}}
+    report["candidates"]["SWITCHv2"]["routing"] = info
+    mcheck = {}
+    for name in ("C1v2", "C4v2"):
+        bk = books[name]
+        bk = bk.loc[(bk.entry_time >= NA) & (bk.entry_time < NB)]
+        net = r237.trade_net(bk, fund, "PESS", 4.0)
+        m = rp.state_at(bk.entry_time, reg)
+        hi = np.isfinite(m) & (m >= rp.HI)
+        mcheck[name] = {"M_ge_2/3": {"trades": int(hi.sum()), "net_4bps": float(net[hi].sum())},
+                        "else": {"trades": int((~hi).sum()), "net_4bps": float(net[~hi].sum())}}
+    sw26 = sw.loc[sw.entry_time >= A]
+    m26 = rp.state_at(sw26.entry_time, reg)
+    swn = sw.loc[(sw.entry_time >= NA) & (sw.entry_time < NB)]
+    mn = rp.state_at(swn.entry_time, reg)
+    report["switch"] = {"mapping_2023_2025_by_state": mcheck,
+                        "M_nan_book_entries": {"2026": int(np.isnan(m26).sum()), "2023_2025": int(np.isnan(mn).sum())},
+                        "route_C4_book_entries": {"2026": int((m26 >= rp.HI).sum()), "2023_2025": int((mn >= rp.HI).sum())},
+                        "book_entries": {"2026": int(len(sw26)), "2023_2025": int(len(swn))}}
+    ov = lambda x, y: {"a": len(x), "b": len(y), "shared": len(x & y)}
+    report["overlap_2026"] = {"B3_vs_K04": r0["overlap_2026"]["B3_vs_K04"],
+                              "C1v2_vs_C4v2": ov(entries["C1v2"], entries["C4v2"]),
+                              "C1rv2_vs_C4v2": ov(entries["C1rv2"], entries["C4v2"])}
+    report["b3_k04_unchanged_from_r0"] = {k: r0["candidates"][k] for k in ("B3_AXC0", "K04_AXC0")}
+    report["b3_k04_native_r0"] = {k: r0["native"][k] for k in ("B3_AXC0", "K04_AXC0")}
+    report["b3_k04_parity_r0"] = {k: r0["parity"][k] for k in ("B3_AXC0", "K04_AXC0")}
+    report["causality"] = {
+        "LS": "one legacy minute series (latest create_time <= t, 40-min staleness cap) from raw archive/snapshot "
+              "rows; equals the frozen 2020-01..2026-06 cache exactly. R2-37 adds availability once: V0 uses the row "
+              "with create_time+5m < T (decision at the hour, fill at that minute's open). V5 evaluates each row at "
+              "create_time+5m = logical_available_at (fill at that minute's open). V5r baseline = rolling quantile "
+              "over past events including the current event (no lookahead).",
+        "E1 V1a": "partial-hour volume/close through the closed minute vs prior 19 completed bars, breakout over prior "
+                  "20-bar high; fill at the next minute open.",
+        "SWITCH": "M = mean of 9 M-target causal percentile ranks vs strictly earlier 30 d predictions (min 7 d); "
+                  "prediction_ts = logical_available_at <= entry minute (asof, age <= 15 min); missing M -> C1; "
+                  "mapping M>=2/3 -> C4 fixed, not fit on 2026.",
+        "fills": "R2-37 contract: fill at the decision minute open at flat 4 bps round trip (maker assumed); maker "
+                 "queue/non-fill is NOT modeled."}
+    report["deviations"] = [
+        "Round-0 C1/C4/SWITCH results double-delayed LS in Q3/Oct (cache already +5m, R2-37 +5m again); superseded "
+        "by v2. Round-0 kept as report_r0.json/md.",
+        "Q3 features_2026q3.parquet no longer used (its R2-37 hash no longer matches); 2026 LS from the snapshot.",
+        "C trade counts follow R2-37 (entry < end and exit >= start, incl. carried); win/worst use full-trade net.",
+        "R2-44 fold predictions miss 2023-12-31 and 2025-12-31; decisions there have M=NaN -> C1.",
+        "B3/K04 not rerun; values carried from round 0 (parity 0 diff)."]
+    report["created_utc"] = datetime.now(timezone.utc).isoformat()
+    report["runtime_seconds"] = round(time.time() - started, 1)
+    report["code_sha256"] = {"sim_r2_56_fix1.py": sha(Path(__file__).resolve()),
+                             "sim_r2_56_replay.py": sha(ROOT / "scripts/sim_r2_56_replay.py")}
+    (OUT / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str) + "\n",
+                                     encoding="utf-8")
+    write_md(report)
+    registry.record(rp.REGISTRY, {
+        "experiment": "R2-56 fix1 C1v2/C1rv2/C4v2/SWITCHv2 single-delay LS replay 2026-01-01..2026-10-07",
+        "n_trials": 4,
+        "config": {"candidates": ["C1v2", "C1rv2", "C4v2", "SWITCHv2"], "window": report["window"],
+                   "costs": report["costs"], "ls": "legacy series + R2-37 single +5m availability",
+                   "switch": "M>=2/3 -> C4v2 legs else C1v2 legs", "no_model_fits": True},
+        "input_hashes": {"snapshot_manifest": hashes["snapshot_manifest_sha256"],
+                         "metrics_archive_before_2026": hashes["metrics_archive_before_2026"],
+                         "funding_tree": hashes["funding_tree"],
+                         "r244_prediction_tree": hashes["r244_prediction_tree"]["tree_sha256"],
+                         "code": report["code_sha256"]["sim_r2_56_fix1.py"]},
+        "result_summary": {k: {"net_4bps": v["net_4bps"], "net_8bps": v["net_8bps"], "trades": v["trades"]}
+                           for k, v in report["candidates"].items()}})
+    (OUT / "run_fix1.log").write_text("\n".join(rp.LOG) + "\n", encoding="utf-8")
+    log("done")
+
+
+def write_md(r: dict) -> None:
+    f = lambda v: "NA" if v is None else f"{v:.1f}"
+    months = [f"2026-{m:02d}" for m in range(1, 11)]
+    allc = {**r["b3_k04_unchanged_from_r0"], **r["candidates"]}
+    lines = ["# R2-56 fix1 (single-delay LS)", "", f"window {r['window'][0]} .. {r['window'][1]} (exclusive); {r['costs']}",
+             "", "| candidate | net4 | net8 | trades | win | long4 | short4 | L/S n | MDD | worst |", "|" + "---|" * 10]
+    for n, s in allc.items():
+        lines.append(f"| {n} | {f(s['net_4bps'])} | {f(s['net_8bps'])} | {s['trades']} | {s['win_rate']:.3f} | "
+                     f"{f(s['long_net_4bps'])} | {f(s['short_net_4bps'])} | {s['long_trades']}/{s['short_trades']} | "
+                     f"{f(s['max_drawdown_bps'])} | {f(s['worst_position_bps'])} |")
+    lines += ["", "## monthly net 4 bps", "", "| candidate | " + " | ".join(months) + " |", "|" + "---|" * 11]
+    for n, s in allc.items():
+        lines.append(f"| {n} | " + " | ".join(f(s["monthly_net_4bps"].get(m, 0.0)) for m in months) + " |")
+    lines += ["", "## components / exits", ""]
+    for n, s in r["candidates"].items():
+        lines.append(f"- {n}: " + ", ".join(f"{c} {f(v['net_4bps'])} ({v['trades']})" for c, v in s["components"].items())
+                     + f"; exits {s['exit_reasons']}; entered in window {s['trades_entered_in_window']}")
+    lines += ["", "## native 2023-01-01..2026-01-01 (B3/K04: 2023-09..2025-12, round 0)", "",
+              "| candidate | net4 | net8 | trades | win | long4 | short4 | MDD | worst |", "|" + "---|" * 9]
+    for n, s in {**r["b3_k04_native_r0"], **r["native"]}.items():
+        lines.append(f"| {n} | {f(s['net_4bps'])} | {f(s['net_8bps'])} | {s['trades']} | {s['win_rate']:.3f} | "
+                     f"{f(s['long_net_4bps'])} | {f(s['short_net_4bps'])} | {f(s['max_drawdown_bps'])} | {f(s['worst_position_bps'])} |")
+    for title, key in (("old vs new", "old_vs_new"), ("HOLD_B parity (abs_diff must be 0)", "parity_hold_b"),
+                       ("overlap 2026", "overlap_2026"), ("switch", "switch"), ("LS validation", "ls_validation"),
+                       ("data checks", "data_checks"), ("input hashes", "input_hashes")):
+        lines += ["", f"## {title}", "", "```", json.dumps(r[key], indent=1, default=str), "```"]
+    lines += ["", "## causality", ""] + [f"- {k}: {v}" for k, v in r["causality"].items()]
+    lines += ["", "## deviations", ""] + [f"- {d}" for d in r["deviations"]]
+    (OUT / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()

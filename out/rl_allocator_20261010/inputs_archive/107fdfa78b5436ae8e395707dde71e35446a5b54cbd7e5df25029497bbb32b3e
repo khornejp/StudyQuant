@@ -1,0 +1,860 @@
+"""R2-37: frozen decision-cadence audit for F3/F3-w30/E1/C1/C4.
+
+No live state is read or changed.  Existing local research inputs are reused.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+import sys
+from concurrent.futures import ProcessPoolExecutor
+from datetime import datetime, timezone
+from pathlib import Path
+
+for _name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+              "NUMEXPR_NUM_THREADS", "NUMBA_NUM_THREADS"):
+    os.environ[_name] = "8"
+
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from out import k45_funding
+from out import k45_ledger as ledger
+from out import run_k45_candidate_compare_r2_23 as r223
+from out import run_k45_hold_a_eval_r2_27 as r227
+from out import run_k45_hold_a_interpret_r2_33 as r233
+from out import run_k45_ls_ratio_timing_r2_35 as r235
+from out import run_k45_single_book_combo_r2_24 as r224
+
+
+OUT = Path("out/k45_decision_cadence_r2_37_20261006")
+SCRIPT = Path(__file__)
+FROZEN_HYPOTHESIS = "1시간 판단이 수익성 있는 신호를 놓친다"
+SEGMENTS = r235.SEGMENTS
+BOUNDARIES = ("PESS", "OPT")
+COSTS = (4.0, 8.0, 12.0)
+WORKERS = 8
+DSR_TRIALS = 27
+DELTA_DSR_TRIALS = 22
+F3, F3_W30, E1 = r235.F3, r235.F3_W30, r235.E1
+STRATEGY_ORDER = {"F3": 0, "F3-w30": 1, "E1": 2, "C1": 3, "C4": 4}
+VARIANT_ORDER = {"V0": 0, "V5": 1, "V5r": 2, "V1a": 1, "V1b": 2}
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(8 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def file_record(path: Path) -> dict[str, object]:
+    stat = path.stat()
+    return {"path": path.as_posix(), "bytes": stat.st_size, "sha256": sha256(path),
+            "mtime_utc": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()}
+
+
+def write_text(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(value, encoding="utf-8")
+    temporary.replace(path)
+
+
+def write_json(path: Path, value: object) -> None:
+    write_text(path, json.dumps(value, ensure_ascii=False, indent=2,
+                                allow_nan=False, default=str) + "\n")
+
+
+def write_parquet(path: Path, frame: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    frame.to_parquet(temporary, index=False)
+    temporary.replace(path)
+
+
+def log(message: str) -> None:
+    line = f"{utc_now()} {message}"
+    print(line, flush=True)
+    with (OUT / "run.log").open("a", encoding="utf-8") as target:
+        target.write(line + "\n")
+
+
+def markdown(frame: pd.DataFrame, decimals: int = 4) -> str:
+    if frame.empty:
+        return "| n |\n|---:|\n| 0 |"
+
+    def cell(value: object) -> str:
+        if pd.isna(value):
+            return "NA"
+        if isinstance(value, (bool, np.bool_)):
+            return str(int(value))
+        if isinstance(value, (float, np.floating)):
+            return f"{value:.{decimals}f}"
+        return str(value).replace("|", "\\|").replace("\n", " ")
+
+    lines = ["| " + " | ".join(map(str, frame.columns)) + " |",
+             "| " + " | ".join("---" for _ in frame.columns) + " |"]
+    lines.extend("| " + " | ".join(cell(value) for value in row) + " |"
+                 for row in frame.itertuples(index=False, name=None))
+    return "\n".join(lines)
+
+
+def hourly_bars(minutes: pd.DataFrame) -> pd.DataFrame:
+    frame = minutes.set_index("open_time")
+    grouped = frame.resample("60min", origin="epoch", label="left", closed="left")
+    bars = grouped.agg(open=("open", "first"), high=("high", "max"),
+                       low=("low", "min"), close=("close", "last"),
+                       volume=("volume", "sum"))
+    count = grouped.close.count()
+    bars = bars.loc[count.eq(60)].reset_index().rename(columns={"open_time": "bar_start"})
+    bars["decision_time"] = bars.bar_start + pd.Timedelta(hours=1)
+    cutoff = minutes.open_time.iloc[-1] + pd.Timedelta(minutes=1)
+    return bars.loc[bars.decision_time.le(cutoff)].reset_index(drop=True)
+
+
+def sides(values: pd.Series, lower: pd.Series, upper: pd.Series) -> np.ndarray:
+    result = np.zeros(len(values), np.int8)
+    result[values.ge(upper).fillna(False).to_numpy()] = -1
+    result[values.le(lower).fillna(False).to_numpy()] = 1
+    return result
+
+
+def signal_frame(times: pd.Series | pd.DatetimeIndex, side: np.ndarray) -> pd.DataFrame:
+    times = pd.DatetimeIndex(pd.to_datetime(times, utc=True))
+    mask = side != 0
+    return pd.DataFrame({"decision_time": times[mask], "side": side[mask].astype(np.int8)})
+
+
+def build_f3_signals(market: pd.DataFrame, features: pd.DataFrame,
+                     bars: pd.DataFrame) -> tuple[dict[tuple[str, str], pd.DataFrame],
+                                                  dict[tuple[str, str], tuple[pd.DatetimeIndex, np.ndarray]]]:
+    feature_times = pd.DatetimeIndex(features.open_time).as_unit("ns").asi8
+    decisions = pd.DatetimeIndex(bars.decision_time)
+    # Frozen V0: archive create_time+5m must be strictly before T.  Minute cache
+    # is forward-filled, so this is exactly the last row at T-6m.
+    positions = np.searchsorted(feature_times + pd.Timedelta(minutes=5).value,
+                                decisions.as_unit("ns").asi8, side="left") - 1
+    hourly_ls = pd.Series(features.global_ls_account.to_numpy(float)[positions])
+
+    create_mask = features.open_time.dt.minute.mod(5).eq(0)
+    events = features.loc[create_mask, ["open_time", "global_ls_account"]].copy()
+    events["available_time"] = events.open_time + pd.Timedelta(minutes=5)
+    event_values = events.global_ls_account.reset_index(drop=True)
+    event_times = pd.DatetimeIndex(events.available_time)
+
+    frames: dict[tuple[str, str], pd.DataFrame] = {}
+    full: dict[tuple[str, str], tuple[pd.DatetimeIndex, np.ndarray]] = {}
+    specs = {"F3": (2_160, 720, .10, .90),
+             "F3-w30": (720, 720, .20, .80)}
+    for strategy, (window, minimum, qlow, qhigh) in specs.items():
+        rolling = hourly_ls.rolling(window, min_periods=minimum)
+        hourly_lower, hourly_upper = rolling.quantile(qlow), rolling.quantile(qhigh)
+        v0_side = sides(hourly_ls, hourly_lower, hourly_upper)
+        frames[(strategy, "V0")] = signal_frame(decisions, v0_side)
+        full[(strategy, "V0")] = (decisions, v0_side)
+
+        levels = pd.DataFrame({"decision_time": decisions,
+                               "lower": hourly_lower.to_numpy(float),
+                               "upper": hourly_upper.to_numpy(float)})
+        fixed = pd.merge_asof(events[["available_time"]].sort_values("available_time"),
+                              levels.sort_values("decision_time"),
+                              left_on="available_time", right_on="decision_time",
+                              direction="backward")
+        v5_side = sides(event_values, fixed.lower, fixed.upper)
+        frames[(strategy, "V5")] = signal_frame(event_times, v5_side)
+        full[(strategy, "V5")] = (event_times, v5_side)
+
+        factor = 12
+        event_rolling = event_values.rolling(window * factor, min_periods=minimum * factor)
+        v5r_side = sides(event_values, event_rolling.quantile(qlow),
+                         event_rolling.quantile(qhigh))
+        frames[(strategy, "V5r")] = signal_frame(event_times, v5r_side)
+        full[(strategy, "V5r")] = (event_times, v5r_side)
+    return frames, full
+
+
+def build_e1_signals(market: pd.DataFrame, bars: pd.DataFrame
+                     ) -> tuple[dict[tuple[str, str], pd.DataFrame],
+                                dict[tuple[str, str], tuple[pd.DatetimeIndex, np.ndarray]]]:
+    volume_mean = bars.volume.rolling(20).mean()
+    volume_std = bars.volume.rolling(20).std(ddof=0)
+    prior_high = bars.high.rolling(20).max().shift()
+    v0_side = ((bars.volume - volume_mean).div(volume_std).gt(3) &
+               bars.close.gt(prior_high)).to_numpy(np.int8)
+    decisions = pd.DatetimeIndex(bars.decision_time)
+
+    minute_times = pd.DatetimeIndex(market.open_time)
+    minute_decisions = minute_times + pd.Timedelta(minutes=1)
+    hour_key = market.open_time.dt.floor("h")
+    partial_volume = market.volume.groupby(hour_key, sort=False).cumsum().to_numpy(float)
+    bar_index = bars.set_index("bar_start")
+    prior19_sum = bars.volume.shift().rolling(19).sum()
+    prior19_sq = bars.volume.pow(2).shift().rolling(19).sum()
+    mapped_sum = hour_key.map(pd.Series(prior19_sum.to_numpy(), index=bar_index.index)).to_numpy(float)
+    mapped_sq = hour_key.map(pd.Series(prior19_sq.to_numpy(), index=bar_index.index)).to_numpy(float)
+    mapped_high = hour_key.map(pd.Series(prior_high.to_numpy(), index=bar_index.index)).to_numpy(float)
+    mean_a = (mapped_sum + partial_volume) / 20
+    variance_a = (mapped_sq + partial_volume ** 2) / 20 - mean_a ** 2
+    z_a = (partial_volume - mean_a) / np.sqrt(np.maximum(variance_a, 0))
+    v1a_side = ((z_a > 3) & (market.close.to_numpy(float) > mapped_high)).astype(np.int8)
+
+    vol60 = market.volume.rolling(60, min_periods=60).sum().to_numpy(float)
+    high60 = market.high.rolling(60, min_periods=60).max().to_numpy(float)
+    phase = minute_decisions.minute.to_numpy()
+    z_b = np.full(len(market), np.nan)
+    high_b = np.full(len(market), np.nan)
+    for minute in range(60):
+        index = np.flatnonzero(phase == minute)
+        volume = pd.Series(vol60[index])
+        z_b[index] = ((volume - volume.rolling(20).mean()) /
+                      volume.rolling(20).std(ddof=0)).to_numpy(float)
+        high_b[index] = pd.Series(high60[index]).rolling(20).max().shift().to_numpy(float)
+    v1b_side = ((z_b > 3) & (market.close.to_numpy(float) > high_b)).astype(np.int8)
+
+    on_hour = minute_decisions.minute == 0
+    if not (np.array_equal(v1a_side[on_hour], v0_side) and
+            np.array_equal(v1b_side[on_hour], v0_side)):
+        raise AssertionError("E1 minute alternatives do not reproduce V0 on the hour")
+
+    frames = {("E1", "V0"): signal_frame(decisions, v0_side),
+              ("E1", "V1a"): signal_frame(minute_decisions, v1a_side),
+              ("E1", "V1b"): signal_frame(minute_decisions, v1b_side)}
+    full = {("E1", "V0"): (decisions, v0_side),
+            ("E1", "V1a"): (minute_decisions, v1a_side),
+            ("E1", "V1b"): (minute_decisions, v1b_side)}
+    return frames, full
+
+
+def price_at(market: pd.DataFrame, time: pd.Timestamp) -> float | None:
+    position = int(np.searchsorted(market.open_time.array.asi8, time.value, side="left"))
+    if position >= len(market) or market.open_time.iloc[position] != time:
+        return None
+    return float(market.open.iloc[position])
+
+
+def simulate(signals: pd.DataFrame, market: pd.DataFrame, hold_hours: int,
+             label: str) -> pd.DataFrame:
+    end_time = market.open_time.iloc[-1] + pd.Timedelta(minutes=1)
+    rows: list[dict[str, object]] = []
+    position = 0
+    entry_time: pd.Timestamp | None = None
+    entry_price = math.nan
+    expiry: pd.Timestamp | None = None
+
+    def close(time: pd.Timestamp, price: float, reason: str) -> None:
+        nonlocal position, entry_time, entry_price, expiry
+        rows.append({"candidate": label, "entry_time": entry_time, "exit_time": time,
+                     "side": position, "entry_price": entry_price, "exit_price": price,
+                     "exit_reason": reason})
+        position, entry_time, entry_price, expiry = 0, None, math.nan, None
+
+    for row in signals.itertuples(index=False):
+        time, desired = pd.Timestamp(row.decision_time), int(row.side)
+        if time >= end_time:
+            break
+        while position and expiry is not None and expiry <= time:
+            expiry_price = price_at(market, expiry)
+            if expiry_price is None:
+                break
+            close(expiry, expiry_price, "max_hold")
+        execution_price = price_at(market, time)
+        if execution_price is None:
+            continue
+        if position and desired == -position:
+            close(time, execution_price, "reverse")
+        if not position:
+            position, entry_time, entry_price = desired, time, execution_price
+            expiry = time + pd.Timedelta(hours=hold_hours)
+    if position:
+        if expiry is not None and expiry < end_time:
+            expiry_price = price_at(market, expiry)
+            if expiry_price is not None:
+                close(expiry, expiry_price, "max_hold")
+        if position:
+            close(end_time, float(market.close.iloc[-1]), "data_end")
+    return pd.DataFrame(rows)
+
+
+def force_window(trades: pd.DataFrame, market: pd.DataFrame,
+                 start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    result = trades.loc[(trades.exit_time > start) & (trades.entry_time < end)].copy()
+    force = result.exit_time > end
+    if force.any():
+        position = int(np.searchsorted(market.open_time.array.asi8, end.value, side="left")) - 1
+        result.loc[force, "exit_time"] = end
+        result.loc[force, "exit_price"] = float(market.close.iloc[position])
+        result.loc[force, "exit_reason"] = "segment_end"
+    return result.reset_index(drop=True)
+
+
+def combo_book(left: pd.DataFrame, right: pd.DataFrame,
+               left_label: str, right_label: str) -> pd.DataFrame:
+    signals = pd.concat([left.assign(candidate=left_label),
+                         right.assign(candidate=right_label)], ignore_index=True)
+    return r224.run_single_book(signals, [left_label, right_label], "FIRST")[0]
+
+
+def build_trade_sets(signals: dict[tuple[str, str], pd.DataFrame],
+                     hist_market: pd.DataFrame, all_market: pd.DataFrame
+                     ) -> tuple[dict[tuple[str, str], pd.DataFrame],
+                                dict[tuple[str, str], pd.DataFrame], pd.DataFrame]:
+    history: dict[tuple[str, str], pd.DataFrame] = {}
+    full: dict[tuple[str, str], pd.DataFrame] = {}
+    specs = {"F3": ("V0", "V5", "V5r", 24),
+             "F3-w30": ("V0", "V5", "V5r", 12),
+             "E1": ("V0", "V1a", "V1b", 20)}
+    for strategy, (*variants, hold) in specs.items():
+        for variant in variants:
+            label = f"{strategy}/{variant}"
+            history[(strategy, variant)] = simulate(signals[(strategy, variant)], hist_market,
+                                                     int(hold), label)
+            full[(strategy, variant)] = simulate(signals[(strategy, variant)], all_market,
+                                                  int(hold), label)
+            log(f"trades {label}: history={len(history[(strategy, variant)])} all={len(full[(strategy, variant)])}")
+
+    definitions = []
+    for combo, f_strategy in (("C1", "F3"), ("C4", "F3-w30")):
+        for f_variant in ("V0", "V5", "V5r"):
+            for e_variant in ("V0", "V1a", "V1b"):
+                variant = f"F_{f_variant}+E_{e_variant}"
+                left_label, right_label = f"{f_strategy}/{f_variant}", f"E1/{e_variant}"
+                history[(combo, variant)] = combo_book(
+                    history[(f_strategy, f_variant)], history[("E1", e_variant)],
+                    left_label, right_label)
+                full[(combo, variant)] = combo_book(
+                    full[(f_strategy, f_variant)], full[("E1", e_variant)],
+                    left_label, right_label)
+                definitions.append({"strategy": combo, "variant": variant,
+                                    "f_leg": f_variant, "e_leg": e_variant})
+
+    definitions.extend({"strategy": strategy, "variant": variant,
+                        "f_leg": variant if strategy.startswith("F3") else "-",
+                        "e_leg": variant if strategy == "E1" else "-"}
+                       for strategy, variants in (("F3", ("V0", "V5", "V5r")),
+                                                  ("F3-w30", ("V0", "V5", "V5r")),
+                                                  ("E1", ("V0", "V1a", "V1b")))
+                       for variant in variants)
+    return history, full, pd.DataFrame(definitions)
+
+
+def missed_episodes(times: pd.DatetimeIndex, variant_side: np.ndarray,
+                    hourly_times: pd.DatetimeIndex, hourly_side: np.ndarray,
+                    cadence_minutes: int, strategy: str, variant: str) -> dict[str, object]:
+    start, end = SEGMENTS["DEV_COMMON"]
+    next_hour = times.ceil("h")
+    hourly_lookup = pd.Series(hourly_side, index=hourly_times)
+    next_side = hourly_lookup.reindex(next_hour).to_numpy(float)
+    mask = ((times >= start) & (times < end) & (times.minute != 0) &
+            (variant_side != 0) & (next_side == 0))
+    positions = np.flatnonzero(mask)
+    if not len(positions):
+        durations = np.array([], float)
+        episode_side = np.array([], np.int8)
+        missed_hours = 0
+    else:
+        selected_time = times[positions]
+        selected_side = variant_side[positions]
+        selected_hour = next_hour[positions]
+        new = np.r_[True, (np.diff(selected_time.asi8) != pd.Timedelta(
+            minutes=cadence_minutes).value) | (selected_side[1:] != selected_side[:-1]) |
+                    (selected_hour[1:].asi8 != selected_hour[:-1].asi8)]
+        groups = np.cumsum(new) - 1
+        counts = np.bincount(groups)
+        durations = counts * cadence_minutes
+        episode_side = selected_side[np.flatnonzero(new)]
+        missed_hours = len(pd.unique(selected_hour))
+    quantile = lambda q: float(np.quantile(durations, q)) if len(durations) else math.nan
+    return {"strategy": strategy, "variant": variant,
+            "cadence_min": cadence_minutes, "signal_points": int(mask.sum()),
+            "missed_hours": int(missed_hours), "missed_episodes": int(len(durations)),
+            "long_episodes": int((episode_side == 1).sum()),
+            "short_episodes": int((episode_side == -1).sum()),
+            "duration_mean_min": float(durations.mean()) if len(durations) else math.nan,
+            "duration_p25_min": quantile(.25), "duration_p50_min": quantile(.50),
+            "duration_p75_min": quantile(.75), "duration_p90_min": quantile(.90),
+            "duration_max_min": float(durations.max()) if len(durations) else math.nan}
+
+
+def missed_signal_table(full_signals: dict[tuple[str, str], tuple[pd.DatetimeIndex, np.ndarray]]) -> pd.DataFrame:
+    rows = []
+    for strategy, variants, cadence in (("F3", ("V5", "V5r"), 5),
+                                         ("F3-w30", ("V5", "V5r"), 5),
+                                         ("E1", ("V1a", "V1b"), 1)):
+        hourly_times, hourly_side = full_signals[(strategy, "V0")]
+        for variant in variants:
+            times, side = full_signals[(strategy, variant)]
+            rows.append(missed_episodes(times, side, hourly_times, hourly_side,
+                                        cadence, strategy, variant))
+    return pd.DataFrame(rows)
+
+
+def fast_ledger(trades: pd.DataFrame, market: pd.DataFrame,
+                funding: pd.DataFrame, boundary: str) -> tuple[np.ndarray, np.ndarray]:
+    n = len(market)
+    pnl = np.zeros(n, float)
+    units = np.zeros(n, float)
+    if trades.empty:
+        return pnl, units
+    times = market.open_time.array.asi8
+    closes = market.close.to_numpy(float)
+    log_close = np.log(closes)
+    log_return = np.r_[0.0, np.diff(log_close)]
+    exposure_delta = np.zeros(n + 1, float)
+    entries = pd.DatetimeIndex(trades.entry_time).as_unit("ns").asi8
+    exits = pd.DatetimeIndex(trades.exit_time).as_unit("ns").asi8
+    left = np.searchsorted(times, entries, side="left")
+    right = np.searchsorted(times, exits, side="right")
+    sides_ = trades.side.to_numpy(float)
+    entry_price = trades.entry_price.to_numpy(float)
+    exit_price = trades.exit_price.to_numpy(float)
+    for i, (a, b, side) in enumerate(zip(left, right, sides_)):
+        if a >= n or b <= a:
+            continue
+        if b - a == 1:
+            pnl[a] += side * math.log(exit_price[i] / entry_price[i]) * 1e4
+        else:
+            pnl[a] += side * (log_close[a] - math.log(entry_price[i])) * 1e4
+            if b - a > 2:
+                exposure_delta[a + 1] += side
+                exposure_delta[b - 1] -= side
+            pnl[b - 1] += side * (math.log(exit_price[i]) - log_close[b - 2]) * 1e4
+        units[a] += .5
+        units[b - 1] += .5
+    pnl += np.cumsum(exposure_delta[:-1]) * log_return * 1e4
+
+    funding_times = pd.DatetimeIndex(funding.time).as_unit("ns").asi8
+    funding_rates = funding.rate.to_numpy(float)
+    for entry, exit_, side in zip(entries, exits, sides_):
+        lo = np.searchsorted(funding_times, entry, side="left")
+        hi = np.searchsorted(funding_times, exit_, side="right")
+        for event, rate in zip(funding_times[lo:hi], funding_rates[lo:hi]):
+            cashflow = -side * rate * 1e4
+            include = ((entry < event < exit_) or
+                       (event == entry and k45_funding.include_boundary_cashflow(
+                           "entry", cashflow, boundary)) or
+                       (event == exit_ and k45_funding.include_boundary_cashflow(
+                           "exit", cashflow, boundary)))
+            if include:
+                position = int(np.searchsorted(times, event, side="left"))
+                if position >= n or times[position] != event:
+                    raise ValueError("funding time outside minute index")
+                pnl[position] += cashflow
+    return pnl, units
+
+
+def segment_daily(pnl0: np.ndarray, units: np.ndarray, market: pd.DataFrame,
+                  start: pd.Timestamp, end: pd.Timestamp, cost: float
+                  ) -> tuple[np.ndarray, np.ndarray]:
+    times = market.open_time.array.asi8
+    left = int(np.searchsorted(times, start.value, side="left"))
+    right = int(np.searchsorted(times, end.value, side="left"))
+    values = pnl0[left:right] - cost * units[left:right]
+    expected = int((end - start) / pd.Timedelta(minutes=1))
+    if len(values) != expected or len(values) % 1_440:
+        raise AssertionError("segment minute coverage mismatch")
+    return values.reshape(-1, 1_440).sum(axis=1), values
+
+
+def _pw_worker(item: tuple[int, np.ndarray]) -> tuple[int, dict[str, object]]:
+    number, daily = item
+    return number, ledger.pw_mean_ci(daily)
+
+
+def evaluate(history: dict[tuple[str, str], pd.DataFrame],
+             full: dict[tuple[str, str], pd.DataFrame], definitions: pd.DataFrame,
+             hist_market: pd.DataFrame, all_market: pd.DataFrame,
+             hist_funding: pd.DataFrame, all_funding: pd.DataFrame
+             ) -> tuple[pd.DataFrame, pd.DataFrame, dict[tuple, np.ndarray]]:
+    metric_rows: list[dict[str, object]] = []
+    daily_rows: list[dict[str, object]] = []
+    daily_cache: dict[tuple, np.ndarray] = {}
+    pw_tasks: list[tuple[int, np.ndarray]] = []
+    for definition in definitions.sort_values(["strategy", "variant"]).itertuples(index=False):
+        key = (definition.strategy, definition.variant)
+        for boundary in BOUNDARIES:
+            ledgers = {}
+            for group, trades, market, funding in (
+                    ("HISTORY", history[key], hist_market, hist_funding),
+                    ("HOLD_A", force_window(full[key], all_market, *SEGMENTS["HOLD_A"]),
+                     all_market, all_funding)):
+                ledgers[group] = fast_ledger(trades, market, funding, boundary)
+            for segment, (start, end) in SEGMENTS.items():
+                group = "HOLD_A" if segment == "HOLD_A" else "HISTORY"
+                trades = (force_window(full[key], all_market, start, end)
+                          if segment == "HOLD_A" else history[key])
+                market = all_market if segment == "HOLD_A" else hist_market
+                pnl0, units = ledgers[group]
+                selected = trades.loc[(trades.entry_time < end) & (trades.exit_time >= start)]
+                benchmark = r235.b0_daily(boundary, segment).to_numpy(float)
+                for cost in COSTS:
+                    daily, minute = segment_daily(pnl0, units, market, start, end, cost)
+                    if len(benchmark) != len(daily):
+                        raise AssertionError("benchmark length mismatch")
+                    standard = daily.std(ddof=1)
+                    regression = r233.ols_hac(daily, benchmark)
+                    row_number = len(metric_rows)
+                    metric_rows.append({
+                        "strategy": definition.strategy, "variant": definition.variant,
+                        "f_leg": definition.f_leg, "e_leg": definition.e_leg,
+                        "segment": segment, "boundary": boundary, "cost_bps": cost,
+                        "trade_n": len(selected), "total_net_bps": float(daily.sum()),
+                        "daily_sharpe": float(daily.mean() / standard * math.sqrt(365))
+                        if standard > 0 else math.nan,
+                        "mtm_max_drawdown_bps": r223._drawdown(minute),
+                        "net_per_trade_bps": float(daily.sum() / len(selected))
+                        if len(selected) else math.nan,
+                        "alpha_daily_bps": regression["alpha_daily_bps"],
+                        "beta": regression["beta"], "pw_status": "PENDING",
+                        "pw_ci95_lower_daily_bps": math.nan, "dsr_trials": DSR_TRIALS,
+                        "dsr": math.nan})
+                    daily_cache[(definition.strategy, definition.variant, segment,
+                                 boundary, cost)] = daily
+                    pw_tasks.append((row_number, daily))
+                    for date, value in zip(pd.date_range(start, end - pd.Timedelta(days=1),
+                                                         freq="D", tz="UTC"), daily):
+                        daily_rows.append({"strategy": definition.strategy,
+                                           "variant": definition.variant,
+                                           "segment": segment, "boundary": boundary,
+                                           "cost_bps": cost, "date": date,
+                                           "net_bps": float(value)})
+        log(f"metrics ledger {definition.strategy}/{definition.variant}")
+
+    metrics = pd.DataFrame(metric_rows)
+    log(f"PW start tasks={len(pw_tasks)} workers={WORKERS}")
+    with ProcessPoolExecutor(max_workers=WORKERS) as executor:
+        for number, pw in executor.map(_pw_worker, pw_tasks, chunksize=2):
+            metrics.loc[number, "pw_status"] = pw["status"]
+            metrics.loc[number, "pw_ci95_lower_daily_bps"] = pw["ci95_lower"]
+
+    for (segment, boundary, cost), part in metrics.groupby(
+            ["segment", "boundary", "cost_bps"], sort=False):
+        unannualized = part.daily_sharpe.to_numpy(float) / math.sqrt(365)
+        variance = float(np.nanvar(unannualized, ddof=1))
+        for index, row in part.iterrows():
+            daily = daily_cache[(row.strategy, row.variant, segment, boundary, cost)]
+            metrics.loc[index, "dsr"] = ledger.deflated_sharpe(
+                daily, DSR_TRIALS, variance)["dsr"]
+
+    baseline_variant = {"F3": "V0", "F3-w30": "V0", "E1": "V0",
+                        "C1": "F_V0+E_V0", "C4": "F_V0+E_V0"}
+    baseline = metrics.copy()
+    baseline["wanted"] = baseline.strategy.map(baseline_variant)
+    baseline = baseline.loc[baseline.variant.eq(baseline.wanted),
+                            ["strategy", "segment", "boundary", "cost_bps",
+                             "trade_n", "total_net_bps", "daily_sharpe"]].rename(columns={
+                                 "trade_n": "baseline_trade_n",
+                                 "total_net_bps": "baseline_total_net_bps",
+                                 "daily_sharpe": "baseline_daily_sharpe"})
+    metrics = metrics.merge(baseline, on=["strategy", "segment", "boundary", "cost_bps"],
+                            validate="many_to_one")
+    metrics["delta_trade_n"] = metrics.trade_n - metrics.baseline_trade_n
+    metrics["delta_total_net_bps"] = metrics.total_net_bps - metrics.baseline_total_net_bps
+    metrics["delta_sharpe"] = metrics.daily_sharpe - metrics.baseline_daily_sharpe
+    metrics["paired_delta_sharpe"] = np.nan
+    metrics["delta_pw_status"] = "BASELINE"
+    metrics["delta_pw_ci95_lower_daily_bps"] = 0.0
+    metrics["delta_dsr_trials"] = DELTA_DSR_TRIALS
+    metrics["delta_dsr"] = np.nan
+    delta_tasks: list[tuple[int, np.ndarray]] = []
+    delta_cache: dict[int, np.ndarray] = {}
+    for index, row in metrics.iterrows():
+        if row.variant == baseline_variant[row.strategy]:
+            continue
+        daily = daily_cache[(row.strategy, row.variant, row.segment,
+                             row.boundary, row.cost_bps)]
+        base_daily = daily_cache[(row.strategy, baseline_variant[row.strategy], row.segment,
+                                  row.boundary, row.cost_bps)]
+        delta = daily - base_daily
+        standard = delta.std(ddof=1)
+        metrics.loc[index, "paired_delta_sharpe"] = (
+            delta.mean() / standard * math.sqrt(365) if standard > 0 else math.nan)
+        metrics.loc[index, "delta_pw_status"] = "PENDING"
+        delta_tasks.append((index, delta))
+        delta_cache[index] = delta
+    log(f"paired-delta PW start tasks={len(delta_tasks)} workers={WORKERS}")
+    with ProcessPoolExecutor(max_workers=WORKERS) as executor:
+        for number, pw in executor.map(_pw_worker, delta_tasks, chunksize=2):
+            metrics.loc[number, "delta_pw_status"] = pw["status"]
+            metrics.loc[number, "delta_pw_ci95_lower_daily_bps"] = pw["ci95_lower"]
+    for _, part in metrics.loc[metrics.delta_pw_status.ne("BASELINE")].groupby(
+            ["segment", "boundary", "cost_bps"], sort=False):
+        unannualized = part.paired_delta_sharpe.to_numpy(float) / math.sqrt(365)
+        variance = float(np.nanvar(unannualized, ddof=1))
+        for index in part.index:
+            metrics.loc[index, "delta_dsr"] = ledger.deflated_sharpe(
+                delta_cache[index], DELTA_DSR_TRIALS, variance)["dsr"]
+    return metrics, pd.DataFrame(daily_rows), daily_cache
+
+
+def trade_net(trades: pd.DataFrame, funding: pd.DataFrame,
+              boundary: str, cost: float) -> np.ndarray:
+    if trades.empty:
+        return np.array([], float)
+    internal, edge, _ = k45_funding.trade_funding_frame(
+        trades.side, trades.entry_time, trades.exit_time, funding, boundary)
+    gross = trades.side.to_numpy(float) * np.log(
+        trades.exit_price.to_numpy(float) / trades.entry_price.to_numpy(float)) * 1e4
+    return gross + internal + edge - cost
+
+
+def missed_trade_metrics(history: dict[tuple[str, str], pd.DataFrame],
+                         full: dict[tuple[str, str], pd.DataFrame],
+                         definitions: pd.DataFrame, hist_funding: pd.DataFrame,
+                         all_funding: pd.DataFrame,
+                         full_signals: dict[tuple[str, str], tuple[pd.DatetimeIndex, np.ndarray]]
+                         ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    baseline_variant = {"F3": "V0", "F3-w30": "V0", "E1": "V0",
+                        "C1": "F_V0+E_V0", "C4": "F_V0+E_V0"}
+    rows, trade_rows = [], []
+    for definition in definitions.itertuples(index=False):
+        baseline_name = baseline_variant[definition.strategy]
+        if definition.variant == baseline_name:
+            continue
+        for segment, (start, end) in SEGMENTS.items():
+            source = full if segment == "HOLD_A" else history
+            funding = all_funding if segment == "HOLD_A" else hist_funding
+            variant = source[(definition.strategy, definition.variant)].copy()
+            if segment == "HOLD_A":
+                variant = variant.loc[(variant.exit_time > start) & (variant.entry_time < end)].copy()
+            in_segment = variant.entry_time.between(start, end, inclusive="left")
+            caught = np.zeros(len(variant), bool)
+            for position, trade in enumerate(variant.itertuples(index=False)):
+                component, component_variant = str(trade.candidate).split("/", 1)
+                time = pd.Timestamp(trade.entry_time)
+                if component_variant == "V0" or time.minute == 0:
+                    continue
+                hourly_times, hourly_side = full_signals[(component, "V0")]
+                hour_position = int(np.searchsorted(hourly_times.as_unit("ns").asi8,
+                                                     time.ceil("h").value, side="left"))
+                caught[position] = (hour_position < len(hourly_times) and
+                                    hourly_times[hour_position] == time.ceil("h") and
+                                    hourly_side[hour_position] == 0)
+            missed = variant.loc[in_segment & caught].copy()
+            if segment == "HOLD_A":
+                # Distribution uses the same observable end as the HOLD_A ledger.
+                force = missed.exit_time > end
+                if force.any():
+                    missed.loc[force, "exit_time"] = end
+                    all_times = full[(definition.strategy, definition.variant)]
+                    # Market end price is already stored on data-end trades.
+                    end_price = float(all_times.exit_price.iloc[-1]) if len(all_times) else math.nan
+                    missed.loc[force, "exit_price"] = end_price
+            for boundary in BOUNDARIES:
+                for cost in COSTS:
+                    values = trade_net(missed, funding, boundary, cost)
+                    quantile = lambda q: float(np.quantile(values, q)) if len(values) else math.nan
+                    rows.append({"strategy": definition.strategy,
+                                 "variant": definition.variant, "segment": segment,
+                                 "boundary": boundary, "cost_bps": cost,
+                                 "missed_trade_n": len(values),
+                                 "total_net_bps": float(values.sum()),
+                                 "mean_net_bps": float(values.mean()) if len(values) else math.nan,
+                                 "p10_net_bps": quantile(.10), "p25_net_bps": quantile(.25),
+                                 "median_net_bps": quantile(.50), "p75_net_bps": quantile(.75),
+                                 "p90_net_bps": quantile(.90),
+                                 "positive_ratio": float((values > 0).mean()) if len(values) else math.nan})
+                    trade_rows.extend({"strategy": definition.strategy,
+                                       "variant": definition.variant, "segment": segment,
+                                       "boundary": boundary, "cost_bps": cost,
+                                       "entry_time": trade.entry_time,
+                                       "exit_time": trade.exit_time, "side": trade.side,
+                                       "net_bps": float(value)}
+                                      for trade, value in zip(missed.itertuples(index=False), values))
+    return pd.DataFrame(rows), pd.DataFrame(trade_rows)
+
+
+def parity_checks(metrics: pd.DataFrame) -> pd.DataFrame:
+    reference = pd.read_parquet(r235.ROOT / "performance.parquet")
+    rows = []
+    mappings = {"F3": F3, "F3-w30": F3_W30, "C1": "C1", "C4": "C4"}
+    for strategy, candidate in mappings.items():
+        variant = "F_V0+E_V0" if strategy.startswith("C") else "V0"
+        actual = metrics.loc[metrics.strategy.eq(strategy) & metrics.variant.eq(variant)]
+        wanted = reference.loc[reference.candidate.eq(candidate) & reference.delay_min.eq(5)]
+        for row in actual.itertuples(index=False):
+            match = wanted.loc[wanted.segment.eq(row.segment) &
+                               wanted.boundary.eq(row.boundary) &
+                               wanted.cost_bps.eq(row.cost_bps)].iloc[0]
+            rows.append({"strategy": strategy, "segment": row.segment,
+                         "boundary": row.boundary, "cost_bps": row.cost_bps,
+                         "trade_n_match": int(row.trade_n) == int(match.trade_n),
+                         "net_abs_diff_bps": abs(row.total_net_bps - match.total_net_bps),
+                         "sharpe_abs_diff": abs(row.daily_sharpe - match.daily_sharpe),
+                         "mdd_abs_diff_bps": abs(row.mtm_max_drawdown_bps -
+                                                  match.mtm_max_drawdown_bps)})
+    result = pd.DataFrame(rows)
+    if not (result.trade_n_match.all() and result.net_abs_diff_bps.max() < 1e-6 and
+            result.sharpe_abs_diff.max() < 1e-9 and result.mdd_abs_diff_bps.max() < 1e-6):
+        raise AssertionError("V0 does not reproduce adopted +5m baseline")
+    return result
+
+
+def report(missed_signals: pd.DataFrame, metrics: pd.DataFrame,
+           missed_metrics: pd.DataFrame, parity: pd.DataFrame) -> tuple[str, list[str]]:
+    metric_columns = ["strategy", "variant", "f_leg", "e_leg", "segment", "boundary",
+                      "cost_bps", "trade_n", "total_net_bps", "daily_sharpe",
+                      "mtm_max_drawdown_bps", "pw_ci95_lower_daily_bps",
+                      "alpha_daily_bps", "beta", "net_per_trade_bps", "dsr",
+                      "delta_trade_n", "delta_total_net_bps", "delta_sharpe",
+                      "paired_delta_sharpe", "delta_pw_ci95_lower_daily_bps", "delta_dsr"]
+    missed_columns = ["strategy", "variant", "segment", "boundary", "cost_bps",
+                      "missed_trade_n", "total_net_bps", "mean_net_bps", "p10_net_bps",
+                      "p25_net_bps", "median_net_bps", "p75_net_bps", "p90_net_bps",
+                      "positive_ratio"]
+
+    primary = metrics.loc[metrics.segment.eq("DEV_COMMON") & metrics.boundary.eq("PESS") &
+                          metrics.cost_bps.eq(4)].copy()
+    primary_missed = missed_metrics.loc[missed_metrics.segment.eq("DEV_COMMON") &
+                                        missed_metrics.boundary.eq("PESS") &
+                                        missed_metrics.cost_bps.eq(4)]
+    joined = primary.merge(primary_missed[["strategy", "variant", "mean_net_bps"]],
+                           on=["strategy", "variant"], how="left")
+    supported = joined.loc[joined.delta_total_net_bps.gt(0) & joined.mean_net_bps.gt(0) &
+                           joined.delta_dsr.ge(.95) &
+                           joined.delta_pw_ci95_lower_daily_bps.gt(0),
+                           ["strategy", "variant"]]
+    candidates = [f"{row.strategy}/{row.variant}" for row in supported.itertuples(index=False)]
+    hold = metrics.loc[metrics.segment.eq("HOLD_B") & metrics.boundary.eq("PESS") &
+                       metrics.cost_bps.eq(4)].copy()
+    if candidates:
+        wanted = set(tuple(value.split("/", 1)) for value in candidates)
+        hold_supported = hold.loc[[tuple(row) in wanted for row in
+                                   hold[["strategy", "variant"]].itertuples(index=False, name=None)]]
+        hold_positive = int(hold_supported.delta_total_net_bps.gt(0).sum())
+        opinion = (f"DEV 표시 규칙(증분 net>0, 놓친 거래 평균>0, paired-delta DSR>=0.95, paired PW 하한>0)을 "
+                   f"{len(candidates)}개가 통과했다: {', '.join(candidates)}. 이 후보만 별도 모의 장부·새 T0로 "
+                   f"추적할 근거는 있다. HOLD_B에서 증분 net 양수는 {hold_positive}/{len(candidates)}개다. "
+                   "기존 장부 교체 근거는 아니다. HOLD_A는 사후 참고다.")
+    else:
+        positive = joined.loc[joined.delta_total_net_bps.gt(0) & joined.mean_net_bps.gt(0)]
+        best_lower = float(positive.delta_pw_ci95_lower_daily_bps.max()) if len(positive) else math.nan
+        best_dsr = float(positive.delta_dsr.max()) if len(positive) else math.nan
+        opinion = ("DEV 표시 규칙(증분 net>0, 놓친 거래 평균>0, paired-delta DSR>=0.95, paired PW 하한>0)을 "
+                   f"통과한 변형이 없다. 방향상 둘 다 양수인 변형은 {len(positive)}개지만, 그중 가장 좋은 "
+                   f"paired PW 하한도 {best_lower:.4f} bp/일, delta DSR도 최대 {best_dsr:.4f}다. "
+                   "별도 모의 장부를 추가할 근거가 부족하다. HOLD_B/HOLD_A로 후보를 되살리면 선택 편향이다.")
+
+    lines = [
+        "# R2-37 판단 주기 검증", "",
+        "## 1번 표 — DEV 놓친 신호", "", markdown(missed_signals, 3), "",
+        "## 2번 표 — 전체 변형 백테스트", "", markdown(metrics[metric_columns], 4), "",
+        "## 3번 표 — V0가 놓치고 변형이 잡은 거래", "",
+        markdown(missed_metrics[missed_columns], 4), "",
+        "## 정의·검증", "",
+        "- V0: 채택된 `create_time+5m < 정시`와 완전한 1시간 봉. 판단시각 `t` 직전 닫힌 분까지 보고 `t` 1분봉 시가에 진입한다.",
+        "- V5: `create_time+5m`에 새 LS 값을 평가한다. 기준선은 그 시각의 직전 정시판으로 한 시간 고정한다. V5r은 90일/30일을 각각 25,920/8,640개 5분 관측으로 재계산한다.",
+        "- V1a: 직전 닫힌 분까지의 진행 중 정시 1시간 봉 누적 거래량·현재 종가를 이전 19개 완성봉과 비교한다. 돌파선은 이전 완성 20봉 고가다.",
+        "- V1b: 매분 끝나는 60분 창과 같은 분 위상의 이전 비중첩 60분 창 19개로 z를 계산한다. 돌파선은 이전 비중첩 20창 고가다. 정시에는 V0와 exact 일치한다.",
+        "- 놓친 신호: 정시가 아닌 조건 충족 구간 중 다음 정시 V0 신호가 0인 연속 episode. 지속시간은 관측점 수×판단 간격이다.",
+        "- 놓친 거래: 변형 다리가 비정시에 진입했고 그 다음 정시 해당 단독 V0 신호가 0인 거래. 단순 조기 진입 뒤 정시에도 신호가 남은 경우와 exit만 달라진 경우는 제외한다. 3번 표 segment는 진입시각 기준이다.",
+        "- 보유시간은 F3 24h, F3-w30 12h, E1 20h의 절대시간으로 고정했다. C1/C4는 모든 3×3 다리 조합, FIRST·F3 우선순위다.",
+        "- alpha/beta는 기존 B0 일별 수익과 Newey-West HAC OLS. PW는 기존 Politis-White stationary bootstrap 2,000회다.",
+        f"- 다중 비교: 전체 수익성에는 27개 series DSR `m={DSR_TRIALS}`, V0 대비 paired 일별 증분에는 비기준 변형 22개 DSR `m={DELTA_DSR_TRIALS}`를 적용했다. 서로 상관된 변형이라 보수성·정확성 한계가 있다.",
+        f"- V0 parity: {len(parity)}개 셀 모두 거래 수 exact, max |net 차이|={parity.net_abs_diff_bps.max():.3e}bp, max |Sharpe 차이|={parity.sharpe_abs_diff.max():.3e}.",
+        "- 판단·후보 추출은 DEV_COMMON만 사용했다. HOLD_B는 OOS 보고, HOLD_A(2026-07..09)는 사후 참고다.", "",
+        "## Codex 의견", "", opinion, "",
+    ]
+    return "\n".join(lines), candidates
+
+
+def main() -> None:
+    started = utc_now()
+    OUT.mkdir(parents=True, exist_ok=True)
+    write_text(OUT / "run.log", "")
+    log("load inputs")
+    hist_market, hist_features, hist_funding, all_market, all_features, all_funding = r235.load_inputs()
+    for frame in (hist_market, hist_features, all_market, all_features):
+        frame["open_time"] = pd.to_datetime(frame.open_time, utc=True).astype("datetime64[ns, UTC]")
+    if (all_market.open_time.diff().dropna() != pd.Timedelta(minutes=1)).any():
+        raise AssertionError("market is not contiguous")
+    bars = hourly_bars(all_market)
+    log("build signals")
+    f3_frames, f3_full = build_f3_signals(all_market, all_features, bars)
+    e1_frames, e1_full = build_e1_signals(all_market, bars)
+    signals, full_signals = {**f3_frames, **e1_frames}, {**f3_full, **e1_full}
+    missed_signals = missed_signal_table(full_signals)
+    log("simulate variants")
+    history, full, definitions = build_trade_sets(signals, hist_market, all_market)
+    log("evaluate")
+    metrics, daily, _ = evaluate(history, full, definitions, hist_market, all_market,
+                                 hist_funding, all_funding)
+    missed_metrics, missed_trades = missed_trade_metrics(
+        history, full, definitions, hist_funding, all_funding, full_signals)
+    parity = parity_checks(metrics)
+
+    strategy_rank = metrics.strategy.map(STRATEGY_ORDER)
+    metrics = metrics.assign(_strategy=strategy_rank).sort_values(
+        ["_strategy", "variant", "segment", "boundary", "cost_bps"]).drop(columns="_strategy").reset_index(drop=True)
+    missed_metrics = missed_metrics.assign(_strategy=missed_metrics.strategy.map(STRATEGY_ORDER)).sort_values(
+        ["_strategy", "variant", "segment", "boundary", "cost_bps"]).drop(columns="_strategy").reset_index(drop=True)
+    report_text, candidates = report(missed_signals, metrics, missed_metrics, parity)
+
+    trades = []
+    for definition in definitions.itertuples(index=False):
+        for group, source in (("HISTORY", history), ("THROUGH_HOLD_A", full)):
+            trades.append(source[(definition.strategy, definition.variant)].assign(
+                strategy=definition.strategy, variant=definition.variant, data_group=group))
+    outputs = {
+        "missed_signals.parquet": missed_signals,
+        "backtest_metrics.parquet": metrics,
+        "daily_pnl.parquet": daily,
+        "missed_trade_metrics.parquet": missed_metrics,
+        "missed_trades.parquet": missed_trades,
+        "trades.parquet": pd.concat(trades, ignore_index=True, sort=False),
+        "parity_checks.parquet": parity,
+        "variant_definitions.parquet": definitions,
+    }
+    for name, frame in outputs.items():
+        write_parquet(OUT / name, frame)
+    write_text(OUT / "REPORT.md", report_text)
+
+    hold_oos = metrics.loc[metrics.segment.eq("HOLD_B") & metrics.boundary.eq("PESS") &
+                           metrics.cost_bps.eq(4) & metrics.delta_total_net_bps.ne(0),
+                           ["strategy", "variant", "trade_n", "total_net_bps",
+                            "delta_total_net_bps", "daily_sharpe", "dsr"]]
+    source_paths = [r235.r214.MARKET, r235.HIST_FEATURES, r235.Q3_MARKET,
+                    r235.Q3_FEATURES, r227.Q3_FUNDING, Path(r235.__file__),
+                    Path(r224.__file__), Path(ledger.__file__), SCRIPT]
+    manifest = {
+        "experiment": "R2-37", "status": "COMPLETE", "started_utc": started,
+        "finished_utc": utc_now(),
+        "source": [file_record(path) for path in source_paths],
+        "timestamp": utc_now(),
+        "data_cutoff": {"DEV_COMMON": "2025-12-31T23:59:59Z",
+                        "HOLD_B": "2026-06-30T23:59:59Z",
+                        "HOLD_A_posthoc": "2026-09-30T23:59:59Z"},
+        "frozen_hypothesis": FROZEN_HYPOTHESIS,
+        "out_of_sample_result": {"segment": "HOLD_B", "role": "OOS",
+                                 "selection_used": False,
+                                 "dev_supported_candidates": candidates,
+                                 "rows_pess_4bps": hold_oos.to_dict("records")},
+        "posthoc_result": {"segment": "HOLD_A", "selection_used": False},
+        "variants": {"series_count": DSR_TRIALS, "multiple_comparison": "DSR m=27",
+                     "nonbaseline_variant_count": DELTA_DSR_TRIALS,
+                     "incremental_multiple_comparison": "paired-delta DSR m=22",
+                     "costs_bps": list(COSTS), "boundaries": list(BOUNDARIES)},
+        "workers_max": WORKERS, "numeric_threads_max": 8,
+        "network_requests": 0, "downloads": 0, "orders": 0,
+        "parameters_changed": False, "live_state_changed": False,
+        "parity": {"rows": len(parity), "all_trade_n_match": bool(parity.trade_n_match.all()),
+                   "max_net_abs_diff_bps": float(parity.net_abs_diff_bps.max()),
+                   "max_sharpe_abs_diff": float(parity.sharpe_abs_diff.max()),
+                   "max_mdd_abs_diff_bps": float(parity.mdd_abs_diff_bps.max())},
+        "outputs": [file_record(OUT / name) for name in (*outputs, "REPORT.md")],
+    }
+    write_json(OUT / "manifest.json", manifest)
+    log("complete")
+
+
+if __name__ == "__main__":
+    main()

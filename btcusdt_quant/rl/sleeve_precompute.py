@@ -29,6 +29,21 @@ LEVELS = (0.0, 0.25, 0.50, 0.75, 1.00)
 TICK, EXIT_QUOTE_BPS, REQUOTE_MIN = 0.1, 2.0, 60
 ROW_COLS = ("minute", "tid", "gross", "fee", "funding")
 
+# Observation contract (Codex review 2026-10-10 P1). Only these columns may reach an allocator observation, and a row
+# only once its available_time <= T. Everything in the private outcome tables (fill result, realized exits, reasons,
+# trade totals) is future information at decision time and stays replay/accounting-only.
+OBS_COLUMNS = {
+    "grid": ("minute_time", "available_time", "sleeve_id", "exec_cell", "available", "base_side", "base_weight",
+             "signal_active", "pending", "open", "exit_pending", "entry_opportunity_id", "base_mandatory_exit_time",
+             "R0_bps", "R_t_bps", "stop_level", "trail_armed", "gross_pnl", "fee", "funding", "net4",
+             "feature_snapshot_id", "snapshot_id_aux", "closed_opp_id"),
+    "decisions": ("entry_opportunity_id", "decision_time", "available_time", "side", "base_weight",
+                  "feature_snapshot_id", "base_mandatory_exit_time", "segment"),
+    "ledger": ("minute_time", "available_time", "minute_idx", "entry_opportunity_id", "gross_pnl", "fee", "funding",
+               "net4"),
+}
+PRIVATE_STEMS = ("outcomes",)
+
 
 # ---------------------------------------------------------------- TEST guard
 class TestAccessError(RuntimeError):
@@ -41,6 +56,36 @@ def guard_times(times_ns, allow_test: bool = False, what: str = "rows") -> np.nd
         raise TestAccessError(f"{what}: {int((t >= TEST_START.value).sum())} TEST rows (>= {TEST_START.date()}) "
                               "read without allow_test=True")
     return t
+
+
+def require_unlock(flag: bool, purpose: str) -> None:
+    """Fail closed: any code path that reads TEST rows must be given an explicit unlock flag."""
+    if not flag:
+        raise TestAccessError(f"{purpose} reads TEST rows (>= {TEST_START.date()}); pass the explicit unlock flag")
+
+
+def obs_columns(kind: str, columns) -> list[str]:
+    """Allowlist check: raise on any column that is not observation-safe for `kind`."""
+    allowed = OBS_COLUMNS[kind]
+    bad = [c for c in columns if c not in allowed]
+    if bad:
+        raise PermissionError(f"non-observation columns for {kind}: {bad}")
+    return list(columns)
+
+
+def read_observation(directory: Path, kind: str, T_max_ns: int, columns=None, allow_test: bool = False) -> pd.DataFrame:
+    """The only reader for observation inputs: allowlisted columns of grid/decisions/ledger partitions, rows with
+    available_time <= T_max_ns. Private outcome tables cannot be read through it."""
+    if kind in PRIVATE_STEMS or kind not in OBS_COLUMNS:
+        raise PermissionError(f"{kind} is not an observation table")
+    cols = obs_columns(kind, columns if columns is not None else OBS_COLUMNS[kind])
+    tcol = "minute_time" if kind != "decisions" else "decision_time"
+    years = set(range(2020, pd.Timestamp(int(T_max_ns), tz="UTC").year + 1))
+    f = read_partitioned(directory, kind, allow_test=allow_test, time_col=tcol, years=years)
+    if not len(f):
+        return f
+    keep = f.available_time.to_numpy(np.int64) <= int(T_max_ns)
+    return f.loc[keep, [c for c in f.columns if c in cols]].reset_index(drop=True)
 
 
 def read_partitioned(directory: Path, stem: str, allow_test: bool = False, time_col: str = "minute_time",
@@ -293,6 +338,18 @@ def interval_fill(n: int, a, b, values, fill, dtype) -> np.ndarray:
         if y >= x:
             out[x:y + 1] = v
     return out
+
+
+def event_ffill(t: np.ndarray, ev_t: np.ndarray, values, fill, dtype) -> np.ndarray:
+    """Value of the latest event with event time <= t[i] (known at minute open t[i]); `fill` before the first."""
+    k = np.searchsorted(np.asarray(ev_t, np.int64), np.asarray(t, np.int64), "right") - 1
+    v = np.asarray(values)
+    return np.where(k >= 0, v[np.maximum(k, 0)] if len(v) else fill, fill).astype(dtype)
+
+
+def event_index(t: np.ndarray, ev_t: np.ndarray) -> np.ndarray:
+    """Index of the latest event with event time <= t[i], -1 before the first."""
+    return np.searchsorted(np.asarray(ev_t, np.int64), np.asarray(t, np.int64), "right") - 1
 
 
 def year_slices(t: np.ndarray) -> dict[int, slice]:

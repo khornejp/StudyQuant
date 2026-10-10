@@ -1,0 +1,590 @@
+{
+  "experiment": "R2-55 family state-exit repairs",
+  "status": "FROZEN",
+  "freeze_time_utc": "2026-10-09T13:19:31Z",
+  "hypothesis": {
+    "change": "Repair only four state-rule families whose frozen predicate is not a durable invalidation of the entry thesis: E1-15 breakout, K06/K07 predicted OCO, K13 multi-timeframe momentum, and K14 opening-range breakout.",
+    "causal_guard": "In every current AX and AXC0 book, reverse, native flag, AX flag and anchor state exits execute only when the row's completed-bar close timestamp is strictly later than the position fill_time; equal or earlier is ignored.",
+    "causal_guard_scope": "Parent-path bugfix applied to both arms. If the historical differential is nonzero, all pairs restart at the same time.",
+    "claim": "On one prospective shadow-paper window, each repaired family may independently improve cost-adjusted 1x net versus its matching current AX books without worse pair-level tail trade or drawdown, after Holm correction across the four frozen family hypotheses."
+  },
+  "parent_freeze": {
+    "path": "out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json",
+    "sha256": "d1d56efa3b35465059e24f30380b7f413a029a4384da2ed45056977327a0eced"
+  },
+  "scope": {
+    "reviewed_ids": [
+      "B1",
+      "B2",
+      "B3",
+      "K01",
+      "K02",
+      "K03",
+      "K04",
+      "K05",
+      "K06_k0.5",
+      "K06_k1.0",
+      "K07_k0.5",
+      "K07_k1.0",
+      "K08",
+      "K09",
+      "K11_15m",
+      "K11_1h",
+      "K12_30m",
+      "K12_1h",
+      "K13",
+      "K14",
+      "K15",
+      "K19",
+      "K21_A",
+      "K21_B",
+      "K23",
+      "K24",
+      "K26",
+      "K29",
+      "K30"
+    ],
+    "changed_ids": [
+      "B1",
+      "B2",
+      "B3",
+      "K04",
+      "K06_k0.5",
+      "K06_k1.0",
+      "K07_k0.5",
+      "K07_k1.0",
+      "K13",
+      "K14"
+    ],
+    "n_changed_ids": 10,
+    "families": {
+      "E1_15_BREAKOUT_LEVEL": [
+        "B1",
+        "B2",
+        "B3",
+        "K04"
+      ],
+      "PREDICTED_OCO_C0": [
+        "K06_k0.5",
+        "K06_k1.0",
+        "K07_k0.5",
+        "K07_k1.0"
+      ],
+      "K13_OPPOSITE_CONSENSUS": [
+        "K13"
+      ],
+      "K14_ORB_C0": [
+        "K14"
+      ]
+    },
+    "review": [
+      {
+        "id": "B1",
+        "family": "composite fast",
+        "frozen_rule": "The opening component owns its rule: A2 prior-10-bar channel, E1 dynamic breakout failure, F3/F3W rolling median.",
+        "verdict": "CHANGE",
+        "change": "For E1-15 positions only, freeze the signal-row breakout level and exit on a later completed 15-minute close back through it. Keep A2, F3 and F3W rules.",
+        "reason": "The E1 flag compares bar high/low with a moving post-entry rolling edge; that edge is not the broken level."
+      },
+      {
+        "id": "B2",
+        "family": "composite fast",
+        "frozen_rule": "The opening component owns its rule: A2 prior-10-bar channel, E1 dynamic breakout failure, F3/F3W rolling median.",
+        "verdict": "CHANGE",
+        "change": "For E1-15 positions only, freeze the signal-row breakout level and exit on a later completed 15-minute close back through it. Keep A2, F3 and F3W rules.",
+        "reason": "Same E1 structural defect as K04; the regime entry gate does not repair the exit anchor."
+      },
+      {
+        "id": "B3",
+        "family": "composite fast",
+        "frozen_rule": "The opening component owns its rule: A2 prior-10-bar channel, E1 dynamic breakout failure, F3/F3W rolling median.",
+        "verdict": "CHANGE",
+        "change": "For E1-15 positions only, freeze the signal-row breakout level and exit on a later completed 15-minute close back through it. Keep A2, F3 and F3W rules.",
+        "reason": "Same E1 structural defect as K04; component routing must preserve the repair."
+      },
+      {
+        "id": "K01",
+        "family": "F3 fade plus E1 hourly breakout",
+        "frozen_rule": "F3 exits at its rolling median. E1 stores the prior-20-hour high and checks only the next completed hourly close for acceptance failure.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "F3 uses its mean-reversion target. E1 uses a frozen pre-entry level and an explicit one-bar acceptance test, not a drifting entry edge."
+      },
+      {
+        "id": "K02",
+        "family": "F3 fade",
+        "frozen_rule": "Long exits at global long-short ratio q50; short exits at q50 in the opposite direction.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "The rolling median is the entry family's natural mean-reversion target."
+      },
+      {
+        "id": "K03",
+        "family": "F3W fade",
+        "frozen_rule": "Long and short positions exit at the rolling 720-hour median of global long-short ratio.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "The median is the symmetric target of the q20/q80 fade; negative contaminated exits do not invalidate that meaning."
+      },
+      {
+        "id": "K04",
+        "family": "E1-15 volume breakout",
+        "frozen_rule": "Long exits when completed-bar high is below the current prior-20-bar high; the short rule is mirrored.",
+        "verdict": "CHANGE",
+        "change": "Store the exact prior-20-bar breakout level from the entry signal row. Exit long when a later completed 15-minute close is at or below that level; mirror for short.",
+        "reason": "The current rolling level absorbs post-entry highs and the high/low predicate tests a moving edge, not failure of the original breakout."
+      },
+      {
+        "id": "K05",
+        "family": "A2-30 channel breakout",
+        "frozen_rule": "Long exits below the prior 10-bar low; short exits above the prior 10-bar high.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "This is an opposite-channel trailing invalidation, distinct from immediate reuse of the entry edge."
+      },
+      {
+        "id": "K06_k0.5",
+        "family": "predicted-range OCO breakout",
+        "frozen_rule": "Long exits at or below the filled upper band; short exits at or above the filled lower band.",
+        "verdict": "CHANGE",
+        "change": "Store entry-decision close C0. Exit long at or below C0 and short at or above C0 on a later completed hourly close.",
+        "reason": "The filled band is the trigger, so treating the same edge as invalidation makes ordinary post-fill noise an exit."
+      },
+      {
+        "id": "K06_k1.0",
+        "family": "predicted-range OCO breakout",
+        "frozen_rule": "Long exits at or below the filled upper band; short exits at or above the filled lower band.",
+        "verdict": "CHANGE",
+        "change": "Store entry-decision close C0. Exit long at or below C0 and short at or above C0 on a later completed hourly close.",
+        "reason": "Same trigger-versus-invalidation defect as K06_k0.5; k does not change rule semantics."
+      },
+      {
+        "id": "K07_k0.5",
+        "family": "predicted-excursion OCO breakout",
+        "frozen_rule": "Long exits at or below the filled upper band; short exits at or above the filled lower band.",
+        "verdict": "CHANGE",
+        "change": "Store entry-decision close C0. Exit long at or below C0 and short at or above C0 on a later completed 15-minute close.",
+        "reason": "The filled band is the trigger, not a durable invalidation boundary."
+      },
+      {
+        "id": "K07_k1.0",
+        "family": "predicted-excursion OCO breakout",
+        "frozen_rule": "Long exits at or below the filled upper band; short exits at or above the filled lower band.",
+        "verdict": "CHANGE",
+        "change": "Store entry-decision close C0. Exit long at or below C0 and short at or above C0 on a later completed 15-minute close.",
+        "reason": "Same trigger-versus-invalidation defect as K07_k0.5; k does not change rule semantics."
+      },
+      {
+        "id": "K08",
+        "family": "squeeze release breakout",
+        "frozen_rule": "Long exits below current Keltner lower; short exits above current Keltner upper.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "The opposite Keltner boundary is a broad volatility-regime failure, not the release trigger edge."
+      },
+      {
+        "id": "K09",
+        "family": "Bollinger low-volatility mean reversion",
+        "frozen_rule": "Long and short positions exit at the current Bollinger middle.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "The middle band is the strategy's explicit mean-reversion target."
+      },
+      {
+        "id": "K11_15m",
+        "family": "EMA9/EMA21 trend",
+        "frozen_rule": "Long exits when EMA9-EMA21 is non-positive; short exits when non-negative.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "The EMA sign is the persistent trend state that generated the cross."
+      },
+      {
+        "id": "K11_1h",
+        "family": "EMA9/EMA21 trend",
+        "frozen_rule": "Long exits when EMA9-EMA21 is non-positive; short exits when non-negative.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "The EMA sign is the persistent trend state that generated the cross."
+      },
+      {
+        "id": "K12_30m",
+        "family": "Supertrend",
+        "frozen_rule": "Exit when Supertrend direction differs from position side.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "Supertrend direction is the strategy state, not a one-bar entry conjunction."
+      },
+      {
+        "id": "K12_1h",
+        "family": "Supertrend",
+        "frozen_rule": "Exit when Supertrend direction differs from position side.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "Supertrend direction is the strategy state, not a one-bar entry conjunction."
+      },
+      {
+        "id": "K13",
+        "family": "multi-timeframe momentum",
+        "frozen_rule": "Exit when any one of the completed 15-minute, 1-hour or 4-hour return signs is no longer equal to the held side.",
+        "verdict": "CHANGE",
+        "change": "On 15-minute rows with decision_time > fill_time, exit a long only when sign15=sign60=sign240=-1 and exit a short only when sign15=sign60=sign240=+1. A 0 or NaN sign means no consensus and no exit. Do not reverse on the same row.",
+        "reason": "Three-way unanimity is the entry trigger; requiring it to persist turns one noisy 15-minute sign change into immediate invalidation."
+      },
+      {
+        "id": "K14",
+        "family": "session opening-range OCO breakout",
+        "frozen_rule": "Long exits at or below the filled range upper; short exits at or above the filled range lower.",
+        "verdict": "CHANGE",
+        "change": "Store the completed opening-range decision close C0. Exit long at or below C0 and short at or above C0 on a later completed 5-minute close.",
+        "reason": "The filled range edge is the breakout trigger. C0 is a pre-entry, interior origin that separates a pullback from failure."
+      },
+      {
+        "id": "K15",
+        "family": "UTC-day VWAP mean reversion",
+        "frozen_rule": "Long and short positions exit at current UTC-day VWAP.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "VWAP is the strategy's explicit mean-reversion target."
+      },
+      {
+        "id": "K19",
+        "family": "premium-z mean reversion",
+        "frozen_rule": "Exit when current premium z crosses zero relative to entry-z sign.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "Zero is the neutral target of the extreme-z fade."
+      },
+      {
+        "id": "K21_A",
+        "family": "taker-share z momentum",
+        "frozen_rule": "Exit when current taker-share z crosses zero against the held momentum side.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "Zero crossing ends the signed momentum state; it does not reuse the z=2 entry threshold."
+      },
+      {
+        "id": "K21_B",
+        "family": "taker-share z mean reversion",
+        "frozen_rule": "Exit when current taker-share z reaches or crosses zero toward the mean.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "Zero is the symmetric mean-reversion target."
+      },
+      {
+        "id": "K23",
+        "family": "top-trader ratio fade",
+        "frozen_rule": "Long and short positions exit at the rolling median top-trader long-short ratio.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "The median is the q10/q90 fade's natural target."
+      },
+      {
+        "id": "K24",
+        "family": "taker-LSR z momentum",
+        "frozen_rule": "Exit when current taker-LSR z crosses zero against the held side.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "Zero crossing ends the signed momentum state; high exit share alone is not a structural defect."
+      },
+      {
+        "id": "K26",
+        "family": "pivot rejection",
+        "frozen_rule": "Long and short rejection positions exit at the current prior-day pivot.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "The pivot is the predefined target between S1 and R1."
+      },
+      {
+        "id": "K29",
+        "family": "filtered level fade",
+        "frozen_rule": "Long and short positions exit at the current prior-day midpoint.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "The midpoint is the predefined fade target."
+      },
+      {
+        "id": "K30",
+        "family": "break-and-retest trend",
+        "frozen_rule": "Store the exact retest level; long exits on a later close at or below it and short exits at or above it.",
+        "verdict": "KEEP",
+        "change": "None.",
+        "reason": "Unlike K06/K07, the stored level is confirmed support or resistance retested before market entry; losing it directly invalidates the thesis."
+      }
+    ]
+  },
+  "family_rule_changes": {
+    "E1_15_BREAKOUT_LEVEL": "For K04 and only the E1-15 component of B1-B3, freeze the exact prior-20-bar breakout level from the entry signal. Long exits on a later completed 15-minute close <= that level; short mirrors at the frozen prior low. Never update the level after entry.",
+    "PREDICTED_OCO_C0": "For K06/K07, freeze C0 from the exact OCO decision row that fills. K06 checks later completed hourly closes; K07 checks later completed 15-minute closes. Long exits <= C0; short exits >= C0.",
+    "K13_OPPOSITE_CONSENSUS": "On 15-minute rows with decision_time > fill_time, a long exits only when sign15=sign60=sign240=-1 and a short exits only when sign15=sign60=sign240=+1. A 0 or NaN sign means no consensus and no exit. No same-row reversal.",
+    "K14_ORB_C0": "Freeze C0 from the exact completed opening-range row whose OCO later fills. Long exits on a later completed 5-minute close <= C0; short exits >= C0."
+  },
+  "evidence": {
+    "cutoff_utc": null,
+    "cutoff_rule": "Set exactly equal to manifest.shadow_deploy_time_utc. No post-deploy observation may inform rules, scope, k, thresholds or evidence floors.",
+    "design_source": "out/k45_rl_r2_48_20261007/r2_52a/trades_ax/*.parquet",
+    "design_period": "2023-09 through 2026-01",
+    "contamination": "Already seen. State-exit shares and conditional net bps are design diagnostics only and cannot count as R2-55 test evidence.",
+    "semantic_priority": "Verdicts follow the frozen rule text and btcusdt_quant/sim/strategies/*.py semantics. Contaminated P&L never decides CHANGE versus KEEP.",
+    "anchor_selection_provenance": "C0, frozen breakout level and opposite consensus were chosen from rule semantics; no alternative anchor/predicate was compared on contaminated P&L (only per-id state-exit share and mean were viewed).",
+    "decision_timing_note": "Expected decision about 37 days median after deploy because the K04 bottleneck is about 0.94 trades/day; plan 50-60 days."
+  },
+  "deployment": {
+    "shadow_deploy_time_utc": null,
+    "manifest_rule": "At successful atomic deployment, write the actual UTC deploy time once to the append-only run manifest before any R2-55 outcome is read.",
+    "paired_state": "Between shadow_deploy_time_utc and start_utc, each AXC0 book mirrors its comparator or remains dormant. Clone each comparator's open position, pending OCO orders and causal state into its AXC0 source, reconstruct changed anchors only from the immutable entry decision row, and record a pair-state equality hash immediately before start_utc. Carry-in positions run but do not count toward the completed-position minimum.",
+    "activation_guard": "The repaired rule activates exactly at start_utc. R2-55 evidence collection cannot start if deploy time, derived start_utc or the pair-state equality hash immediately before start_utc is missing."
+  },
+  "honest_test": {
+    "mode": "Prospective shadow paper books only; no live orders.",
+    "start_utc": null,
+    "start_rule": "Set in the manifest to the first UTC 15-minute boundary strictly after manifest.shadow_deploy_time_utc. If deployment occurs exactly on a boundary, use the next boundary.",
+    "calendar": "One common start, one common decision cutoff and every UTC day for all pairs; zero-fill missing activity before daily differencing.",
+    "selection": "No result-driven restart, family or book drop, rule change, evidence-floor change, threshold change or k reselection. One look after every pair meets minimum evidence."
+  },
+  "shadow_books": {
+    "sources": [
+      "B1_AXC0",
+      "B2_AXC0",
+      "B3_AXC0",
+      "K04_AXC0",
+      "K06_k0.5_AXC0",
+      "K06_k1.0_AXC0",
+      "K07_k0.5_AXC0",
+      "K07_k1.0_AXC0",
+      "K13_AXC0",
+      "K14_AXC0"
+    ],
+    "x3": [
+      "B1_AXC0_x3",
+      "B2_AXC0_x3",
+      "B3_AXC0_x3",
+      "K04_AXC0_x3",
+      "K06_k0.5_AXC0_x3",
+      "K06_k1.0_AXC0_x3",
+      "K07_k0.5_AXC0_x3",
+      "K07_k1.0_AXC0_x3",
+      "K13_AXC0_x3",
+      "K14_AXC0_x3"
+    ],
+    "comparators": [
+      [
+        "B1_AXC0",
+        "B1_AX"
+      ],
+      [
+        "B2_AXC0",
+        "B2_AX"
+      ],
+      [
+        "B3_AXC0",
+        "B3_AX"
+      ],
+      [
+        "K04_AXC0",
+        "K04_AX"
+      ],
+      [
+        "K06_k0.5_AXC0",
+        "K06_k0.5_AX"
+      ],
+      [
+        "K06_k1.0_AXC0",
+        "K06_k1.0_AX"
+      ],
+      [
+        "K07_k0.5_AXC0",
+        "K07_k0.5_AX"
+      ],
+      [
+        "K07_k1.0_AXC0",
+        "K07_k1.0_AX"
+      ],
+      [
+        "K13_AXC0",
+        "K13_AX"
+      ],
+      [
+        "K14_AXC0",
+        "K14_AX"
+      ]
+    ],
+    "name_note": "AXC0 is the frozen R2-55 experiment namespace; K04 and K13 retain it even though their family repair is not a C0 anchor.",
+    "visibility": "All AXC0 1x sources and x3 overlays are hidden research books. They cannot replace, rename, retire, prioritize, display or notify in place of current AX books before that family passes. Each x3 mirrors its 1x source and is diagnostic, not another test."
+  },
+  "inheritance": {
+    "rule": "Everything not explicitly changed here remains FROZEN R2-52A.",
+    "unchanged": {
+      "R0": "min(k*E0,300) log bps",
+      "R_t": "tighten-only",
+      "trail": "parent rule",
+      "max_hold": "none",
+      "minute_order": "parent order",
+      "risk_k_values": [
+        1.0,
+        1.5,
+        2.0
+      ],
+      "risk_k_selection": "Per-window validation P&L; tie -> 2.0.",
+      "costs": "4 bps round trip plus PESS funding; 8 bps stress."
+    },
+    "K13_risk": "Keep max_hold=none on purpose. Hard and trailing stops limit price loss only; duration and funding remain unbounded. Report hold-time p95 and maximum, open-position age, exposure and funding."
+  },
+  "k_source": {
+    "rule": "Rerun pre-2026 validation selection for each changed id with only its frozen family repair. Never select on prospective paper results.",
+    "trials": "10 changed ids x 3 risk-k values = 30",
+    "new_trials": 30,
+    "registry_sequence": [
+      "R2-52A 5413",
+      "K01_FLIP 5417",
+      "R2-54 5544",
+      "R2-55 5574"
+    ],
+    "registry_after": 5574,
+    "not_multipliers": [
+      "Four family hypotheses",
+      "Prospective days",
+      "x3 overlays",
+      "4-bps and 8-bps ledgers",
+      "Bootstrap replicates"
+    ]
+  },
+  "minimum_evidence": {
+    "unit": "Each of the 10 frozen 1x shadow/current pairs separately.",
+    "rule": "A pair is ready only after both 30 elapsed UTC days from start_utc and at least 30 eligible completed 1x positions in the shadow arm and 30 in the current arm. Eligible positions have entry_time >= start_utc; carry-in and administrative data-end closes do not count.",
+    "common_cutoff": "Open the single test only when every pair is ready. Use one common cutoff at the first UTC-day boundary after the last pair becomes ready.",
+    "provenance": "Chosen by this DRAFT before deployment.",
+    "rationale": "The floor limits single-day and single-trade decisions. It is a screening floor, not a power claim."
+  },
+  "pass_criteria": {
+    "unit": "Four separately decided family hypotheses on frozen 1x pairs. x3 cannot create a pass.",
+    "primary_ledger": "Primary daily P&L, cumulative P&L and drawdown use a 1-minute MTM ledger rebased to 0 at start_utc, including open positions, costs and PESS funding. Exclude pre-start P&L. worst_position_bps includes a cutoff forced-close mark for every open position. Closed-only daily_pnl is forbidden.",
+    "family_series": "For each family and UTC day, compute each member pair's shadow-minus-current 4-bps PESS daily delta after zero filling, then take the arithmetic mean with equal weight per pair.",
+    "primary_test": "For each frozen family series on the common UTC calendar only, use a one-sided stationary-bootstrap mean test with btcusdt_quant.sim.analytics.pw_block_length, 2000 replicates and seed 0. Compute p=(1+count(centered bootstrap mean >= observed mean))/2001 from centered resamples. Compute the 95% percentile mean interval from uncentered resamples.",
+    "bootstrap_edge_cases": "Any NaN in input or bootstrap output invalidates the family. Any missing pair invalidates its family. For zero variance, p=1/2001 only when observed mean>0 and p=1 otherwise; the uncentered percentile interval degenerates at the observed mean. Never use a pair-specific calendar.",
+    "multiplicity": "Apply Holm step-down correction across exactly the four frozen family p-values at family-wise alpha=0.05. A family satisfies the statistical gate only when its Holm-adjusted p<=0.05 and its unadjusted 95% lower bound>0.",
+    "per_pair": [
+      "Cumulative shadow-minus-current net at 4 bps plus PESS > 0.",
+      "The same frozen path at 8 bps plus PESS >= 0.",
+      "Shadow worst_position_bps >= current.",
+      "Shadow max_drawdown_bps <= current."
+    ],
+    "family_pass": "A family passes only if its statistical gate passes and every frozen member pair passes every per-pair gate at the one common cutoff.",
+    "independence": "A failing or invalid family does not cancel a passing family. A missing or failed pair invalidates only its family; it cannot be dropped. No family is retested under R2-55."
+  },
+  "decision": {
+    "fail": "Keep current AX books for that family. Retain its shadows only as labelled diagnostics or stop them; no retry or rule tuning under R2-55.",
+    "pass": "Switch only the passing family's current AX sources to the frozen repair after the family decision is recorded. Switch each source at its first flat moment; never rewrite an open position. Update x3 only through its source. Until then, current books remain visible and authoritative."
+  },
+  "old_data_reruns": {
+    "role": "Diagnostic only.",
+    "rules": "Label contaminated; exclude from pass/fail; do not alter families, rules, guards, k, thresholds, evidence floors, deployment start, books or implementation after viewing."
+  },
+  "manifest_required": [
+    "This DRAFT/final freeze SHA-256 and status",
+    "shadow_deploy_time_utc and evidence cutoff_utc, which must be equal",
+    "derived start_utc, the first strict 15-minute boundary after deploy",
+    "all 10 source/x3/comparator names and configuration hashes",
+    "per-pair cloned state payload hash and reconstruction source row",
+    "selected k per pre-2026 window and id",
+    "registry sequence 5413 -> 5417 -> 5544 -> 5574; R2-54 frozen before K01_FLIP with no R2-54 amendment",
+    "per-pair elapsed days and eligible completed-position counts",
+    "single common cutoff and no-prior-look attestation",
+    "four raw p-values, Holm order, adjusted p-values and confidence intervals",
+    "every per-pair 4-bps, 8-bps, worst-position and max-drawdown result",
+    "failed or missing books, which cannot be dropped"
+  ],
+  "implementation_plan": {
+    "btcusdt_quant/sim/strategies/legacy.py": "Add frozen E1-15 breakout anchors for K04 and component-routed B1-B3 shadows while preserving current AX behavior.",
+    "btcusdt_quant/sim/strategies/volatility.py": "Carry entry-decision C0 for K06/K07 AXC0 while preserving current band-edge AX behavior.",
+    "btcusdt_quant/sim/strategies/trend.py": "Add K13 opposite-consensus and K14 decision-C0 shadow state while preserving current AX behavior.",
+    "btcusdt_quant/sim/core.py + btcusdt_quant/sim/reference.py": "Support the four tagged shadow rules, preserve component isolation, and enforce checked-close timestamp > fill_time in both paths.",
+    "statistical_report": "Emit centered PW stationary-bootstrap p-values, intervals and deterministic Holm trace for exactly four families.",
+    "differential_tests": "Long/short thresholds, same-or-earlier close ignored, later native-cadence close accepted, composite component isolation, K13 loss-of-unanimity ignored, opposite unanimity accepted, core/reference equality, and unchanged current AX behavior.",
+    "btcusdt_quant/paper/catalog.py": "Add 10 hidden AXC0 sources and 10 derived x3 shadows; atomically clone pair state; keep current catalog names and roles.",
+    "btcusdt_quant/paper/config.py + config/paper.toml": "Configure separate hidden shadow books. Do not change current books, primary_book, dashboard visibility or telegram_books before family pass."
+  },
+  "frozen_by": "user 2026-10-09 ('순차적으로 일단 진행해봐')",
+  "review_trail": [
+    "Frozen 2026-10-09T13:19:31Z; implementation sequenced after R2-54 Task 4 (shared core.py/reference.py)",
+    "REBASE_2026-10-10 2026-10-09T19:49:43Z: R2-52B parent, 5-k grid (user 2026-10-10)",
+    "REBASE_BACK 2026-10-10T01:44:36Z: parent back to R2-52A (user)",
+    "HISTORICAL_TEST 2026-10-10T03:26:15Z: decision on 2026-01..10-07 historical replay (user)"
+  ],
+  "amendments": [
+    {
+      "id": "REBASE_2026-10-10",
+      "utc": "2026-10-09T19:49:43Z",
+      "approved_by": "user 2026-10-10",
+      "field": "parent freeze, exit inheritance, risk-k grid, and trial registry",
+      "parent_freeze": {
+        "path": "out/k45_rl_r2_48_20261007/r2_52b_exit_freeze.json",
+        "sha256": "e7ef93bef2474478d70690efe1a2f3db3bc5551b50e89cf49ae7d9f39cc48856"
+      },
+      "new": {
+        "inheritance": "Everything not explicitly changed by R2-55 inherits R2-52B.",
+        "risk_k_values": [
+          1.0,
+          1.5,
+          2.0,
+          2.5,
+          3.0
+        ],
+        "risk_k_tie_break": "Lower k first.",
+        "pre_2026_k_selection": "Rerun all ten changed ids over the five-k grid. Any earlier three-k selection is superseded. Never select from prospective results.",
+        "costs": "4 bps flat maker round trip plus PESS funding. The 8 bps ledger is report-only and never selects, ranks, or gates.",
+        "paper": "Current R2-52A books and positions remain unchanged. R2-55 remains a separate shadow experiment with no position migration."
+      },
+      "trials": {
+        "registry_base": 5901,
+        "calculation": "10 changed ids * 5 risk-k values = 50",
+        "new_trials": 50,
+        "registry_after": 5951,
+        "sequence": [
+          "R2-54 5544",
+          "R2-52B 5689",
+          "K01_FLIP 5694",
+          "R2-54 A5 5901",
+          "R2-55 rebase 5951"
+        ]
+      },
+      "results_seen": "Pre-2026 state-exit diagnostics were already seen and remain contaminated diagnostics only. No prospective R2-55 outcome was seen. R2-54 aborted run 1 file access is not R2-55 evidence.",
+      "freeze_sha256_before": "567cd73460fa48946e296a5ce80d1dc040c43817692c98da39ff9327cb64f7db"
+    },
+    {
+      "id": "REBASE_BACK_2026-10-10",
+      "utc": "2026-10-10T01:44:36Z",
+      "approved_by": "user 2026-10-10 ('일단 A로 가')",
+      "field": "parent freeze, risk-k grid, trial registry",
+      "parent_freeze": {
+        "path": "out/k45_rl_r2_48_20261007/r2_52a_exit_freeze.json",
+        "sha256": "d1d56efa3b35465059e24f30380b7f413a029a4384da2ed45056977327a0eced"
+      },
+      "new": "REBASE_2026-10-10 (R2-52B parent, five-k grid) is suspended. R2-55 inherits R2-52A: R0=min(k*E0,300), tighten-only R_t, trail as R2-52A, k {1.0,1.5,2.0}, tie 2.0. All other R2-55 terms unchanged.",
+      "trials": {
+        "registry_base": 5694,
+        "calculation": "10 changed ids * 3 risk-k values = 30",
+        "new_trials": 30,
+        "registry_after": 5724,
+        "sequence": [
+          "R2-54 5544",
+          "R2-52B 5689",
+          "K01_FLIP(R2-52B) 5694",
+          "R2-54 A6 no new trials",
+          "R2-55 5724"
+        ]
+      },
+      "freeze_sha256_before": "1fe32b9ba6f50e78567bf216844a5ea7780033c7555435f4ee78d3af48fb9d5e",
+      "results_seen": "R2-52B research results seen (K01 FAIL). No prospective R2-55 outcome seen."
+    },
+    {
+      "id": "HISTORICAL_TEST_2026-10-10",
+      "utc": "2026-10-10T03:26:15Z",
+      "approved_by": "user 2026-10-10 ('기존 데이터로 검증하게 수정')",
+      "field": "honest_test, minimum_evidence, shadow deployment, activation guard",
+      "new": "Honest test = historical replay on [2026-01-01T00:00Z, 2026-10-08T00:00Z) using the R2-54 FINAL snapshot inputs (out/k45_rl_r2_48_20261007/r2_54/stageb_snapshot, verify hashes) plus 1m market for the window. Both arms (current R2-52A AX and repaired AXC0, the causal guard applied to both) run continuously from flat at 2026-01-01 with k selected only on pre-2026 data (rolling R2-52A procedure, last pre-2026 window's k). Pair evaluation, MTM ledger, Holm over the 4 family hypotheses, worst position, MDD and per-pair rules as frozen; minimum evidence = full window and >= 30 completed positions per arm per pair (else that pair is invalid and its family fails). Prospective shadow books, deploy-time start and pair-state hash rules are replaced for the decision; shadow paper books may still run as diagnostics. Test runs are logged and counted; no rule, k or threshold is changed from test results.",
+      "contamination": "2026 window was used as R2-54 Stage-B test (different hypothesis, outcomes seen). R2-55 design diagnostics came from the 2023-09..2025-12 R2-52A test. Paper AX trades since 2026-10-09T01:24Z lie outside the window.",
+      "freeze_sha256_before": "93c523487006cf18cee6a881d4cc19ca6db1c7ba1d407e758eb17237afd3cd25",
+      "results_seen": "No R2-55 outcome on the 2026 window seen."
+    }
+  ]
+}

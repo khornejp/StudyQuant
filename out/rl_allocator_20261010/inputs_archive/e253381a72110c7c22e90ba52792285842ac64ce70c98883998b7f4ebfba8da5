@@ -1,0 +1,442 @@
+결론: **7개 sleeve allocator**, **1h 결정 주기 주안**, **4h ablation**. 기존 PPO 골격만 재사용. sleeve 실행은 고정 shadow ledger로 분리. TEST는 학습·선택 금지.
+
+근거 수익:
+
+- G3 long S180: DEV-FULL `22,996.2`, TEST `1,684.1`
+- G3 short F180: DEV-FULL `5,787.7`, TEST `1,614.9`
+- LBR FUND: DEV-FULL `1,724.0`, TEST `1,562.7`; TEST 재선정
+- B3_AXC0/K04_AXC0 TEST: `2,347.8/2,587.3`
+- C1v2/C4v2 TEST: `4,809.6/5,467.4`; native 2023–25 `17,105.3/12,079.9`
+
+근거: [G3/LBR portfolio metrics](</D:/StudyQuant/out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/portfolio_metrics.parquet>), [R2-56 report](</D:/StudyQuant/out/k45_rl_r2_48_20261007/r2_56/report.md:7>).
+
+## 1. Action space
+
+Sleeve 7개:
+
+1. `G3_LONG`: S180, `W180-P65`, long만
+2. `G3_SHORT`: F180, `V-ENS`, short만
+3. `LBR_FUND`: `b-1.0,d0.25,a1,h2`, long
+4. `B3_AXC0`
+5. `K04_AXC0`
+6. `C1v2`
+7. `C4v2`
+
+G3 정의 근거: [g3.py](</D:/StudyQuant/btcusdt_quant/paper/g3.py:1>). LBR은 TEST 재선정 명시: [manifest.json](</D:/StudyQuant/out/long_basis_release_20261010/LBR-FUND-MAT-20261010T101154Z-407303fe/manifest.json:34>).
+
+각 sleeve별 factorized categorical head:
+
+- 새 기회: `OFF, 0.25, 0.50, 0.75, 1.00`
+- pending: `KEEP, CANCEL`
+- open: `HOLD, TIGHTEN_75, TIGHTEN_50, EXIT`
+- `TIGHTEN_*`: 기존 `R0` 보유 sleeve만 허용. 현재 B3/K04 대상.
+- G3/LBR/C1/C4: `HOLD/EXIT`만. 새 stop 발명 금지.
+- open allocation 증가 금지. 진입 allocation을 청산까지 고정.
+- base mandatory exit·stop·trail 취소 금지.
+- stop 변경: `R_t = min(R_t, 0.75R0 또는 0.50R0)`. widening 불가.
+- 조기 `EXIT`: 다음 허용 maker exit. 2 bps/side, slippage `0`.
+
+제약:
+
+- sleeve당 multiplier `0..1`.
+- 유효 exposure = `multiplier × base_weight`.
+- gross `Σ|exposure_i| ≤ 2.0`.
+- 기존 open exposure 우선. 신규 동시 진입만 남은 cap에 비례 축소.
+- long/short 별도 virtual book. 연구 ledger에서 상계 금지.
+- net exposure도 별도 보고.
+- 반대 sleeve 동시 보유 허용. gross cap만 적용.
+
+결정 주기:
+
+- 주안: `1h`. 매시 닫힌 데이터로 다음 1h의 standing allocation 결정.
+- ablation: `4h`.
+- G3/LBR 4h 신호는 1h grid에 causal forward-fill.
+- B3/K04 15m, C1/C4 분·시간 신호는 다음 allocator 결정 전까지 직전 standing allocation 적용.
+- `[가설]` 1h가 exit 제어와 빠른 sleeve 상태 반영에 유리. DEV에서만 4h와 비교.
+
+G3-family 실행 6개 cell 유지:
+
+- offset `{2,5}` bps
+- penetration `{0.5,1.0,2.0}` bps
+- TTL `60m`, exit quote `2bps`, requote `60m`
+- maker 왕복 `4bps`, slippage `0`
+
+근거: [Batch-5 engine](</D:/StudyQuant/out/run_new_model_batch5_20261010.py:782>).
+
+## 2. State
+
+시각 `T` 기준 32개 1h history + static vector.
+
+Sleeve별:
+
+- `available`, `signal_active`, `pending`, `open`, `side`
+- base target, base weight, allocator weight
+- signal age, pending age, hold age, base exit까지 남은 시간
+- unrealized net4, MAE, MFE
+- 현재 stop 거리, `R0`, `R_t/R0`, trail armed
+- 최근 sleeve MTM net4:
+  - `24h`, `7d`, `30d` 합
+  - `24h`, `7d` 변동성
+  - running MDD
+  - 최근 `20`회 closed win rate와 평균 net4
+- 미래 trade 결과·최종 exit reason 금지
+
+신호별:
+
+- G3: `score_F`, `score_S`, `svi42`, `svi180`, `sigma_ann`, target-vol weight, `funding_z90`
+- LBR: armed 여부·age, `zr4`, `ztaker`, `zprem`, `zfund`, recovery delta, hold 잔여 bar
+- B3/K04: component, M/L regime, volume z, breakout 거리, LS quantile 거리, adaptive `k/E0/R0/R_t`
+- C1/C4: F3/F3-w30 LS quantile 거리, E1 volume z·breakout 거리, component, hold 잔여 시간
+
+공통 regime:
+
+- realized vol `1h/4h/24h/7d`
+- G3 SVI
+- funding robust z
+- OI z·변화 `1h/4h/24h`
+- global/top LS z
+- taker LSR z
+- premium z
+- UTC hour/day sin/cos
+
+인과 규칙:
+
+- bar close·`available_time <= T`
+- funding은 반드시 `funding_time < T`
+- normalizer는 해당 fold train만
+- NaN mask 별도
+- TEST 행 변경 시 DEV state byte-identical
+- prefix invariance 필수
+
+기존 state의 strict funding/metric 접근과 train-only normalizer 재사용 가능: [state.py](</D:/StudyQuant/btcusdt_quant/rl/state.py:105>).
+
+## 3. Reward
+
+권장식:
+
+```text
+excess_net_t = Δnet4_RL_t - Δnet4_static_t
+
+reward_t =
+    excess_net_t
+  - 0.10 × max(0, ΔMDD_RL_t - ΔMDD_static_t)
+  - 0.25 × max(0, turnover_RL_t - turnover_static_t)
+```
+
+단위 bps. `0.10`, `0.25`는 `[가설]`; TEST 전 freeze. 대안 grid 금지. 필요하면 DEV-only 사전 비교 `{0, 0.10} × {0, 0.25}` 4개만.
+
+`Δnet4` 포함 항목:
+
+- 가격 MTM
+- 진입·청산 maker 비용 총 `4bps`
+- PESS funding
+- 조기 exit 비용
+- allocation 선형 배율
+- slippage `0`
+
+R2-48 flat 붕괴 방지:
+
+- 기존 `net - 2×loss - ΔMDD` 폐기. 15m noise만으로 약 `18.6bps/step` 손실 벌점 발생.
+- static DEV-best policy로 actor bias 초기화.
+- step-0 static checkpoint 저장.
+- checkpoint 선택 기준: raw net 아닌 **worst-cell validation excess**.
+- all-flat checkpoint 승격 금지.
+- baseline 동일 행동 시 episode reward 정확히 `0`.
+- baseline 항은 edge 생성 아님. 분산 감소용 control variate.
+
+R2-48는 `25/40` W01 run 모두 flat, entropy `<0.05`가 update `16–23`에 발생. R2-51도 `138/540`에서 중단: [progress.md](</D:/StudyQuant/.superpowers/sdd/2026-10-07-rl-plan3/progress.md:96>).
+
+검증 등식:
+
+```text
+Σ step net4 = Σ minute ledger = Σ closed trade net4 + terminal MTM
+Σ reward = RL excess net4 - DD penalty - turnover penalty
+```
+
+## 4. Baselines
+
+필수 4개:
+
+- Static equal:
+  - sleeve 7개 각각 `2/7`
+  - gross cap `2.0`
+- Static DEV-best:
+  - weights `{0,0.25,0.50,0.75,1.00}`
+  - `Σw≤2`
+  - 후보 `5,595`개
+  - train 구간만 사용
+  - 순위: 6-cell 최소 net4, 최소 bootstrap p05, MDD, turnover
+- G3 only:
+  - `G3_LONG=1`, `G3_SHORT=1`, 나머지 `0`
+- Option 1 ablation:
+  - RL action head 2개만
+  - G3 long/short allocation·exit
+  - gross cap `2.0`
+  - 동일 state/reward/folds/seeds/gates
+
+Always-flat은 진단만. 승격 baseline 아님.
+
+## 5. Training protocol
+
+Walk-forward 5개:
+
+- F1: train `2020`, val `2021`
+- F2: train `2020–2021`, val `2022`
+- F3: train `2020–2022`, val `2023`
+- F4: train `2020–2023`, val `2024`
+- F5: train `2020–2024`, val `2025`
+
+각 fold:
+
+- train·val 시작 flat.
+- 시작 시 canonical sleeve가 open이면 다음 canonical flat까지 mask.
+- episode `90d = 2,160` 1h steps.
+- train 내 random contiguous episode.
+- episode 끝 maker exit 비용 포함.
+- val은 전체 연도 1회 연속 replay.
+- sleeve 데이터가 아직 없으면 `available=0`; 0으로 가짜 signal 생성 금지.
+
+PPO 초기값 `[가설]`:
+
+- seeds `{0,1,2,3,4}`
+- encoder: 32-step Conv, hidden `64`
+- `γ=0.999`, GAE `λ=0.95`
+- clip/value clip `0.2`
+- rollout `128 × 128 env`
+- minibatch `2,048`, epoch `4`
+- entropy `0.01`
+- lr `{1e-4,3e-4}`를 seeds `{0,1}`로 DEV 비교
+- max `2,000,000` transitions
+- validation 매 `10` update
+- patience `8`
+- deterministic argmax 평가
+- 5-seed ensemble: sleeve별 median allocation. exit는 `3/5` 이상. cap projector 재적용.
+
+재사용:
+
+- `compute_gae`
+- checkpoint/RNG/resume 구조
+- PPO clipping·optimizer 구조
+- `TemporalActorCritic` encoder 골격
+
+변경:
+
+- `N_ACTIONS=3` 단일 head 폐기
+- 7개 masked categorical head
+- joint log-prob = head log-prob 합
+- entropy = active head 평균
+- `ppo_update`가 vector action 처리
+
+근거: [models.py](</D:/StudyQuant/btcusdt_quant/rl/models.py:16>), [ppo.py](</D:/StudyQuant/btcusdt_quant/rl/ppo.py:43>), [VecTradingEnv](</D:/StudyQuant/btcusdt_quant/rl/vec_env.py:81>).
+
+컴퓨트:
+
+- 현재 RTX 3090 `24,576 MiB`; free `22,126 MiB`
+- CUDA 사용 가능, Torch `2.13.0+cu126`
+- CPU `32`
+- 기존 실측: env `473k transitions/s`, PPO 약 `2.4 updates/s`
+- 기존 run `119–429s`, 평균 약 `204s`
+- cadence/lr screen `20` runs
+- 선택 cadence 완성 `15` runs
+- Option 1 ablation `25` runs
+- 총 `60` runs
+- 평균 추정 `3.4 GPU-h`, 최악 `7.2 GPU-h`
+- precompute CPU `[가설] 30–60분`
+- GPU job 동시 `1`
+
+## 6. Precompute plan
+
+고정 shadow sleeve를 먼저 완성. RL env는 원시 signal engine 호출 금지.
+
+입력:
+
+- G3: [run_new_model_batch5_20261010.py](</D:/StudyQuant/out/run_new_model_batch5_20261010.py:132>)
+- LBR: [run_long_basis_release_20261010.py](</D:/StudyQuant/out/run_long_basis_release_20261010.py:59>)
+- B3/K04: [sim_r2_55.py](</D:/StudyQuant/scripts/sim_r2_55.py:89>)
+- C1/C4: [run_k45_decision_cadence_r2_37.py](</D:/StudyQuant/out/run_k45_decision_cadence_r2_37.py:245>)
+- B3/K04 signal 세부: [legacy.py](</D:/StudyQuant/btcusdt_quant/sim/strategies/legacy.py:105>)
+
+출력 배열:
+
+```text
+minute_time
+sleeve_id
+exec_cell
+base_side
+base_weight
+signal_active
+pending/open
+entry_opportunity_id
+base_exit
+base_stop/trail state
+gross_pnl
+fee
+funding
+net4
+available_time
+feature snapshot id
+```
+
+저장 구조:
+
+- 공통 sleeve 4개: B3/K04/C1/C4 한 번
+- G3_LONG/G3_SHORT/LBR: 6개 execution cell
+- 연도 partition
+- minute P&L `float64`; state `float32`
+- 1h observation cache 별도
+- source hash·timestamp·cutoff·hypothesis 기록
+
+Counterfactual 규칙:
+
+- RL이 skip해도 canonical shadow sleeve는 원래 경로 계속 진행.
+- skip한 canonical trade 중간 진입 금지.
+- 조기 exit 뒤 canonical trade가 끝날 때까지 재진입 금지.
+- allocation은 canonical entry opportunity에서만 결정.
+- 이 정의로 precomputed opportunity schedule 고정.
+
+Parity:
+
+- G3 primary cell:
+  - DEV long `22,996.226652`
+  - DEV short `5,787.747466`
+  - TEST long `1,684.115630`
+  - TEST short `1,614.933205`
+- LBR primary:
+  - DEV `1,724.025589`
+  - TEST `1,562.674997`
+- B3/K04 TEST:
+  - `2,347.842552/2,587.292720`
+- C1/C4 TEST:
+  - `4,809.605689/5,467.390927`
+
+허용 오차:
+
+- trade row·fill count exact
+- minute ledger `atol=1e-9`
+- 총 net4 `atol=1e-6`
+- 100개 random control path × 7 sleeves × 6 cells slow replay parity
+- future tamper·prefix invariance
+- all-off net 정확히 `0`
+
+## 7. Gates
+
+사전 integrity gate:
+
+- 7 sleeve base parity PASS
+- 6 execution cell PASS
+- causal prefix PASS
+- reward equality PASS
+- random counterfactual parity PASS
+- 하나라도 FAIL이면 학습 금지
+
+DEV gate, 각 6 cell:
+
+- 5개 val fold 각각 `RL net4 > static DEV-best net4`
+- stitched 2021–2025:
+  - `RL net4 > 0`
+  - `Δnet4 > 0`
+  - `MDD_RL < MDD_static`
+  - stationary bootstrap daily excess p05 `>0`
+- bootstrap `10,000`회, seed `20261010`
+- block `{20,60,120}d`; 3개 p05 모두 `>0`
+- 6/6 cell 전부 PASS
+
+TEST `2026-01-01..2026-10-08 exclusive`, 각 6 cell:
+
+- `RL net4 > 0`
+- `RL net4 > frozen static baseline`
+- `MDD_RL < MDD_static`
+- block `{20,60,120}d` bootstrap p05 모두 `>0`
+- 6/6 cell 전부 PASS
+- `8bps`는 보고만. gate 금지.
+
+TEST 전 freeze:
+
+- sleeve hashes
+- state schema
+- actions/cap/projector
+- folds
+- reward
+- PPO/network
+- seeds
+- static weights
+- checkpoint hashes
+- gate 코드
+
+TEST 결과 후 변경 허용. 단 이후 결과는 `TEST-adapted`로 기록. 독립 OOS 주장 금지.
+
+## 8. Step plan
+
+1. 계약 freeze
+
+   - 새 파일: `out/rl_allocator_<run>/freeze.json`
+   - source, timestamp, cutoff, hypothesis, 7 sleeve, 6 cells, hashes
+   - TEST 접근 guard 테스트
+
+2. Sleeve precompute
+
+   - 새 파일: `btcusdt_quant/rl/sleeve_precompute.py`
+   - script: `scripts/precompute_rl_allocator.py`
+   - 테스트: `tests/rl/test_sleeve_precompute.py`
+   - 출력: `precompute/common/`, `precompute/g3_family/<cell>/`
+
+3. State store
+
+   - 새 파일: `btcusdt_quant/rl/allocator_state.py`
+   - 테스트: availability, funding `<T`, OI `available_time<=T`, future tamper, normalizer
+   - 출력: `state_1h.parquet`, `state_4h.parquet`
+
+4. Environment
+
+   - 새 파일: `btcusdt_quant/rl/allocator_env.py`
+   - 새 계약: `btcusdt_quant/rl/allocator_contracts.py`
+   - 테스트: masks, cap `2.0`, frozen allocation, no widening, mandatory exit, all-off, ledger equality
+
+5. PPO/model
+
+   - 수정 대상: `models.py`, `ppo.py`
+   - 새 `AllocatorActorCritic`
+   - 기존 `TemporalActorCritic` 호환 유지
+   - 테스트: multi-head log-prob, masked entropy, resume bit-exact, tiny allocator MDP
+
+6. Baselines
+
+   - 새 파일: `btcusdt_quant/rl/allocator_baselines.py`
+   - 5,595 static vectors
+   - equal/G3-only/DEV-best
+   - 테스트: train-only 선택, tie-break, cap, 6-cell replay
+
+7. Rolling train
+
+   - 새 script: `scripts/rl_allocator_rolling.py`
+   - smoke 1 fold·1 seed·`100k` transitions
+   - 이후 60-run 예산
+   - 출력: checkpoints, fold traces, action ratios, entropy, hashes, registry row
+
+8. Evaluation
+
+   - 새 파일: `btcusdt_quant/rl/allocator_evaluation.py`
+   - 출력:
+     - `dev_fold_metrics.parquet`
+     - `test_metrics.parquet`
+     - `bootstrap.parquet`
+     - `actions.parquet`
+     - `REPORT.md`
+     - `manifest.json`
+   - Option 1 ablation 포함
+   - TEST 1회 평가 후 결과 전부 보고
+
+주요 위험:
+
+- **TEST 선택 편향:** LBR 명시적 TEST 재선정. C1/C4 rerun도 TEST 관찰 뒤 채택. TEST gate는 성능 확인일 뿐 독립 OOS 아님.
+- **sleeve overlap/netting:** long·short 상계 시 실제 주문·비용이 virtual ledger와 달라짐. 연구는 독립 비용 부과. gross/net 둘 다 보고.
+- **counterfactual ledger:** skip·조기 exit가 원래 technique의 다음 기회를 바꿀 수 있음. shadow schedule 정의와 100-seed slow parity 없으면 사용 금지.
+- **실행 모델 차이:** 6개 offset/penetration cell은 G3-family만. B3/K04/C1/C4는 native fill 계약 유지.
+- **1h cadence:** 15m/5m 신호를 즉시 보지 못함. standing allocation만 적용. 4h ablation과 DEV 비교.
+- **공통 이력 부족:** sleeve 미가용 기간은 mask. 0수익 sleeve로 취급해 학습시키지 않음.
+- **reward baseline:** 분산 감소·flat 선택 방지 장치. 예측력 자체를 추가하지 않음.
+
+읽기 전용 준수. 파일 변경·생성 없음.
+
+Codex session ID: 01a12553-57cf-7101-8be4-52c53c397d28
+Resume in Codex: codex resume 01a12553-57cf-7101-8be4-52c53c397d28
