@@ -30,14 +30,6 @@
     "sha256": "d8335ca8b21dddb2c5611e67a347012dca32dd0aa97e8f07c382400a2968fffb",
     "commit": "c85e46a"
   },
-  "code_blobs_at_HEAD": {
-    "btcusdt_quant/rl/sleeve_precompute.py": "ce610fc7be6e3db75cd56804a2b6d0f8b724748f",
-    "btcusdt_quant/rl/allocator_state.py": "228c0b8df1a9d55e4f89f0a46f5cd634c5cc8fcc",
-    "scripts/precompute_rl_allocator.py": "f7bb39cfe2f85a196685ea771654c046a4bc7ef8",
-    "tests/rl/test_sleeve_precompute.py": "380663d3890c45d9472defccd583fc1fc6dd7892",
-    "tests/rl/test_allocator_state.py": "87aaeedaae2cf705576bcde32c3adaef4e83a020"
-  },
-  "head_at_write": "e6dd0228e5da5eed9a3f1d2702ce77116171d280",
   "verify": "git checkout <code_commit>; sha256 of each LF file == code_sha256_lf; out/ artifacts regenerate with precompute --allow-test-parity / state --allow-test-parity",
   "round2": {
     "code_commit": "d3e4493",
@@ -59,5 +51,38 @@
     },
     "precompute": "unchanged (manifest sha f09649710970ea12c8648c489a049c7ddd394997792ce2b6b553a7e25bd77553, code c85e46a); round-2 script edits do not touch the precompute path",
     "diff_precompute_path": "git diff c85e46a d3e4493 -- btcusdt_quant/rl/sleeve_precompute.py: none"
+  },
+  "superseded": {
+    "code_blobs_at_HEAD": "stale (written at 728a3ef); see current.code_blobs",
+    "head_at_write": "stale (728a3ef); see current.head"
+  },
+  "stale_code_blobs_at_728a3ef": {
+    "btcusdt_quant/rl/sleeve_precompute.py": "ce610fc7be6e3db75cd56804a2b6d0f8b724748f",
+    "btcusdt_quant/rl/allocator_state.py": "228c0b8df1a9d55e4f89f0a46f5cd634c5cc8fcc",
+    "scripts/precompute_rl_allocator.py": "f7bb39cfe2f85a196685ea771654c046a4bc7ef8",
+    "tests/rl/test_sleeve_precompute.py": "380663d3890c45d9472defccd583fc1fc6dd7892",
+    "tests/rl/test_allocator_state.py": "87aaeedaae2cf705576bcde32c3adaef4e83a020"
+  },
+  "stale_head_at_write": "e6dd0228e5da5eed9a3f1d2702ce77116171d280",
+  "round3_env": {
+    "code_commit": "26be5e2",
+    "env_check": {
+      "path": "out/rl_allocator_20261010/env/env_check.json",
+      "sha256": "3f36423eac83e03ae4cee6eb5ebca245cedbeb91aa225d892b461b435dcd05af"
+    }
+  },
+  "current": {
+    "head": "26be5e27b8b08caa5363fd6c95c8bb30ca78cf71",
+    "code_blobs": {
+      "btcusdt_quant/rl/sleeve_precompute.py": "ce610fc7be6e3db75cd56804a2b6d0f8b724748f",
+      "btcusdt_quant/rl/allocator_state.py": "9100bd137785f0f81e6abf78bdda3ffe5cb78e2e",
+      "btcusdt_quant/rl/allocator_contracts.py": "59ed77747dead42c77342f3d681a5583768ca2cc",
+      "btcusdt_quant/rl/allocator_env.py": "6099b0ea169f9ebe2b62d00ec2e5c2a85812bb29",
+      "scripts/precompute_rl_allocator.py": "20178205048f3da8b905d41199ccb89d5f253828",
+      "tests/rl/test_sleeve_precompute.py": "380663d3890c45d9472defccd583fc1fc6dd7892",
+      "tests/rl/test_allocator_state.py": "1cc58654781da8a96c2856b1298e6fd6d8637c86",
+      "tests/rl/test_allocator_env.py": "3b4b24aeacdb7ffdd9544f5dd701df6ecdab7aaf"
+    },
+    "chain": "precompute c85e46a -> state/signals d3e4493 -> env 26be5e2; sleeve_precompute.py unchanged since c85e46a"
   }
 }
