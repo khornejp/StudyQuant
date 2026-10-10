@@ -149,6 +149,28 @@ def _component_rows(fast: pd.DataFrame, name: str, cadence: int | None = None) -
     return make_table(rows.decision_time, rows[name], component, hold, **flags)
 
 
+def e1_axc0(ctx: Context, table: pd.DataFrame) -> pd.DataFrame:
+    """R2-55 E1_15_BREAKOUT_LEVEL (K04 and only the E1-15 component of B1-B3): the exact prior-20-bar high / low of
+    the entry signal row is stored at fill (anchor_upper / anchor_lower, never updated); every later E1 row carries
+    its completed 15 m close (anchor_price). Long exits when that close <= the stored high, short when >= the stored
+    low. The E1 rolling-edge AX flags are dropped; other components keep their rows unchanged."""
+    b15 = ctx.bars(15)
+    times = pd.DatetimeIndex(b15.decision_time)
+    target = pd.DatetimeIndex(table.decision_time)
+    at = lambda values: pd.Series(np.asarray(values, float), index=times).reindex(target).to_numpy()
+    e1 = table.component.to_numpy() == E1_15
+    out = table.copy()
+    for name in ("anchor_upper", "anchor_lower", "anchor_price"):
+        if name not in out:
+            out[name] = np.nan
+    out["ax_exit_long"] = np.where(e1, False, out.ax_exit_long.to_numpy(bool))
+    out["ax_exit_short"] = np.where(e1, False, out.ax_exit_short.to_numpy(bool))
+    out["anchor_upper"] = np.where(e1, at(b15.high.rolling(20).max().shift()), out.anchor_upper.to_numpy(float))
+    out["anchor_lower"] = np.where(e1, at(b15.low.rolling(20).min().shift()), out.anchor_lower.to_numpy(float))
+    out["anchor_price"] = np.where(e1, at(b15.close), out.anchor_price.to_numpy(float))
+    return out
+
+
 def _single(name: str, cadence: int):
     return lambda ctx: _component_rows(fast_signals(ctx), name, cadence)
 
@@ -179,7 +201,7 @@ register(Spec("K01_FLIP", "baseline", 60, 24 * 60, "24h", None, k01_c1x_flip, re
               ax_rows=k01_flip_ax_rows, post_freeze=True))
 register(Spec("K02", "reversion", 30, 4 * 60, "4h", "LOW", _single("F3-30", 30)))
 register(Spec("K03", "reversion", 30, 12 * 60, "12h", "LOW", _single("F3W-30", 30)))
-register(Spec("K04", "volatility", 15, 5 * 60, "4h", "HIGH", _single("E1-15", 15)))
+register(Spec("K04", "volatility", 15, 5 * 60, "4h", "HIGH", _single("E1-15", 15), axc0=e1_axc0))
 register(Spec("K05", "volatility", 30, NO_HOLD, "4h", "HIGH", _single("A2-30", 30)))
 for _book in ("B1", "B2", "B3"):
-    register(Spec(_book, "composite", 15, 12 * 60, "4h", None, _composite(_book)))
+    register(Spec(_book, "composite", 15, 12 * 60, "4h", None, _composite(_book), axc0=e1_axc0))

@@ -51,6 +51,21 @@ def k13_mtf_momentum(ctx: Context) -> pd.DataFrame:
                       exit_long=~up, exit_short=~down, ind_sign_15m=signs[0], ind_sign_1h=signs[1], ind_sign_4h=signs[2])
 
 
+def k13_axc0(ctx: Context, table: pd.DataFrame) -> pd.DataFrame:
+    """R2-55 K13_OPPOSITE_CONSENSUS: a long exits only when sign15 = sign60 = sign240 = -1, a short only when all are
+    +1 (a 0 or NaN sign is no consensus, no exit). Those are exactly the side -1 / +1 rows, so the exit is the same
+    row's reverse; strict reentry never re-enters on it. Needs SimConfig(causal_guard=True) for decision > fill."""
+    return table.assign(exit_long=(table.side == -1).to_numpy(), exit_short=(table.side == 1).to_numpy())
+
+
+def k14_axc0(ctx: Context, table: pd.DataFrame) -> pd.DataFrame:
+    """R2-55 K14_ORB_C0: the completed opening-range close C0 of the session row whose OCO fills is stored as both
+    anchors; a later completed 5 m close exits long at <= C0, short at >= C0 (inert rows store nothing)."""
+    oco = (table.entry == "oco").to_numpy()
+    c0 = np.where(oco, table.anchor_price.to_numpy(float), np.nan)
+    return table.assign(anchor_upper=c0, anchor_lower=c0)
+
+
 def k14_session_orb(ctx: Context) -> pd.DataFrame:
     """First 30 min range of each UTC session (00:00, 07:00, 13:30); OCO breakout until start + 4 h;
     native stop at the opposite edge; flat at session start + 8 h."""
@@ -82,5 +97,5 @@ for _m, _name in ((15, "15m"), (60, "1h")):
     register(Spec(f"K11_{_name}", "trend", _m, 720, "4h", "HIGH", k11_ema_cross(_m)))
 for _m, _name, _head in ((30, "30m", "4h"), (60, "1h", "12h")):
     register(Spec(f"K12_{_name}", "trend", _m, 720, _head, "HIGH", k12_supertrend(_m)))
-register(Spec("K13", "trend", 15, 720, "4h", "HIGH", k13_mtf_momentum))
-register(Spec("K14", "trend", 0, 8 * 60 - 31, "4h", "HIGH", k14_session_orb, ax_rows=k14_ax_rows))
+register(Spec("K13", "trend", 15, 720, "4h", "HIGH", k13_mtf_momentum, axc0=k13_axc0))
+register(Spec("K14", "trend", 0, 8 * 60 - 31, "4h", "HIGH", k14_session_orb, ax_rows=k14_ax_rows, axc0=k14_axc0))

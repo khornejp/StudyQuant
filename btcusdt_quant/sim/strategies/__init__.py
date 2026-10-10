@@ -23,6 +23,7 @@ class Spec:
     simulator: str = "core"     # "core" or "grid"
     ax_rows: Callable[[Context, pd.DataFrame], pd.DataFrame] | None = None   # R2-52A inert state rows (K01, K14)
     post_freeze: bool = False   # added after the R2-47/48/52A freezes (K01_FLIP): kept out of catalog-wide sweeps
+    axc0: Callable[[Context, pd.DataFrame], pd.DataFrame] | None = None   # R2-55 family repair of the AX table
 
 
 CATALOG: dict[str, Spec] = {}
@@ -82,17 +83,23 @@ AX_DEFAULTS = {"ax_exit_long": False, "ax_exit_short": False, "anchor_upper": np
 
 
 def build_variant(ctx: Context, spec_id: str, gated: bool, style: str,
-                  ax: bool = False) -> tuple[pd.DataFrame, SimConfig]:
+                  ax: bool = False, axc0: bool = False) -> tuple[pd.DataFrame, SimConfig]:
     """ax=True (R2-52A, the only valid input of SimConfig(exit_policy="R2_52A"), which rejects a table without the
     state columns): also the side-0 rows a family needs for its state checks, and every state column. The default
-    output is the pre-R2-52A table exactly (no state rows or columns; RL state, paper and BASE read it)."""
+    output is the pre-R2-52A table exactly (no state rows or columns; RL state, paper and BASE read it).
+    axc0=True (needs ax; R2-55 r2_55_k0607_c0_freeze.json AXC0 shadow): the AX table with the id's frozen family
+    repair (Spec.axc0); ids without one are rejected. Off by default, so current AX books are unchanged."""
     spec = CATALOG[spec_id]
     if gated and spec.gate is None:
         raise ValueError(f"{spec_id} has no gate axis")
+    if axc0 and (not ax or spec.axc0 is None):
+        raise ValueError(f"{spec_id}: axc0 needs ax=True and an R2-55 family repair")
     table = spec.build(ctx)
     if ax:
         if spec.ax_rows is not None:
             table = pd.concat([table, spec.ax_rows(ctx, table)], ignore_index=True)
+        if axc0:
+            table = spec.axc0(ctx, table)
         table = table.assign(**{c: v for c, v in AX_DEFAULTS.items() if c not in table})
     else:
         table = table.drop(columns=[c for c in AX_DEFAULTS if c in table])

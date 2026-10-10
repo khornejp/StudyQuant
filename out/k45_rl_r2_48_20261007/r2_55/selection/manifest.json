@@ -1,0 +1,183 @@
+{
+  "created_utc": "2026-10-10T03:43:00.179343+00:00",
+  "freeze": "out\\k45_rl_r2_48_20261007\\r2_55_k0607_c0_freeze.json",
+  "freeze_sha256": "93da69ce3175b9bf6cca59fb2f46b43d06ac0b81d226346b04bc09141696379d",
+  "parent_freeze_sha256": "d1d56efa3b35465059e24f30380b7f413a029a4384da2ed45056977327a0eced",
+  "ids": [
+    "B1",
+    "B2",
+    "B3",
+    "K04",
+    "K06_k0.5",
+    "K06_k1.0",
+    "K07_k0.5",
+    "K07_k1.0",
+    "K13",
+    "K14"
+  ],
+  "config": {
+    "experiment": "R2-55 AXC0 pre-2026 k selection",
+    "exit_policy": "R2_52A",
+    "k_values": "[1.0, 1.5, 2.0]",
+    "selection": "R2-52A rolling: per window 4 bps validation minute-ledger P&L from flat at val_start, open position marked at val_end without exit fee; tie -> 2.0",
+    "tables": "build_variant(ax=True, axc0=True): frozen family repair only; causal_guard off (as the paired AX k)",
+    "freeze_sha256": "93da69ce3175b9bf6cca59fb2f46b43d06ac0b81d226346b04bc09141696379d",
+    "windows": "W01..W10"
+  },
+  "input_sha256": {
+    "market_file": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "market_note": "single parquet to 2026-06-30; load_minutes filters open_time < cutoff at read",
+    "metrics_before_cutoff": "02fc9bfe9d88c7aad6fb04e3568df04e7ced3cbcd9d738dbd1953ce39646a150",
+    "premium_before_cutoff": "75e865bc564522c43219912402157ceb9037f9919e2b47a9f8491ae472f56623",
+    "funding": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "predictions_segments": [
+      "DEV_FRONT",
+      "DEV_BACK"
+    ],
+    "predictions": "6a42115a058401350e67cdf3ea589d4f1774c53bb6b71c6a74c28a4677702ed0",
+    "code": "d59fb6acfe9baddd2a92e133b92d58b96ae4baf126728bbab468304865ff8d3c"
+  },
+  "prediction_coverage": {
+    "expected": 134592,
+    "present": 134400,
+    "missing": 192,
+    "missing_days": [
+      "2023-12-31",
+      "2025-12-31"
+    ],
+    "retrain_after_timestamp": 0
+  },
+  "code_sha256": {
+    "scripts\\sim_r2_55.py": "0d7b3f164c5022fda16d9a272553fcb90f5fa2f58385d2a1396a1bfcfae92f11",
+    "scripts\\sim_adaptive_exit.py": "74b1b41e6c1c0dd55cc1e3e2b038638502d1feb6cecb632e0246947c5f1219af",
+    "btcusdt_quant\\sim\\core.py": "a32b0b674c17b40ebcdc6aad177a26fa7cfdd408cdd2a47dffc7593b0915b6bb",
+    "btcusdt_quant\\sim\\reference.py": "a3737bf8151b5214e6080a0a89a46d8fd6839b35c0516a4e8dfe5b15320b4d9d",
+    "btcusdt_quant\\sim\\costs.py": "53a7271a21101124f358f3c41ed6d2b9ba2e2883cd01a49193b59125ee0eba7f",
+    "btcusdt_quant/sim/strategies": "7d0db40530635dcd5329feb96277b7830ef48c2270e973be61a3c11cfe9135c2"
+  },
+  "registry_before": 5694,
+  "registry_after": 5724,
+  "selected_k": {
+    "B1": {
+      "W01": 2.0,
+      "W02": 2.0,
+      "W03": 1.5,
+      "W04": 1.0,
+      "W05": 1.0,
+      "W06": 2.0,
+      "W07": 1.0,
+      "W08": 1.5,
+      "W09": 1.5,
+      "W10": 1.0
+    },
+    "B2": {
+      "W01": 2.0,
+      "W02": 2.0,
+      "W03": 1.5,
+      "W04": 1.0,
+      "W05": 1.5,
+      "W06": 2.0,
+      "W07": 1.5,
+      "W08": 1.5,
+      "W09": 2.0,
+      "W10": 1.0
+    },
+    "B3": {
+      "W01": 2.0,
+      "W02": 2.0,
+      "W03": 1.5,
+      "W04": 1.5,
+      "W05": 2.0,
+      "W06": 2.0,
+      "W07": 1.0,
+      "W08": 1.0,
+      "W09": 1.5,
+      "W10": 1.0
+    },
+    "K04": {
+      "W01": 2.0,
+      "W02": 2.0,
+      "W03": 2.0,
+      "W04": 1.0,
+      "W05": 1.0,
+      "W06": 1.0,
+      "W07": 1.0,
+      "W08": 1.0,
+      "W09": 2.0,
+      "W10": 2.0
+    },
+    "K06_k0.5": {
+      "W01": 1.5,
+      "W02": 2.0,
+      "W03": 2.0,
+      "W04": 1.5,
+      "W05": 2.0,
+      "W06": 2.0,
+      "W07": 2.0,
+      "W08": 1.0,
+      "W09": 2.0,
+      "W10": 2.0
+    },
+    "K06_k1.0": {
+      "W01": 2.0,
+      "W02": 1.0,
+      "W03": 1.5,
+      "W04": 1.5,
+      "W05": 1.5,
+      "W06": 1.5,
+      "W07": 2.0,
+      "W08": 2.0,
+      "W09": 2.0,
+      "W10": 2.0
+    },
+    "K07_k0.5": {
+      "W01": 2.0,
+      "W02": 2.0,
+      "W03": 2.0,
+      "W04": 2.0,
+      "W05": 2.0,
+      "W06": 1.5,
+      "W07": 2.0,
+      "W08": 2.0,
+      "W09": 2.0,
+      "W10": 2.0
+    },
+    "K07_k1.0": {
+      "W01": 2.0,
+      "W02": 1.5,
+      "W03": 2.0,
+      "W04": 1.5,
+      "W05": 2.0,
+      "W06": 2.0,
+      "W07": 2.0,
+      "W08": 2.0,
+      "W09": 2.0,
+      "W10": 2.0
+    },
+    "K13": {
+      "W01": 1.5,
+      "W02": 1.5,
+      "W03": 2.0,
+      "W04": 1.0,
+      "W05": 2.0,
+      "W06": 2.0,
+      "W07": 1.5,
+      "W08": 2.0,
+      "W09": 2.0,
+      "W10": 2.0
+    },
+    "K14": {
+      "W01": 1.0,
+      "W02": 1.5,
+      "W03": 1.0,
+      "W04": 2.0,
+      "W05": 1.5,
+      "W06": 2.0,
+      "W07": 2.0,
+      "W08": 1.0,
+      "W09": 2.0,
+      "W10": 2.0
+    }
+  },
+  "runtime_seconds": 71.5
+}

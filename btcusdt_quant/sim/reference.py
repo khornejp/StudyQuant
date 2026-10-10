@@ -22,6 +22,10 @@ class SimConfig:
     action_mode: bool = False       # rows are target positions (R2-48 C1): only decision_time and side are read
     exit_policy: str = "BASE"       # "R2_52A": adaptive full-position exits (r2_52a_exit_freeze.json), no max hold
                                     # "R2_52B": R2_52A with a 300-500 hard stop S and a separate trail A (r2_52b)
+    causal_guard: bool = field(default=False, repr=False)
+    # R2-55 (r2_55_k0607_c0_freeze.json causal_guard; R2_52A/R2_52B only): reverse, native/AX flag and anchor state
+    # exits only on rows whose completed-bar close (decision_time) is strictly later than the position fill minute;
+    # else the row is ignored. repr=False keeps the pre-R2-55 repr of every default config byte-identical.
 
 @dataclass
 class SimResult:
@@ -76,7 +80,8 @@ def slip(price: float, direction: int, bps: float) -> float:
 def check_policy(config: SimConfig) -> bool:
     """True for R2_52A / R2_52B, which run NATIVE/strict rows only (no DETEXIT legs, no action targets)."""
     if config.exit_policy not in ("BASE", "R2_52A", "R2_52B") or (config.exit_policy != "BASE" and (
-            config.exit_style != "NATIVE" or config.reentry != "strict" or config.action_mode)):
+            config.exit_style != "NATIVE" or config.reentry != "strict" or config.action_mode)) or (
+            config.causal_guard and config.exit_policy == "BASE"):
         raise ValueError("bad config")
     return config.exit_policy != "BASE"
 
@@ -350,6 +355,8 @@ def _simulate_r2_52a(signals, minutes, start, end, config, e, e_min, e_col, k_mi
                 for _, row in rows:       # a row acts on the held position only through its own component
                     if row.component != pos["component"]:
                         continue
+                    if config.causal_guard and pd.Timestamp(row.decision_time) <= t_index[pos["i"]]:
+                        continue          # R2-55 guard: a close at or before the fill minute is not post-entry data
                     reverse = row.side == -side
                     flag = (row.exit_long and side == 1) or (row.exit_short and side == -1)
                     state = ((side == 1 and row.anchor_price <= pos["anchor_upper"])

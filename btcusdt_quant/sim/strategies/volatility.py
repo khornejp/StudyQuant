@@ -24,6 +24,12 @@ def _oco_band(ctx: Context, cadence: int, column: str, k: float) -> pd.DataFrame
                       **{f"ind_pred_{column.split('_', 1)[1]}_bps": width})
 
 
+def oco_c0(ctx: Context, table: pd.DataFrame) -> pd.DataFrame:
+    """R2-55 PREDICTED_OCO_C0 (K06 hourly, K07 15 m): the decision close C0 of the OCO row that fills is stored as
+    both anchors; a later completed native-cadence close (anchor_price) exits long at <= C0, short at >= C0."""
+    return table.assign(anchor_upper=table.ind_close.to_numpy(float), anchor_lower=table.ind_close.to_numpy(float))
+
+
 def k06_vb(k: float):
     """Each hour: OCO stop entries at close_T * exp(+-k * predicted range_1h); 1 h expiry; 4 h hold."""
     return lambda ctx: _oco_band(ctx, 60, "prediction_range_1h", k)
@@ -61,7 +67,7 @@ def k09_lowvol_mr(ctx: Context) -> pd.DataFrame:
 
 
 for _k in (0.5, 1.0):
-    register(Spec(f"K06_k{_k}", "volatility", 60, 240, "1h", "HIGH", k06_vb(_k)))
-    register(Spec(f"K07_k{_k}", "volatility", 15, 240, "1h", "HIGH", k07_straddle(_k)))
+    register(Spec(f"K06_k{_k}", "volatility", 60, 240, "1h", "HIGH", k06_vb(_k), axc0=oco_c0))
+    register(Spec(f"K07_k{_k}", "volatility", 15, 240, "1h", "HIGH", k07_straddle(_k), axc0=oco_c0))
 register(Spec("K08", "volatility", 15, 480, "4h", "HIGH", k08_squeeze))
 register(Spec("K09", "reversion", 15, 240, "4h", "LOW", k09_lowvol_mr))

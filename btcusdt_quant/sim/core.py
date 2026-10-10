@@ -345,7 +345,7 @@ def _valid(x):
 @numba.njit(cache=True)
 def _adaptive_loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_upper, d_lower, d_expiry, d_component,
                    d_exit_long, d_exit_short, d_allow, d_e0, d_k, d_up, d_lo, d_px, d_once, d_col, e, e_min, km, use_km,
-                   v3, fee_per_side, stop_slip, mslip, b_policy):
+                   v3, fee_per_side, stop_slip, mslip, b_policy, d_dec_ns, guard):
     """R2_52A / R2_52B (b_policy); line-for-line reference._simulate_r2_52a. One leg: slot 0 is the position."""
     n = len(o)
     pnl = np.zeros(n)
@@ -377,6 +377,8 @@ def _adaptive_loop(t_ns, o, h, l, c, exec_start, exec_end, d_side, d_oco, d_uppe
                 for j in range(exec_start[i], exec_end[i]):
                     if d_component[j] != ist[COMPONENT]:
                         continue
+                    if guard and d_dec_ns[j] <= t_ns[leg_tidx[0]]:
+                        continue          # R2-55 guard (reference: checked close at or before the fill minute)
                     reverse = d_side[j] == -side
                     flag = (d_exit_long[j] and side == 1) or (d_exit_short[j] and side == -1)
                     state = (side == 1 and d_px[j] <= ast[AUP]) or (side == -1 and d_px[j] >= ast[ALO])
@@ -499,7 +501,7 @@ def simulate(signals: pd.DataFrame, minutes: pd.DataFrame, start: pd.Timestamp, 
             col("anchor_lower"), col("anchor_price"), col("anchor_once"), e_col, e, e_min,
             np.ones(len(t_ns)) if k_minute is None else k_minute, k_minute is not None, v3,
             float(config.fee_per_side), float(config.stop_slippage_bps), float(config.market_slippage_bps),
-            config.exit_policy == "R2_52B")
+            config.exit_policy == "R2_52B", decisions.as_unit("ns").asi8, config.causal_guard)
     elif config.action_mode:
         side = action_rows(signals, config).side.to_numpy(np.int64)
         fund = costs._settlement_arrays() if config.include_funding else (np.zeros(0, np.int64), np.zeros(0))
