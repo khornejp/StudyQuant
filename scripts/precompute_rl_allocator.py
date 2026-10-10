@@ -867,7 +867,12 @@ def out_g3(G, files, avail_rep):
         log(f"wrote {s} {tag}")
 
 
-FOLDS = {"F1": (("2020-01-01", "2021-01-01"), ("2021-01-01", "2022-01-01")),
+# amendment A2 (user 2026-10-10): ma20-based features -> RL data usable from 2021-12-01; three folds
+USABLE_FROM = "2021-12-01"
+FOLDS_A2 = {"F1": (("2021-12-01", "2023-01-01"), ("2023-01-01", "2024-01-01")),
+            "F2": (("2021-12-01", "2024-01-01"), ("2024-01-01", "2025-01-01")),
+            "F3": (("2021-12-01", "2025-01-01"), ("2025-01-01", "2026-01-01"))}
+FOLDS = {"F1": (("2020-01-01", "2021-01-01"), ("2021-01-01", "2022-01-01")),   # A1 folds (precompute report only)
          "F2": (("2020-01-01", "2022-01-01"), ("2022-01-01", "2023-01-01")),
          "F3": (("2020-01-01", "2023-01-01"), ("2023-01-01", "2024-01-01")),
          "F4": (("2020-01-01", "2024-01-01"), ("2024-01-01", "2025-01-01")),
@@ -1314,6 +1319,22 @@ def cmd_state(args) -> None:
     if not eq:
         raise SystemExit(f"STATE TAMPER FAIL {bad}")
     log(f"tamper ok {rep['tamper']}")
+    rep["usable_from"] = USABLE_FROM
+    rep["folds"] = {f: {"train": list(w[0]), "val": list(w[1])} for f, w in FOLDS_A2.items()}
+    rep["rows_before_usable_1h"] = int((dev["T"].to_numpy() < pd.Timestamp(USABLE_FROM, tz="UTC").value).sum())
+    prim = dev[dev.exec_cell == CELL_TAG[PRIMARY]]
+    Tp = prim["T"].to_numpy(np.int64)
+    rep["availability_A2_1h"] = {}
+    for s_ in SLEEVES:
+        av_ = prim[f"{s_}_available"].to_numpy() == 1
+        op_ = prim[f"{s_}_open"].to_numpy() == 1
+        r_ = {}
+        for f, wins in FOLDS_A2.items():
+            for nm, (a_, b_) in zip(("train", "val"), wins):
+                k_ = (Tp > pd.Timestamp(a_, tz="UTC").value) & (Tp <= pd.Timestamp(b_, tz="UTC").value)
+                r_[f"{f}_{nm}_available_pct"] = round(100 * float(av_[k_].mean()), 3)
+                r_[f"{f}_{nm}_open_pct"] = round(100 * float(op_[k_].mean()), 3)
+        rep["availability_A2_1h"][s_] = r_
     rep["contaminated_unavailable_rows"] = contamination(dev)
     if any(rep["contaminated_unavailable_rows"].values()):
         raise SystemExit(f"STATE CONTAMINATION {rep['contaminated_unavailable_rows']}")
@@ -1325,7 +1346,7 @@ def cmd_state(args) -> None:
     dev4.to_parquet(STATE / "state_4h.parquet", index=False, compression="zstd")
     norms = {}
     for nm, fr_ in (("1h", dev), ("4h", dev4)):
-        norms[nm] = {f: ast.fit_normalizer(fr_, *FOLDS[f][0]) for f in FOLDS}
+        norms[nm] = {f: ast.fit_normalizer(fr_, *FOLDS_A2[f][0]) for f in FOLDS_A2}
         orders = {f: ast.feature_order(fr_.columns, n_) for f, n_ in norms[nm].items()}
         if len({tuple(o) for o in orders.values()}) != 1:
             raise SystemExit(f"feature order differs across folds ({nm})")
@@ -1724,7 +1745,8 @@ def cmd_env_check(args) -> None:
             else:
                 checks.append(("NATIVE_AX", f"{s}|native", "NATIVE_net4"))
             for wname, key, field_ in checks:
-                env = AE.AllocatorEnv(cd, inherit_open=[s], terminal_fee=False, record_minutes=True)
+                env = AE.AllocatorEnv(cd, inherit_open=[s], terminal_fee=False, record_minutes=True,
+                                      allow_pre_usable=True)
                 obs = env.reset(*win[wname])
                 tot = 0.0
                 while True:
@@ -1742,7 +1764,7 @@ def cmd_env_check(args) -> None:
                 worst_tot, worst_min = max(worst_tot, abs(tot - ref)), max(worst_min, dmin)
         # random legal policies (all 7 sleeves) vs slow replay; static-equal actions -> reward 0
         rng = np.random.default_rng(SEED + CELLS.index(next(c for c in CELLS if CELL_TAG[c] == cell)))
-        starts = [ts("2021-03-01"), ts("2022-06-01"), ts("2023-11-01"), ts("2024-08-01"), ts("2025-05-01"),
+        starts = [ts("2021-12-01"), ts("2022-06-01"), ts("2023-11-01"), ts("2024-08-01"), ts("2025-05-01"),
                   ts("2026-02-01")]
         rr = {"episodes": 0, "steps": 0, "max_minute_diff": 0.0, "max_total_diff": 0.0, "max_gross": 0.0,
               "max_gross_reserved": 0.0, "steps_sum_vs_minutes": 0.0, "events": 0, "pending_steps": 0,
@@ -1831,6 +1853,7 @@ def cmd_env_check(args) -> None:
                     "static_nonzero_reward_steps==0": S["static_nonzero_reward_steps"] == 0,
                     "static_sum_abs_reward==0": S["static_sum_abs_reward"] == 0.0}
     rep["turnover_unit"] = "bps = 2 bps x traded notional (mult x base weight per entry and exit leg, terminal exit included)"
+    rep["gates"] = {k: bool(v) for k, v in rep["gates"].items()}
     ok = all(rep["gates"].values())
     rep["pass"] = bool(ok)
     dump(OUT / "env" / "env_check.json", rep)
@@ -1839,9 +1862,37 @@ def cmd_env_check(args) -> None:
         raise SystemExit("ENV CHECK FAIL")
 
 
+# ================================================================ freeze amendment A2 (user 2026-10-10)
+AMEND2 = OUT / "freeze_amendment_A2.json"
+
+
+def cmd_amend2(_args) -> None:
+    if AMEND2.exists():
+        raise SystemExit(f"{AMEND2} exists (write-once)")
+    doc = {
+        "id": "A2", "status": "FROZEN", "created_utc": datetime.now(timezone.utc).isoformat(),
+        "amends": {"freeze_sha256_lf": sha(FREEZE), "amendment_A1_sha256": sha(AMEND)},
+        "source": "user instruction 2026-10-10 (relayed by coordinator): project features include ma20; RL "
+                  "training/evaluation data starts 2021-12-01; G3 warm-up unavailability accepted",
+        "dev_usable_window": [USABLE_FROM, "2026-01-01"],
+        "folds": {f: {"train": list(w[0]), "val": list(w[1])} for f, w in FOLDS_A2.items()},
+        "dropped_folds": "A1 F1 (val 2021) and F2 (val 2022); A1 F3..F5 are renumbered F1..F3 with train starting "
+                         "2021-12-01",
+        "normalizers": "median/IQR per A2 fold train window only (state/normalizers.json keys F1..F3)",
+        "pre_usable_rows": "state/precompute rows before 2021-12-01 are kept on disk but never used for training, "
+                           "selection, normalizers or static DEV-best scoring; the env refuses episodes starting "
+                           "before 2021-12-01 unless allow_pre_usable=True (canonical parity checks only)",
+        "static_dev_best": "scored on A2 fold train windows only; TEST never scored",
+        "availability": "B3/K04 available from 2023-09-01; C1v2/C4v2 from 2020-10-01 (LS + 720h warm-up); LBR as "
+                        "is (no imputation, masked); G3 warm-up unavailability accepted",
+        "unchanged": "sleeves, exec cells, action space, gross cap, costs, reward, TEST window and guard"}
+    dump(AMEND2, doc)
+    log(f"amendment A2 written sha256 {sha(AMEND2)}")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=("freeze", "amend", "precompute", "signals", "state", "env-check"))
+    ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--only", default="g3,c,ax")
     ap.add_argument("--no-registry", action="store_true")
@@ -1853,6 +1904,8 @@ def main(argv=None) -> None:
         return cmd_freeze(args)
     if args.command == "amend":
         return cmd_amend(args)
+    if args.command == "amend2":
+        return cmd_amend2(args)
     if args.command == "signals":
         return cmd_signals(args)
     if args.command == "env-check":

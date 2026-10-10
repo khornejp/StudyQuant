@@ -132,6 +132,7 @@ class CellData:
     seq_norm: dict                   # col -> (median, scale)
     avail_T: np.ndarray              # [len(T1h), 7] sleeve availability seen at T
     feature_order: list
+    usable_from: int = 0             # amendment A2: first usable decision time (ns)
 
     @property
     def logc(self) -> np.ndarray:
@@ -216,13 +217,14 @@ class Book:
 
 class AllocatorEnv:
     def __init__(self, data: CellData, cadence_h: int = 1, static_weights=None, inherit_open=False,
-                 terminal_fee: bool = True, record_minutes: bool = False):
+                 terminal_fee: bool = True, record_minutes: bool = False, allow_pre_usable: bool = False):
         if cadence_h not in (1, 4):
             raise ValueError("cadence 1h or 4h")
         self.d = data
         self.cad = cadence_h
         self.static_w = C.validate_static_weights(static_weights)
         self.inherit, self.terminal_fee, self.record = inherit_open, terminal_fee, record_minutes
+        self.allow_pre_usable = allow_pre_usable
         self.sd = [data.sleeves[s] for s in C.SLEEVES]
         # all opportunities ordered by decision minute
         di = [(sd.dec_idx[k], si, k) for si, sd in enumerate(self.sd) for k in range(sd.n)]
@@ -236,6 +238,8 @@ class AllocatorEnv:
         step = self.cad * HOUR
         if start_T % step or end_T % step or end_T <= start_T:
             raise ValueError("episode bounds must be on the cadence grid")
+        if start_T < d.usable_from and not self.allow_pre_usable:
+            raise ValueError("episode starts before the A2 usable window (2021-12-01)")
         self.Ts = np.arange((end_T - start_T) // step + 1, dtype=np.int64) * step + start_T
         ti = np.searchsorted(d.T1h, self.Ts[:-1])
         if np.any(ti >= len(d.T1h)) or np.any(d.T1h[np.minimum(ti, len(d.T1h) - 1)] != self.Ts[:-1]):
@@ -506,7 +510,7 @@ def load_cell(cell: str, cadence_h: int = 1, fold: str = "F1", allow_test: bool 
     prov = json.loads((root / "provenance.json").read_text(encoding="utf-8"))
     sm_path = st / "manifest.json"
     smf = json.loads(sm_path.read_text(encoding="utf-8"))
-    r2 = prov["round2"]["state"]
+    r2 = prov["state_current"]
     if _sha(sm_path) != r2["sha256"] or _sha(st / "normalizers.json") != r2["normalizers_sha256"]:
         raise SchemaError("state manifest / normalizers hash != provenance")
     pm_path = pre / "manifest.json"
@@ -577,4 +581,5 @@ def load_cell(cell: str, cadence_h: int = 1, fold: str = "F1", allow_test: bool 
     seq_norm = {c: norm[c] for c in C.SEQ_COLUMNS}
     return CellData(cell=cell, t=t, o=mk.o.to_numpy(float), h=mk.h.to_numpy(float), l=mk.l.to_numpy(float),
                     c=mk.c.to_numpy(float), sleeves=sleeves, T1h=sf["T"].to_numpy(np.int64), static=static,
-                    seq_raw=seq_raw, seq_norm=seq_norm, avail_T=avail_T, feature_order=order)
+                    seq_raw=seq_raw, seq_norm=seq_norm, avail_T=avail_T, feature_order=order,
+                    usable_from=pd.Timestamp(smf["usable_from"], tz="UTC").value)

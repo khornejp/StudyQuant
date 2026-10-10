@@ -111,7 +111,10 @@ def test_fixed_schema_and_cell_history(cell):
 
 @real
 def test_c_unavailable_hard_mask_and_cap_zero(cell):
-    env = start(E.AllocatorEnv(cell, static_weights=[0, 0, 0, 0, 0, 1.0, 1.0]), "2020-08-01", "2020-11-15")
+    with pytest.raises(ValueError, match="usable"):                       # A2: no episodes before 2021-12-01
+        start(E.AllocatorEnv(cell), "2021-11-01", "2021-12-15")
+    env = start(E.AllocatorEnv(cell, static_weights=[0, 0, 0, 0, 0, 1.0, 1.0], allow_pre_usable=True),
+                "2020-08-01", "2020-11-15")
     m = env.obs0["masks"]
     assert not m.entry[SI["C1v2"], 1:].any() and not m.entry[SI["C4v2"], 1:].any()
     with pytest.raises(ValueError):
@@ -158,7 +161,8 @@ def test_canonical_parity_dev_minute_ledger(cell):
     pm = json.loads((OUT / "precompute/manifest.json").read_text(encoding="utf-8"))["parity"]
     for s, a, b, key, field in (("G3_LONG", "2020-01-01 01:00", "2026-01-01", "G3_LONG|o2_p1.0", "DEV-FULL_net4"),
                                 ("C1v2", "2023-01-01", "2026-01-01", "C1v2|native", "NATIVE_2023_2025_net4")):
-        env = start(E.AllocatorEnv(cell, inherit_open=[s], terminal_fee=False, record_minutes=True), a, b)
+        env = start(E.AllocatorEnv(cell, inherit_open=[s], terminal_fee=False, record_minutes=True,
+                                   allow_pre_usable=True), a, b)
         lv = [4 if k == SI[s] else 0 for k in range(7)]
         tot, rs, _ = run(env, level_policy(lv))
         assert abs(tot - pm[key][field]) <= 1e-6, (s, tot, pm[key][field])
