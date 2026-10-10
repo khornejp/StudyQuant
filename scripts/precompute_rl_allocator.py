@@ -1745,7 +1745,8 @@ def cmd_env_check(args) -> None:
         starts = [ts("2021-03-01"), ts("2022-06-01"), ts("2023-11-01"), ts("2024-08-01"), ts("2025-05-01"),
                   ts("2026-02-01")]
         rr = {"episodes": 0, "steps": 0, "max_minute_diff": 0.0, "max_total_diff": 0.0, "max_gross": 0.0,
-              "steps_sum_vs_minutes": 0.0, "events": 0}
+              "max_gross_reserved": 0.0, "steps_sum_vs_minutes": 0.0, "events": 0, "pending_steps": 0,
+              "cancel_legal_sleeve_steps": 0, "effects": {}}
         tsec = 0.0
         for st_ in starts:
             env = AE.AllocatorEnv(cd, static_weights=[0.25] * 7, record_minutes=True)
@@ -1753,11 +1754,15 @@ def cmd_env_check(args) -> None:
             tot, rsum, nst = 0.0, 0.0, 0
             t1 = time.time()
             while True:
-                obs, r, done, info = env.step(random_action(rng, obs["masks"]))
+                mk_ = obs["masks"]
+                rr["pending_steps"] += int(mk_.pending[:, 1].any())
+                rr["cancel_legal_sleeve_steps"] += int(mk_.pending[:, 1].sum())
+                obs, r, done, info = env.step(random_action(rng, mk_))
                 tot += info["net_rl"]
                 rsum += r
                 nst += 1
                 rr["max_gross"] = max(rr["max_gross"], info["gross"])
+                rr["max_gross_reserved"] = max(rr["max_gross_reserved"], info["gross_reserved"])
                 if done:
                     break
             tsec += time.time() - t1
@@ -1768,10 +1773,16 @@ def cmd_env_check(args) -> None:
             rr["episodes"] += 1
             rr["steps"] += nst
             rr["events"] += len(env.rl.events)
+            for k_, v_ in env.rl.effects.items():
+                rr["effects"][k_] = rr["effects"].get(k_, 0) + v_
+            for (_, _, a_, _, _) in env.rl.events:
+                rr["effects"][a_ + "_requests"] = rr["effects"].get(a_ + "_requests", 0) + 1
             rr["modified_exits"] = rr.get("modified_exits", 0) + sum(len(x) for x in env.rl.mod)
             rr["tighten_exits"] = rr.get("tighten_exits", 0) + sum(1 for (si_, q_, a_, m_, v_) in env.rl.events
                                                                    if a_.startswith("TIGHTEN") and q_ in env.rl.mod[si_])
         rr["steps_per_sec"] = round(rr["steps"] / tsec, 1)
+        rr["pending_occupancy_pct"] = round(100 * rr["pending_steps"] / rr["steps"], 4)
+        rr["cancel_active_mask_pct"] = round(100 * rr["cancel_legal_sleeve_steps"] / (rr["steps"] * 7), 4)
         rep["random"][cell] = rr
         # static-baseline actions: reward exactly 0 every step
         env = AE.AllocatorEnv(cd, static_weights=[0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.5])
@@ -1801,13 +1812,26 @@ def cmd_env_check(args) -> None:
                       "max_minute_vs_slow": worst_min,
                       "random_max_minute_diff": max(v["max_minute_diff"] for v in rep["random"].values()),
                       "random_max_gross": max(v["max_gross"] for v in rep["random"].values()),
+                      "random_max_gross_reserved": max(v["max_gross_reserved"] for v in rep["random"].values()),
+                      "random_max_total_diff": max(v["max_total_diff"] for v in rep["random"].values()),
+                      "random_steps_sum_vs_minutes": max(v["steps_sum_vs_minutes"] for v in rep["random"].values()),
+                      "static_sum_abs_reward": sum(v["sum_abs_reward"] for v in rep["static"].values()),
                       "static_nonzero_reward_steps": sum(v["nonzero_reward_steps"] for v in rep["static"].values())}
     rep.update(created_utc=datetime.now(timezone.utc).isoformat(), git_head=git("rev-parse", "HEAD"),
                code_sha256={"allocator_env": sha(ROOT / "btcusdt_quant/rl/allocator_env.py"),
                             "allocator_contracts": sha(ROOT / "btcusdt_quant/rl/allocator_contracts.py"),
                             "script": sha(Path(__file__))}, runtime_sec=round(time.time() - t0, 1))
-    ok = (worst_tot <= 1e-6 and worst_min <= 1e-9 and rep["summary"]["random_max_minute_diff"] <= 1e-9
-          and rep["summary"]["random_max_gross"] <= AC.GROSS_CAP + 1e-9 and rep["summary"]["static_nonzero_reward_steps"] == 0)
+    S = rep["summary"]
+    rep["gates"] = {"parity_total<=1e-6": worst_tot <= 1e-6, "parity_minute<=1e-9": worst_min <= 1e-9,
+                    "random_minute<=1e-9": S["random_max_minute_diff"] <= 1e-9,
+                    "random_total<=1e-6": S["random_max_total_diff"] <= 1e-6,
+                    "steps_sum_vs_minutes<=1e-6": S["random_steps_sum_vs_minutes"] <= 1e-6,
+                    "gross_open<=2": S["random_max_gross"] <= AC.GROSS_CAP + 1e-12,
+                    "gross_reserved<=2": S["random_max_gross_reserved"] <= AC.GROSS_CAP + 1e-12,
+                    "static_nonzero_reward_steps==0": S["static_nonzero_reward_steps"] == 0,
+                    "static_sum_abs_reward==0": S["static_sum_abs_reward"] == 0.0}
+    rep["turnover_unit"] = "bps = 2 bps x traded notional (mult x base weight per entry and exit leg, terminal exit included)"
+    ok = all(rep["gates"].values())
     rep["pass"] = bool(ok)
     dump(OUT / "env" / "env_check.json", rep)
     log(f"env-check {'PASS' if ok else 'FAIL'} {rep['summary']}")

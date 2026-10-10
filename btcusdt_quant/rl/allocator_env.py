@@ -2,8 +2,10 @@
 
 One env = one execution cell, decisions every `cadence_h` hours (1h primary, 4h ablation) on the frozen canonical
 shadow schedule of the 7 sleeves:
-  * entry head: a standing level in LEVELS for canonical opportunities whose decision time falls in [T, T + cadence);
-    an opportunity whose sleeve is unavailable at its own decision gets exactly 0 (hard mask, cap 0).
+  * entry head: a standing level in LEVELS for canonical opportunities whose decision time falls in [T, T + cadence).
+    It is legal only for sleeves available at T (state row T); a sleeve unavailable at T is OFF for the whole interval
+    even if it becomes available inside it (e.g. C4 available from 2020-10-01 00:00 minute, first allocator interval
+    2020-10-01 01:00). Independently, an opportunity whose sleeve is unavailable at its own decision minute gets 0.
   * pending head KEEP/CANCEL for allocated, not yet filled opportunities; open head HOLD/EXIT (+TIGHTEN_75/50 for
     B3/K04: R_t = min(R_t, f x R0), never wider). Allocation is fixed from entry to exit; skipped or early-exited
     opportunities never re-enter (only canonical opportunities exist).
@@ -12,6 +14,10 @@ shadow schedule of the 7 sleeves:
   * episodes start flat (canonical positions open/pending at the start stay unallocated); at the end every allocated
     open position is marked and charged its exit fee.
   * reward (design section 3) against a static-weight book run on the same data; identical actions give exactly 0.
+    Turnover unit: bps = 2 bps x traded notional (multiplier x base weight per entry leg and per exit leg, terminal
+    exit included). The static book takes any weights in [0, 1] (sum <= 2); RL actions only LEVELS, so an off-grid
+    static comparator (e.g. equal 2/7) is a reward baseline only, never reproducible by RL actions.
+  * caps: gross_open = open allocated exposure; gross_reserved = open + pending (bounded by 2.0 by the projector).
 P&L comes only from the precomputed canonical minute rows (sleeve_precompute) and, for modified trades, from the same
 ledger functions (lin_trade / log_trade / exit_fill), so the env minute ledger equals a slow replay.
 """
@@ -196,6 +202,7 @@ class Book:
     tf: list = field(default_factory=list)                   # per sleeve: {opp: tighten fraction}
     events: list = field(default_factory=list)               # (sleeve, opp, action, minute, value)
     active: list = field(default_factory=list)               # per sleeve: allocated opps not yet finished
+    effects: dict = field(default_factory=dict)              # action -> count of requests that changed a position
     equity: float = 0.0
     peak: float = 0.0
     mdd: float = 0.0
@@ -214,9 +221,7 @@ class AllocatorEnv:
             raise ValueError("cadence 1h or 4h")
         self.d = data
         self.cad = cadence_h
-        self.static_w = np.zeros(len(C.SLEEVES)) if static_weights is None else np.asarray(static_weights, float)
-        if np.any(self.static_w < 0) or np.any(self.static_w > 1) or self.static_w.sum() > C.GROSS_CAP + 1e-12:
-            raise ValueError("static weights must be in [0, 1] with sum <= gross cap")
+        self.static_w = C.validate_static_weights(static_weights)
         self.inherit, self.terminal_fee, self.record = inherit_open, terminal_fee, record_minutes
         self.sd = [data.sleeves[s] for s in C.SLEEVES]
         # all opportunities ordered by decision minute
@@ -311,6 +316,7 @@ class AllocatorEnv:
             pend, opn = self._state(book, si, a)
             if C.PENDING_ACTIONS[action.pending[si]] == "CANCEL":
                 for q in pend:
+                    book.effects["CANCEL"] = book.effects.get("CANCEL", 0) + 1
                     book.mult[si][q] = 0.0
                     book.events.append((si, q, "CANCEL", a, 0.0))
             op = C.OPEN_ACTIONS[action.open[si]]
@@ -330,6 +336,7 @@ class AllocatorEnv:
                 else:
                     continue
                 if ch is not None:
+                    book.effects[op] = book.effects.get(op, 0) + 1
                     j, px = ch
                     book.mod[si][q] = trade_rows(self.d, sd, q, j, px)
                     book.end[si][q] = j
@@ -349,7 +356,7 @@ class AllocatorEnv:
                 sd = self.sd[si]
                 for q in book.active[si]:
                     m = book.mult[si][q]
-                    if m > 0 and sd.dec_idx[q] < tau and (book.end[si][q] if sd.e[q] >= 0 else sd.expiry[q]) >= tau:
+                    if m > 0 and sd.dec_idx[q] < tau and C.reserved_at(sd.e[q], book.end[si][q], sd.expiry[q], tau):
                         gross += m * sd.w[q]
             scale = C.project_cap(gross, req)
             for (si, q), r, sc in zip(grp, req, scale):
@@ -429,6 +436,7 @@ class AllocatorEnv:
         done = self.k == len(self.Ts) - 1
         info = {"net_rl": out["rl"][0], "net_st": out["st"][0], "dmdd_rl": out["rl"][1], "dmdd_st": out["st"][1],
                 "turnover_rl": out["rl"][2], "turnover_st": out["st"][2], "gross": self.gross(self.rl, b),
+                "gross_open": self.gross(self.rl, b), "gross_reserved": self.gross_reserved(self.rl, b),
                 "net_exposure": self.net_exposure(self.rl, b)}
         return (None if done else self.observation()), r, done, info
 
@@ -438,6 +446,16 @@ class AllocatorEnv:
             for q in book.active[si]:
                 m = book.mult[si][q]
                 if m > 0 and sd.e[q] >= 0 and sd.e[q] < idx <= book.end[si][q]:
+                    g += m * sd.w[q]
+        return g
+
+    def gross_reserved(self, book: Book, idx: int) -> float:
+        """Open + pending allocated exposure at the start of minute idx (the quantity the cap projector bounds)."""
+        g = 0.0
+        for si, sd in enumerate(self.sd):
+            for q in book.active[si]:
+                m = book.mult[si][q]
+                if m > 0 and sd.dec_idx[q] < idx and C.reserved_at(sd.e[q], book.end[si][q], sd.expiry[q], idx):
                     g += m * sd.w[q]
         return g
 
@@ -502,10 +520,13 @@ def load_cell(cell: str, cadence_h: int = 1, fold: str = "F1", allow_test: bool 
     norm = {k: tuple(v) for k, v in norms[fold].items()}
     if len(order) != C.N_STATIC or order != ast.feature_order(smf["columns"], norm):
         raise SchemaError("feature-order contract violated")
-    frames = [pd.read_parquet(st / "state_1h.parquet")]
+    names = ["state_1h.parquet"] + (["state_1h_TEST.parquet"] if allow_test else [])
     if allow_test:
         sp.require_unlock(True, "TEST state")
-        frames.append(pd.read_parquet(st / "state_1h_TEST.parquet"))
+    for nm in names:                                          # verify bytes before reading
+        if nm not in smf["files"] or _sha(st / nm) != smf["files"][nm]["sha256"]:
+            raise SchemaError(f"state file hash mismatch {nm}")
+    frames = [pd.read_parquet(st / nm) for nm in names]
     sf = pd.concat(frames, ignore_index=True)
     if list(sf.columns) != smf["columns"]:
         raise SchemaError("state columns != manifest")
@@ -520,15 +541,19 @@ def load_cell(cell: str, cadence_h: int = 1, fold: str = "F1", allow_test: bool 
     years = set(range(2020, (2026 if allow_test else 2025) + 1))
 
     def part(rel: str, stem: str, tcol: str = "minute_time", key: str | None = None, columns=None) -> pd.DataFrame:
-        f = _read_cols(pre / rel, stem, allow_test, tcol, years, columns)
+        entry = files[key or rel]
+        entry = entry.get(stem, entry)
+        yr = lambda nm: int(nm[:-len(".parquet")].rsplit("_", 1)[1])  # noqa: E731
+        expect = {nm for nm in entry if nm.startswith(stem + "_") and yr(nm) in years}
+        actual = {p.name for p in (pre / rel).glob(f"{stem}_*.parquet") if yr(p.name) in years}
+        if expect != actual:                                   # missing or extra partition -> fail closed
+            raise SchemaError(f"partition set mismatch {rel}/{stem}: missing {sorted(expect - actual)} "
+                              f"extra {sorted(actual - expect)}")
         if verify_hashes:
-            entry = files[key or rel]
-            entry = entry.get(stem, entry)
-            for p in sorted((pre / rel).glob(f"{stem}_*.parquet")):
-                y = int(p.stem.rsplit("_", 1)[1])
-                if y in years and entry[p.name]["sha256"] != _sha(p):
-                    raise SchemaError(f"hash mismatch {rel}/{p.name}")
-        return f
+            for nm in sorted(expect):
+                if entry[nm]["sha256"] != _sha(pre / rel / nm):
+                    raise SchemaError(f"hash mismatch {rel}/{nm}")
+        return _read_cols(pre / rel, stem, allow_test, tcol, years, columns)
 
     mk = part("common/market", "market")
     t = mk.minute_time.to_numpy(np.int64)

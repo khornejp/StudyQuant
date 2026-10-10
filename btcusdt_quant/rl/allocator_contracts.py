@@ -64,12 +64,33 @@ def sleeve_masks(available: bool, has_pending: bool, has_open: bool, sleeve: str
 
 
 def validate_action(action: Action, masks: Masks) -> None:
+    """Integer indices in range, then legality under the masks (masked or malformed actions raise)."""
     for name in ("entry", "pending", "open"):
-        idx = np.asarray(getattr(action, name), int)
+        raw = np.asarray(getattr(action, name))
         m = getattr(masks, name)
-        if idx.shape != (len(SLEEVES),) or not m[np.arange(len(SLEEVES)), idx].all():
-            bad = [SLEEVES[k] for k in range(len(SLEEVES)) if not m[k, idx[k]]]
-            raise ValueError(f"masked {name} action for {bad}")
+        if raw.shape != (len(SLEEVES),) or not np.issubdtype(raw.dtype, np.integer):
+            raise ValueError(f"{name}: need {len(SLEEVES)} integer indices, got {raw.dtype} {raw.shape}")
+        if np.any(raw < 0) or np.any(raw >= m.shape[1]):
+            raise ValueError(f"{name}: index out of range {raw.tolist()}")
+        ok = m[np.arange(len(SLEEVES)), raw]
+        if not ok.all():
+            raise ValueError(f"masked {name} action for {[SLEEVES[k] for k in np.flatnonzero(~ok)]}")
+
+
+def validate_static_weights(w) -> np.ndarray:
+    """Static baseline weights: shape (7,), finite, each in [0, 1], sum <= gross cap; None -> all zero."""
+    if w is None:
+        return np.zeros(len(SLEEVES))
+    a = np.asarray(w, float)
+    if a.shape != (len(SLEEVES),) or not np.isfinite(a).all() or np.any(a < 0) or np.any(a > 1)             or a.sum() > GROSS_CAP + 1e-12:
+        raise ValueError(f"invalid static weights {w}")
+    return a
+
+
+def reserved_at(e: int, end: int, expiry: int, tau: int) -> bool:
+    """Opportunity occupies cap at minute tau: filled -> until its exit minute (an exit at tau releases the cap for
+    entries at tau, e.g. a same-minute reversal); unfilled -> while its order still rests (expiry >= tau)."""
+    return (end > tau) if e >= 0 else (expiry >= tau)
 
 
 def project_cap(existing_gross: float, requested: np.ndarray, cap: float = GROSS_CAP) -> np.ndarray:

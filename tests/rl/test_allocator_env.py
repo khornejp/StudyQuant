@@ -79,7 +79,7 @@ def test_load_fail_closed(tmp_path):
         shutil.copyfile(OUT / rel, root / rel)
     p = root / "state/manifest.json"
     p.write_bytes(p.read_bytes().replace(b'"runtime_sec"', b'"runtime_sec_"'))
-    with pytest.raises(E.SchemaError):
+    with pytest.raises(E.SchemaError, match="hash"):
         E.load_cell("o2_p0.5", root=root)
     shutil.copyfile(OUT / "state/manifest.json", p)
     n = json.loads((root / "state/normalizers.json").read_text())
@@ -203,3 +203,34 @@ def test_random_policy_vs_slow_replay_no_reentry_no_widening(cell):
     with pytest.raises(ValueError):                         # widening request is masked
         env2 = start(E.AllocatorEnv(cell), "2024-09-01", "2024-12-01")
         env2.step(C.Action((0,) * 7, (0,) * 7, (0, 0, 0, 2, 0, 0, 0)))   # TIGHTEN_50 with nothing open
+
+
+def test_action_and_static_weight_validation():
+    m = C.Masks()
+    m.entry[:] = True
+    m.pending[:, 0] = True
+    m.open[:, 0] = True
+    C.validate_action(C.Action((4,) * 7, (0,) * 7, (0,) * 7), m)
+    for bad in (C.Action((-1,) + (0,) * 6, (0,) * 7, (0,) * 7), C.Action((0.9,) + (0,) * 6, (0,) * 7, (0,) * 7),
+                C.Action((5,) + (0,) * 6, (0,) * 7, (0,) * 7), C.Action((0,) * 6, (0,) * 7, (0,) * 7),
+                C.Action((0,) * 7, (1,) * 7, (0,) * 7)):
+        with pytest.raises(ValueError):
+            C.validate_action(bad, m)
+    for w in ([0.5] * 6, [1.0] * 7, [np.nan] + [0] * 6, [-0.1] + [0] * 6, [1.5] + [0] * 6):
+        with pytest.raises(ValueError):
+            C.validate_static_weights(w)
+    assert np.allclose(C.validate_static_weights([2 / 7] * 7), 2 / 7)
+    assert C.reserved_at(5, 10, -1, 10) is False and C.reserved_at(5, 11, -1, 10) and C.reserved_at(-1, -1, 10, 10)
+
+
+@real
+def test_missing_partition_fails_closed(tmp_path):
+    root = tmp_path / "rl"
+    shutil.copytree(OUT / "state", root / "state", ignore=shutil.ignore_patterns("*TEST*"))
+    (root / "precompute").mkdir()
+    shutil.copyfile(OUT / "provenance.json", root / "provenance.json")
+    shutil.copyfile(OUT / "precompute/manifest.json", root / "precompute/manifest.json")
+    shutil.copytree(OUT / "precompute/common/market", root / "precompute/common/market")
+    (root / "precompute/common/market/market_2021.parquet").unlink()
+    with pytest.raises(E.SchemaError, match="partition set mismatch"):
+        E.load_cell("o2_p0.5", root=root)
