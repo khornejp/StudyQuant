@@ -2817,10 +2817,120 @@ def cmd_router(args) -> None:
         f"{rep['boot_positive_count']}")
 
 
+# ================================================================ REGIME-SHORT-24H (Codex spec 2026-10-11)
+def cmd_regime_short(args) -> None:
+    from btcusdt_quant.rl import regime_short as RS
+    t0 = time.time()
+    RD = OUT / "regime_short_24h"
+    RD.mkdir(parents=True, exist_ok=True)
+    b2 = load("nm_b2_rs", "out/run_new_model_batch2_20261010.py")
+    minutes, _met, _prem, funding = b2.load_all()
+    minutes = minutes[minutes.open_time < sp.TEST_START].reset_index(drop=True)      # DEV only, TEST never read
+    funding = funding[funding.time < sp.TEST_START].reset_index(drop=True)
+    m = b2.Market.from_frames(minutes, funding)
+    sp.guard_times(m.t, False, "regime-short market")
+    del minutes, _met, _prem
+    st = pd.read_parquet(OUT / "state/state_1h.parquet", columns=["T", "exec_cell"] + list(RS.FEATURES))
+    st = st[st.exec_cell == CELL_TAG[PRIMARY]].sort_values("T").reset_index(drop=True)
+    sp.guard_times(st["T"].to_numpy(np.int64), False, "regime-short state")
+    H4 = 4 * 3600 * 10**9
+    st = st[st["T"].to_numpy(np.int64) % H4 == 0].reset_index(drop=True)
+    T = st["T"].to_numpy(np.int64)
+    X = st[list(RS.FEATURES)].to_numpy(float)
+    d = np.searchsorted(m.t, T) - 1                                   # bar closing at T (decision t[d] + 1m = T)
+    if not np.array_equal(m.t[d] + sp.MIN, T):
+        raise SystemExit("decision bars misaligned")
+    y, lend = RS.short_labels(m.t, m.c, m.ft, m.fr, d)
+    ts = lambda x: pd.Timestamp(x, tz="UTC").value  # noqa: E731
+    cells = [(o, p) for o in (2, 5) for p in (0.5, 1.0, 2.0)]
+    rep: dict = {"spec": {"hypothesis": "2022/2025 20-60 day bearish blocks are predicted by existing causal futures "
+                                        "regime features", "cadence": "4h", "side": "short only", "features": RS.FEATURES,
+                          "model": "ridge, fold-train median/IQR, NaN->0", "lambdas": RS.LAMBDAS,
+                          "lambda_cv": "train-internal year blocks (quarters if one year), score = held-out rule net",
+                          "entry": "predicted net4 > 0", "hold_min": RS.HOLD_MIN, "weight": 1.0,
+                          "execution": "Batch-2 maker engine (event kind), 2 bps exit quote, 6 cells",
+                          "train_rows": "label end <= val start - 24h (embargo)", "folds": FOLDS_A2,
+                          "source": "local Binance USD-M BTCUSDT 1m + funding (DEV < 2026-01-01); state_1h DEV",
+                          "data_cutoff": "2026-01-01 (DEV only; TEST not accessed)"},
+                 "folds": {}}
+    passes = {"net": [], "boot": [], "closed": []}
+    for f, (tr_w, va_w) in FOLDS_A2.items():
+        a_tr, b_tr = ts(tr_w[0]), ts(tr_w[1])
+        a_va, b_va = ts(va_w[0]), ts(va_w[1])
+        tr = (T >= a_tr) & (T < b_tr) & (lend <= a_va - RS.HOLD_MIN * sp.MIN) & np.isfinite(y)
+        lam, cvres = RS.cv_lambda(X[tr], y[tr], T[tr], lend[tr])
+        med, sc = RS.fit_norm(X[tr])
+        w, b0 = RS.ridge(RS.apply_norm(X[tr], med, sc), y[tr], lam)
+        va = (T >= a_va) & (T < b_va)
+        pred = RS.apply_norm(X[va], med, sc) @ w + b0
+        side = np.where(pred > 0, -1, 0)
+        # leakage tamper: (1) future prices/funding from the embargo start on x1.7 -> identical train labels/model;
+        # (2) state rows after a cut inside val changed -> predictions before the cut identical
+        c2 = m.c.copy()
+        k = int(np.searchsorted(m.t, a_va - RS.HOLD_MIN * sp.MIN))
+        c2[k:] *= 1.7
+        fr2 = np.where(m.ft >= a_va - RS.HOLD_MIN * sp.MIN, m.fr * 1.7, m.fr)
+        y2, _ = RS.short_labels(m.t, c2, m.ft, fr2, d)
+        lam2, _ = RS.cv_lambda(X[tr], y2[tr], T[tr], lend[tr])
+        w2, b02 = RS.ridge(RS.apply_norm(X[tr], *RS.fit_norm(X[tr])), y2[tr], lam2)
+        X3 = X.copy()
+        cut = a_va + (b_va - a_va) // 2
+        X3[T > cut] = 99.0
+        p3 = RS.apply_norm(X3[va], med, sc) @ w + b0
+        tamper = {"train_labels_equal": bool(np.array_equal(y[tr], y2[tr])), "model_equal": bool(
+            lam2 == lam and np.array_equal(w, w2) and b0 == b02),
+                  "pred_before_cut_equal": bool(np.array_equal(p3[T[va] <= cut], pred[T[va] <= cut])),
+                  "max_train_label_end": str(pd.Timestamp(int(lend[tr].max()), tz="UTC"))}
+        lo, hi = m.idx(pd.Timestamp(a_va, tz="UTC")), m.idx(pd.Timestamp(b_va, tz="UTC"))
+        cell_rows = {}
+        for o, p in cells:
+            trd, od = b2.simulate(m, "event", d[va], side, np.ones(va.sum()), o, b2.TTL_TREND, p, lo, hi,
+                                  hold=RS.HOLD_MIN)
+            bk = b2.Book(m, trd, od, lo, hi)
+            wnd = bk.window(lo, hi)
+            daily = bk.daily(lo, hi)
+            boots = {str(bl): b2.stationary_boot_p05(daily, bl) for bl in (20, 60, 120)}
+            days = pd.date_range(pd.Timestamp(a_va, tz="UTC"), periods=len(daily), freq="D")
+            mon = pd.Series(daily, index=days).groupby(days.strftime("%Y-%m")).sum()
+            cell_rows[f"o{o}_p{p}"] = {"net4": wnd["net4"], "net8_report_only": wnd["net8"], "closed": wnd["closed"],
+                                       "entries": wnd["entries"], "win": wnd["win"], "mdd": wnd["mdd_1m"],
+                                       "funding": wnd["funding"], "fill_rate": wnd["fill_notional_rate"],
+                                       "boot_p05": boots, "monthly": {k_: float(v) for k_, v in mon.items()}}
+            passes["net"].append(wnd["net4"] > 0)
+            passes["boot"] += [v > 0 for v in boots.values()]
+            passes["closed"].append(wnd["closed"] >= 30)
+        top = np.argsort(-np.abs(w))[:8]
+        rep["folds"][f] = {"train": tr_w, "val": va_w, "train_rows": int(tr.sum()), "val_decisions": int(va.sum()),
+                           "lambda": lam, "cv": {str(k_): v for k_, v in cvres.items()},
+                           "pred_positive_share": float((pred > 0).mean()), "intercept": b0,
+                           "coef_top": {RS.FEATURES[i]: float(w[i]) for i in top}, "tamper": tamper,
+                           "label_mean_train": float(np.nanmean(y[tr])), "cells": cell_rows}
+        log(f"regime-short {f}: lambda {lam} rows {tr.sum()} short share {(pred > 0).mean():.3f} "
+            f"net4 {[round(v['net4'], 1) for v in cell_rows.values()]} closed {[v['closed'] for v in cell_rows.values()]}")
+    rep["pass_criteria"] = {"net4>0": f"{sum(passes['net'])}/{len(passes['net'])}",
+                            "boot_p05>0": f"{sum(passes['boot'])}/{len(passes['boot'])}",
+                            "closed>=30": f"{sum(passes['closed'])}/{len(passes['closed'])}",
+                            "tamper_all": all(all(v for k_, v in x["tamper"].items() if k_ != "max_train_label_end")
+                                              for x in rep["folds"].values())}
+    rep["pass"] = bool(all(passes["net"]) and all(passes["boot"]) and all(passes["closed"])
+                       and rep["pass_criteria"]["tamper_all"])
+    rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
+               runtime_sec=round(time.time() - t0, 1), test_accessed=False,
+               code_sha256={"regime_short": sha(ROOT / "btcusdt_quant/rl/regime_short.py"), "script": sha(Path(__file__))})
+    dump(RD / "regime_short_report.json", rep)
+    registry.record(REGISTRY, {"experiment": "REGIME-SHORT-24H ridge short (A2r1 F1-F4, 6 cells)", "role": "trial",
+                               "n_trials": len(RS.LAMBDAS), "n_simulations": 4 * len(cells),
+                               "config": {k_: v for k_, v in rep["spec"].items() if k_ != "folds"},
+                               "result_summary": {"pass": rep["pass"], **rep["pass_criteria"],
+                                                  "lambdas": {f: x["lambda"] for f, x in rep["folds"].items()}}})
+    log(f"regime-short {'PASS' if rep['pass'] else 'FAIL'} {rep['pass_criteria']} {rep['runtime_sec']}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
-                                       "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router"))
+                                       "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
+                                       "regime-short"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -2852,6 +2962,8 @@ def main(argv=None) -> None:
         return cmd_pilot_e2(args)
     if args.command == "router":
         return cmd_router(args)
+    if args.command == "regime-short":
+        return cmd_regime_short(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)

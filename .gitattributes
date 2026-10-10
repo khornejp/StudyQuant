@@ -21,3 +21,5 @@ tests/rl/test_allocator_model.py text eol=lf
 tests/rl/test_allocator_ppo.py text eol=lf
 btcusdt_quant/rl/allocator_router.py text eol=lf
 tests/rl/test_allocator_router.py text eol=lf
+btcusdt_quant/rl/regime_short.py text eol=lf
+tests/rl/test_regime_short.py text eol=lf
