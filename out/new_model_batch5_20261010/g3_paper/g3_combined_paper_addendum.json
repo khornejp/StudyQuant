@@ -1,0 +1,163 @@
+{
+  "book": "G3_COMBINED",
+  "status": "staged (config/paper.g3_staged.toml, start __T_ADD__ placeholder); not live",
+  "verdict_codex": "paper only, no real capital, no x3 (Codex B5 review, session 01a124e0-8cc4-76b2-9038-1e5868334e7e: 조건부 YES live paper 후보; 실자본·x3 NO)",
+  "frozen_hypothesis": "normalised score/SVI keep fixed boundaries; funding gate uses previous-90-event robust-z raw boundary median90 + c*1.4826*MAD90 (c in {-0.5,0}); only target vol adapts (trailing sigma_ann quantile or V-ENS mean); 0.5 F42 + 0.5 S180 long ensemble dilutes long profit concentration; maker 4 bps rt",
+  "source_run": {
+    "run_id": "NM-B5-20261010T080025Z-c55285f2",
+    "dir": "out/new_model_batch5_20261010/NM-B5-20261010T080025Z-c55285f2",
+    "created_utc": "2026-10-10T08:11:24.387863+00:00",
+    "data_cutoff": "2026-10-08 00:00:00+00:00 exclusive",
+    "code_sha256": "c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428",
+    "combined_book_sha256": "56e1bc7ced78243b0aa4d69b877a66828a2e52a80b771008c3523ceb1fefaf16",
+    "picks": {
+      "LONG_DEV_PICK": "G5-S180-c+0.0-W180-P65",
+      "SHORT_DEV_PICK": "G5-F180-c+0.0-V-ENS"
+    }
+  },
+  "sleeves": {
+    "long": {
+      "config_id": "G5-S180-c+0.0-W180-P65",
+      "side": "long only",
+      "trend_lookbacks_4h": [
+        42,
+        168,
+        504
+      ],
+      "svi_window": 180,
+      "entry_state": "score>=0.50 and SVI>=0.10",
+      "vol": "wL=min(1, Q0.65(sigma_ann over previous 1080 decisions)/sigma_ann_t)",
+      "funding_gate": null
+    },
+    "short": {
+      "config_id": "G5-F180-c+0.0-V-ENS",
+      "side": "short only",
+      "trend_lookbacks_4h": [
+        6,
+        18,
+        42
+      ],
+      "svi_window": 180,
+      "entry_state": "score<=-0.50 and SVI<=-0.10 and funding_rate_j>=median90+0*1.4826*MAD90",
+      "vol": "mean of min(1,Q/sigma) for W180-P50, W180-P65, W365-P50, W365-P65; any NaN -> flat"
+    }
+  },
+  "params": {
+    "c": 0.0,
+    "score_deadband": 0.5,
+    "svi_threshold": 0.1,
+    "funding_events_n": 90,
+    "funding_min_obs": 30,
+    "sigma": "std of previous 180 4h log returns, current excluded; sigma_ann=sigma4*sqrt(6*365)",
+    "svi": "(P-N)/(P+N+1e-12) over last 180 4h returns",
+    "score": "mean_L clip(log(C_t/C_{t-L})/(sigma4*sqrt(L)),-3,3)",
+    "k": "none (no stop / adaptive exit)"
+  },
+  "funding_semantics": "strict: latest event j with funding_time < T; threshold sample = previous 90 events (event j excluded), min 30 finite",
+  "mad0_rule": "MAD90 == 0 -> threshold = median90 (scale-degenerate raw boundary collapses to the median; not a defined robust-z). DEV MAD0 decisions 4046/14832, TEST 0",
+  "decision_time": "UTC 00/04/08/12/16/20; dec4 = 239 + 240k from 2020-01-01 00:00; order time T = closed 4h bar open + 1m (paper records decision_time / exit_decision_time = research bar time + 1m, Codex HIGH fix)",
+  "execution": {
+    "entry": "maker limit 2 bps (long floor(close*(1-0.0002)/0.1)*0.1, short ceil(close*(1+0.0002)/0.1)*0.1), TTL 60 1m bars, 0.5 bp trade-through, gap-through rejects",
+    "exit": "target != held side -> passive 2 bps favourable quote, requote every 60m at new close, 0.5 bp penetration, until filled; new decisions ignored while exit pending; no immediate reversal",
+    "sizing": "weight frozen at entry decision until exit",
+    "cost": "maker 4 bps round trip x weight, slippage 0, PESS funding (actual events), 1m MTM",
+    "not_ready": "sleeve flat, weight 0"
+  },
+  "capital": "common NAV; each sleeve <= 1x, gross <= 2x (net = wL - wS); P&L is the plain sum of sleeve bps of NAV; no x3 overlay",
+  "state_machines": "two independent sleeves (separate batch-2 simulate runs on the sleeve-masked target)",
+  "paper_implementation": {
+    "module": "btcusdt_quant/paper/g3.py",
+    "module_sha256": "43903d3de68aa90791e766d8e30b948056334925256711d33690c1d3736d7365",
+    "engine": "out/run_new_model_batch5_20261010.py (+ batch4/3/2/1) imported unchanged (sha256 c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428)",
+    "inputs": "DEV market artifacts/btcusdt_2020_2026h1.parquet < 2026-01-01 + R2-54 FINAL snapshot market_1m [2026-01-01, 2026-10-08) + live klines_1m >= 2026-10-08; DEV funding artifacts/funding_2020_2026h1 < 2026-01-01 + live funding table >= 2026-01-01 and < data end; missing minute -> book not updated (fail closed)",
+    "recompute": "whole history recomputed every catalog cycle from a flat start at the book start (decisions with T >= start)",
+    "db_rows": "trades (closed sleeve trades, PESS, candidate G3_LONG:/G3_SHORT:<config id>, exit_reason TARGET_CHANGE), daily_pnl (PESS, 1m MTM net4 incl. open trades and reserved 2 bps exit fee), catalog_g3_state (one row per sleeve); no positions row, no OPT rows, no x3 / Telegram / dashboard",
+    "parity_script_sha256": "d86e3a644546196997a69b9bb6abece351203690f48f233733319deb6352c4a2"
+  },
+  "parity": {
+    "script": "scripts/paper_g3_parity.py",
+    "report": "out/new_model_batch5_20261010/g3_paper/paper_g3_parity.json",
+    "match": true,
+    "sleeve_vs_combined": {
+      "n_compared": 48,
+      "max_abs_diff": 0.0,
+      "n_diff_gt_1e-6": 0
+    },
+    "combined_primary_net4": {
+      "DEV-FULL": 28783.974118221366,
+      "DEV-A": 20146.546767338583,
+      "DEV-B": 8637.42735088278,
+      "TEST": 3299.0488348639283
+    },
+    "full_replay": {
+      "market_equal": true,
+      "combined_pnl_1m_equal": true,
+      "max_gross": 2.0,
+      "overlap_minutes": 1,
+      "sleeves": {
+        "long": {
+          "decisions": 14832,
+          "side_equal": true,
+          "weight_max_abs_diff": 0.0,
+          "trades": [
+            116,
+            116
+          ],
+          "closed": 115,
+          "trades_equal": true,
+          "orders_equal": true,
+          "pnl_1m_equal": true,
+          "window_max_abs_diff": 0.0
+        },
+        "short": {
+          "decisions": 14832,
+          "side_equal": true,
+          "weight_max_abs_diff": 0.0,
+          "trades": [
+            183,
+            183
+          ],
+          "closed": 183,
+          "trades_equal": true,
+          "orders_equal": true,
+          "pnl_1m_equal": true,
+          "window_max_abs_diff": 0.0
+        }
+      },
+      "stored_ledger_daily_max_abs_diff": 3.126388037344441e-13
+    },
+    "flat_start_2026": {
+      "TEST_net4": 3299.0488348639337,
+      "ledger": {
+        "long": {
+          "trades": 15,
+          "closed": 14,
+          "first_entry": "2026-04-22 16:10:00+00:00"
+        },
+        "short": {
+          "trades": 21,
+          "closed": 21,
+          "first_entry": "2026-01-29 16:04:00+00:00"
+        }
+      }
+    },
+    "live_db_overlap": {
+      "klines_overlap_rows": 142560,
+      "klines_live_rows": 142560,
+      "klines_rows_differing": 0,
+      "funding_rows": [
+        840,
+        840
+      ],
+      "funding_rows_differing": 0
+    },
+    "python": "venv_btcusdt (pandas 2.3.3, numpy 1.26.4)"
+  },
+  "risks": [
+    "recompute-from-history: a late or revised funding / kline row changes past decisions (no decision freeze table)",
+    "TEST long sleeve 14 closed, top1 trade 59.29% of long net (Codex); long boot60 TEST negative",
+    "MAD0 fallback drives DEV short selection (DEV-FULL short 5787.7475 vs 4661.7445 with MAD0 blocked); TEST impact 0",
+    "paper_catalog cycle +~1.6 s (live dry run 1.78/1.58/1.53 s); archive minutes 2020-01-01..2026-10-08 cached in process (dry-run process RSS 1.37 GB incl. its own DB frames)"
+  ],
+  "observed_through": "2026-10-08 (snapshot); live dry run on artifacts/live DB to 2026-10-10T08:35Z ok"
+}

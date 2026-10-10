@@ -1,0 +1,270 @@
+{
+  "run": "NM-B5-20261010T080025Z-c55285f2",
+  "engine_sha256": "c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428",
+  "sleeve_ids": {
+    "long": "G5-S180-c+0.0-W180-P65",
+    "short": "G5-F180-c+0.0-V-ENS"
+  },
+  "sleeve_vs_combined": {
+    "n_compared": 48,
+    "max_abs_diff": 0.0,
+    "n_diff_gt_1e-6": 0,
+    "combined_primary": {
+      "DEV-FULL": {
+        "got": 28783.974118221366,
+        "ref_4dp": 28783.9741,
+        "json": 28783.974118221366,
+        "diff_vs_json": 0.0
+      },
+      "DEV-A": {
+        "got": 20146.546767338583,
+        "ref_4dp": 20146.5468,
+        "json": 20146.546767338583,
+        "diff_vs_json": 0.0
+      },
+      "DEV-B": {
+        "got": 8637.42735088278,
+        "ref_4dp": 8637.4274,
+        "json": 8637.42735088278,
+        "diff_vs_json": 0.0
+      },
+      "TEST": {
+        "got": 3299.0488348639283,
+        "ref_4dp": 3299.0488,
+        "json": 3299.0488348639283,
+        "diff_vs_json": 0.0
+      }
+    },
+    "match": true
+  },
+  "paper_full_replay": {
+    "market_equal": true,
+    "sleeves": {
+      "long": {
+        "decisions": 14832,
+        "side_equal": true,
+        "weight_max_abs_diff": 0.0,
+        "nonflat_decisions": 3559,
+        "trades": [
+          116,
+          116
+        ],
+        "trades_equal": true,
+        "closed": 115,
+        "orders_equal": true,
+        "pnl_1m_equal": true,
+        "funding_cashflows_equal": true,
+        "window_net4": {
+          "DEV-FULL": [
+            22996.226652431793,
+            22996.226652431793
+          ],
+          "DEV-A": [
+            17190.001042230815,
+            17190.001042230815
+          ],
+          "DEV-B": [
+            5806.225610200977,
+            5806.225610200977
+          ],
+          "TEST": [
+            1684.115629575647,
+            1684.115629575647
+          ]
+        },
+        "window_max_abs_diff": 0.0,
+        "match": true
+      },
+      "short": {
+        "decisions": 14832,
+        "side_equal": true,
+        "weight_max_abs_diff": 0.0,
+        "nonflat_decisions": 590,
+        "trades": [
+          183,
+          183
+        ],
+        "trades_equal": true,
+        "closed": 183,
+        "orders_equal": true,
+        "pnl_1m_equal": true,
+        "funding_cashflows_equal": true,
+        "window_net4": {
+          "DEV-FULL": [
+            5787.747465789573,
+            5787.747465789573
+          ],
+          "DEV-A": [
+            2956.545725107769,
+            2956.545725107769
+          ],
+          "DEV-B": [
+            2831.201740681803,
+            2831.201740681803
+          ],
+          "TEST": [
+            1614.933205288281,
+            1614.933205288281
+          ]
+        },
+        "window_max_abs_diff": 0.0,
+        "match": true
+      }
+    },
+    "combined_pnl_1m_equal": true,
+    "combined_window_net4": {
+      "DEV-FULL": 28783.97411822137,
+      "DEV-A": 20146.546767338583,
+      "DEV-B": 8637.427350882774,
+      "TEST": 3299.0488348639337
+    },
+    "max_gross": 2.0,
+    "overlap_minutes": 1,
+    "match": true,
+    "stored_ledger": {
+      "long": {
+        "n": [
+          116,
+          116
+        ],
+        "checks": {
+          "decision_time_plus_1m": true,
+          "exit_decision_time_plus_1m": true,
+          "entry_time": true,
+          "exit_time": true,
+          "entry_price": true,
+          "exit_price": true,
+          "weight": true,
+          "net4_full_max_abs_diff": 0.0
+        },
+        "match": true
+      },
+      "short": {
+        "n": [
+          183,
+          183
+        ],
+        "checks": {
+          "decision_time_plus_1m": true,
+          "exit_decision_time_plus_1m": true,
+          "entry_time": true,
+          "exit_time": true,
+          "entry_price": true,
+          "exit_price": true,
+          "weight": true,
+          "net4_full_max_abs_diff": 0.0
+        },
+        "match": true
+      },
+      "daily": {
+        "n": [
+          2472,
+          2472
+        ],
+        "max_abs_diff": 3.126388037344441e-13,
+        "components_sum_ok": true
+      },
+      "match": true
+    }
+  },
+  "paper_flat_start_2026": {
+    "market_equal": true,
+    "sleeves": {
+      "long": {
+        "decisions": 1681,
+        "side_equal": true,
+        "weight_max_abs_diff": 0.0,
+        "nonflat_decisions": 389,
+        "trades": [
+          15,
+          15
+        ],
+        "trades_equal": true,
+        "closed": 14,
+        "orders_equal": true,
+        "pnl_1m_equal": true,
+        "funding_cashflows_equal": true,
+        "window_net4": {
+          "DEV-FULL": [
+            0.0,
+            0.0
+          ],
+          "DEV-B": [
+            0.0,
+            0.0
+          ],
+          "TEST": [
+            1684.115629575647,
+            1684.115629575647
+          ]
+        },
+        "window_max_abs_diff": 0.0,
+        "match": true
+      },
+      "short": {
+        "decisions": 1681,
+        "side_equal": true,
+        "weight_max_abs_diff": 0.0,
+        "nonflat_decisions": 62,
+        "trades": [
+          21,
+          21
+        ],
+        "trades_equal": true,
+        "closed": 21,
+        "orders_equal": true,
+        "pnl_1m_equal": true,
+        "funding_cashflows_equal": true,
+        "window_net4": {
+          "DEV-FULL": [
+            0.0,
+            0.0
+          ],
+          "DEV-B": [
+            0.0,
+            0.0
+          ],
+          "TEST": [
+            1614.9332052882808,
+            1614.9332052882808
+          ]
+        },
+        "window_max_abs_diff": 0.0,
+        "match": true
+      }
+    },
+    "combined_pnl_1m_equal": true,
+    "combined_window_net4": {
+      "DEV-FULL": 0.0,
+      "DEV-B": 0.0,
+      "TEST": 3299.0488348639337
+    },
+    "max_gross": 1.0,
+    "overlap_minutes": 0,
+    "match": true,
+    "ledger": {
+      "long": {
+        "trades": 15,
+        "closed": 14,
+        "first_entry": "2026-04-22 16:10:00+00:00"
+      },
+      "short": {
+        "trades": 21,
+        "closed": 21,
+        "first_entry": "2026-01-29 16:04:00+00:00"
+      }
+    },
+    "decision_grid_ok": true
+  },
+  "live_db_overlap": {
+    "klines_overlap_rows": 142560,
+    "klines_live_rows": 142560,
+    "klines_rows_differing": 0,
+    "funding_rows": [
+      840,
+      840
+    ],
+    "funding_rows_differing": 0
+  },
+  "match": true
+}

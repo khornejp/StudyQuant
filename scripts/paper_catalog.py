@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import numpy as np, pandas as pd, torch  # noqa: E402
-from btcusdt_quant.paper import catalog, detector, leverage  # noqa: E402
+from btcusdt_quant.paper import catalog, detector, g3, leverage  # noqa: E402
 from btcusdt_quant.paper.config import load_config  # noqa: E402
 from btcusdt_quant.paper.store import (PaperStore, exclusive_lock, refuse_missing_funding_backfill,  # noqa: E402,F401
                                        refuse_pending_switch, utc_text)
@@ -115,7 +115,7 @@ def ensure_catalog_tables(connection) -> None:
 
 def active_books(config) -> list[str]:
     retired = set(getattr(config, "retired_books", ()))
-    return [n for n in config.books if n in catalog.BOOKS and n not in retired]
+    return [n for n in config.books if (n in catalog.BOOKS or n in g3.BOOKS) and n not in retired]
 
 
 def decide_model_books(store: PaperStore, config, ctx, predictions: pd.DataFrame) -> int:
@@ -235,9 +235,17 @@ def recompute_books(store: PaperStore, config, end: pd.Timestamp, ctx=None, fund
         ctx, funding, _ = load_context(store)
     decisions = read_decisions(store)
     names = active_books(config)
-    results, signals = {}, {}
+    results, signals, g3_results = {}, {}, {}
     end_price = float(ctx.minutes.close.iloc[-1])
     for name in names:
+        if name in g3.BOOKS:      # G3 sleeves: research accounting, no x3, no catalog signals / AX state
+            start = pd.Timestamp(config.book_start_times.get(name, config.start_time))
+            if start < end:
+                try:
+                    g3_results[name] = g3.run_book(name, ctx.minutes, funding, start, end)
+                except Exception:
+                    log.exception("g3 book %s failed", name)
+            continue
         if with_signals:
             try:     # conditions are shown before a book's T0 too
                 signals[name] = catalog.signal_rows(name, ctx, end - pd.Timedelta(days=SIGNAL_DAYS))
@@ -303,6 +311,18 @@ def recompute_books(store: PaperStore, config, end: pd.Timestamp, ctx=None, fund
                 connection.execute(f"ROLLBACK TO {savepoint}")
                 connection.execute(f"RELEASE {savepoint}")
                 log.exception("catalog publish %s failed", name)
+            else:
+                connection.execute(f"RELEASE {savepoint}")
+                published += 1
+        for index, (name, result) in enumerate(g3_results.items()):
+            savepoint = f"g3_book_{index}"
+            connection.execute(f"SAVEPOINT {savepoint}")
+            try:
+                g3.publish(connection, name, result)
+            except Exception:
+                connection.execute(f"ROLLBACK TO {savepoint}")
+                connection.execute(f"RELEASE {savepoint}")
+                log.exception("g3 publish %s failed", name)
             else:
                 connection.execute(f"RELEASE {savepoint}")
                 published += 1

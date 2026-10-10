@@ -1,0 +1,37 @@
+# R2-52A AX paper configuration (scripts/paper_ax_switch.py); retired books stay in the DB as the record
+# effective_switch_time = 2026-10-09T01:24:00Z
+# B3_AXC0 + K04_AXC0 appended (out/k45_rl_r2_48_20261007/r2_55/axc0_paper_addendum.json)
+# G3_COMBINED appended: 1x sleeves only, no x3 / Telegram (out/new_model_batch5_20261010/g3_paper/g3_combined_paper_addendum.json)
+[paper]
+mode = "paper"
+symbol = "BTCUSDT"
+books = ["C1_AX", "B1_AX", "B2_AX", "B3_AX", "K02_AX", "K03_AX", "K04_AX", "K05_AX", "K06_k0.5_AX", "K06_k1.0_AX", "K07_k0.5_AX", "K07_k1.0_AX", "K08_AX", "K09_AX", "K11_15m_AX", "K11_1h_AX", "K12_30m_AX", "K12_1h_AX", "K13_AX", "K14_AX", "K15_AX", "K19_AX", "K21_A_AX", "K21_B_AX", "K26_AX", "K29_AX", "K30_AX", "C1_FLIP_AX", "B3_AXC0", "K04_AXC0", "G3_COMBINED"]
+book_start_times = { "C1_AX" = "2026-10-09T01:24:00Z", "B1_AX" = "2026-10-09T01:24:00Z", "B2_AX" = "2026-10-09T01:24:00Z", "B3_AX" = "2026-10-09T01:24:00Z", "K02_AX" = "2026-10-09T01:24:00Z", "K03_AX" = "2026-10-09T01:24:00Z", "K04_AX" = "2026-10-09T01:24:00Z", "K05_AX" = "2026-10-09T01:24:00Z", "K06_k0.5_AX" = "2026-10-09T01:24:00Z", "K06_k1.0_AX" = "2026-10-09T01:24:00Z", "K07_k0.5_AX" = "2026-10-09T01:24:00Z", "K07_k1.0_AX" = "2026-10-09T01:24:00Z", "K08_AX" = "2026-10-09T01:24:00Z", "K09_AX" = "2026-10-09T01:24:00Z", "K11_15m_AX" = "2026-10-09T01:24:00Z", "K11_1h_AX" = "2026-10-09T01:24:00Z", "K12_30m_AX" = "2026-10-09T01:24:00Z", "K12_1h_AX" = "2026-10-09T01:24:00Z", "K13_AX" = "2026-10-09T01:24:00Z", "K14_AX" = "2026-10-09T01:24:00Z", "K15_AX" = "2026-10-09T01:24:00Z", "K19_AX" = "2026-10-09T01:24:00Z", "K21_A_AX" = "2026-10-09T01:24:00Z", "K21_B_AX" = "2026-10-09T01:24:00Z", "K26_AX" = "2026-10-09T01:24:00Z", "K29_AX" = "2026-10-09T01:24:00Z", "K30_AX" = "2026-10-09T01:24:00Z", "C1_FLIP_AX" = "2026-10-09T15:08:00Z", "B3_AXC0" = "__T_ADD__", "K04_AXC0" = "__T_ADD__", "G3_COMBINED" = "__T_ADD__" }
+comparison_books = ["B1_AX", "B2_AX", "B3_AX", "K02_AX", "K03_AX", "K04_AX", "K05_AX", "K06_k0.5_AX", "K06_k1.0_AX", "K07_k0.5_AX", "K07_k1.0_AX", "K08_AX", "K09_AX", "K11_15m_AX", "K11_1h_AX", "K12_30m_AX", "K12_1h_AX", "K13_AX", "K14_AX", "K15_AX", "K19_AX", "K21_A_AX", "K21_B_AX", "K26_AX", "K29_AX", "K30_AX", "C1_FLIP_AX", "B3_AXC0", "K04_AXC0"]
+leverage_books = ["C1_AX", "B1_AX", "B2_AX", "B3_AX", "K02_AX", "K03_AX", "K04_AX", "K05_AX", "K06_k0.5_AX", "K06_k1.0_AX", "K07_k0.5_AX", "K07_k1.0_AX", "K08_AX", "K09_AX", "K11_15m_AX", "K11_1h_AX", "K12_30m_AX", "K12_1h_AX", "K13_AX", "K14_AX", "K15_AX", "K19_AX", "K21_A_AX", "K21_B_AX", "K26_AX", "K29_AX", "K30_AX", "C1_FLIP_AX", "B3_AXC0", "K04_AXC0"]
+primary_book = "C1_AX"
+start_time = "2026-10-09T01:24:00Z"
+cost_bps = 4.0
+leverage = 3
+budget_usd = 100
+maintenance_margin_rate = 0.004
+liquidation_fee_rate = 0.0
+sqlite_path = "artifacts/live/live.sqlite"
+data_root = "artifacts/live"
+dashboard_host = "127.0.0.1"
+dashboard_port = 8765
+telegram_entry = true
+telegram_exit = true
+telegram_dropped_signal = false
+telegram_daily_summary = true
+telegram_alert = true
+telegram_retry_base_seconds = 5.0
+telegram_retry_max_seconds = 300.0
+telegram_books = ["C1_AX_x3", "B1_AX_x3", "B2_AX_x3", "B3_AX_x3", "K02_AX_x3", "K03_AX_x3", "K04_AX_x3", "K05_AX_x3", "K06_k0.5_AX_x3", "K06_k1.0_AX_x3", "K07_k0.5_AX_x3", "K07_k1.0_AX_x3", "K08_AX_x3", "K09_AX_x3", "K11_15m_AX_x3", "K11_1h_AX_x3", "K12_30m_AX_x3", "K12_1h_AX_x3", "K13_AX_x3", "K14_AX_x3", "K15_AX_x3", "K19_AX_x3", "K21_A_AX_x3", "K21_B_AX_x3", "K26_AX_x3", "K29_AX_x3", "K30_AX_x3", "C1_FLIP_AX_x3", "B3_AXC0_x3", "K04_AXC0_x3"]
+retired_books = ["B1", "B1_D", "B2", "B2_BE", "B2_D", "B2_S150", "B2_V3", "B3", "B3_D", "C1", "C1_5m", "C1_FLIP", "C1_SL200", "C1_T1", "C1_x3", "C4", "C4_x3", "E1", "E1_x3", "F3", "F3_x3", "K02", "K02_D", "K02_G", "K02_GD", "K03", "K03_D", "K03_G", "K03_GD", "K03_S150", "K03_TRAIL", "K03_V3", "K04", "K04_D", "K04_G", "K04_GD", "K05", "K05_D", "K05_G", "K05_GD", "K06_k0.5", "K06_k0.5_D", "K06_k0.5_G", "K06_k0.5_GD", "K06_k1.0", "K06_k1.0_D", "K06_k1.0_G", "K06_k1.0_GD", "K07_k0.5", "K07_k0.5_D", "K07_k0.5_G", "K07_k0.5_GD", "K07_k1.0", "K07_k1.0_D", "K07_k1.0_G", "K07_k1.0_GD", "K08", "K08_D", "K08_G", "K08_GD", "K09", "K09_D", "K09_G", "K09_GD", "K10", "K10_G", "K11_15m", "K11_15m_D", "K11_15m_G", "K11_15m_GD", "K11_1h", "K11_1h_D", "K11_1h_G", "K11_1h_GD", "K12_1h", "K12_1h_D", "K12_1h_G", "K12_1h_GD", "K12_30m", "K12_30m_D", "K12_30m_G", "K12_30m_GD", "K13", "K13_D", "K13_G", "K13_GD", "K14", "K14_D", "K14_G", "K14_GD", "K15", "K15_D", "K15_G", "K15_GD", "K16", "K16_D", "K16_G", "K16_GD", "K17_N5", "K17_N5_D", "K17_N5_G", "K17_N5_GD", "K17_N7", "K17_N7_D", "K17_N7_G", "K17_N7_GD", "K18", "K18_D", "K18_G", "K18_GD", "K19", "K19_D", "K19_G", "K19_GD", "K21_A", "K21_A_D", "K21_A_G", "K21_A_GD", "K21_B", "K21_B_D", "K21_B_G", "K21_B_GD", "K22", "K22_D", "K22_G", "K22_GD", "K25", "K25_D", "K25_G", "K25_GD", "K26", "K26_D", "K26_G", "K26_GD", "K27", "K27_D", "K27_G", "K27_GD", "K28", "K28_D", "K28_G", "K28_GD", "K29", "K29_D", "K29_G", "K29_GD", "K30", "K30_D", "K30_G", "K30_GD"]
+alert_collector_lag_seconds = 10.0
+alert_gap_minutes = 1
+alert_disk_free_ratio = 0.1
+book_ticker_enabled = true
+book_ticker_raw_ticks = false
+websocket_reconnect_max_seconds = 60.0

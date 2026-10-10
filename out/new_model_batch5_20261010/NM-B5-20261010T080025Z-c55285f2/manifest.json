@@ -1,0 +1,355 @@
+{
+  "run_id": "NM-B5-20261010T080025Z-c55285f2",
+  "parent_run_id": "NM-B4-20261010T073851Z-ec7d5409",
+  "created_utc": "2026-10-10T08:11:24.387863+00:00",
+  "spec": "scratchpad codex_batch5.md section 3 (Codex session 01a124c5-ad76-7d91-a832-42fbf0b4d6b7)",
+  "name": "G3-NORM-ADAPT",
+  "frozen_hypothesis": "normalised score/SVI keep fixed boundaries; funding gate uses previous-90-event robust-z raw boundary median90 + c*1.4826*MAD90 (c in {-0.5,0}); only target vol adapts (trailing sigma_ann quantile or V-ENS mean); 0.5 F42 + 0.5 S180 long ensemble dilutes long profit concentration; maker 4 bps rt",
+  "windows": {
+    "DEV-FULL": [
+      "2020-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "DEV-A": [
+      "2020-01-01 00:00:00+00:00",
+      "2024-01-01 00:00:00+00:00"
+    ],
+    "DEV-B": [
+      "2024-01-01 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00"
+    ],
+    "TEST": [
+      "2026-01-01 00:00:00+00:00",
+      "2026-10-08 00:00:00+00:00"
+    ]
+  },
+  "window_days": {
+    "DEV-FULL": 2192,
+    "DEV-A": 1461,
+    "DEV-B": 731,
+    "TEST": 280
+  },
+  "data_cutoff": "2026-10-08 00:00:00+00:00",
+  "cutoff_note": "2026-10-08 exclusive",
+  "sources": {
+    "dev_market": "D:\\StudyQuant\\artifacts\\btcusdt_2020_2026h1.parquet",
+    "test_market": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\market_1m.parquet",
+    "dev_funding": "D:\\StudyQuant\\artifacts\\funding_2020_2026h1",
+    "test_funding": "D:\\StudyQuant\\out\\k45_rl_r2_48_20261007\\r2_54\\stageb_snapshot\\funding_model_input.parquet",
+    "engine_batch2": "D:\\StudyQuant\\out\\run_new_model_batch2_20261010.py",
+    "batch3": "D:\\StudyQuant\\out\\run_new_model_batch3_20261010.py",
+    "batch4": "D:\\StudyQuant\\out\\run_new_model_batch4_20261010.py",
+    "batch4_run": "D:\\StudyQuant\\out\\new_model_batch4_20261010\\NM-B4-20261010T073851Z-ec7d5409"
+  },
+  "input_sha256": {
+    "dev_market": "6ad4dba7c55550e380426b4397b55dfbea3bcb318e37632971d82cad8cf6ada4",
+    "dev_metrics_tree": "fb9591579dacfab0a93de72f120770496f6f04b2b6cebd58859e9449acc904bd",
+    "dev_premium_tree": "3e246393245cfb0bc1a6ed81e9c81320e144cb87822a8696f9695d1867f5121c",
+    "dev_funding_tree": "62211af1b3df9bd3765ccd30313402740862f1f396338d68a0bbc8cd527f032e",
+    "batch1_code": "8a329e4fc730ccd32d10d67216a2fc7581076c226c4813b7414afd2df9fdba1a",
+    "snap_market_1m.parquet": "919433f8beade10aec0d6b9d194e94f9809704098638706255da505d26152c59",
+    "snap_technique_metrics.parquet": "dd5afe89d138b0ec63f27de3738bcbde0ef75664e4288bfe8d95fa578a3e5408",
+    "snap_technique_premium.parquet": "5d02b5ba1015b28812fc08b1d9ca7232f1298d8556c5b55b40ce3ac2c2300c98",
+    "snap_funding_model_input.parquet": "ac0f660302dc805c421a9c79304b4af6fecb332b6b01704d908e1805297e6590",
+    "snap_manifest.json": "b748d3640249a675a6a9047419bff8b0e7d8cef59e41fe2d1d85f8adbd167069",
+    "batch2_code": "97244bea96d70d0fdcce3d9d8132a683edcd98e79f3c591c8a1e3b960b72ec04",
+    "batch3_code": "7760a0d9140d9e254862a9377266175c933f26fd45ddd79d5d3d7d959b0c6181",
+    "batch4_code": "ec7d54099d2bae3c100e2f07f3cdacb0fd9bfcf9ff5f8f025a5e4b0857d42d6d",
+    "batch4_manifest": "4006556893d7356a286d3a963c362ffd50a01c571e4f2f9a861b64cb47e78d2a",
+    "batch4_controls_strict": "672fbfadda4814101b19ef61d82d1c4743ffb3fbbe025ad4483426dbc9806233",
+    "code": "c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428"
+  },
+  "code_sha256": "c55285f27c8d17167894d74e8ff68f99c3efb5c71ab7d013060e075288fec428",
+  "git": {
+    "head": "20538c4f4b7b644224f0edb74531ccf117afebbf",
+    "branch": "research/k45-audit-and-negative-results-20260930",
+    "dirty_files": 78
+  },
+  "counts": {
+    "core_logical": 40,
+    "control_logical": 2,
+    "logical": 42,
+    "sims_core": 240,
+    "sims_control": 12,
+    "sims": 252,
+    "derived_ensembles": 5,
+    "n_trials": 245,
+    "state_rows": 14832,
+    "dev_eligible_core": 40,
+    "G5_RESELECTED": "eligible",
+    "LONG_RESELECTED": "side-eligible",
+    "LONG_n_eligible": 25,
+    "SHORT_RESELECTED": "side-eligible",
+    "SHORT_n_eligible": 40,
+    "G5_n_eligible": 40
+  },
+  "structures": {
+    "F42": {
+      "trend": [
+        6,
+        18,
+        42
+      ],
+      "svi_w": 42
+    },
+    "F180": {
+      "trend": [
+        6,
+        18,
+        42
+      ],
+      "svi_w": 180
+    },
+    "S42": {
+      "trend": [
+        42,
+        168,
+        504
+      ],
+      "svi_w": 42
+    },
+    "S180": {
+      "trend": [
+        42,
+        168,
+        504
+      ],
+      "svi_w": 180
+    }
+  },
+  "funding_c": [
+    -0.5,
+    0.0
+  ],
+  "vol_policies": {
+    "W180-P50": {
+      "W": 180,
+      "q": 0.5
+    },
+    "W180-P65": {
+      "W": 180,
+      "q": 0.65
+    },
+    "W365-P50": {
+      "W": 365,
+      "q": 0.5
+    },
+    "W365-P65": {
+      "W": 365,
+      "q": 0.65
+    },
+    "V-ENS": "mean of 4 weights"
+  },
+  "controls": {
+    "CONTROL_B3_DEV_PICK_STRICT": {
+      "struct": "F180",
+      "c": 0.0,
+      "tv": 0.4,
+      "b3_gate": "fz>=0"
+    },
+    "CONTROL_B3_RESELECTED_STRICT": {
+      "struct": "S180",
+      "c": -0.5,
+      "tv": 0.4,
+      "b3_gate": "fz>=-0.5"
+    }
+  },
+  "control_parity": {
+    "CONTROL_B3_DEV_PICK_STRICT": {
+      "n_compared_vs_b4_strict": 1056,
+      "n_diff_atol_1e-6": 0,
+      "diffs": {},
+      "net4_DEV-FULL/DEV-B/TEST": [
+        15416.57326329006,
+        4069.5464440228516,
+        2589.633718807933
+      ],
+      "spec_ref": [
+        15416.5733,
+        4069.5464,
+        2589.6337
+      ],
+      "max_abs_diff_vs_spec_4dp": 4.4022851398040075e-05
+    },
+    "CONTROL_B3_RESELECTED_STRICT": {
+      "n_compared_vs_b4_strict": 1056,
+      "n_diff_atol_1e-6": 0,
+      "diffs": {},
+      "net4_DEV-FULL/DEV-B/TEST": [
+        24046.965697853208,
+        6227.051037340838,
+        4288.2396896790015
+      ],
+      "spec_ref": [
+        24046.9657,
+        6227.051,
+        4288.2397
+      ],
+      "max_abs_diff_vs_spec_4dp": 3.7340837479860056e-05
+    }
+  },
+  "picks": {
+    "G5_DEV_PICK": "G5-F180-c+0.0-V-ENS",
+    "G5_RESELECTED": "G5-S180-c-0.5-W365-P50",
+    "LONG_DEV_PICK": "G5-S180-c+0.0-W180-P65",
+    "LONG_RESELECTED": "G5-S180-c+0.0-W365-P50",
+    "SHORT_DEV_PICK": "G5-F180-c+0.0-V-ENS",
+    "SHORT_RESELECTED": "G5-S42-c-0.5-W365-P65",
+    "CONTROL_B3_DEV_PICK_STRICT": "CONTROL_B3_DEV_PICK_STRICT",
+    "CONTROL_B3_RESELECTED_STRICT": "CONTROL_B3_RESELECTED_STRICT"
+  },
+  "pool_notes": {
+    "G5_RESELECTED": "eligible",
+    "LONG_RESELECTED": "side-eligible",
+    "LONG_n_eligible": 25,
+    "SHORT_RESELECTED": "side-eligible",
+    "SHORT_n_eligible": 40,
+    "G5_n_eligible": 40
+  },
+  "test_selection_flags": {
+    "G5_RESELECTED": "TEST-selected; never independent OOS",
+    "LONG_RESELECTED": "TEST-selected; never independent OOS",
+    "SHORT_RESELECTED": "TEST-selected; never independent OOS"
+  },
+  "long_c_dedupe": {
+    "representative_c": 0.0,
+    "diffs": {
+      "F42-W180-P50": {
+        "max_abs_long_net4_diff_c": 25.913864082574037
+      },
+      "F42-W180-P65": {
+        "max_abs_long_net4_diff_c": 25.913864082574037
+      },
+      "F42-W365-P50": {
+        "max_abs_long_net4_diff_c": 25.913864082574037
+      },
+      "F42-W365-P65": {
+        "max_abs_long_net4_diff_c": 25.913864082574037
+      },
+      "F42-V-ENS": {
+        "max_abs_long_net4_diff_c": 25.913864082574037
+      },
+      "F180-W180-P50": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "F180-W180-P65": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "F180-W365-P50": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "F180-W365-P65": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "F180-V-ENS": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "S42-W180-P50": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "S42-W180-P65": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "S42-W365-P50": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "S42-W365-P65": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "S42-V-ENS": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "S180-W180-P50": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "S180-W180-P65": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "S180-W365-P50": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "S180-W365-P65": {
+        "max_abs_long_net4_diff_c": 0.0
+      },
+      "S180-V-ENS": {
+        "max_abs_long_net4_diff_c": 0.0
+      }
+    }
+  },
+  "identity_checks": {
+    "assert7_unclipped_rows": 27961,
+    "funding_events_mad0": 2023,
+    "decisions_mad0": 4046
+  },
+  "prefix_checks": {
+    "cut": "2026-01-01 00:00:00+00:00",
+    "decisions_compared": 13152,
+    "configs": {
+      "G5-F42-c-0.5-W180-P50": {
+        "prefix_closed_trades_equal": 724,
+        "prefix_open": 0
+      },
+      "G5-S180-c+0.0-V-ENS": {
+        "prefix_closed_trades_equal": 261,
+        "prefix_open": 0
+      },
+      "CONTROL_B3_DEV_PICK_STRICT": {
+        "prefix_closed_trades_equal": 386,
+        "prefix_open": 0
+      },
+      "CONTROL_B3_RESELECTED_STRICT": {
+        "prefix_closed_trades_equal": 259,
+        "prefix_open": 0
+      }
+    }
+  },
+  "execution": {
+    "tick": 0.1,
+    "offsets_bps": [
+      2,
+      5
+    ],
+    "penetration_bps": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "ttl_min": 60,
+    "exit_quote_bps": 2.0,
+    "requote_min": 60,
+    "cost_bps_rt": 4,
+    "report_only_bps_rt": 8,
+    "slippage": 0,
+    "terminal_open": "MTM + reserved 2 bps exit",
+    "funding": "PESS",
+    "action": "state_flat",
+    "weight": "entry_weight_frozen"
+  },
+  "selection": {
+    "G5_DEV_PICK": "Batch-3 eligible/DEV_score over core 40; ties DEV-FULL mdd, turnover, id",
+    "LONG_DEV_PICK": "pool 20 core (c=0) + 5 ensembles; side eligibility; offset 2/5 x DEV-A/B long per-day min",
+    "SHORT_DEV_PICK": "pool 40 core; same on short",
+    "G5_RESELECTED": "ADAPT_score (TEST 12 cells min) max; TEST-selected; never independent OOS",
+    "LONG_RESELECTED": "TEST long 6 cells min max; TEST-selected; never independent OOS",
+    "SHORT_RESELECTED": "TEST short 6 cells min max; TEST-selected; never independent OOS"
+  },
+  "verdict_rules": "Batch-3 verdict() unchanged (PROFIT_PASS, LOW_N, STRONG, ROBUST_PASS, SIDE_STRONG); side analogues S_* for side labels",
+  "bootstrap": {
+    "type": "stationary",
+    "blocks_days": [
+      20,
+      60,
+      120
+    ],
+    "n": 10000,
+    "seed": 20261010,
+    "stat": "mean daily 1m-MTM net4 (bps/day)"
+  },
+  "excluded": [
+    "raw score/SVI/funding quantiles",
+    "WF/bandit",
+    "regime-conditional thresholds"
+  ],
+  "interpretations": "Batch-5 (2026-10-10): G3-NORM-ADAPT.\n\nSpec: scratchpad codex_batch5.md section 3 (Codex session 01a124c5-ad76-7d91-a832-42fbf0b4d6b7). Parent run\nNM-B4-20261010T073851Z-ec7d5409 (strict-control parity source).\nFrozen hypothesis: already-normalised score (+-0.50) / SVI (+-0.10) keep their fixed boundaries; the raw funding\npercentile is replaced by a robust-z raw boundary over the previous 90 funding events\n(raw_thr = median90 + c*1.4826*MAD90, c in {-0.5, 0}); only the target vol adapts (trailing quantile of sigma_ann);\na 50/50 F42 + S180 long ensemble dilutes long profit concentration. Maker round trip 4 bps fixed.\n\nEngine: Batch-2 simulate/Book/bootstrap/G features, Batch-3 eligible/dev_score/adapt_score/verdict/diagnostics/\nwindow_bounds, Batch-4 trailing_q/prefix_market/window_checks are imported unchanged (importlib; file hashes = inputs).\nAll main results use strict funding semantics: an event is usable only if funding_time < T (controls included).\nInterpretations (spec silent or ambiguous; most causal reading chosen):\n  * T = market_time[dec4] + 1m, dec4 = 239 + 240k; score/SVI/sigma = Batch-2 G features (sigma = previous 180 4h\n    log returns, current excluded; SVI includes the bar closing at T).\n  * funding: j_t = max{j: ft_j < T}; median90/MAD90 over events j-90..j-1 (event j excluded), min 30 finite\n    (same sample as Batch-1 trailing_robust_z); raw_thr_j(c) = median90 + c*1.4826*MAD90; gate = fr_j >= raw_thr_j.\n    MAD90 == 0 keeps the formula (thr = median); strict controls keep Batch-3 fz (MAD 0 -> NaN -> short blocked).\n  * tv_t(W,q) = linear quantile of sigma_ann over the previous 6W 4h decisions (= [T-W, T), current excluded),\n    NaN unless all 6W finite. V-ENS weight = mean of the four (W,q) weights; NaN (flat) unless all four finite.\n  * long needs score/SVI/weight ready; short additionally funding ready. Not ready -> flat, weight 0.\n  * long pool de-duplication over c: long legs differ across c (the short gate changes path timing in state_flat),\n    so the c=0.0 sim is the representative (difference reported in manifest 'long_c_dedupe').\n  * LONG_ENS_{V}: daily/1m long P&L = 0.5 x F42(c=0) long + 0.5 x S180(c=0) long, every exec cell; closed and entries\n    = sum of both sleeves' counts; exposure/turnover/fill weights x0.5; MDD/Sharpe from the combined 1m P&L.\n  * side eligibility = Batch-3 rule restricted to one side: offset 2/5 pen 0.5 DEV-FULL/A/B side net4 > 0; primary\n    DEV-FULL side closed >= 20 or side exposure >= 180d; primary DEV-FULL side fill_notional_rate >= 0.10 (orders of\n    that side). Side ties: lower primary DEV-FULL side MDD, lower side turnover, config id.\n  * RESELECTED pools: eligible (or side-eligible) configs; whole pool only if none is eligible (flagged).\n  * side verdicts (side labels; Batch-3 rule restricted to one side): S_PROFIT_PASS, S_LOW_N (primary TEST side\n    closed < 10), S_STRONG (TEST side boot60 p05 > 0), S_ROBUST_PASS (4 windows x 6 cells side net4 > 0),\n    S_ROBUST_STRONG. Core picks also carry the Batch-3 two-side verdict.\n  * combined book (derived, no simulation): LONG_DEV_PICK long sleeve + SHORT_DEV_PICK short sleeve, P&L summed;\n    each sleeve weight <= 1, gross up to 2 when both sleeves are open at once (overlap minutes reported).\n  * prefix checks run on the real data at cut 2026-01-01: state on a truncated market and on a future-tampered\n    market must equal the full state; closed trades of a truncated simulation must equal the full-run rows.\n  * picks' trades/daily come from the stored primary trades (no re-simulation).\n",
+  "runtime_sec": 658.7
+}
