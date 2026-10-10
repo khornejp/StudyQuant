@@ -34,6 +34,18 @@ def short_labels(t: np.ndarray, c: np.ndarray, ft: np.ndarray, fr: np.ndarray, d
     return lab, np.where(ok, t1, np.iinfo(np.int64).max)
 
 
+def long_labels(t: np.ndarray, c: np.ndarray, ft: np.ndarray, fr: np.ndarray, d: np.ndarray, hold: int = HOLD_MIN):
+    """Long label: +24h price return - 4 bps - funding a long pays for settlements in (T, T + 24h]."""
+    y_s, lend = short_labels(t, c, ft, fr, d, hold)
+    d = np.asarray(d, np.int64)
+    e = np.minimum(d + hold, len(t) - 1)
+    gross = (c[e] / c[d] - 1.0) * 1e4
+    t0, t1 = t[d] + MIN, t[e] + MIN
+    cf = np.concatenate([[0.0], np.cumsum(fr * 1e4)])
+    fund = cf[np.searchsorted(ft, t1, "right")] - cf[np.searchsorted(ft, t0, "right")]
+    return np.where(np.isfinite(y_s), gross - COST_BPS - fund, np.nan), lend
+
+
 def fit_norm(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     med = np.nanmedian(X, axis=0)
     q1, q3 = np.nanpercentile(X, 25, axis=0), np.nanpercentile(X, 75, axis=0)

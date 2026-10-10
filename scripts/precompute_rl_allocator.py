@@ -2819,72 +2819,120 @@ def cmd_router(args) -> None:
 
 # ================================================================ REGIME-SHORT-24H (Codex spec 2026-10-11)
 def cmd_regime_short(args) -> None:
-    from btcusdt_quant.rl import regime_short as RS
-    t0 = time.time()
-    RD = OUT / "regime_short_24h"
-    RD.mkdir(parents=True, exist_ok=True)
+    regime_experiment("short")
+
+
+def cmd_regime_bidir(args) -> None:
+    regime_experiment("bidir")
+
+
+def regime_inputs():
+    """DEV-only market / funding (never opens a TEST path) + causal state features at 4h decisions."""
+    from btcusdt_quant.rl import dev_data as DD, regime_short as RS
     b2 = load("nm_b2_rs", "out/run_new_model_batch2_20261010.py")
-    minutes, _met, _prem, funding = b2.load_all()
-    minutes = minutes[minutes.open_time < sp.TEST_START].reset_index(drop=True)      # DEV only, TEST never read
-    funding = funding[funding.time < sp.TEST_START].reset_index(drop=True)
+    minutes, funding, in_hash = DD.load_dev()
     m = b2.Market.from_frames(minutes, funding)
-    sp.guard_times(m.t, False, "regime-short market")
-    del minutes, _met, _prem
+    del minutes
     st = pd.read_parquet(OUT / "state/state_1h.parquet", columns=["T", "exec_cell"] + list(RS.FEATURES))
     st = st[st.exec_cell == CELL_TAG[PRIMARY]].sort_values("T").reset_index(drop=True)
-    sp.guard_times(st["T"].to_numpy(np.int64), False, "regime-short state")
-    H4 = 4 * 3600 * 10**9
-    st = st[st["T"].to_numpy(np.int64) % H4 == 0].reset_index(drop=True)
+    sp.guard_times(st["T"].to_numpy(np.int64), False, "regime state")
+    st = st[st["T"].to_numpy(np.int64) % (4 * 3600 * 10**9) == 0].reset_index(drop=True)
+    in_hash["state_1h"] = sha(OUT / "state/state_1h.parquet")
+    return b2, m, st, in_hash
+
+
+def ma100_bear(m, T: np.ndarray, d: np.ndarray) -> np.ndarray:
+    """Bear regime: close_T < mean close of the last 100 completed UTC days (the running day excluded)."""
+    day = m.t // (86400 * 10**9)
+    last = np.r_[day[1:] != day[:-1], True]                       # last minute of each UTC day
+    dclose, dday = m.c[last], day[last]
+    end_t = (dday + 1) * 86400 * 10**9                             # day complete at its end
+    cs = np.r_[0.0, np.cumsum(dclose)]
+    k = np.searchsorted(end_t, T, "right")                         # completed days by T
+    ma = np.where(k >= 100, (cs[k] - cs[np.maximum(k - 100, 0)]) / 100.0, np.nan)
+    return np.where(np.isfinite(ma), m.c[d] < ma, False), ma
+
+
+def regime_experiment(mode: str) -> None:
+    from btcusdt_quant.rl import regime_short as RS
+    t0 = time.time()
+    name = "regime_short_24h" if mode == "short" else "regime_bidir_24h_r1"
+    RD = OUT / name
+    RD.mkdir(parents=True, exist_ok=True)
+    b2, m, st, in_hash = regime_inputs()
     T = st["T"].to_numpy(np.int64)
     X = st[list(RS.FEATURES)].to_numpy(float)
-    d = np.searchsorted(m.t, T) - 1                                   # bar closing at T (decision t[d] + 1m = T)
+    d = np.searchsorted(m.t, T) - 1
     if not np.array_equal(m.t[d] + sp.MIN, T):
         raise SystemExit("decision bars misaligned")
-    y, lend = RS.short_labels(m.t, m.c, m.ft, m.fr, d)
+    y_s, lend = RS.short_labels(m.t, m.c, m.ft, m.fr, d)
+    y_l, _ = RS.long_labels(m.t, m.c, m.ft, m.fr, d)
+    bear, ma = ma100_bear(m, T, d)
     ts = lambda x: pd.Timestamp(x, tz="UTC").value  # noqa: E731
     cells = [(o, p) for o in (2, 5) for p in (0.5, 1.0, 2.0)]
-    rep: dict = {"spec": {"hypothesis": "2022/2025 20-60 day bearish blocks are predicted by existing causal futures "
-                                        "regime features", "cadence": "4h", "side": "short only", "features": RS.FEATURES,
-                          "model": "ridge, fold-train median/IQR, NaN->0", "lambdas": RS.LAMBDAS,
+    rep: dict = {"spec": {"mode": mode, "cadence": "4h", "features": RS.FEATURES, "lambdas": RS.LAMBDAS,
+                          "model": "ridge, fold-train median/IQR, NaN->0, clip 10",
                           "lambda_cv": "train-internal year blocks (quarters if one year), score = held-out rule net",
-                          "entry": "predicted net4 > 0", "hold_min": RS.HOLD_MIN, "weight": 1.0,
-                          "execution": "Batch-2 maker engine (event kind), 2 bps exit quote, 6 cells",
+                          "entry": "pred > 0", "hold_min": RS.HOLD_MIN, "weight": 1.0, "max_gross": 1,
+                          "execution": "Batch-2 maker engine (event kind), 2 bps exit quote, 6 cells, 4 bps rt",
+                          "regime": None if mode == "short" else "bear: close_T < MA100 (last 100 completed UTC "
+                                                                  "daily closes) -> short model; bull -> long model",
                           "train_rows": "label end <= val start - 24h (embargo)", "folds": FOLDS_A2,
-                          "source": "local Binance USD-M BTCUSDT 1m + funding (DEV < 2026-01-01); state_1h DEV",
-                          "data_cutoff": "2026-01-01 (DEV only; TEST not accessed)"},
+                          "source": "local Binance USD-M BTCUSDT 1m + monthly funding archives, DEV loader "
+                                    "(btcusdt_quant/rl/dev_data.py, TEST paths refused); state_1h DEV",
+                          "data_cutoff": "2026-01-01 exclusive", "input_sha256": in_hash},
                  "folds": {}}
+    sides = ("short",) if mode == "short" else ("short", "long")
+    labels = {"short": y_s, "long": y_l}
     passes = {"net": [], "boot": [], "closed": []}
     for f, (tr_w, va_w) in FOLDS_A2.items():
         a_tr, b_tr = ts(tr_w[0]), ts(tr_w[1])
         a_va, b_va = ts(va_w[0]), ts(va_w[1])
-        tr = (T >= a_tr) & (T < b_tr) & (lend <= a_va - RS.HOLD_MIN * sp.MIN) & np.isfinite(y)
-        lam, cvres = RS.cv_lambda(X[tr], y[tr], T[tr], lend[tr])
-        med, sc = RS.fit_norm(X[tr])
-        w, b0 = RS.ridge(RS.apply_norm(X[tr], med, sc), y[tr], lam)
+        emb = a_va - RS.HOLD_MIN * sp.MIN
+        tr = (T >= a_tr) & (T < b_tr) & (lend <= emb) & np.isfinite(y_s)
         va = (T >= a_va) & (T < b_va)
-        pred = RS.apply_norm(X[va], med, sc) @ w + b0
-        side = np.where(pred > 0, -1, 0)
-        # leakage tamper: (1) future prices/funding from the embargo start on x1.7 -> identical train labels/model;
-        # (2) state rows after a cut inside val changed -> predictions before the cut identical
+        med, sc = RS.fit_norm(X[tr])
         c2 = m.c.copy()
-        k = int(np.searchsorted(m.t, a_va - RS.HOLD_MIN * sp.MIN))
-        c2[k:] *= 1.7
-        fr2 = np.where(m.ft > a_va - RS.HOLD_MIN * sp.MIN, m.fr * 1.7, m.fr)   # strictly after the embargo point
-        y2, _ = RS.short_labels(m.t, c2, m.ft, fr2, d)
-        lam2, _ = RS.cv_lambda(X[tr], y2[tr], T[tr], lend[tr])
-        w2, b02 = RS.ridge(RS.apply_norm(X[tr], *RS.fit_norm(X[tr])), y2[tr], lam2)
+        c2[int(np.searchsorted(m.t, emb)):] *= 1.7
+        fr2 = np.where(m.ft > emb, m.fr * 1.7, m.fr)
+        tam2 = {"short": RS.short_labels(m.t, c2, m.ft, fr2, d)[0], "long": RS.long_labels(m.t, c2, m.ft, fr2, d)[0]}
         X3 = X.copy()
         cut = a_va + (b_va - a_va) // 2
         X3[T > cut] = 99.0
-        p3 = RS.apply_norm(X3[va], med, sc) @ w + b0
-        tamper = {"train_labels_equal": bool(np.array_equal(y[tr], y2[tr])), "model_equal": bool(
-            lam2 == lam and np.array_equal(w, w2) and b0 == b02),
-                  "pred_before_cut_equal": bool(np.array_equal(p3[T[va] <= cut], pred[T[va] <= cut])),
-                  "max_train_label_end": str(pd.Timestamp(int(lend[tr].max()), tz="UTC"))}
+        models, F = {}, {"train": tr_w, "val": va_w, "train_rows": int(tr.sum()), "val_decisions": int(va.sum()),
+                         "bear_share_val": float(bear[va].mean()), "bear_share_train": float(bear[tr].mean()),
+                         "models": {}, "tamper": {}}
+        side = np.zeros(int(va.sum()), int)
+        for sd in sides:
+            y = labels[sd]
+            lam, cvres = RS.cv_lambda(X[tr], y[tr], T[tr], lend[tr])
+            w, b0 = RS.ridge(RS.apply_norm(X[tr], med, sc), y[tr], lam)
+            pred = RS.apply_norm(X[va], med, sc) @ w + b0
+            lam2, _ = RS.cv_lambda(X[tr], tam2[sd][tr], T[tr], lend[tr])
+            w2, b02 = RS.ridge(RS.apply_norm(X[tr], med, sc), tam2[sd][tr], lam2)
+            p3 = RS.apply_norm(X3[va], med, sc) @ w + b0
+            F["tamper"][sd] = {"train_labels_equal": bool(np.array_equal(y[tr], tam2[sd][tr])),
+                               "model_equal": bool(lam2 == lam and np.array_equal(w, w2) and b0 == b02),
+                               "pred_before_cut_equal": bool(np.array_equal(p3[T[va] <= cut], pred[T[va] <= cut]))}
+            top = np.argsort(-np.abs(w))[:8]
+            F["models"][sd] = {"lambda": lam, "cv": {str(k_): v for k_, v in cvres.items()}, "intercept": b0,
+                               "coef_top": {RS.FEATURES[i]: float(w[i]) for i in top},
+                               "pred_positive_share": float((pred > 0).mean()),
+                               "label_mean_train": float(np.nanmean(y[tr])),
+                               "rule_label_sum_val": float(np.nansum(y[va][pred > 0]))}
+            if mode == "short":
+                side = np.where(pred > 0, -1, side)
+            elif sd == "short":
+                side = np.where(bear[va] & (pred > 0), -1, side)
+            else:
+                side = np.where(~bear[va] & (pred > 0), 1, side)
+            models[sd] = (w, b0)
+        F["side_share"] = {"short": float((side < 0).mean()), "long": float((side > 0).mean()),
+                           "flat": float((side == 0).mean())}
         lo, hi = m.idx(pd.Timestamp(a_va, tz="UTC")), m.idx(pd.Timestamp(b_va, tz="UTC"))
-        cell_rows = {}
+        F["cells"] = {}
         for o, p in cells:
-            trd, od = b2.simulate(m, "event", d[va], side, np.ones(va.sum()), o, b2.TTL_TREND, p, lo, hi,
+            trd, od = b2.simulate(m, "event", d[va], side, np.ones(int(va.sum())), o, b2.TTL_TREND, p, lo, hi,
                                   hold=RS.HOLD_MIN)
             bk = b2.Book(m, trd, od, lo, hi)
             wnd = bk.window(lo, hi)
@@ -2892,45 +2940,48 @@ def cmd_regime_short(args) -> None:
             boots = {str(bl): b2.stationary_boot_p05(daily, bl) for bl in (20, 60, 120)}
             days = pd.date_range(pd.Timestamp(a_va, tz="UTC"), periods=len(daily), freq="D")
             mon = pd.Series(daily, index=days).groupby(days.strftime("%Y-%m")).sum()
-            cell_rows[f"o{o}_p{p}"] = {"net4": wnd["net4"], "net8_report_only": wnd["net8"], "closed": wnd["closed"],
-                                       "entries": wnd["entries"], "win": wnd["win"], "mdd": wnd["mdd_1m"],
-                                       "funding": wnd["funding"], "fill_rate": wnd["fill_notional_rate"],
-                                       "boot_p05": boots, "monthly": {k_: float(v) for k_, v in mon.items()}}
+            F["cells"][f"o{o}_p{p}"] = {
+                "net4": wnd["net4"], "net8_report_only": wnd["net8"], "closed": wnd["closed"], "win": wnd["win"],
+                "mdd": wnd["mdd_1m"], "funding": wnd["funding"], "fill_rate": wnd["fill_notional_rate"],
+                "long_net4": wnd["long_net4"], "short_net4": wnd["short_net4"], "long_closed": wnd["long_closed"],
+                "short_closed": wnd["short_closed"], "boot_p05": boots,
+                "monthly": {k_: float(v) for k_, v in mon.items()}}
             passes["net"].append(wnd["net4"] > 0)
             passes["boot"] += [v > 0 for v in boots.values()]
             passes["closed"].append(wnd["closed"] >= 30)
-        top = np.argsort(-np.abs(w))[:8]
-        rep["folds"][f] = {"train": tr_w, "val": va_w, "train_rows": int(tr.sum()), "val_decisions": int(va.sum()),
-                           "lambda": lam, "cv": {str(k_): v for k_, v in cvres.items()},
-                           "pred_positive_share": float((pred > 0).mean()), "intercept": b0,
-                           "coef_top": {RS.FEATURES[i]: float(w[i]) for i in top}, "tamper": tamper,
-                           "label_mean_train": float(np.nanmean(y[tr])), "cells": cell_rows}
-        log(f"regime-short {f}: lambda {lam} rows {tr.sum()} short share {(pred > 0).mean():.3f} "
-            f"net4 {[round(v['net4'], 1) for v in cell_rows.values()]} closed {[v['closed'] for v in cell_rows.values()]}")
+        rep["folds"][f] = F
+        log(f"{name} {f}: lambdas {[F['models'][s]['lambda'] for s in sides]} sides {F['side_share']} net4 "
+            f"{[round(v['net4'], 1) for v in F['cells'].values()]} closed {[v['closed'] for v in F['cells'].values()]}")
+    tam_ok = all(all(v for x in F["tamper"].values() for v in x.values()) for F in rep["folds"].values())
     rep["pass_criteria"] = {"net4>0": f"{sum(passes['net'])}/{len(passes['net'])}",
                             "boot_p05>0": f"{sum(passes['boot'])}/{len(passes['boot'])}",
-                            "closed>=30": f"{sum(passes['closed'])}/{len(passes['closed'])}",
-                            "tamper_all": all(all(v for k_, v in x["tamper"].items() if k_ != "max_train_label_end")
-                                              for x in rep["folds"].values())}
-    rep["pass"] = bool(all(passes["net"]) and all(passes["boot"]) and all(passes["closed"])
-                       and rep["pass_criteria"]["tamper_all"])
+                            "closed>=30": f"{sum(passes['closed'])}/{len(passes['closed'])}", "tamper_all": tam_ok}
+    rep["pass"] = bool(all(passes["net"]) and all(passes["boot"]) and all(passes["closed"]) and tam_ok)
+    rep["yearly_o2_p0.5_net4"] = {F["val"][0][:4]: F["cells"]["o2_p0.5"]["net4"] for F in rep["folds"].values()}
+    rep["yearly_rule_label_sum_short"] = {F["val"][0][:4]: F["models"]["short"]["rule_label_sum_val"]
+                                          for F in rep["folds"].values()}
     rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
                runtime_sec=round(time.time() - t0, 1), test_accessed=False,
-               code_sha256={"regime_short": sha(ROOT / "btcusdt_quant/rl/regime_short.py"), "script": sha(Path(__file__))})
-    dump(RD / "regime_short_report.json", rep)
-    registry.record(REGISTRY, {"experiment": "REGIME-SHORT-24H ridge short (A2r1 F1-F4, 6 cells)", "role": "trial",
-                               "n_trials": len(RS.LAMBDAS), "n_simulations": 4 * len(cells),
-                               "config": {k_: v for k_, v in rep["spec"].items() if k_ != "folds"},
-                               "result_summary": {"pass": rep["pass"], **rep["pass_criteria"],
-                                                  "lambdas": {f: x["lambda"] for f, x in rep["folds"].items()}}})
-    log(f"regime-short {'PASS' if rep['pass'] else 'FAIL'} {rep['pass_criteria']} {rep['runtime_sec']}s")
+               test_access_note="DEV loader refuses the stage-B snapshot and 2026 funding archives; the mixed market "
+                                "artifact is read with an open_time < 2026-01-01 predicate; state_1h is the DEV store",
+               code_sha256={"regime_short": sha(ROOT / "btcusdt_quant/rl/regime_short.py"),
+                            "dev_data": sha(ROOT / "btcusdt_quant/rl/dev_data.py"), "script": sha(Path(__file__))})
+    dump(RD / ("regime_short_report_devloader.json" if mode == "short" else "regime_bidir_report.json"), rep)
+    registry.record(REGISTRY, {"experiment": ("REGIME-SHORT-24H rerun (DEV-only loader)" if mode == "short"
+                                              else "REGIME-BIDIR-24H-r1 (MA100 regime, short/long ridge)"),
+                               "role": "trial", "n_trials": len(RS.LAMBDAS) * len(sides),
+                               "n_simulations": 4 * len(cells),
+                               "config": {k_: v for k_, v in rep["spec"].items() if k_ not in ("folds", "input_sha256")},
+                               "input_hashes": in_hash,
+                               "result_summary": {"pass": rep["pass"], **rep["pass_criteria"]}})
+    log(f"{name} {'PASS' if rep['pass'] else 'FAIL'} {rep['pass_criteria']} {rep['runtime_sec']}s")
 
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
-                                       "regime-short"))
+                                       "regime-short", "regime-bidir"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -2964,6 +3015,8 @@ def main(argv=None) -> None:
         return cmd_router(args)
     if args.command == "regime-short":
         return cmd_regime_short(args)
+    if args.command == "regime-bidir":
+        return cmd_regime_bidir(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)

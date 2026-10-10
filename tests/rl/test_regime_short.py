@@ -40,3 +40,49 @@ def test_norm_nan_and_cv_embargo():
     lam, res = RS.cv_lambda(Xf, y, T, lend)
     assert lam in RS.LAMBDAS and all(r["blocks"] == 2 for r in res.values())
     assert set(RS.block_ids(T[:100])) == {20211}         # one year -> quarter blocks
+
+
+def test_dev_loader_refuses_test_sources(tmp_path):
+    import pytest
+    from btcusdt_quant.rl import dev_data as DD, sleeve_precompute as sp
+    with pytest.raises(sp.TestAccessError):
+        DD.assert_dev_path(DD.ROOT / "out/k45_rl_r2_48_20261007/r2_54/stageb_snapshot/market_1m.parquet")
+    with pytest.raises(sp.TestAccessError):
+        DD.assert_dev_path(tmp_path / "BTCUSDT-fundingRate-2026-01.zip")
+    for nm in ("BTCUSDT-fundingRate-2025-12.zip", "BTCUSDT-fundingRate-2026-02.zip"):
+        (tmp_path / nm).write_bytes(b"x")
+    assert [p.name for p in DD.dev_funding_files(tmp_path)] == ["BTCUSDT-fundingRate-2025-12.zip"]
+
+
+def test_long_label_is_mirror_minus_costs():
+    n = 3000
+    t = (pd.Timestamp("2024-01-01", tz="UTC").value + np.arange(n) * MIN).astype(np.int64)
+    c = np.linspace(100, 110, n)
+    ft = t[[50]] + MIN // 2
+    fr = np.array([2e-4])
+    ys, _ = RS.short_labels(t, c, ft, fr, np.array([10]))
+    yl, _ = RS.long_labels(t, c, ft, fr, np.array([10]))
+    g = (c[1450] / c[10] - 1) * 1e4
+    assert np.isclose(yl[0], g - 4 - 2) and np.isclose(ys[0], -g - 4 + 2)
+
+
+def test_ma100_uses_completed_days_only():
+    import importlib.util, sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("pra_ma_t", root / "scripts/precompute_rl_allocator.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    days = 105
+    t = (pd.Timestamp("2024-01-01", tz="UTC").value + np.arange(days * 1440) * MIN).astype(np.int64)
+    c = np.repeat(np.arange(1, days + 1, dtype=float), 1440)
+    m = type("M", (), {"t": t, "c": c})()
+    T = np.array([pd.Timestamp("2024-04-10 04:00", tz="UTC").value])   # day index 100 running
+    d = np.searchsorted(t, T) - 1
+    bear, ma = mod.ma100_bear(m, T, d)
+    assert np.isclose(ma[0], np.arange(1, 101).mean())                   # days 0..99, running day excluded
+    c2 = c.copy()
+    c2[d[0] + 1:] = 1e6                                                  # future tamper
+    m2 = type("M", (), {"t": t, "c": c2})()
+    assert np.isclose(mod.ma100_bear(m2, T, d)[1][0], ma[0])
