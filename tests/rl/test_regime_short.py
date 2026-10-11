@@ -95,4 +95,6 @@ def test_dev_market_hash_is_slice_hash():
     g.loc[1, "open"] = 2.5
     assert DD.frame_sha(f) == DD.frame_sha(f.copy()) and DD.frame_sha(f) != DD.frame_sha(g)
     import inspect
-    assert "_sha(market)" not in inspect.getsource(DD.load_dev)            # mixed parquet bytes never hashed
+    # the DEV market is now a DEV-only physical file (built from daily archives < 2026); the mixed file is not read
+    assert inspect.signature(DD.load_dev).parameters["market"].default == DD.DEV_MARKET != DD.MIXED_MARKET
+    assert all(p.name < "BTCUSDT-1m-2026" for p in DD.dev_day_files())
