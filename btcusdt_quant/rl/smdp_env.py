@@ -29,20 +29,25 @@ def _robust(x: np.ndarray, train: np.ndarray):
 class SmdpData:
     """Shared, read-only arrays (market minutes, funding, token / market features) for one fold."""
 
-    def __init__(self, store_dir, minutes: pd.DataFrame, funding_sched: pd.DataFrame, train: tuple, end: str):
+    def __init__(self, store_dir, minutes: pd.DataFrame, funding_sched: pd.DataFrame, train, end: str):
+        """train: one (start, end) window or (A5 LOYO) a list of windows; normalizers / RV median use their union."""
         self.t = minutes.open_time.array.asi8.copy()
         self.o, self.h, self.l, self.c = (minutes[x].to_numpy(float) for x in ("open", "high", "low", "close"))
         self.ft = funding_sched.time.array.asi8.copy()
         self.fr = funding_sched.rate.to_numpy(float)
         self.rv = MK.rv24h(self.c)
-        a, b = (pd.Timestamp(x, tz="UTC").value for x in train)
+        wins = [train] if isinstance(train[0], str) else list(train)
+        self.train_windows = [tuple(pd.Timestamp(x, tz="UTC").value for x in w) for w in wins]
+        a, b = min(w[0] for w in self.train_windows), max(w[1] for w in self.train_windows)
         self.train = (a, b)
         self.end = pd.Timestamp(end, tz="UTC").value
         clk = SG.clock()
         self.r0 = 0
         self.r1 = int(np.searchsorted(clk, self.end))
         self.clk = clk[:self.r1]
-        trn = (self.clk >= a) & (self.clk < b)
+        trn = np.zeros(len(self.clk), bool)
+        for wa, wb in self.train_windows:
+            trn |= (self.clk >= wa) & (self.clk < wb)
         toks = SG.tokens()
         self.tokens = toks
         feats = []
@@ -66,8 +71,9 @@ class SmdpData:
         med, sc = _robust(x, trn)
         self.mkt = np.clip(np.nan_to_num((x - med) / sc, nan=0.0), -10, 10).astype(np.float32)
         self.market_cols = cols
-        ia, ib = np.searchsorted(self.t, [a, b])
-        self.rv_med = float(np.median(self.rv[ia + 1440:ib]))
+        rv_tr = np.concatenate([self.rv[int(np.searchsorted(self.t, wa)) + 1440:int(np.searchsorted(self.t, wb))]
+                                for wa, wb in self.train_windows])
+        self.rv_med = float(np.median(rv_tr))
         self.obs_dim = self.tok.shape[1] + self.mkt.shape[1] + N_ACCOUNT
 
     def row(self, t_ns: int) -> int:
@@ -220,3 +226,49 @@ class SmdpBlockEnvs(SmdpEnvs):
         k = int(self.block_of[e])
         _, a, b = self.blocks[k]
         return {"block": k, "start": a, "end": b, "reuse": int(self.reuse[self.cells[e]][k]) - 1}
+
+
+class SmdpYearBlockEnvs(SmdpBlockEnvs):
+    """A5 LOYO episodes: for every cell and every train window (calendar year) `env_per` envs walk that year's
+    non-overlapping 90-day blocks (tail included, flat reset at block start) in order, cycling; every year gets the
+    same number of envs and the same rollout minutes."""
+
+    def __init__(self, data: SmdpData, cells6: list, targets: tuple, waits: tuple, windows: list, env_per: int = 3):
+        self.d, self.targets, self.waits = data, tuple(float(x) for x in targets), tuple(int(w) for w in waits)
+        self.year_blocks = [make_blocks(tuple(pd.Timestamp(int(x), tz="UTC").isoformat() for x in w)) for w in windows]
+        self.blocks = [b for yb in self.year_blocks for b in yb]
+        self.n_env = env_per
+        self.slots = [(c, y) for c in cells6 for y in range(len(windows)) for _ in range(env_per)]
+        self.cells = [c for c, _ in self.slots]
+        self.E = len(self.cells)
+        self.kern = [None] * self.E
+        self.t_now = np.zeros(self.E, np.int64)
+        self.t_end = np.zeros(self.E, np.int64)
+        self.s0 = np.zeros(self.E, np.int64)
+        self.block_of = np.zeros(self.E, np.int64)
+        self.next_block = {(c, y): env_per for c in cells6 for y in range(len(windows))}
+        self.reuse = {(c, y): np.zeros(len(self.year_blocks[y]), np.int64) for c in cells6 for y in range(len(windows))}
+        pos = {}
+        for e, key in enumerate(self.slots):
+            j = pos.get(key, 0)
+            pos[key] = j + 1
+            self._start_year_block(e, j % len(self.year_blocks[key[1]]))
+
+    def _start_year_block(self, e: int, k: int):
+        c, y = self.slots[e]
+        self.reuse[(c, y)][k] += 1
+        _, a, b = self.year_blocks[y][k]
+        self.block_of[e] = k
+        self._reset(e, a, b)
+
+    def advance_block(self, e: int):
+        key = self.slots[e]
+        k = self.next_block[key] % len(self.year_blocks[key[1]])
+        self.next_block[key] += 1
+        self._start_year_block(e, k)
+
+    def block_info(self, e: int) -> dict:
+        c, y = self.slots[e]
+        k = int(self.block_of[e])
+        _, a, b = self.year_blocks[y][k]
+        return {"year_window": int(y), "block": k, "start": a, "end": b, "reuse": int(self.reuse[(c, y)][k]) - 1}

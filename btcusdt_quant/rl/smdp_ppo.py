@@ -261,10 +261,15 @@ def pd_ts(x: str) -> int:
 A4_WAITS = (15, 60, 240)
 A4_TARGETS = (0.0, -0.25, -0.5, -0.75, -1.0)
 A4_TARGETS_LONG = (0.0, 0.25, 0.5, 0.75, 1.0)
+A5_TARGETS = (-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0)
+TRACE_COLS = ("time", "cell_index", "seed", "rng", "expected_target", "sampled_target", "wait", "executed_U", "ret_24h_bps",
+              "consensus")
 
 
 def wrong_side(f: dict, side: int) -> bool:
     """Exposure on the forbidden side: short-only -> any long minute, long-only -> any short minute."""
+    if side == 0:
+        return False
     return f["u_max"] > 1e-12 if side < 0 else f["u_min"] < -1e-12
 A4_ROLLOUT_MIN = 7 * 1440
 
@@ -289,6 +294,8 @@ class A4Config:
     collapse_h_wait: float = 0.30
     collapse_dominant: float = 0.95
     collapse_updates: int = 3
+    target_betas: tuple = (0.010, 0.005, 0.002)          # A5: (0.00732, 0.00366, 0.00147)
+    wait_betas: tuple = (0.020, 0.015, 0.010)
 
 
 def a4_schedule(update: int) -> tuple[float, float]:
@@ -308,7 +315,8 @@ class EntropyFloor:
         self.cfg, self.on, self.ok_run = cfg, False, 0
 
     def betas(self, update: int) -> tuple[float, float, bool]:
-        bt, bw = a4_schedule(update)
+        k = 0 if update <= 17 else 1 if update <= 34 else 2
+        bt, bw = self.cfg.target_betas[k], self.cfg.wait_betas[k]
         return bt, (self.cfg.floor_beta_wait if self.on else bw), self.on
 
     def observe(self, h_wait: float) -> None:
@@ -339,7 +347,7 @@ class A4Trainer:
         self.update = 0
         self.floor = EntropyFloor(cfg)
         self.collapse_run = 0
-        self.side = 1 if max(envs.targets) > 0 else -1
+        self.side = 0 if min(envs.targets) < 0 < max(envs.targets) else (1 if max(envs.targets) > 0 else -1)
         self.obs = envs.obs()
 
     def run_update(self) -> dict:
@@ -494,7 +502,7 @@ class A4Trainer:
         return out
 
 
-def evaluate_sampled(models: dict, data, cells, targets, waits, start: str, end: str, rng_seeds) -> dict:
+def evaluate_sampled(models: dict, data, cells, targets, waits, start: str, end: str, rng_seeds, trace=None) -> dict:
     """A4 evaluation: for every training seed s (models[s]) x action RNG seed r x cell, one flat-start trajectory
     over [start, end) with categorical sampling of both heads (numpy Generator seeded with (r, s, cell index))."""
     from .smdp_env import SmdpEnvs
@@ -526,6 +534,17 @@ def evaluate_sampled(models: dict, data, cells, targets, waits, start: str, end:
                     aw = int(min(np.searchsorted(np.cumsum(pw[n]), g.random(), "right"), len(waits) - 1))
                     k = ev.kern[e]
                     i0 = k.i
+                    if trace is not None:
+                        gi = ev.s0[e] + i0
+                        c_ = data.c
+                        r24 = (c_[gi] / c_[gi - 1440] - 1.0) * 1e4 if gi >= 1440 else np.nan
+                        row = data.row(int(ev.t_now[e]))
+                        sd = data.tok[row].reshape(-1, 20)
+                        av = sd[:, 5] > 0
+                        cons = float(sd[av, 0].mean()) if av.any() else 0.0
+                        trace.append((int(ev.t_now[e]), keys[e][2], keys[e][0], keys[e][1],
+                                      float(np.dot(pt[n], np.asarray(targets))), float(targets[at]), int(waits[aw]),
+                                      float(k.st[MK.S_U]), float(r24), cons))
                     f = ev.step_one(e, at, aw)
                     r_ = acc[e]
                     r_["nonfinite"] += int((~torch.isfinite(x[n])).sum())

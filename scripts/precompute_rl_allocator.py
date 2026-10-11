@@ -4859,7 +4859,9 @@ def cmd_smdp_a4(args) -> None:
                 "boot_p05>0_18of18": bool(all(b > 0 for x in allc for b in x["boot_p05"].values())),
                 "net4/mdd>=1_6of6": bool(all((x["net_over_mdd"] or 0) >= 1 for x in allc)),
                 "flat<0.95": bool(all(x["flat_ratio"] < 0.95 for x in allc)),
-                "seeds_stitched_6of6>=2of3": bool(nseed >= 2)}
+                "seeds_stitched_6of6>=2of3": bool(nseed >= 2),
+                # A3 rule (restored for A5): 5-seed ensemble + >= 3/5 seeds; A4 never ran seeds 3, 4 -> cannot pass
+                "a3_5seed_rule_seeds_3_4_run": False}
             rep["pass"] = bool(all(rep["pass_criteria"].values()))
     rep.update(total_wall_sec=round(time.time() - t_all, 1), created_utc=datetime.now(timezone.utc).isoformat(),
                test_rows_used=0, physical_test_reads=0)
@@ -4876,12 +4878,286 @@ def cmd_smdp_a4(args) -> None:
         f"{rep['total_wall_sec']}s")
 
 
+# ================================================================ A5 (Codex 2026-10-11): signed targets, LOYO years
+A5_CANDS = (17, 34, 51, 68)
+A5_TRAIN_YEARS = (2021, 2022, 2023, 2024)
+A5_VAL_YEARS = (2022, 2023, 2024)
+
+
+def a5_window(y: int) -> tuple:
+    return (USABLE_FROM if y == 2021 else f"{y}-01-01", f"{y + 1}-01-01")
+
+
+def a5_data(windows: list, end: str):
+    from btcusdt_quant.rl import dev_data as DD, smdp_env as SE, u35
+    minutes, fund, in_hash = DD.load_dev()
+    fs = u35.assert_settlement_grid(u35.scheduled(fund))
+    return SE.SmdpData(SS, minutes, fs, train=windows, end=end), in_hash
+
+
+def a5_train(data, cfg, seed: int, updates: int, windows: list, snap_at=()):
+    from btcusdt_quant.rl import smdp_env as SE, smdp_ppo as SP
+    envs = SE.SmdpYearBlockEnvs(data, G_CELLS, SP.A5_TARGETS, SP.A4_WAITS, windows, env_per=3)
+    tr = SP.A4Trainer(envs, cfg, seed)
+    logs, snaps, status = [], {}, "ok"
+    for u in range(1, updates + 1):
+        tu = time.time()
+        rec = tr.run_update()
+        rec["sec"] = round(time.time() - tu, 2)
+        logs.append(rec)
+        if u in snap_at:
+            snaps[u] = copy_state(tr)
+        if tr.collapse_run >= cfg.collapse_updates:
+            status = f"collapse_fail_at_u{u}"
+            break
+    return tr, logs, snaps, status, envs
+
+
+def a5_model(data, cfg, state):
+    from btcusdt_quant.rl import smdp_ppo as SP
+    m = SP.SmdpPolicy(data.obs_dim, len(SP.A5_TARGETS), len(SP.A4_WAITS), cfg.hidden)
+    m.load_state_dict(state)
+    m.eval()
+    return m
+
+
+def a5_diag(tr: pd.DataFrame, days: float) -> dict:
+    """Report-only behaviour diagnostics from the evaluation trace."""
+    out = {"decisions": int(len(tr))}
+    if not len(tr):
+        return out
+    ok = np.isfinite(tr.ret_24h_bps)
+    out["spearman_expected_target_vs_ret24h"] = float(tr.loc[ok, "expected_target"].rank().corr(tr.loc[ok, "ret_24h_bps"].rank()))
+    out["spearman_expected_target_vs_consensus"] = float(tr.expected_target.rank().corr(tr.consensus.rank()))
+    q = pd.qcut(tr.loc[ok, "ret_24h_bps"], 3, labels=["low", "mid", "high"])
+    g = tr.loc[ok].groupby(q, observed=True)
+    out["ret24h_tercile"] = {str(k): {"n": int(len(v)), "ret24h_mean_bps": float(v.ret_24h_bps.mean()),
+                                      "expected_target_mean": float(v.expected_target.mean()),
+                                      "sampled_target_mean": float(v.sampled_target.mean())} for k, v in g}
+    st, ex = tr.sampled_target.to_numpy(), tr.executed_U.to_numpy()
+    out["sampled_share"] = {"long": float((st > 0).mean()), "flat": float((st == 0).mean()), "short": float((st < 0).mean())}
+    out["executed_share_at_decisions"] = {"long": float((ex > 1e-9).mean()), "flat": float((np.abs(ex) <= 1e-9).mean()),
+                                          "short": float((ex < -1e-9).mean())}
+    sw = tr.sort_values("time").groupby(["cell_index", "seed", "rng"]).sampled_target.apply(lambda s: int((s.diff().fillna(0) != 0).sum()))
+    out["target_switches_per_day"] = float(sw.mean() / days)
+    out["wait_share"] = {str(int(w)): float((tr.wait == w).mean()) for w in sorted(tr.wait.unique())}
+    return out
+
+
+def a5_eval(models: dict, data, val, rng, trace_path=None) -> tuple:
+    from btcusdt_quant.rl import smdp_ppo as SP
+    trace = []
+    res = SP.evaluate_sampled(models, data, G_CELLS, SP.A5_TARGETS, SP.A4_WAITS, *val, rng, trace=trace)
+    want = int((pd.Timestamp(val[1], tz="UTC") - pd.Timestamp(val[0], tz="UTC")) / pd.Timedelta(minutes=1))
+    end_ns = pd.Timestamp(val[1], tz="UTC").value
+    out = {}
+    for c in [f"o{o}_p{p}" for o, p in G_CELLS]:
+        rs = [v for (s, r, cc), v in res.items() if cc == c]
+        out[c] = {"n": len(rs), "net4_mean": float(np.mean([v["net4"] for v in rs])),
+                  "net4_min": float(np.min([v["net4"] for v in rs])), "net4_max": float(np.max([v["net4"] for v in rs])),
+                  "round_trips_mean": float(np.mean([v["round_trips"] for v in rs])),
+                  "flat_ratio": float(sum(v["flat_minutes"] for v in rs) / max(sum(v["minutes"] for v in rs), 1)),
+                  "target_share": (np.sum([v["t_cnt"] for v in rs], 0) / max(np.sum([v["t_cnt"] for v in rs]), 1)).tolist(),
+                  "wait_share": (np.sum([v["w_cnt"] for v in rs], 0) / max(np.sum([v["w_cnt"] for v in rs]), 1)).tolist(),
+                  "daily_mean": np.mean([v["daily"] for v in rs], 0),
+                  "per_seed_net4": {str(s): float(np.mean([v["net4"] for (s2, r, cc), v in res.items() if cc == c and s2 == s]))
+                                    for s in models},
+                  "integrity": {"nan_inf==0": bool(all(v["nonfinite"] == 0 for v in rs)),
+                                "abs_pos<=1": bool(all(v["u_absmax"] <= 1 + 1e-12 for v in rs)),
+                                "identity<=1e-8": bool(all(v["identity_err"] <= 1e-8 for v in rs)),
+                                "minutes_exact": bool(all(int(v["minutes"]) == want for v in rs)),
+                                "last_time<end": bool(all(v["last_time"] < end_ns for v in rs))}}
+    tdf = pd.DataFrame(trace, columns=SP.TRACE_COLS)
+    if trace_path is not None:
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        tdf.to_parquet(trace_path, index=False, compression="zstd")
+    return out, a5_diag(tdf, want / 1440.0), (sha(trace_path) if trace_path is not None else None)
+
+
+def cmd_smdp_a5(args) -> None:
+    import torch
+    from btcusdt_quant.rl import gates as GT, smdp_ppo as SP
+    t_all = time.time()
+    torch.set_num_threads(4)
+    smoke = "smoke" in set(getattr(args, "only", ()) or ())
+    AD = OUT / ("smdp_a5_smoke" if smoke else "smdp_a5")
+    AD.mkdir(parents=True, exist_ok=True)
+    cfg = SP.A4Config(target_betas=(0.00732, 0.00366, 0.00147))
+    base = pilot_baselines()
+    rep: dict = {"spec": {"a5": "freeze_amendment_A5.json", "targets": SP.A5_TARGETS, "waits": SP.A4_WAITS,
+                          "cfg": dataclasses_asdict(cfg), "candidates": A5_CANDS, "eval_rng": A4_RNG,
+                          "folds": {f"CV-{y}": [a5_window(t) for t in A5_TRAIN_YEARS if t != y] for y in A5_VAL_YEARS},
+                          "envs": "3 per cell x train year; 10,080 rollout minutes per env per update",
+                          "selection": "min over 6 cells of stitched CV-2022..2024 [24-sample mean net4 - max(0, famvol, "
+                                       "ewa)], tie -> earlier; all <= 0 -> FAIL, 2025 not run"},
+                 "provenance": {"a5_sha256": sha(OUT / "freeze_amendment_A5.json") if (OUT / "freeze_amendment_A5.json").exists() else None,
+                                "config_sha256": smdp_config_hash(cfg),
+                                "code_sha256": {k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py")
+                                                for k_ in ("smdp_env", "smdp_ppo", "maker_kernel", "signal_store", "dev_data")},
+                                "cutoff": "< 2026-01-01", "test_rows_used": 0, "physical_test_reads": 0,
+                                "git_head": git("rev-parse", "HEAD"), "created_utc": datetime.now(timezone.utc).isoformat()},
+                 "a4_criterion_note": "A4 code had weakened the seed criterion to >= 2/3 seeds (3 seeds); restored here to "
+                                      "the A3 rule (5-seed ensemble PASS + >= 3/5 seeds with 6/6 positive)",
+                 "folds": {}}
+    if smoke:
+        y = 2022
+        wins = [a5_window(t) for t in A5_TRAIN_YEARS if t != y]
+        t0 = time.time()
+        data, _ = a5_data(wins, "2025-01-01")
+        tr, logs, _, status, envs = a5_train(data, cfg, 0, 2, wins)
+        ev, dg, tsha = a5_eval({0: tr.model}, data, ("2022-01-01", "2022-01-15"), (10000,), AD / "trace_smoke.parquet")
+        rep["smoke"] = {"status": status, "wall_sec": round(time.time() - t0, 1), "envs": envs.E,
+                        "env_per_cell_year": envs.n_env, "year_blocks": [[list(map(int, b)) for b in yb] for yb in envs.year_blocks],
+                        "transitions": [r["transitions"] for r in logs], "sec": [r["sec"] for r in logs],
+                        "eval": a4_public(ev), "diag": dg, "trace_sha256": tsha,
+                        "params": int(sum(p.numel() for p in tr.model.parameters())),
+                        "checks": {"no_abort": bool(status == "ok"), "params==65741": bool(sum(p.numel() for p in tr.model.parameters()) == 65741),
+                                   "envs==54": bool(envs.E == 54),
+                                   "blocks_nonoverlap_within_year": bool(all(x[2] <= z[1] for yb in envs.year_blocks for x, z in zip(yb[:-1], yb[1:]))),
+                                   "eval_integrity": bool(all(all(x["integrity"].values()) for x in ev.values())),
+                                   "trace_rows>0": bool(dg["decisions"] > 0), "wall<=120s": bool(time.time() - t0 <= 120)}}
+        rep["pass"] = bool(all(rep["smoke"]["checks"].values()))
+        dump(AD / "smdp_a5_smoke_report.json", rep)
+        registry.record(REGISTRY, {"experiment": "SMDP A5 smoke", "role": "smoke", "n_trials": 1, "n_simulations": 1,
+                                   "config": rep["spec"]["cfg"], "result_summary": rep["smoke"]["checks"]})
+        log(f"A5 smoke {'PASS' if rep['pass'] else 'FAIL'} {rep['smoke']['checks']} {rep['smoke']['wall_sec']}s")
+        return
+    seeds = [0, 1, 2]
+    evals = {}
+    fail_reason = None
+    t_cv = time.time()
+    for y in A5_VAL_YEARS:
+        fold = f"CV-{y}"
+        wins = [a5_window(t) for t in A5_TRAIN_YEARS if t != y]
+        val = (f"{y}-01-01", f"{y + 1}-01-01")
+        data, _ = a5_data(wins, "2025-01-01")
+        fr = {"train_windows": wins, "val": val, "seeds": {}}
+        snaps_all = {}
+        for seed in seeds:
+            t0 = time.time()
+            try:
+                tr, logs, snaps, status, envs = a5_train(data, cfg, seed, max(A5_CANDS), wins, snap_at=A5_CANDS)
+            except SP.A4Abort as ex:
+                fr["seeds"][str(seed)] = {"status": "abort", "error": str(ex)}
+                fail_reason = f"abort {fold} seed {seed}"
+                break
+            ck = {}
+            for u, st in snaps.items():
+                snaps_all[(seed, u)] = st
+                p = AD / "ckpt" / f"{fold}_s{seed}_u{u}.pt"
+                p.parent.mkdir(parents=True, exist_ok=True)
+                torch.save({"model": st, "seed": seed, "update": u, "fold": fold}, p)
+                ck[str(u)] = sha(p)
+            fr["seeds"][str(seed)] = {"status": status, "wall_sec": round(time.time() - t0, 1), "curves": a4_curves(logs),
+                                      "envs": envs.E, "stop_diag": stop_diag(logs), "checkpoint_sha256": ck}
+            log(f"A5 {fold} seed {seed}: {status} {time.time() - t0:.0f}s")
+            if status != "ok":
+                fail_reason = f"{status} {fold} seed {seed}"
+                break
+        if fail_reason:
+            rep["folds"][fold] = fr
+            break
+        for u in A5_CANDS:
+            te = time.time()
+            ms = {s_: a5_model(data, cfg, snaps_all[(s_, u)]) for s_ in seeds}
+            ev, dg, tsha = a5_eval(ms, data, val, A4_RNG, AD / "trace" / f"{fold}_u{u}.parquet")
+            evals[(y, u)] = ev
+            fr.setdefault("candidates", {})[str(u)] = {"sampled": a4_public(ev), "diag": dg, "trace_sha256": tsha,
+                                                       "sec": round(time.time() - te, 1)}
+            log(f"A5 {fold} u{u}: mean net4 {[round(x['net4_mean']) for x in ev.values()]}")
+        rep["folds"][fold] = fr
+        del data
+    rep["cv_wall_sec"] = round(time.time() - t_cv, 1)
+    if fail_reason:
+        rep["pass"], rep["fail_reason"] = False, fail_reason
+    else:
+        table = []
+        for u in A5_CANDS:
+            row = {"update": u, "cells": {}}
+            for c in [f"o{o}_p{p}" for o, p in G_CELLS]:
+                net = sum(evals[(y, u)][c]["net4_mean"] for y in A5_VAL_YEARS)
+                bf = sum(base[(c, y)]["famvol"] for y in A5_VAL_YEARS)
+                be = sum(base[(c, y)]["ewa"] for y in A5_VAL_YEARS)
+                row["cells"][c] = {"net4_mean_stitched": net, "yearly": {str(y): evals[(y, u)][c]["net4_mean"] for y in A5_VAL_YEARS},
+                                   "famvol": bf, "ewa": be, "excess": net - max(0.0, bf, be)}
+            row["min_excess"] = min(x["excess"] for x in row["cells"].values())
+            table.append(row)
+        best = sorted(table, key=lambda r: (-r["min_excess"], r["update"]))[0]
+        rep["selection"] = {"table": table}
+        if best["min_excess"] <= 0:
+            rep["pass"], rep["fail_reason"] = False, "all candidates min_excess <= 0 (A5 FAIL; 2025 not run)"
+            rep["selection"]["U_star"] = None
+        else:
+            U = int(best["update"])
+            rep["selection"]["U_star"] = U
+            t_f = time.time()
+            wins = [a5_window(t) for t in A5_TRAIN_YEARS]
+            data, _ = a5_data(wins, "2026-01-01")
+            seeds5 = [0, 1, 2, 3, 4]
+            ms5, fin = {}, {"seeds": {}}
+            for seed in seeds5:
+                t0 = time.time()
+                tr, logs, _, status, envs = a5_train(data, cfg, seed, U, wins)
+                p = AD / "ckpt" / f"FINAL_s{seed}_u{U}.pt"
+                torch.save({"model": tr.model.state_dict(), "seed": seed, "update": U}, p)
+                ms5[seed] = tr.model
+                fin["seeds"][str(seed)] = {"status": status, "wall_sec": round(time.time() - t0, 1),
+                                           "curves": a4_curves(logs), "checkpoint_sha256": sha(p)}
+            ev5, dg5, tsha5 = a5_eval(ms5, data, ("2025-01-01", "2026-01-01"), A4_RNG, AD / "trace" / f"FINAL_2025_u{U}.parquet")
+            fin.update(eval_2025=a4_public(ev5), diag_2025=dg5, trace_sha256=tsha5, wall_sec=round(time.time() - t_f, 1))
+            rep["final"] = fin
+            E = {**{y: evals[(y, U)] for y in A5_VAL_YEARS}, 2025: ev5}
+            cs = {}
+            for c in [f"o{o}_p{p}" for o, p in G_CELLS]:
+                daily = np.concatenate([E[y][c]["daily_mean"] for y in sorted(E)])
+                eq = np.r_[0.0, np.cumsum(daily)]
+                mdd = float((np.maximum.accumulate(eq) - eq).max())
+                net = float(sum(E[y][c]["net4_mean"] for y in E))
+                bf = sum(base[(c, y)]["famvol"] for y in E)
+                be = sum(base[(c, y)]["ewa"] for y in E)
+                cs[c] = {"net4": net, "mdd_daily": mdd, "net_over_mdd": net / mdd if mdd > 0 else None,
+                         "beats": bool(net > max(0.0, bf, be)),
+                         "yearly": {str(y): {"net4": E[y][c]["net4_mean"], "round_trips": E[y][c]["round_trips_mean"]} for y in E},
+                         "boot_p05": {str(bl): GT.boot_p05(daily, bl) for bl in (20, 60, 120)},
+                         "flat_ratio": float(np.mean([E[y][c]["flat_ratio"] for y in E])),
+                         "seed_2025": E[2025][c]["per_seed_net4"],
+                         "seed_stitched_0_2": {str(s_): float(sum(E[y][c]["per_seed_net4"][str(s_)] for y in A5_VAL_YEARS)
+                                                              + E[2025][c]["per_seed_net4"][str(s_)]) for s_ in seeds}}
+            allc = cs.values()
+            rep["stitched"] = cs
+            seed_ok = [all(x["seed_stitched_0_2"][str(s_)] > 0 for x in allc) for s_ in seeds] + \
+                      [all(x["seed_2025"][str(s_)] > 0 for x in allc) for s_ in (3, 4)]
+            rep["pass_criteria"] = {
+                "integrity": bool(all(all(E[y][c]["integrity"].values()) for y in E for c in E[y])),
+                "stitched_net4>0_6of6": bool(all(x["net4"] > 0 for x in allc)),
+                "beats_baselines_6of6": bool(all(x["beats"] for x in allc)),
+                "yearly_net4>0_24of24": bool(all(v["net4"] > 0 for x in allc for v in x["yearly"].values())),
+                "yearly_round_trips>=30_24of24": bool(all(v["round_trips"] >= 30 for x in allc for v in x["yearly"].values())),
+                "boot_p05>0_18of18": bool(all(b > 0 for x in allc for b in x["boot_p05"].values())),
+                "net4/mdd>=1_6of6": bool(all((x["net_over_mdd"] or 0) >= 1 for x in allc)),
+                "flat<0.95": bool(all(x["flat_ratio"] < 0.95 for x in allc)),
+                "seeds_6of6_positive>=3of5": bool(sum(seed_ok) >= 3)}
+            rep["seed_criterion_note"] = ("seeds 0..2: stitched CV-2022..2024 + 2025; seeds 3, 4: 2025 only (no CV runs "
+                                          "under the time budget)")
+            rep["pass"] = bool(all(rep["pass_criteria"].values()))
+    rep.update(total_wall_sec=round(time.time() - t_all, 1), created_utc=datetime.now(timezone.utc).isoformat(),
+               test_rows_used=0, physical_test_reads=0)
+    dump(AD / "smdp_a5_report.json", rep)
+    for seed in seeds:
+        registry.record(REGISTRY, {"experiment": f"SMDP A5 signed LOYO seed {seed}", "role": "trial",
+                                   "n_trials": len(A5_CANDS), "n_simulations": 3, "config": rep["spec"]["cfg"],
+                                   "result_summary": {"pass": rep["pass"], "fail_reason": rep.get("fail_reason"),
+                                                      "U_star": (rep.get("selection") or {}).get("U_star")}})
+    log(f"A5 done pass={rep['pass']} {rep.get('fail_reason')} U*={(rep.get('selection') or {}).get('U_star')} "
+        f"{rep['total_wall_sec']}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4", "smdp-a5"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -4942,6 +5218,8 @@ def main(argv=None) -> None:
         return cmd_smdp_pilot(args)
     if args.command == "smdp-a4":
         return cmd_smdp_a4(args)
+    if args.command == "smdp-a5":
+        return cmd_smdp_a5(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
