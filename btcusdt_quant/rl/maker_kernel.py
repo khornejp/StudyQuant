@@ -39,8 +39,8 @@ EPS = 1e-12
 # state vector slots
 (S_U, S_Q, S_EQ, S_POSPNL, S_DAY0, S_DAY, S_PEND, S_PDQ, S_PLIM, S_PSTART, S_PEXP, S_PKIND, S_PTGT, S_LEG2,
  S_FPOS, S_FDAY, S_KILL, S_FILLS, S_FEES, S_FUND, S_TURN, S_TTLX, S_REQ, S_REV, S_PSTOP, S_DSTOP, S_RT,
- S_POSSTART, S_SPNL, S_AWFLAT, S_SFLATK, S_AWRE, S_DSZ, S_DE2S, S_DFL, S_DNFL, S_DRE, S_DNRE,
- S_NSTATE) = range(39)
+ S_POSSTART, S_SPNL, S_AWFLAT, S_SFLATK, S_AWRE, S_DSZ, S_DE2S, S_DFL, S_DNFL, S_DRE, S_DNRE, S_NEV,
+ S_NSTATE) = range(40)
 # stop diagnostics (sums over stops): size at stop, entry->stop minutes, flatten loss (P&L from the stop to the flat
 # fill), flat->re-entry minutes; counts in S_PSTOP + S_DSTOP / S_DNFL / S_DNRE
 K_INC, K_RED = 1.0, 2.0
@@ -161,6 +161,7 @@ def advance(o, h, l, c, day, frate, st, pnl, upath, i, j, tgt, off, pen):
             st[S_FDAY], newly = 1.0, True
             st[S_DSTOP] += 1
         if newly and abs(st[S_U]) > EPS:
+            st[S_NEV] += 1                          # one stop event even if position and day stops fire together
             st[S_DSZ] += abs(st[S_U])
             st[S_DE2S] += k - st[S_POSSTART]
             st[S_SPNL], st[S_AWFLAT] = st[S_POSPNL], 1.0

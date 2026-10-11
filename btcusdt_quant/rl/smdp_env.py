@@ -75,8 +75,9 @@ class SmdpData:
 
 
 class SmdpEnvs:
-    def __init__(self, data: SmdpData, cells: list, targets: tuple, episode_days: int, seed: int):
+    def __init__(self, data: SmdpData, cells: list, targets: tuple, episode_days: int, seed: int, waits=MK.WAITS):
         self.d, self.cells, self.targets = data, list(cells), tuple(float(x) for x in targets)
+        self.waits = tuple(int(w) for w in waits)
         self.E = len(self.cells)
         self.L = episode_days * 1440
         self.rng = np.random.default_rng(seed)
@@ -120,7 +121,7 @@ class SmdpEnvs:
         k = self.kern[e]
         st0 = k.st.copy()
         i0 = k.i
-        info = k.step(self.targets[a_t], MK.WAITS[a_w])
+        info = k.step(self.targets[a_t], self.waits[a_w])
         gi0 = self.s0[e]
         rv = self.d.rv[gi0:gi0 + len(k.t)]
         rw = MK.step_reward(k.pnl, k.upath, rv, self.d.rv_med, i0, info["j"], info["d_target"])
@@ -130,14 +131,15 @@ class SmdpEnvs:
                                                                                           - rw["turnover"])),
                "minutes": int(len(u)), "flat_minutes": int((np.abs(u) < 0.125).sum()), "exposure_sum": float(np.abs(u).sum()),
                "u_max": float(u.max()) if len(u) else 0.0, "u_absmax": float(np.abs(u).max()) if len(u) else 0.0,
-               "target": self.targets[a_t], "wait": MK.WAITS[a_w],
+               "target": self.targets[a_t], "wait": self.waits[a_w], "a_w": int(a_w),
                "last_time": int(k.t[info["j"]]) if len(u) else -1}
         for nm, slot in (("fills", MK.S_FILLS), ("round_trips", MK.S_RT), ("ttl_expiry", MK.S_TTLX),
                          ("requote", MK.S_REQ), ("reversal", MK.S_REV), ("pos_stop", MK.S_PSTOP),
                          ("day_stop", MK.S_DSTOP), ("fees", MK.S_FEES), ("funding", MK.S_FUND),
                          ("stop_size_sum", MK.S_DSZ), ("stop_entry_to_stop_min_sum", MK.S_DE2S),
                          ("stop_flatten_loss_sum", MK.S_DFL), ("stop_flattens", MK.S_DNFL),
-                         ("stop_reentry_min_sum", MK.S_DRE), ("stop_reentries", MK.S_DNRE)):
+                         ("stop_reentry_min_sum", MK.S_DRE), ("stop_reentries", MK.S_DNRE),
+                         ("stop_events", MK.S_NEV)):
             out[nm] = float(st1[slot] - st0[slot])
         self.t_now[e] = self.d.t[gi0 + info["j"]] + SG.MIN_NS
         out["done"] = bool(info["j"] >= len(k.t) - 1 or self.t_now[e] >= self.t_end[e])
@@ -165,3 +167,56 @@ class SmdpEnvs:
             k.st, k.i, k.i0, k.last_target = st.copy(), int(i), int(i0), float(lt)
             self.kern[e] = k
         self.t_now, self.t_end, self.s0 = sd["t_now"].copy(), sd["t_end"].copy(), sd["s0"].copy()
+
+
+def make_blocks(train: tuple, days: int = 90) -> list:
+    """A4: non-overlapping chronological blocks [a + days*k, min(a + days*(k+1), b)), tail included."""
+    a, b = (pd.Timestamp(x, tz="UTC").value for x in train)
+    out, k = [], 0
+    while a + k * days * 86_400 * 10**9 < b:
+        s_ = a + k * days * 86_400 * 10**9
+        out.append((k, s_, min(s_ + days * 86_400 * 10**9, b)))
+        k += 1
+    for (_, _, e1), (_, s2, _) in zip(out[:-1], out[1:]):
+        if s2 < e1:
+            raise ValueError("block overlap")
+    return out
+
+
+class SmdpBlockEnvs(SmdpEnvs):
+    """A4 episodes: every cell runs min(10, n_blocks) envs over the same block queue (block start = flat reset, no
+    random start); a finished env takes the next unconsumed block; after all blocks the cycle restarts."""
+
+    def __init__(self, data: SmdpData, cells6: list, targets: tuple, waits: tuple, max_env_per_cell: int = 10):
+        self.d, self.targets, self.waits = data, tuple(float(x) for x in targets), tuple(int(w) for w in waits)
+        self.blocks = make_blocks(tuple(pd.Timestamp(int(x), tz="UTC").isoformat() for x in data.train))
+        self.n_env = min(max_env_per_cell, len(self.blocks))
+        self.cells = [c for c in cells6 for _ in range(self.n_env)]
+        self.E = len(self.cells)
+        self.kern = [None] * self.E
+        self.t_now = np.zeros(self.E, np.int64)
+        self.t_end = np.zeros(self.E, np.int64)
+        self.s0 = np.zeros(self.E, np.int64)
+        self.block_of = np.zeros(self.E, np.int64)
+        self.next_block = {c: self.n_env for c in cells6}
+        self.reuse = {c: np.zeros(len(self.blocks), np.int64) for c in cells6}
+        for e in range(self.E):
+            self._start_block(e, e % self.n_env)
+
+    def _start_block(self, e: int, k: int):
+        c = self.cells[e]
+        self.reuse[c][k] += 1
+        _, a, b = self.blocks[k]
+        self.block_of[e] = k
+        self._reset(e, a, b)
+
+    def advance_block(self, e: int):
+        c = self.cells[e]
+        k = self.next_block[c] % len(self.blocks)
+        self.next_block[c] += 1
+        self._start_block(e, k)
+
+    def block_info(self, e: int) -> dict:
+        k = int(self.block_of[e])
+        _, a, b = self.blocks[k]
+        return {"block": k, "start": a, "end": b, "reuse": int(self.reuse[self.cells[e]][k]) - 1}

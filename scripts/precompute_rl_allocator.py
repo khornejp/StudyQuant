@@ -4266,7 +4266,7 @@ def cmd_scripted_baselines(args) -> None:
 # ================================================================ SMDP short-only smoke + pilot (Codex 2026-10-11, A3 locked)
 SMOKE_TARGETS = (0.0, -0.25, -0.5, -0.75, -1.0)
 STOP_KEYS = ("pos_stop", "day_stop", "stop_size_sum", "stop_entry_to_stop_min_sum", "stop_flatten_loss_sum",
-             "stop_flattens", "stop_reentry_min_sum", "stop_reentries")
+             "stop_flattens", "stop_reentry_min_sum", "stop_reentries", "stop_events")
 
 
 def smdp_data(fold: str):
@@ -4278,9 +4278,9 @@ def smdp_data(fold: str):
 
 
 def stop_diag(rows: list) -> dict:
-    t = {k: float(sum(r[k] for r in rows)) for k in STOP_KEYS}
-    n = t["pos_stop"] + t["day_stop"]
-    return {"pos_stops": t["pos_stop"], "day_stops": t["day_stop"],
+    t = {k: float(sum(r.get(k, 0.0) for r in rows)) for k in STOP_KEYS}
+    n = t["stop_events"]                     # one event per stop minute (position + day stop together count once)
+    return {"pos_stops": t["pos_stop"], "day_stops": t["day_stop"], "stop_events": n,
             "mean_size_at_stop": t["stop_size_sum"] / n if n else None,
             "mean_entry_to_stop_min": t["stop_entry_to_stop_min_sum"] / n if n else None,
             "mean_flatten_loss_bps": t["stop_flatten_loss_sum"] / t["stop_flattens"] if t["stop_flattens"] else None,
@@ -4622,12 +4622,257 @@ def e2_smdp_model(data, cfg, state):
     return m
 
 
+# ================================================================ A4 (Codex final 2026-10-11): short-only, waits {15m,1h,4h}
+A4_CANDS = (17, 34, 51, 68)
+A4_RNG = tuple(range(10000, 10008))
+
+
+def a4_curves(logs: list) -> dict:
+    keys = ("net4", "idle", "turnover", "reward", "reward_discounted", "fills", "fees", "funding", "exposure",
+            "flat_minute_ratio", "pos_stop", "day_stop", "transitions", "elapsed_minutes", "beta_target", "beta_wait",
+            "floor_on", "collapse_run", "policy_loss", "value_loss", "entropy_target", "entropy_wait", "approx_kl",
+            "clip_frac", "explained_var", "grad_norm", "sec")
+    out = {k: [r[k] for r in logs] for k in keys}
+    for hd in ("target", "wait"):
+        for k in ("count", "mean_prob", "argmax_share", "entropy_raw", "entropy_norm"):
+            out[f"{hd}_{k}"] = [r["heads"][hd][k] for r in logs]
+    out["wait_dominant_share"] = [r["heads"]["wait"]["dominant_share"] for r in logs]
+    out["per_wait"] = [r["per_wait"] for r in logs]
+    out["blocks_finished"] = [r["blocks_finished"] for r in logs]
+    return out
+
+
+def a4_train(data, cfg, seed: int, updates: int, snap_at=()):
+    from btcusdt_quant.rl import smdp_env as SE, smdp_ppo as SP
+    envs = SE.SmdpBlockEnvs(data, G_CELLS, SP.A4_TARGETS, SP.A4_WAITS)
+    tr = SP.A4Trainer(envs, cfg, seed)
+    logs, snaps, status = [], {}, "ok"
+    for u in range(1, updates + 1):
+        tu = time.time()
+        rec = tr.run_update()                                # raises A4Abort on integrity failures
+        rec["sec"] = round(time.time() - tu, 2)
+        logs.append(rec)
+        if u in snap_at:
+            snaps[u] = copy_state(tr)
+        if tr.collapse_run >= cfg.collapse_updates:
+            status = f"collapse_fail_at_u{u}"
+            break
+    return tr, logs, snaps, status, envs
+
+
+def a4_model(data, cfg, state):
+    from btcusdt_quant.rl import smdp_ppo as SP
+    m = SP.SmdpPolicy(data.obs_dim, len(SP.A4_TARGETS), len(SP.A4_WAITS), cfg.hidden)
+    m.load_state_dict(state)
+    m.eval()
+    return m
+
+
+def a4_eval(models: dict, data, val, rng=A4_RNG) -> dict:
+    """24 sampled trajectories per cell (3 training seeds x 8 action seeds); per-cell means and mean daily series."""
+    from btcusdt_quant.rl import smdp_ppo as SP
+    res = SP.evaluate_sampled(models, data, G_CELLS, SP.A4_TARGETS, SP.A4_WAITS, *val, rng)
+    want = int((pd.Timestamp(val[1], tz="UTC") - pd.Timestamp(val[0], tz="UTC")) / pd.Timedelta(minutes=1))
+    end_ns = pd.Timestamp(val[1], tz="UTC").value
+    out = {}
+    for c in [f"o{o}_p{p}" for o, p in G_CELLS]:
+        rs = [v for (s, r, cc), v in res.items() if cc == c]
+        out[c] = {"n": len(rs), "net4_mean": float(np.mean([v["net4"] for v in rs])),
+                  "net4_min": float(np.min([v["net4"] for v in rs])), "net4_max": float(np.max([v["net4"] for v in rs])),
+                  "round_trips_mean": float(np.mean([v["round_trips"] for v in rs])),
+                  "flat_ratio": float(sum(v["flat_minutes"] for v in rs) / max(sum(v["minutes"] for v in rs), 1)),
+                  "target_share": (np.sum([v["t_cnt"] for v in rs], 0) / max(np.sum([v["t_cnt"] for v in rs]), 1)).tolist(),
+                  "wait_share": (np.sum([v["w_cnt"] for v in rs], 0) / max(np.sum([v["w_cnt"] for v in rs]), 1)).tolist(),
+                  "decisions_mean": float(np.mean([v["decisions"] for v in rs])),
+                  "daily_mean": np.mean([v["daily"] for v in rs], 0),
+                  "integrity": {"nan_inf==0": bool(all(v["nonfinite"] == 0 for v in rs)),
+                                "long_exposure==0": bool(all(v["u_max"] <= 1e-12 for v in rs)),
+                                "identity<=1e-8": bool(all(v["identity_err"] <= 1e-8 for v in rs)),
+                                "minutes_exact": bool(all(int(v["minutes"]) == want for v in rs)),
+                                "last_time<end": bool(all(v["last_time"] < end_ns for v in rs))},
+                  "per_seed_net4": {str(s): float(np.mean([v["net4"] for (s2, r, cc), v in res.items()
+                                                           if cc == c and s2 == s])) for s in models}}
+    return out
+
+
+def a4_public(ev: dict) -> dict:
+    return {c: {k: v for k, v in x.items() if k != "daily_mean"} for c, x in ev.items()}
+
+
+def cmd_smdp_a4(args) -> None:
+    import torch
+    from btcusdt_quant.rl import gates as GT, smdp_ppo as SP
+    t_all = time.time()
+    torch.set_num_threads(4)
+    smoke = str(getattr(args, "only", "")) == "smoke"
+    AD = OUT / ("smdp_a4_smoke" if smoke else "smdp_a4")
+    AD.mkdir(parents=True, exist_ok=True)
+    cfg = SP.A4Config()
+    base = pilot_baselines()
+    rep: dict = {"spec": {"a4": "freeze_amendment_A4.json", "targets": SP.A4_TARGETS, "waits": SP.A4_WAITS,
+                          "cfg": dataclasses_asdict(cfg), "candidates": A4_CANDS, "eval_rng": A4_RNG,
+                          "eval": "3 training seeds x 8 action RNG seeds, categorical sampling of both heads, per-cell "
+                                  "mean net4; joint argmax per seed = diagnostic only",
+                          "selection": "min over 6 cells of stitched F1..F3 [mean net4 - max(0, famvol, ewa)], tie -> "
+                                       "earlier; all <= 0 -> A4 FAIL (F4 skipped)"},
+                 "provenance": {"a4_sha256": sha(OUT / "freeze_amendment_A4.json") if (OUT / "freeze_amendment_A4.json").exists() else None,
+                                "a3_sha256": sha(OUT / "freeze_amendment_A3.json"),
+                                "a3_training_sha256": sha(OUT / "freeze_amendment_A3_training.json"),
+                                "config_sha256": smdp_config_hash(cfg),
+                                "code_sha256": {k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py")
+                                                for k_ in ("smdp_env", "smdp_ppo", "maker_kernel", "signal_store", "dev_data")},
+                                "source": "DEV-only physical market + DEV funding archives; signal store", "cutoff": "< 2026-01-01",
+                                "test_rows_used": 0, "physical_test_reads": 0, "git_head": git("rev-parse", "HEAD"),
+                                "created_utc": datetime.now(timezone.utc).isoformat()}, "folds": {}}
+    if smoke:
+        data, _ = smdp_data("F1")
+        t0 = time.time()
+        status, err = "ok", None
+        try:
+            tr, logs, _, status, envs = a4_train(data, cfg, 0, 6)
+        except SP.A4Abort as ex:
+            status, err, logs, envs = "abort", str(ex), [], None
+        ev = a4_eval({0: tr.model}, data, ("2022-01-01", "2022-02-01"), rng=(10000, 10001)) if status == "ok" else {}
+        fin = [b for r in logs for b in r["blocks_finished"]]
+        rep["smoke"] = {"status": status, "error": err, "wall_sec": round(time.time() - t0, 1),
+                        "blocks": [list(map(int, b)) for b in envs.blocks] if envs else None,
+                        "env_per_cell": envs.n_env if envs else None, "blocks_finished": fin,
+                        "curves": a4_curves(logs) if logs else None, "eval_1m": a4_public(ev),
+                        "checks": {"no_abort": bool(status == "ok"),
+                                   "blocks_nonoverlap": bool(envs is not None and all(x[2] <= y[1] for x, y in zip(envs.blocks[:-1], envs.blocks[1:]))),
+                                   "eval_integrity": bool(all(all(x["integrity"].values()) for x in ev.values())) if ev else False,
+                                   "floor_logic_unit_tested": True,
+                                   "floor_triggered_in_smoke": bool(any(r["floor_next"] for r in logs))}}
+        rep["pass"] = bool(rep["smoke"]["checks"]["no_abort"] and rep["smoke"]["checks"]["blocks_nonoverlap"]
+                           and rep["smoke"]["checks"]["eval_integrity"])
+        dump(AD / "smdp_a4_smoke_report.json", rep)
+        registry.record(REGISTRY, {"experiment": "SMDP A4 smoke", "role": "smoke", "n_trials": 1, "n_simulations": 1,
+                                   "config": rep["spec"]["cfg"], "result_summary": rep["smoke"]["checks"]})
+        log(f"A4 smoke {'PASS' if rep['pass'] else 'FAIL'} {rep['smoke']['checks']} {rep['smoke']['wall_sec']}s")
+        return
+    seeds = [0, 1, 2]
+    models_at, ens = {}, {}
+    fail_reason = None
+    for fold in ("F1", "F2", "F3"):
+        data, _ = smdp_data(fold)
+        train, val = FOLDS_A2[fold]
+        fr = {"seeds": {}}
+        for seed in seeds:
+            t0 = time.time()
+            try:
+                tr, logs, snaps, status, envs = a4_train(data, cfg, seed, max(A4_CANDS), snap_at=A4_CANDS)
+            except SP.A4Abort as ex:
+                fr["seeds"][str(seed)] = {"status": "abort", "error": str(ex)}
+                fail_reason = f"abort {fold} seed {seed}"
+                break
+            for u, st in snaps.items():
+                models_at[(fold, seed, u)] = st
+            fr["seeds"][str(seed)] = {"status": status, "wall_sec": round(time.time() - t0, 1), "curves": a4_curves(logs),
+                                      "blocks": [list(map(int, b)) for b in envs.blocks], "env_per_cell": envs.n_env,
+                                      "stop_diag": stop_diag(logs), "final_model_sha256": SP.model_sha(tr.model)}
+            log(f"A4 {fold} seed {seed}: {status} {time.time() - t0:.0f}s")
+            if status != "ok":
+                fail_reason = f"{status} {fold} seed {seed}"
+                break
+        if fail_reason:
+            rep["folds"][fold] = fr
+            break
+        for u in A4_CANDS:
+            te = time.time()
+            ms = {s_: a4_model(data, cfg, models_at[(fold, s_, u)]) for s_ in seeds}
+            ev = a4_eval(ms, data, val)
+            ens[(fold, u)] = ev
+            diag = {str(s_): {c: x["net4"] for c, x in SP.evaluate([ms[s_]], data, G_CELLS, SP.A4_TARGETS, *val,
+                                                                   waits=SP.A4_WAITS).items()} for s_ in seeds}
+            fr.setdefault("candidates", {})[str(u)] = {"sampled": a4_public(ev), "argmax_diag_net4": diag,
+                                                       "sec": round(time.time() - te, 1)}
+            log(f"A4 {fold} u{u}: mean net4 {[round(x['net4_mean']) for x in ev.values()]}")
+        rep["folds"][fold] = fr
+        del data
+    if fail_reason:
+        rep["pass"], rep["fail_reason"] = False, fail_reason
+    else:
+        table = []
+        for u in A4_CANDS:
+            row = {"update": u, "cells": {}}
+            for c in [f"o{o}_p{p}" for o, p in G_CELLS]:
+                net = sum(ens[(f, u)][c]["net4_mean"] for f in ("F1", "F2", "F3"))
+                bf = sum(base[(c, PILOT_YEARS[f])]["famvol"] for f in ("F1", "F2", "F3"))
+                be = sum(base[(c, PILOT_YEARS[f])]["ewa"] for f in ("F1", "F2", "F3"))
+                row["cells"][c] = {"net4_mean_stitched": net, "yearly": {str(PILOT_YEARS[f]): ens[(f, u)][c]["net4_mean"]
+                                                                        for f in ("F1", "F2", "F3")},
+                                   "famvol": bf, "ewa": be, "excess": net - max(0.0, bf, be)}
+            row["min_excess"] = min(x["excess"] for x in row["cells"].values())
+            table.append(row)
+        best = sorted(table, key=lambda r: (-r["min_excess"], r["update"]))[0]
+        rep["selection"] = {"table": table}
+        if best["min_excess"] <= 0:
+            rep["pass"], rep["fail_reason"] = False, "all candidates min_excess <= 0 (A4 FAIL, F4 skipped)"
+            rep["selection"]["U_star"] = None
+        else:
+            U = int(best["update"])
+            rep["selection"]["U_star"] = U
+            data, _ = smdp_data("F4")
+            train, val = FOLDS_A2["F4"]
+            ms4, f4 = {}, {"seeds": {}}
+            for seed in seeds:
+                t0 = time.time()
+                tr, logs, _, status, envs = a4_train(data, cfg, seed, U)
+                torch.save({"model": tr.model.state_dict(), "seed": seed, "U": U}, AD / f"F4_seed{seed}_u{U}.pt")
+                ms4[seed] = tr.model
+                f4["seeds"][str(seed)] = {"status": status, "wall_sec": round(time.time() - t0, 1), "curves": a4_curves(logs),
+                                          "stop_diag": stop_diag(logs), "checkpoint_sha256": sha(AD / f"F4_seed{seed}_u{U}.pt")}
+            ev4 = a4_eval(ms4, data, val)
+            f4["eval_2025"] = a4_public(ev4)
+            rep["folds"]["F4"] = f4
+            yrs = {"F1": 2022, "F2": 2023, "F3": 2024, "F4": 2025}
+            E = {**{f: ens[(f, U)] for f in ("F1", "F2", "F3")}, "F4": ev4}
+            cs = {}
+            for c in [f"o{o}_p{p}" for o, p in G_CELLS]:
+                daily = np.concatenate([E[f][c]["daily_mean"] for f in yrs])
+                eq = np.r_[0.0, np.cumsum(daily)]
+                mdd = float((np.maximum.accumulate(eq) - eq).max())
+                net = float(sum(E[f][c]["net4_mean"] for f in yrs))
+                bf = sum(base[(c, yrs[f])]["famvol"] for f in yrs)
+                be = sum(base[(c, yrs[f])]["ewa"] for f in yrs)
+                cs[c] = {"net4": net, "mdd_daily": mdd, "net_over_mdd": net / mdd if mdd > 0 else None,
+                         "beats": bool(net > max(0.0, bf, be)),
+                         "yearly": {str(yrs[f]): {"net4": E[f][c]["net4_mean"], "round_trips": E[f][c]["round_trips_mean"]} for f in yrs},
+                         "boot_p05": {str(bl): GT.boot_p05(daily, bl) for bl in (20, 60, 120)},
+                         "flat_ratio": float(np.mean([E[f][c]["flat_ratio"] for f in yrs])),
+                         "per_seed_stitched": {str(s_): float(sum(E[f][c]["per_seed_net4"][str(s_)] for f in yrs)) for s_ in seeds}}
+            allc = cs.values()
+            rep["stitched"] = cs
+            nseed = sum(all(x["per_seed_stitched"][str(s_)] > 0 for x in allc) for s_ in seeds)
+            rep["pass_criteria"] = {
+                "integrity": bool(all(all(E[f][c]["integrity"].values()) for f in yrs for c in E[f])),
+                "stitched_net4>0_6of6": bool(all(x["net4"] > 0 for x in allc)),
+                "beats_baselines_6of6": bool(all(x["beats"] for x in allc)),
+                "yearly_net4>0_24of24": bool(all(y["net4"] > 0 for x in allc for y in x["yearly"].values())),
+                "yearly_round_trips>=30_24of24": bool(all(y["round_trips"] >= 30 for x in allc for y in x["yearly"].values())),
+                "boot_p05>0_18of18": bool(all(b > 0 for x in allc for b in x["boot_p05"].values())),
+                "net4/mdd>=1_6of6": bool(all((x["net_over_mdd"] or 0) >= 1 for x in allc)),
+                "flat<0.95": bool(all(x["flat_ratio"] < 0.95 for x in allc)),
+                "seeds_stitched_6of6>=2of3": bool(nseed >= 2)}
+            rep["pass"] = bool(all(rep["pass_criteria"].values()))
+    rep.update(total_wall_sec=round(time.time() - t_all, 1), created_utc=datetime.now(timezone.utc).isoformat(),
+               test_rows_used=0, physical_test_reads=0)
+    dump(AD / "smdp_a4_report.json", rep)
+    for seed in seeds:
+        registry.record(REGISTRY, {"experiment": f"SMDP A4 short-only seed {seed}", "role": "trial",
+                                   "n_trials": len(A4_CANDS), "n_simulations": 4, "config": rep["spec"]["cfg"],
+                                   "result_summary": {"pass": rep["pass"], "fail_reason": rep.get("fail_reason"),
+                                                      "U_star": (rep.get("selection") or {}).get("U_star")}})
+    log(f"A4 done pass={rep['pass']} {rep.get('fail_reason')} U*={(rep.get('selection') or {}).get('U_star')} "
+        f"{rep['total_wall_sec']}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -4686,6 +4931,8 @@ def main(argv=None) -> None:
         return cmd_smdp_smoke(args)
     if args.command == "smdp-pilot":
         return cmd_smdp_pilot(args)
+    if args.command == "smdp-a4":
+        return cmd_smdp_a4(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
