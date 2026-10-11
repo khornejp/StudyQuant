@@ -4153,15 +4153,17 @@ def sb_targets(kind: str, side, avail, W) -> np.ndarray:
     return np.clip(np.round(v * 4) / 4, -1, 1)
 
 
-def sb_run(K, dec_i: np.ndarray, tg: np.ndarray, rv, rv_med: float) -> dict:
+def sb_run(K, dec_i: np.ndarray, tg: np.ndarray, rv, rv_med) -> dict:
+    """rv_med: per-decision train median RV24h of the decision's fold."""
     from btcusdt_quant.rl import maker_kernel as MK
     K.reset(int(dec_i[0]))
-    tot = {"net4": 0.0, "idle": 0.0, "turnover": 0.0, "reward": 0.0}
+    rv_med = np.broadcast_to(np.asarray(rv_med, float), (len(dec_i),))
+    tot = {"net4": 0.0, "idle": 0.0, "turnover": 0.0, "reward": 0.0, "reward_discounted": 0.0}
     for q in range(len(dec_i)):
         w = SB_WAIT
         i0 = K.i
         info = K.step(float(tg[q]), w)
-        d = MK.step_reward(K.pnl, K.upath, rv, rv_med, i0, info["j"], info["d_target"])
+        d = MK.step_reward(K.pnl, K.upath, rv, float(rv_med[q]), i0, info["j"], info["d_target"])
         for k_ in tot:
             tot[k_] += d[k_]
     return tot
@@ -4187,6 +4189,8 @@ def cmd_scripted_baselines(args) -> None:
                                     "flat": "always 0"},
                           "reward": MK.step_reward.__doc__, "rv_median": "fold train [2021-01-30, year start) median "
                                                                           "of RV24h at minute closes",
+                          "labels": "position_openings = flat -> position minutes (formerly reported as round_trips); "
+                                    "completed_round_trips = position -> flat (kernel counter)",
                           "tokens": toks, "data": "DEV loader (< 2026-01-01), funding snapped to settlements"},
                  "folds": {}, "yearly": {}, "continuous": {}}
     W_by_year, tg_by = {}, {k: {} for k in kinds}
@@ -4217,7 +4221,8 @@ def cmd_scripted_baselines(args) -> None:
                 days_all.append(d)
                 flat = np.abs(up) < 0.125
                 stats[str(y)] = {"net4": float(pnl.sum()), "mdd": GT.mdd(d), "boot60_p05": GT.boot_p05(d, 60),
-                                 "round_trips": int((flat[:-1] & ~flat[1:]).sum()), "flat_ratio": float(flat.mean()),
+                                 "position_openings": int((flat[:-1] & ~flat[1:]).sum()),
+                                 "completed_round_trips": int(K.st[MK.S_RT]), "flat_ratio": float(flat.mean()),
                                  "fills": int(K.st[MK.S_FILLS]), "fees": float(K.st[MK.S_FEES]),
                                  "funding": float(K.st[MK.S_FUND]), "reward": tot,
                                  "target_change_decisions": int((np.diff(np.r_[0.0, tg]) != 0).sum())}
@@ -4229,7 +4234,8 @@ def cmd_scripted_baselines(args) -> None:
             dts = np.arange(a, b, SB_WAIT * SG.MIN_NS, dtype=np.int64)
             tg = np.concatenate([tg_by[kind][(ctag, y)] for y in U35_YEARS])
             dec_i = np.searchsorted(t_min, dts) - 1
-            tot = sb_run(K, dec_i, tg, rv, rep["folds"]["F4"]["rv24h_train_median"])
+            yr_dec = pd.DatetimeIndex(dts, tz="UTC").year
+            tot = sb_run(K, dec_i, tg, rv, np.array([rep["folds"][U35_FOLD_OF[y_]]["rv24h_train_median"] for y_ in yr_dec]))
             ia, ib = np.searchsorted(t_min, [a, b])
             pnl, up = K.pnl[ia:ib].copy(), K.upath[ia:ib].copy()
             d = pnl.reshape(-1, 1440).sum(1)
@@ -4238,9 +4244,11 @@ def cmd_scripted_baselines(args) -> None:
             rep["continuous"].setdefault(ctag, {})[kind] = {
                 "net4": float(pnl.sum()), "mdd": GT.mdd(d), "boot60_p05": GT.boot_p05(d, 60),
                 "boot20_p05": GT.boot_p05(d, 20), "boot120_p05": GT.boot_p05(d, 120),
-                "round_trips": int((flat[:-1] & ~flat[1:]).sum()), "flat_ratio": float(flat.mean()),
-                "fills": int(K.st[MK.S_FILLS]), "net4_by_year": {str(y): float(pnl[yrs == y].sum()) for y in U35_YEARS},
-                "reward_rv_median_note": "F4 train median used for the whole continuous run", "reward": tot}
+                "position_openings": int((flat[:-1] & ~flat[1:]).sum()), "completed_round_trips": int(K.st[MK.S_RT]),
+                "flat_ratio": float(flat.mean()), "fills": int(K.st[MK.S_FILLS]),
+                "counters": {k_: int(K.st[getattr(MK, "S_" + k_)]) for k_ in ("TTLX", "REQ", "REV", "PSTOP", "DSTOP")},
+                "net4_by_year": {str(y): float(pnl[yrs == y].sum()) for y in U35_YEARS},
+                "reward_rv_median_note": "each decision uses its own fold's train median RV24h", "reward": tot}
         log(f"baselines {ctag}: " + " ".join(f"{k}={rep['continuous'][ctag][k]['net4']:.0f}" for k in kinds))
     rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
                runtime_sec=round(time.time() - t0, 1), test_accessed=False, input_sha256=in_hash,
