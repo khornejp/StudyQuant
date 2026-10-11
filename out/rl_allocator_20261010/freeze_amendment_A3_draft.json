@@ -1,0 +1,463 @@
+{
+  "name": "A3 amendment DRAFT - single-position 5m SMDP (Codex redesign 2026-10-11)",
+  "status": "DRAFT - not locked; awaiting Codex review/lock",
+  "created_utc": "2026-10-11T01:23:27.269559+00:00",
+  "supersedes": {
+    "allocator_on_off": "RL allocator over sleeves (levels / binary ON-OFF, open/pending heads, static and EWA7 comparators, U35 family-risk reference) is withdrawn",
+    "forbidden_inputs": "U35/sleeve exit ledgers, outcome tables and sleeve net4 are not RL inputs or rewards; only causal signal timelines are used",
+    "checkpoints": "no RL-EWA7-BINARY checkpoint exists (training never started); none may be used",
+    "kept_from_A2r1": "DEV window [2021-01-30, 2026-01-01), folds F1..F4 (val 2022..2025), maker 4 bps round trip, 6 evaluation cells offset {2,5} x pen {0.5,1,2}, TEST (>= 2026-01-01) guard"
+  },
+  "token_map": {
+    "rules": "Signal-only causal store on a 5-minute clock (Codex SMDP redesign 2026-10-11). Techniques are observations only:\nno sleeve P&L, exit or outcome ledger is read here.\n\nToken map (one token per base technique id):\n  * every research catalog id (btcusdt_quant.sim.strategies.CATALOG, 41) except K10 (grid book, no directional\n    signal: empty table) and exact sign-negation duplicates (K21_B == -K21_A on every decision -> merged into K21_A);\n  * gated / DETEXIT expansions are not tokens: the gate becomes the gate_pass channel, DETEXIT differs only in exits;\n  * AX / AXC0 paper variants are not separate: their entry rows equal the base id's (B3, K04 checked), only exits\n    differ; K01_FLIP stays a token (its entries are not K01's);\n  * research signals outside the catalog: G3_LONG, G3_SHORT, LBR_FUND, C1v2, C4v2 (grid timelines, primary cell).\n",
+    "reconcile": {
+      "paper_toml_books": 32,
+      "u35_universe": 35,
+      "catalog_ids": 41,
+      "catalog_ids_pre_post_freeze": 40,
+      "post_freeze_ids": [
+        "K01_FLIP"
+      ],
+      "gate_x_style_expansion": 152,
+      "paper_catalog_py_books": 30,
+      "historical_108": "2026-10-07 paper_catalog: 29 ids x gate x NATIVE/DETEXIT (grid NATIVE only); retired 2026-10-09 by the R2-52A AX switch (memory #103 -> #116); not a current code list",
+      "tokens": 44,
+      "excluded": {
+        "K10": "grid book: empty signal table, no directional signal",
+        "K21_B": "exact sign negation of K21_A on every decision group (merged)"
+      },
+      "variants_merged": {
+        "B3_AXC0": "B3",
+        "K04_AXC0": "K04",
+        "C1_AX": "K01",
+        "C1_FLIP_AX": "K01_FLIP"
+      },
+      "paper_book_to_token": {
+        "C1_AX": "K01",
+        "B1_AX": "B1",
+        "B2_AX": "B2",
+        "B3_AX": "B3",
+        "K02_AX": "K02",
+        "K03_AX": "K03",
+        "K04_AX": "K04",
+        "K05_AX": "K05",
+        "K06_k0.5_AX": "K06_k0.5",
+        "K06_k1.0_AX": "K06_k1.0",
+        "K07_k0.5_AX": "K07_k0.5",
+        "K07_k1.0_AX": "K07_k1.0",
+        "K08_AX": "K08",
+        "K09_AX": "K09",
+        "K11_15m_AX": "K11_15m",
+        "K11_1h_AX": "K11_1h",
+        "K12_30m_AX": "K12_30m",
+        "K12_1h_AX": "K12_1h",
+        "K13_AX": "K13",
+        "K14_AX": "K14",
+        "K15_AX": "K15",
+        "K19_AX": "K19",
+        "K21_A_AX": "K21_A",
+        "K21_B_AX": "K21_B",
+        "K26_AX": "K26",
+        "K29_AX": "K29",
+        "K30_AX": "K30",
+        "C1_FLIP_AX": "K01_FLIP",
+        "B3_AXC0": "B3",
+        "K04_AXC0": "K04",
+        "G3_LONG": "G3_LONG",
+        "G3_SHORT": "G3_SHORT"
+      }
+    },
+    "tokens": [
+      {
+        "token": "K01",
+        "token_id": 0,
+        "family": "baseline",
+        "source_id": "K01"
+      },
+      {
+        "token": "K01_FLIP",
+        "token_id": 1,
+        "family": "baseline",
+        "source_id": "K01_FLIP"
+      },
+      {
+        "token": "K02",
+        "token_id": 2,
+        "family": "reversion",
+        "source_id": "K02"
+      },
+      {
+        "token": "K03",
+        "token_id": 3,
+        "family": "reversion",
+        "source_id": "K03"
+      },
+      {
+        "token": "K04",
+        "token_id": 4,
+        "family": "volatility",
+        "source_id": "K04"
+      },
+      {
+        "token": "K05",
+        "token_id": 5,
+        "family": "volatility",
+        "source_id": "K05"
+      },
+      {
+        "token": "B1",
+        "token_id": 6,
+        "family": "composite",
+        "source_id": "B1"
+      },
+      {
+        "token": "B2",
+        "token_id": 7,
+        "family": "composite",
+        "source_id": "B2"
+      },
+      {
+        "token": "B3",
+        "token_id": 8,
+        "family": "composite",
+        "source_id": "B3"
+      },
+      {
+        "token": "K06_k0.5",
+        "token_id": 9,
+        "family": "volatility",
+        "source_id": "K06_k0.5"
+      },
+      {
+        "token": "K07_k0.5",
+        "token_id": 10,
+        "family": "volatility",
+        "source_id": "K07_k0.5"
+      },
+      {
+        "token": "K06_k1.0",
+        "token_id": 11,
+        "family": "volatility",
+        "source_id": "K06_k1.0"
+      },
+      {
+        "token": "K07_k1.0",
+        "token_id": 12,
+        "family": "volatility",
+        "source_id": "K07_k1.0"
+      },
+      {
+        "token": "K08",
+        "token_id": 13,
+        "family": "volatility",
+        "source_id": "K08"
+      },
+      {
+        "token": "K09",
+        "token_id": 14,
+        "family": "reversion",
+        "source_id": "K09"
+      },
+      {
+        "token": "K11_15m",
+        "token_id": 15,
+        "family": "trend",
+        "source_id": "K11_15m"
+      },
+      {
+        "token": "K11_1h",
+        "token_id": 16,
+        "family": "trend",
+        "source_id": "K11_1h"
+      },
+      {
+        "token": "K12_30m",
+        "token_id": 17,
+        "family": "trend",
+        "source_id": "K12_30m"
+      },
+      {
+        "token": "K12_1h",
+        "token_id": 18,
+        "family": "trend",
+        "source_id": "K12_1h"
+      },
+      {
+        "token": "K13",
+        "token_id": 19,
+        "family": "trend",
+        "source_id": "K13"
+      },
+      {
+        "token": "K14",
+        "token_id": 20,
+        "family": "trend",
+        "source_id": "K14"
+      },
+      {
+        "token": "K15",
+        "token_id": 21,
+        "family": "reversion",
+        "source_id": "K15"
+      },
+      {
+        "token": "K16",
+        "token_id": 22,
+        "family": "reversion",
+        "source_id": "K16"
+      },
+      {
+        "token": "K17_N5",
+        "token_id": 23,
+        "family": "reversion",
+        "source_id": "K17_N5"
+      },
+      {
+        "token": "K17_N7",
+        "token_id": 24,
+        "family": "reversion",
+        "source_id": "K17_N7"
+      },
+      {
+        "token": "K18",
+        "token_id": 25,
+        "family": "futures",
+        "source_id": "K18"
+      },
+      {
+        "token": "K19",
+        "token_id": 26,
+        "family": "reversion",
+        "source_id": "K19"
+      },
+      {
+        "token": "K20_A",
+        "token_id": 27,
+        "family": "futures",
+        "source_id": "K20_A"
+      },
+      {
+        "token": "K21_A",
+        "token_id": 28,
+        "family": "futures",
+        "source_id": "K21_A"
+      },
+      {
+        "token": "K20_B",
+        "token_id": 29,
+        "family": "futures",
+        "source_id": "K20_B"
+      },
+      {
+        "token": "K22",
+        "token_id": 30,
+        "family": "futures",
+        "source_id": "K22"
+      },
+      {
+        "token": "K23",
+        "token_id": 31,
+        "family": "reversion",
+        "source_id": "K23"
+      },
+      {
+        "token": "K24",
+        "token_id": 32,
+        "family": "futures",
+        "source_id": "K24"
+      },
+      {
+        "token": "K25",
+        "token_id": 33,
+        "family": "levels",
+        "source_id": "K25"
+      },
+      {
+        "token": "K26",
+        "token_id": 34,
+        "family": "levels",
+        "source_id": "K26"
+      },
+      {
+        "token": "K27",
+        "token_id": 35,
+        "family": "levels",
+        "source_id": "K27"
+      },
+      {
+        "token": "K28",
+        "token_id": 36,
+        "family": "levels",
+        "source_id": "K28"
+      },
+      {
+        "token": "K29",
+        "token_id": 37,
+        "family": "levels",
+        "source_id": "K29"
+      },
+      {
+        "token": "K30",
+        "token_id": 38,
+        "family": "levels",
+        "source_id": "K30"
+      },
+      {
+        "token": "G3_LONG",
+        "token_id": 39,
+        "family": "G3",
+        "source_id": "G3_LONG"
+      },
+      {
+        "token": "G3_SHORT",
+        "token_id": 40,
+        "family": "G3",
+        "source_id": "G3_SHORT"
+      },
+      {
+        "token": "LBR_FUND",
+        "token_id": 41,
+        "family": "LBR",
+        "source_id": "LBR_FUND"
+      },
+      {
+        "token": "C1v2",
+        "token_id": 42,
+        "family": "baseline",
+        "source_id": "C1v2"
+      },
+      {
+        "token": "C4v2",
+        "token_id": 43,
+        "family": "baseline",
+        "source_id": "C4v2"
+      }
+    ]
+  },
+  "signal_store": {
+    "clock": [
+      "2021-01-30 00:00:00+00:00",
+      "2026-01-01 00:00:00+00:00",
+      "5min"
+    ],
+    "rows": 517536,
+    "channels": [
+      "side",
+      "active",
+      "strength",
+      "strength_avail",
+      "age_min",
+      "gate_pass",
+      "gate_avail",
+      "available",
+      "mk60_mean",
+      "mk60_hit",
+      "mk60_vol",
+      "mk60_count",
+      "mk240_mean",
+      "mk240_hit",
+      "mk240_vol",
+      "mk240_count",
+      "mk1440_mean",
+      "mk1440_hit",
+      "mk1440_vol",
+      "mk1440_count"
+    ],
+    "market_features": "state_1h primary cell, sleeve-prefixed and mask columns removed, as of the 5m clock",
+    "markout": "m_h(t) = side(t-h) x (C(t)/C(t-h) - 1) x 1e4 - 4, C(t) = close of minute t-1, h in {1h,4h,24h}; time-decayed EWMA half-life 30 d (mean/hit/vol/count) [draft parameter]",
+    "manifest_sha256": "6641e656a7b9b18ac5aaf03543fd1bedf419fd2519bded0f3f86a8a4aa135a36",
+    "prefix_tamper": {
+      "cut": "2024-07-01 00:00:00+00:00",
+      "prefix_mismatch": [],
+      "tamper_mismatch": [],
+      "tamper_changed_after_cut_tokens": 33,
+      "pass": true
+    },
+    "patchtst": {
+      "decision": "reuse existing R2-44 w730_raw predictions (DEV_FRONT/DEV_BACK); proof in manifest",
+      "proof": {
+        "folds": 201,
+        "ckpt_hash_ok": 201,
+        "pred_hash_ok": 201,
+        "rows_in_window_ok": 201,
+        "bad": [],
+        "code_sha256": "0822082ce2c78b7a1d16aa4e770fc7398d9695b6cecdfde2874025fbcce66ae6",
+        "archived_code_equal": true,
+        "cutoff_rule": "split_indices: label_end = origin + 24h; train/stop rows need label_end < retrain_time - 24h; window 730 d; scaler on train origins only (fit_fold scaler_end)",
+        "first3_elapsed_sec": [
+          72.20352489966899,
+          54.366247799713165,
+          109.57550580007955
+        ],
+        "median_elapsed_sec": 80.7289437004365,
+        "pass": true
+      }
+    }
+  },
+  "kernel": {
+    "rules": "Signed-size maker event kernel for a single BTCUSDT position (Codex SMDP redesign 2026-10-11).\n\nDecision: target in TARGETS (-1 .. 1 step 0.25) and wait in WAITS minutes (5m / 15m / 1h / 4h / 24h). A decision is\ntaken at the close of minute bar i; the kernel then runs minutes i+1 .. i+wait and stops at the next decision.\n\nOrders (maker only, no partial fills, one live order at a time):\n  * only the difference dq = target - executed is ordered;\n  * an order that raises |position| rests at limit_price(close[start-1], side, offset) for TTL 60 m and is cancelled\n    unfilled at its expiry (never re-quoted by the kernel; the next decision places a new one);\n  * an order that lowers |position| (including a flatten) rests at 2 bps (EXIT_QUOTE_BPS) and is re-quoted at the new\n    close every 60 m until filled, exactly as the sleeve passive exit (sleeve_precompute.exit_fill);\n  * fills: sleeve_precompute.first_fill rule per bar (limit touched with `pen` bps trade-through, gap-through\n    rejected), fill price = limit;\n  * re-selecting the target of the live order keeps it (no TTL reset); a different target cancels it and the\n    replacement rests from the minute after the next one (one minute cancel latency); a fresh order (none live)\n    rests from the next minute;\n  * reversal: flatten first; the opposite entry is placed only after the flatten fill, from the following minute\n    (never both sides in one minute).\nAccounting (bps of notional 1, identical to the Batch-2 Book for single positions): coins Q (units / fill price),\nminute P&L = Q_prev x (c_k - c_{k-1}) + sum fills dQ x (c_k - px), maker fee 2 bps x |dq| per fill, funding PESS on the\nexecuted position only: at a settlement minute min(cf(U_before), cf(U_after)), cf(U) = -U x rate x 1e4.\nRisk: a position whose P&L since it opened reaches -500 bps, or a UTC-day equity change reaching -1500 bps, forces\ntarget 0 (passive flatten, maker only; the loss bound is NOT guaranteed: fills can lag), released when flat (position\nstop) / at the next UTC day (daily stop); a kill switch forces 0 permanently.",
+    "targets": [
+      -1.0,
+      -0.75,
+      -0.5,
+      -0.25,
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "waits_min": [
+      5,
+      15,
+      60,
+      240,
+      1440
+    ],
+    "ttl_min": 60,
+    "exit_quote_bps": 2.0,
+    "fee_bps_side": 2.0,
+    "stops": {
+      "position_bps": -500.0,
+      "day_bps": -1500.0,
+      "note": "passive maker flatten; loss bound not guaranteed"
+    },
+    "interpretations_to_confirm": [
+      "entries quote at the cell offset; reductions/flatten quote at 2 bps and re-quote every 60 m (sleeve passive-exit rule)",
+      "target change with a live order: cancel, replacement rests from decision bar + 2 (1-minute cancel latency); fresh order from + 1",
+      "position stop releases when flat; daily stop releases at the next UTC day",
+      "funding PESS on executed units: min(cf(before), cf(after)) at the settlement minute"
+    ],
+    "code_sha256": "670f3794d71c0d6ea02a0417ed9f9b9a4d4ab21ac833176715d9e85795928b03"
+  },
+  "reward": {
+    "formula": "r_5m = net4_5m - idle_5m - 0.05 bps x |d target| (decision block); idle_5m = 1.0 bps/288 x clip(RV24h / train median RV24h, 0.25, 4) x I(|executed| < 0.125); gamma(d) = exp(-ln2 d / 30 d)",
+    "fields": [
+      "net4",
+      "idle",
+      "turnover",
+      "reward",
+      "reward_discounted",
+      "gamma_d",
+      "blocks",
+      "flat_blocks"
+    ]
+  },
+  "baselines": {
+    "report": "out/rl_allocator_20261010/scripted_baselines/scripted_baselines_report.json",
+    "report_sha256": "c7d42606a8903712dc6c7d5672db6db8cf8a5c65b91ba407e433435d7b38eed9"
+  },
+  "hashes": {
+    "precompute_u35_manifest": "dfa1e8b008ba05f0d163542a4dc2e9cd39472d8eacf12d14c1306474e03b33b6",
+    "precompute_manifest": "f09649710970ea12c8648c489a049c7ddd394997792ce2b6b553a7e25bd77553",
+    "freeze_A2r1": "49d467c414eef249f51baa71e27480637cf4c5de4d64c9b12a458061a137e465",
+    "signal_store_code": "89451ba646b6e2d3c5fedbb9dc4b6f6467f476fc2efbd4fe2733227ccf229feb",
+    "u35_code": "a2f3cf1cbcfa92b703e845335d9caf0fa316bd7a4967da71cfb1c2b64b1a27e8"
+  },
+  "open_for_codex": [
+    "EWMA half-life and markout cost convention",
+    "scripted-baseline decision cadence (1h used)",
+    "whether to keep K21_B merged as a negation",
+    "G3 timelines differ per exec cell (primary cell used)"
+  ]
+}
