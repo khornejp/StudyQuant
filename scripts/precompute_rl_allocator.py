@@ -4263,12 +4263,121 @@ def cmd_scripted_baselines(args) -> None:
     log(f"scripted baselines done {rep['runtime_sec']}s")
 
 
+# ================================================================ short-only 200k SMDP smoke (Codex 2026-10-11, after A3 lock)
+SMOKE_TARGETS = (0.0, -0.25, -0.5, -0.75, -1.0)
+
+
+def cmd_smdp_smoke(args) -> None:
+    import torch
+    from btcusdt_quant.rl import dev_data as DD, maker_kernel as MK, smdp_env as SE, smdp_ppo as SP, u35
+    from btcusdt_quant.rl.allocator_ppo import tensors_equal
+    t_all = time.time()
+    torch.set_num_threads(4)
+    SD = OUT / "smdp_smoke"
+    SD.mkdir(parents=True, exist_ok=True)
+    minutes, fund, in_hash = DD.load_dev()
+    fs = u35.assert_settlement_grid(u35.scheduled(fund))
+    train, val = FOLDS_A2["F1"]
+    data = SE.SmdpData(SS, minutes, fs, train=train, end=val[1])
+    del minutes
+    cfg = SP.SmdpConfig()
+    cells = [c for c in G_CELLS for _ in range(cfg.envs_per_cell)]
+    seeds = [int(x) for x in str(getattr(args, "seeds", "0,1,2")).split(",")]
+    rep: dict = {"spec": {"fold": "F1", "train": train, "val": val, "targets": SMOKE_TARGETS, "waits": MK.WAITS,
+                          "cfg": dataclasses_asdict(cfg), "envs": len(cells), "transitions_per_seed":
+                              cfg.updates * cfg.rollout * len(cells), "obs_dim": data.obs_dim,
+                          "obs": "44 tokens x 20 channels + market state + 8 account; train-window robust scaling",
+                          "entropy_coef_note": "0.01 constant (not in the Codex smoke spec; chosen here)",
+                          "val_protocol": "deterministic argmax, full 2022, 6 cells, flat start, at updates 0/17/34",
+                          "rv24h_train_median": data.rv_med},
+                 "provenance": {"a3_sha256": sha(OUT / "freeze_amendment_A3.json"),
+                                "signal_store_manifest_sha256": sha(SS / "manifest.json"), "input_sha256": in_hash,
+                                "code_sha256": {k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py")
+                                                for k_ in ("smdp_env", "smdp_ppo", "maker_kernel", "signal_store")},
+                                "data_cutoff": "2026-01-01 (DEV); training rows < 2022-01-01, val 2022",
+                                "git_head": git("rev-parse", "HEAD")}, "seeds": {}}
+    checks_all = {}
+    for seed in seeds:
+        t0 = time.time()
+        envs = SE.SmdpEnvs(data, cells, SMOKE_TARGETS, cfg.episode_days, seed)
+        tr = SP.SmdpTrainer(envs, cfg, seed)
+        vals = {0: tr.validate(data, G_CELLS, val[0], val[1])}
+        logs, sd17 = [], None
+        for u in range(1, cfg.updates + 1):
+            tu = time.time()
+            rec = tr.run_update()
+            rec["sec"] = round(time.time() - tu, 2)
+            logs.append(rec)
+            if u == 17:
+                sd17 = tr.state_dict()
+                vals[17] = tr.validate(data, G_CELLS, val[0], val[1])
+        vals[34] = tr.validate(data, G_CELLS, val[0], val[1])
+        wall = time.time() - t0
+        final = tr.state_dict()
+        torch.save({"model": final["model"], "cfg": dataclasses_asdict(cfg), "seed": seed}, SD / f"seed{seed}_u34.pt")
+        ck_sha = sha(SD / f"seed{seed}_u34.pt")
+        tr2 = SP.SmdpTrainer(SE.SmdpEnvs(data, cells, SMOKE_TARGETS, cfg.episode_days, seed), cfg, seed)
+        tr2.load_state_dict(sd17)
+        logs2 = [tr2.run_update() for _ in range(17, cfg.updates)]
+        s2 = tr2.state_dict()
+        resume_ok = (tensors_equal(final["model"], s2["model"]) and tensors_equal(final["opt"], s2["opt"])
+                     and all(a_["net4"] == b_["net4"] and a_["policy_loss"] == b_["policy_loss"]
+                             for a_, b_ in zip(logs[17:], logs2)))
+        tc = np.sum([r["target_counts"] for r in logs], 0)
+        wc = np.sum([r["wait_counts"] for r in logs], 0)
+        pc = {}
+        for r in logs:
+            for c_, v in r["per_cell"].items():
+                x = pc.setdefault(c_, {"fills": 0.0, "round_trips": 0.0})
+                x["fills"] += v["fills"]
+                x["round_trips"] += v["round_trips"]
+        v34 = vals[34]
+        det_flat = sum(v["flat_minutes"] for v in v34.values()) / max(sum(v["minutes"] for v in v34.values()), 1)
+        allv = [v for vv in vals.values() for v in vv.values()]
+        ch = {"nan_inf==0": sum(r["nonfinite"] for r in logs) == 0 and all(v["nonfinite"] == 0 for v in allv),
+              "long_exposure==0": max(r["u_max"] for r in logs) <= 1e-12 and all(v["u_max"] <= 1e-12 for v in allv),
+              "abs_pos<=1": max(r["u_absmax"] for r in logs) <= 1 + 1e-12 and all(v["u_absmax"] <= 1 + 1e-12 for v in allv),
+              "reward_ledger_identity<=1e-8": max(r["identity_err"] for r in logs) <= 1e-8
+              and all(v["identity_err"] <= 1e-8 for v in allv),
+              "cell_fills>=30": all(v["fills"] >= 30 for v in pc.values()),
+              "cell_round_trips>=10": all(v["round_trips"] >= 10 for v in pc.values()),
+              "det_flat_ratio<0.98": det_flat < 0.98,
+              "sampled_target0_share<0.98": tc[0] / tc.sum() < 0.98,
+              "dominant_wait_share<0.98": wc.max() / wc.sum() < 0.98,
+              "completed": len(logs) == cfg.updates, "resume_bit_exact": bool(resume_ok),
+              "wall<=600s": wall <= 600}
+        checks_all[seed] = ch
+        rep["seeds"][str(seed)] = {
+            "checks": ch, "wall_sec": round(wall, 1), "checkpoint_sha256": ck_sha, "model_sha256": SP.model_sha(tr.model),
+            "per_cell_train": pc, "target_share": (tc / tc.sum()).tolist(), "wait_share": (wc / wc.sum()).tolist(),
+            "det_flat_ratio_u34": det_flat,
+            "curves": {k: [r[k] for r in logs] for k in ("net4", "idle", "turnover", "reward", "reward_discounted",
+                                                         "gamma_d_mean", "flat_minute_ratio", "flat_block_ratio",
+                                                         "exposure", "fills", "round_trips", "ttl_expiry", "requote",
+                                                         "reversal", "pos_stop", "day_stop", "fees", "funding",
+                                                         "entropy", "approx_kl", "clip_frac", "value_loss",
+                                                         "explained_var", "grad_norm", "sec")},
+            "val": {str(k): v for k, v in vals.items()}}
+        log(f"smoke seed {seed}: wall {wall:.0f}s {ch}")
+    tot = time.time() - t_all
+    rep["total_wall_sec"] = round(tot, 1)
+    rep["pass"] = bool(all(all(c.values()) for c in checks_all.values()) and tot <= 1800)
+    rep.update(created_utc=datetime.now(timezone.utc).isoformat(), test_accessed=False)
+    dump(SD / "smdp_smoke_report.json", rep)
+    for seed in seeds:
+        registry.record(REGISTRY, {"experiment": f"SMDP short-only 200k smoke seed {seed}", "role": "smoke",
+                                   "n_trials": 1, "n_simulations": 1, "config": rep["spec"]["cfg"],
+                                   "result_summary": {"checks": checks_all[seed],
+                                                      "checkpoint_sha256": rep["seeds"][str(seed)]["checkpoint_sha256"]}})
+    log(f"smdp smoke {'PASS' if rep['pass'] else 'FAIL'} total {tot:.0f}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -4323,6 +4432,8 @@ def main(argv=None) -> None:
         return cmd_scripted_baselines(args)
     if args.command == "u35-verify":
         return cmd_u35_verify(args)
+    if args.command == "smdp-smoke":
+        return cmd_smdp_smoke(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
