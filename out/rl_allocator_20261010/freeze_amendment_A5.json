@@ -1,0 +1,94 @@
+{
+  "name": "A5 amendment (signed SMDP, LOYO years; Codex 2026-10-11)",
+  "status": "LOCKED",
+  "created_utc": "2026-10-11T06:27:31.042681+00:00",
+  "base": {
+    "A4_sha256": "dfad04485a22514a338e09d00aa38f39f050371bf047209d3f8d79e99920e77b",
+    "A4L_sha256": "488155356272c710e14bb900465ae518662ef13c9b349935f0aff538c776910c"
+  },
+  "action": {
+    "targets": [
+      -1.0,
+      -0.75,
+      -0.5,
+      -0.25,
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "waits": [
+      15,
+      60,
+      240
+    ],
+    "kernel": "signed kernel, flatten-first reversal, maker 4 bps round trip, stops unchanged"
+  },
+  "network": "948 -> 64 Tanh -> 64 Tanh; heads target 9, wait 3, value 1 (65,741 params)",
+  "entropy": {
+    "target_betas": {
+      "u1-17": 0.00732,
+      "u18-34": 0.00366,
+      "u35-68": 0.00147
+    },
+    "wait": "A4 schedule and floor unchanged"
+  },
+  "folds": {
+    "CV-2022": "train 2021 (from 2021-01-30), 2023, 2024",
+    "CV-2023": "train 2021, 2022, 2024",
+    "CV-2024": "train 2021, 2022, 2023",
+    "normalizer": "robust scaling and RV median on the three train years only",
+    "episodes": "3 envs per cell x train year (54 envs); 10,080 rollout minutes per env per update (equal year weight); 90-day non-overlapping blocks inside each year, tail included, flat reset"
+  },
+  "selection": "candidates u17/34/51/68, seeds 0/1/2, action RNG 10000..10007 (24 sampled trajectories per cell); score = min over 6 cells of stitched 3 val years [mean net4 - max(0, famvol, ewa)]; all <= 0 -> immediate FAIL, 2025 not run",
+  "final": "if passed: train 2021..2024 (equal year weight), 5 seeds x 8 RNG = 40 trajectories per cell, single 2025 validation",
+  "trace": "time, cell, seed, rng, expected_target, sampled_target, wait, executed_U, ret_24h (trailing, bps), signed technique consensus (mean side of available tokens); report-only: Spearman, ret24h tercile target means, long/flat/short share, target switches/day; checkpoints saved even on FAIL",
+  "pass_criteria": "A3 original: integrity; stitched net4 > 0 6/6; baseline excess 6/6; yearly net4 > 0 24/24; round trips >= 30 24/24; bootstrap p05 > 0 18/18; net4/MDD >= 1 6/6; flat < 0.95; 5-seed ensemble PASS + >= 3/5 seeds 6/6 positive (A4 code had >= 2/3; recorded)",
+  "excluded": "synthetic sign flip, new regime features, behavioural prior, drift-neutral reward (diagnostics only)",
+  "budget": {
+    "smoke_min": 2,
+    "cv_min": 55,
+    "final_min": 40
+  },
+  "config": {
+    "lr": 0.0003,
+    "clip": 0.2,
+    "vclip": 0.2,
+    "epochs": 4,
+    "minibatch": 512,
+    "reward_scale": 0.01,
+    "vf_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "hidden": 64,
+    "updates": 68,
+    "rollout_min": 10080,
+    "lam_base": 0.95,
+    "floor_beta_wait": 0.05,
+    "floor_low": 0.55,
+    "floor_release": 0.6,
+    "collapse_h_wait": 0.3,
+    "collapse_dominant": 0.95,
+    "collapse_updates": 3,
+    "target_betas": [
+      0.00732,
+      0.00366,
+      0.00147
+    ],
+    "wait_betas": [
+      0.02,
+      0.015,
+      0.01
+    ]
+  },
+  "config_sha256": "cdabf296bb5c4fb2c16b9463698ca53c8bc80fcf304de5d1341a2e0080312a07",
+  "code_sha256": {
+    "smdp_env": "74915d260ac705b52398d459b2c3c4080be10b9712899d088875ecc8088821ad",
+    "smdp_ppo": "a188ea1c0a354a533a922feb18ef47eb364dce0e23aa8549e8a49565ecba84a1",
+    "maker_kernel": "054fe3948a7904fb93c9eb32c2315883e11f7b2301a6e9d88c46c056e56cbc5f",
+    "signal_store": "89451ba646b6e2d3c5fedbb9dc4b6f6467f476fc2efbd4fe2733227ccf229feb",
+    "dev_data": "a87c9593c896959eecdee6be7858142de5275fb95507692915b3e2a2e8969d20"
+  },
+  "test_rows_used": 0,
+  "physical_test_reads": 0
+}
