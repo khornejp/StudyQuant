@@ -163,9 +163,9 @@ def exploit_weights(recipient_model, donor_state: dict, reinit_value: bool, seed
         for m in recipient_model.v.modules():
             if isinstance(m, torch.nn.Linear):
                 bound = 1.0 / math.sqrt(m.in_features)
-                with torch.no_grad():
-                    m.weight.uniform_(-bound, bound, generator=g)
-                    m.bias.uniform_(-bound, bound, generator=g)
+                with torch.no_grad():                  # draw on the CPU generator, copy to the param device
+                    m.weight.copy_(torch.empty(m.weight.shape).uniform_(-bound, bound, generator=g))
+                    m.bias.copy_(torch.empty(m.bias.shape).uniform_(-bound, bound, generator=g))
     return recipient_model
 
 

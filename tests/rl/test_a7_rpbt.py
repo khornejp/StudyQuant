@@ -84,3 +84,13 @@ def test_atomic_checkpoint_hash_refusal(tmp_path):
     assert len(h) == 64 and A7.load_checkpoint(p, {"code": "a"})["x"] == 1
     with pytest.raises(RuntimeError):
         A7.load_checkpoint(p, {"code": "b"})
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA only")
+def test_exploit_value_reinit_on_cuda():
+    donor, rec = PolicyA6(20).cuda(), PolicyA6(20).cuda()
+    sd = donor.state_dict()
+    A7.exploit_weights(rec, sd, reinit_value=True, seed=3)
+    s2 = rec.state_dict()
+    assert all(torch.equal(s2[k], sd[k]) for k in sd if k.startswith(("trunk.", "pt.", "pw.")))
+    assert not torch.equal(s2["v.1.weight"], sd["v.1.weight"]) and s2["v.1.weight"].is_cuda
