@@ -35,14 +35,3 @@ def test_lambda_d_gae_and_param_count():
     assert torch.allclose(adv[:, 0], torch.tensor([1.0 + MK.gamma(15) * SP.lam_d(15) * a1, a1]))
     m = SP.SmdpPolicy(948, 5, 3, 64)
     assert sum(p.numel() for p in m.parameters()) == 65_481
-
-
-def test_stop_event_counted_once():
-    n = 400
-    c = np.full(n, 100.0); c[200:] = 80.0                       # -2000 bps: position and day stop same minute
-    o = np.r_[c[0], c[:-1]]; h, l = np.maximum(o, c), np.minimum(o, c)
-    t = (np.arange(n) * 60_000_000_000).astype(np.int64)
-    st = np.zeros(MK.S_NSTATE); st[MK.S_U], st[MK.S_Q] = 1.0, 0.01
-    MK.advance(o, h, l, c, (t // 86_400_000_000_000).astype(np.int64), np.full(n, np.nan), st, np.zeros(n), np.zeros(n),
-               100, 201, 1.0, 2.0, 0.5)
-    assert st[MK.S_PSTOP] == 1 and st[MK.S_DSTOP] == 1 and st[MK.S_NEV] == 1 and st[MK.S_DSZ] == 1.0

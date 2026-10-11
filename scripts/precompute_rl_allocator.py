@@ -4154,16 +4154,17 @@ def sb_targets(kind: str, side, avail, W) -> np.ndarray:
 
 
 def sb_run(K, dec_i: np.ndarray, tg: np.ndarray, rv, rv_med) -> dict:
-    """rv_med: per-decision train median RV24h of the decision's fold."""
-    from btcusdt_quant.rl import maker_kernel as MK
+    """A6: reward terms from smdp_reward with the configured (currently UNSET -> 0, flagged) idle / inventory values."""
+    from btcusdt_quant.rl import smdp_reward as RW
+    RCFG = RW.RewardConfig()
     K.reset(int(dec_i[0]))
     rv_med = np.broadcast_to(np.asarray(rv_med, float), (len(dec_i),))
-    tot = {"net4": 0.0, "idle": 0.0, "turnover": 0.0, "reward": 0.0, "reward_discounted": 0.0}
+    tot = {"net4": 0.0, "idle": 0.0, "inventory": 0.0, "turnover": 0.0, "reward": 0.0, "reward_discounted": 0.0}
     for q in range(len(dec_i)):
         w = SB_WAIT
         i0 = K.i
         info = K.step(float(tg[q]), w)
-        d = MK.step_reward(K.pnl, K.upath, rv, float(rv_med[q]), i0, info["j"], info["d_target"])
+        d = RW.step_reward(K.pnl, K.upath, K.kpath, K.mpath, i0, info["j"], info["d_target"], RCFG, require_set=False)
         for k_ in tot:
             tot[k_] += d[k_]
     return tot
@@ -4179,6 +4180,8 @@ def cmd_scripted_baselines(args) -> None:
     t_min = minutes.open_time.array.asi8.copy()
     o, h, l, c = (minutes[x].to_numpy(float) for x in ("open", "high", "low", "close"))
     rv = MK.rv24h(c)
+    from btcusdt_quant.rl import smdp_reward as RW
+    rv_ref = MK.rv_ref_monthly(t_min, rv)
     toks, side, avail, clk = sb_token_arrays()
     C = SG.close_at(clk, t_min, c)
     ts = lambda x: pd.Timestamp(x, tz="UTC").value  # noqa: E731
@@ -4187,7 +4190,8 @@ def cmd_scripted_baselines(args) -> None:
                                                           "vote quantized to 0.25, wait 1h",
                           "votes": {"famvol": sb_invvol_weights.__doc__, "ewa": "mean side over available tokens",
                                     "flat": "always 0"},
-                          "reward": MK.step_reward.__doc__, "rv_median": "fold train [2021-01-30, year start) median "
+                          "reward": "A6 smdp_reward; idle / inventory / turnover values UNSET (user decision pending) -> "
+                                    "reported as 0; net4 is final", "rv_median": "fold train [2021-01-30, year start) median "
                                                                           "of RV24h at minute closes",
                           "labels": "position_openings = flat -> position minutes (formerly reported as round_trips); "
                                     "completed_round_trips = position -> flat (kernel counter)",
@@ -4204,6 +4208,7 @@ def cmd_scripted_baselines(args) -> None:
     for cell in G_CELLS:
         ctag = f"o{cell[0]}_p{cell[1]}"
         K = MK.Kernel(o, h, l, c, t_min, fs.time.array.asi8, fs.rate.to_numpy(float), cell[0], cell[1])
+        K.mpath = RW.m_of_t(rv, rv_ref, RW.RewardConfig())
         for kind in kinds:
             days_all, stats = [], {}
             for y in U35_YEARS:
@@ -4246,7 +4251,8 @@ def cmd_scripted_baselines(args) -> None:
                 "boot20_p05": GT.boot_p05(d, 20), "boot120_p05": GT.boot_p05(d, 120),
                 "position_openings": int((flat[:-1] & ~flat[1:]).sum()), "completed_round_trips": int(K.st[MK.S_RT]),
                 "flat_ratio": float(flat.mean()), "fills": int(K.st[MK.S_FILLS]),
-                "counters": {k_: int(K.st[getattr(MK, "S_" + k_)]) for k_ in ("TTLX", "REQ", "REV", "PSTOP", "DSTOP")},
+                "counters": {k_: int(K.st[getattr(MK, "S_" + k_)]) for k_ in ("TTLX", "REQ", "REV", "KILLCOUNT")},
+                "diag": MK.diagnostics(K.st),
                 "net4_by_year": {str(y): float(pnl[yrs == y].sum()) for y in U35_YEARS},
                 "reward_rv_median_note": "each decision uses its own fold's train median RV24h", "reward": tot}
         log(f"baselines {ctag}: " + " ".join(f"{k}={rep['continuous'][ctag][k]['net4']:.0f}" for k in kinds))
@@ -4333,8 +4339,8 @@ def smdp_train(data, cells, cfg, seed: int, updates: int, val_at=(), snap_at=(),
 
 def curves(logs: list) -> dict:
     keys = ("net4", "idle", "turnover", "reward", "reward_discounted", "gamma_d_mean", "flat_minute_ratio",
-            "flat_block_ratio", "exposure", "fills", "round_trips", "ttl_expiry", "requote", "reversal", "pos_stop",
-            "day_stop", "fees", "funding", "entropy", "approx_kl", "clip_frac", "value_loss", "explained_var",
+            "flat_block_ratio", "exposure", "fills", "round_trips", "ttl_expiry", "requote", "reversal",
+            "fees", "funding", "entropy", "approx_kl", "clip_frac", "value_loss", "explained_var",
             "grad_norm", "sec")
     return {k: [r[k] for r in logs] for k in keys}
 
@@ -4464,7 +4470,7 @@ def pilot_baselines() -> dict:
 
 def cell_summary(v: dict) -> dict:
     return {c: {k: x[k] for k in ("net4", "mdd_daily", "flat_minute_ratio", "fills", "round_trips", "decisions",
-                                  "exposure", "fees", "funding", "pos_stop", "day_stop")}
+                                  "exposure", "fees", "funding")}
             | {"target_share": (np.array(x["t_cnt"]) / max(sum(x["t_cnt"]), 1)).tolist(),
                "wait_share": (np.array(x["w_cnt"]) / max(sum(x["w_cnt"]), 1)).tolist()} for c, x in v.items()}
 
@@ -4629,7 +4635,7 @@ A4_RNG = tuple(range(10000, 10008))
 
 def a4_curves(logs: list) -> dict:
     keys = ("net4", "idle", "turnover", "reward", "reward_discounted", "fills", "fees", "funding", "exposure",
-            "flat_minute_ratio", "pos_stop", "day_stop", "transitions", "elapsed_minutes", "beta_target", "beta_wait",
+            "flat_minute_ratio", "kill_count", "transitions", "elapsed_minutes", "beta_target", "beta_wait",
             "floor_on", "collapse_run", "policy_loss", "value_loss", "entropy_target", "entropy_wait", "approx_kl",
             "clip_frac", "explained_var", "grad_norm", "sec")
     out = {k: [r[k] for r in logs] for k in keys}

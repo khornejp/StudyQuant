@@ -70,10 +70,9 @@ def model_sha(m: nn.Module) -> str:
     return hashlib.sha256(buf.getvalue()).hexdigest()
 
 
-ACC_KEYS = ("net4", "idle", "turnover", "reward", "reward_discounted", "gamma_d", "blocks", "flat_blocks", "minutes",
-            "flat_minutes", "exposure_sum", "fills", "round_trips", "ttl_expiry", "requote", "reversal", "pos_stop",
-            "day_stop", "fees", "funding", "stop_size_sum", "stop_entry_to_stop_min_sum", "stop_flatten_loss_sum",
-            "stop_flattens", "stop_reentry_min_sum", "stop_reentries", "stop_events")
+ACC_KEYS = ("net4", "idle", "inventory", "turnover", "reward", "reward_discounted", "gamma_d", "blocks", "flat_blocks",
+            "minutes", "flat_minutes", "exposure_sum", "fills", "round_trips", "ttl_expiry", "requote", "reversal",
+            "fees", "funding", "kill_count")
 
 
 class SmdpTrainer:

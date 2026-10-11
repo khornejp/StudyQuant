@@ -46,3 +46,4 @@ tests/rl/test_smdp_ppo.py text eol=lf
 btcusdt_quant/rl/smdp_env.py text eol=lf
 tests/rl/test_smdp_env.py text eol=lf
 tests/rl/test_smdp_a4.py text eol=lf
+btcusdt_quant/rl/smdp_reward.py text eol=lf

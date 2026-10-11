@@ -74,13 +74,13 @@ def test_properties_reselect_cancel_reversal_funding():
     assert np.all(np.isin(np.round(np.abs(du[np.abs(du) > 0]) * 4, 9), [1, 2, 3, 4, 5, 6, 7, 8]))
 
 
-def test_funding_pess_min_rule_and_kill():
+def test_funding_pess_and_manual_kill_aborts():
     m = market(seed=7)
     k = kernel(m, 2, 0.5)
     k.reset(100, kill=True)
-    for _ in range(50):
-        assert k.step(1.0, 60)["effective_target"] == 0.0
-    assert k.st[MK.S_U] == 0 and k.pnl.sum() == 0.0
+    r = k.step(1.0, 60)
+    assert r["fault"] and r["kill_reason"] == "manual_kill" and r["episode_aborted"] and k.pnl.sum() == 0.0
+    assert r["minutes_valid"] == 0 and k.st[MK.S_U] == 0                        # no flatten simulated
     k = kernel(m, 2, 0.5)
     k.reset(100)
     for _ in range(200):
@@ -91,9 +91,40 @@ def test_funding_pess_min_rule_and_kill():
     assert len(held) > 3
 
 
-def test_position_stop_forces_flat():
+def _faulty(kind):
+    m = market(seed=11)
+    k0 = 3000
+    if kind == "gap":
+        m.t[k0:] += 60_000_000_000                                               # 1-minute hole
+    elif kind == "nan":
+        m.c[k0] = np.nan
+    else:
+        m.h[k0] = min(m.o[k0], m.c[k0]) - 1.0                                    # high below open/close
+    return m, k0
+
+
+def test_fault_kill_records_prefix_without_flatten():
+    for kind, reason in (("gap", "data_gap_or_timestamp_discontinuity"), ("nan", "nonfinite_ohlc"),
+                         ("ohlc", "ohlc_invariant")):
+        m, k0 = _faulty(kind)
+        k = kernel(m, 2, 0.5)
+        k.reset(1000)
+        r = None
+        for _ in range(100):
+            r = k.step(1.0, 60)
+            if r["fault"]:
+                break
+        assert r["fault"] and r["kill_reason"] == reason and r["kill_count"] == 1
+        assert r["valid_prefix_minutes"] == k0 - 1001 and r["fault_time"] == int(m.t[k0])
+        u_before = k.upath[k0 - 1]
+        assert k.st[MK.S_U] == u_before                                          # position left as is (no fake flatten)
+        n = k.step(0.0, 60)
+        assert n["fault"] and n["minutes_valid"] == 0
+
+
+def test_no_stop_large_loss_keeps_target():
     m = market(seed=8)
-    m.c[5000:] = m.c[5000:] * np.linspace(1.0, 0.9, m.N - 5000)      # -10 % slide
+    m.c[5000:] = m.c[5000:] * np.linspace(1.0, 0.9, m.N - 5000)                  # -10 % slide: no stop in A6
     m.o[5000:] = np.r_[m.c[4999], m.c[5000:-1]]
     m.h[:] = np.maximum(m.h, np.maximum(m.o, m.c))
     m.l[:] = np.minimum(m.l, np.minimum(m.o, m.c))
@@ -103,42 +134,38 @@ def test_position_stop_forces_flat():
         k.step(1.0, 60)
     u = k.upath[4001:k.i + 1]
     first = int(np.argmax(u == 1.0))
-    assert u[first] == 1.0 and np.any(u[first:] == 0.0)          # target 1 throughout, yet flattened by the stop
-    assert k.st[MK.S_PSTOP] >= 1 and k.st[MK.S_DNFL] >= 1 and k.st[MK.S_DSZ] >= 1.0 and k.st[MK.S_DE2S] > 0
-    assert k.st[MK.S_DNRE] >= 1 and k.st[MK.S_DFL] <= 0
+    assert u[first] == 1.0 and np.all(u[first:] == 1.0)                         # never flattened
+    d = MK.diagnostics(k.st)
+    assert d["kill_count"] == 0 and not d["episode_aborted"]
+
+
+def test_flat_diagnostics_and_k_reset():
+    m = market(seed=12)
+    k = kernel(m, 2, 0.5)
+    k.reset(2000)
+    for _ in range(10):
+        k.step(0.0, 240)
+    assert k.kpath[k.i] == k.i - 2000 and MK.diagnostics(k.st)["flat_hours"] == (k.i - 2000) / 60.0
+    for _ in range(30):
+        k.step(1.0, 15)
+    first = int(np.flatnonzero(k.upath[2001:k.i + 1] != 0)[0]) + 2001
+    assert k.kpath[first + 58] > 0 and k.kpath[first + 59] == 0                  # reset after 60 non-flat minutes
+    assert MK.diagnostics(k.st)["flat_to_fill_h"] > 0
 
 
 def test_reward_decomposition():
+    from btcusdt_quant.rl import smdp_reward as RW
     m = market(seed=9)
     k = kernel(m, 2, 0.5)
     i = k.reset(2000)
     r = k.step(1.0, 60)
     rv = MK.rv24h(m.c)
-    d = MK.step_reward(k.pnl, k.upath, rv, float(np.median(rv[1440:])), i, r["j"], r["d_target"])
-    assert np.isclose(d["net4"], r["net4"]) and d["blocks"] == 12
-    assert np.isclose(d["reward"], d["net4"] - d["idle"] - d["turnover"]) and np.isclose(d["turnover"], 0.05)
+    mp = RW.m_of_t(rv, np.full(m.N, float(np.median(rv[1440:]))), RW.RewardConfig())
+    cfg = RW.RewardConfig(idle_bps_per_h=0.3, inventory_bps_per_h=0.1, turnover_bps=0.05, f_kind="linear", f_param=0.1)
+    d = RW.step_reward(k.pnl, k.upath, k.kpath, mp, i, r["j"], r["d_target"], cfg)
+    assert np.isclose(d["net4"], r["net4"]) and d["blocks"] == 12 and np.isclose(d["turnover"], 0.05)
+    assert np.isclose(d["reward"], d["net4"] - d["idle"] - d["inventory"] - d["turnover"])
+    import pytest
+    with pytest.raises(ValueError):
+        RW.step_reward(k.pnl, k.upath, k.kpath, mp, i, r["j"], r["d_target"], RW.RewardConfig())
     assert np.isclose(MK.gamma(30 * 1440), 0.5)
-
-
-def _partial_reduce_case(mod):
-    """Long 1.0 with a live partial reduce (target 0.5, dq -0.5, limit far above) when the position stop fires."""
-    n = 400
-    c = np.full(n, 100.0)
-    c[200:] = 94.0                                                  # -600 bps: position stop at minute 200
-    o = np.r_[c[0], c[:-1]]
-    h, l = np.maximum(o, c), np.minimum(o, c)
-    t = (np.arange(n) * 60_000_000_000).astype(np.int64)
-    st = np.zeros(mod.S_NSTATE)
-    st[mod.S_U], st[mod.S_Q] = 1.0, 1.0 / 100.0
-    st[mod.S_PEND], st[mod.S_PDQ], st[mod.S_PLIM] = 1.0, -0.5, 1000.0
-    st[mod.S_PSTART], st[mod.S_PEXP], st[mod.S_PKIND], st[mod.S_PTGT] = 101, 10_000, mod.K_RED, 0.5
-    pnl, up = np.zeros(n), np.zeros(n)
-    mod.advance(o, h, l, c, (t // 86_400_000_000_000).astype(np.int64), np.full(n, np.nan), st, pnl, up, 100, 201,
-                0.5, 2.0, 0.5)
-    return st
-
-
-def test_partial_reduce_stop_becomes_full_flatten():
-    st = _partial_reduce_case(MK)
-    assert st[MK.S_FPOS] == 1 and st[MK.S_PEND] == 1 and st[MK.S_PTGT] == 0.0
-    assert st[MK.S_PDQ] == -1.0 and st[MK.S_PKIND] == MK.K_RED and st[MK.S_PSTOP] == 1

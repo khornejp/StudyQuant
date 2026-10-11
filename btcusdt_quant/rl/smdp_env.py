@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np, pandas as pd
 from . import maker_kernel as MK
 from . import signal_store as SG
+from . import smdp_reward as RW
 
 FLAG = ("side", "active", "strength_avail", "gate_pass", "gate_avail", "available")
 CONT = ("strength", "age_min") + tuple(f"mk{h}_{s}" for h in SG.HORIZONS for s in ("mean", "hit", "vol", "count"))
@@ -74,6 +75,7 @@ class SmdpData:
         rv_tr = np.concatenate([self.rv[int(np.searchsorted(self.t, wa)) + 1440:int(np.searchsorted(self.t, wb))]
                                 for wa, wb in self.train_windows])
         self.rv_med = float(np.median(rv_tr))
+        self.rv_ref = MK.rv_ref_monthly(self.t, self.rv)              # A6: expanding past median, fixed per month
         self.obs_dim = self.tok.shape[1] + self.mkt.shape[1] + N_ACCOUNT
 
     def row(self, t_ns: int) -> int:
@@ -81,7 +83,9 @@ class SmdpData:
 
 
 class SmdpEnvs:
-    def __init__(self, data: SmdpData, cells: list, targets: tuple, episode_days: int, seed: int, waits=MK.WAITS):
+    def __init__(self, data: SmdpData, cells: list, targets: tuple, episode_days: int, seed: int, waits=MK.WAITS,
+                 reward_cfg: RW.RewardConfig | None = None, require_set: bool = False):
+        self.reward_cfg, self.require_set = reward_cfg or RW.RewardConfig(), require_set
         self.d, self.cells, self.targets = data, list(cells), tuple(float(x) for x in targets)
         self.waits = tuple(int(w) for w in waits)
         self.E = len(self.cells)
@@ -108,6 +112,7 @@ class SmdpEnvs:
         off, pen = self.cells[e]
         k = MK.Kernel(d.o[s:z], d.h[s:z], d.l[s:z], d.c[s:z], d.t[s:z], d.ft, d.fr, off, pen)
         k.reset(int(np.searchsorted(k.t, start_ns)) - 1)            # decision bar closing at start
+        k.mpath = RW.m_of_t(d.rv[s:z], d.rv_ref[s:z], self.reward_cfg)
         self.kern[e], self.s0[e], self.t_now[e], self.t_end[e] = k, s, start_ns, end_ns
 
     def obs(self, idx=None) -> np.ndarray:
@@ -118,9 +123,11 @@ class SmdpEnvs:
         for n, e in enumerate(idx):
             st, k = self.kern[e].st, self.kern[e]
             gi = self.s0[e] + k.i
+            ref = d.rv_ref[gi] if np.isfinite(d.rv_ref[gi]) else d.rv_med
+            age = (k.i - st[MK.S_PPLACED]) / 60.0 if st[MK.S_PEND] > 0 else 0.0
             acc[n] = (st[MK.S_U], k.last_target, st[MK.S_PEND], st[MK.S_PDQ] * st[MK.S_PEND],
-                      np.clip(st[MK.S_POSPNL] / 100, -10, 10), np.clip((st[MK.S_EQ] - st[MK.S_DAY0]) / 100, -10, 10),
-                      float(st[MK.S_FPOS] > 0 or st[MK.S_FDAY] > 0), np.log(max(d.rv[gi], 1e-6) / d.rv_med))
+                      np.clip(st[MK.S_POSPNL] / 100, -10, 10), age, np.clip(st[MK.S_FLATSTREAK] / 60.0 / 24.0, 0, 4),
+                      np.log(max(d.rv[gi], 1e-6) / ref))
         return np.concatenate([d.tok[rows], d.mkt[rows], acc], 1)
 
     def step_one(self, e: int, a_t: int, a_w: int) -> dict:
@@ -130,25 +137,27 @@ class SmdpEnvs:
         info = k.step(self.targets[a_t], self.waits[a_w])
         gi0 = self.s0[e]
         rv = self.d.rv[gi0:gi0 + len(k.t)]
-        rw = MK.step_reward(k.pnl, k.upath, rv, self.d.rv_med, i0, info["j"], info["d_target"])
+        del rv
+        rw = RW.step_reward(k.pnl, k.upath, k.kpath, k.mpath, i0, info["j"], info["d_target"], self.reward_cfg,
+                            self.require_set)
+        ident = abs(rw["net4"] - info["net4"]) + abs(rw["reward"] - (rw["net4"] - rw["idle"] - rw["inventory"]
+                                                                     - rw["turnover"]))
+        if ident > 1e-8:
+            k.fault(4, info["j"])
         u = k.upath[i0 + 1:info["j"] + 1]
         st1 = k.st
-        out = {**rw, "identity_err": abs(rw["net4"] - info["net4"]) + abs(rw["reward"] - (rw["net4"] - rw["idle"]
-                                                                                          - rw["turnover"])),
+        out = {**rw, "identity_err": ident, "fault": bool(k.st[MK.S_FAULT]), "kill_reason": info["kill_reason"],
+               "valid_prefix_minutes": info["valid_prefix_minutes"],
                "minutes": int(len(u)), "flat_minutes": int((np.abs(u) < 0.125).sum()), "exposure_sum": float(np.abs(u).sum()),
                "u_max": float(u.max()) if len(u) else 0.0, "u_min": float(u.min()) if len(u) else 0.0, "u_absmax": float(np.abs(u).max()) if len(u) else 0.0,
                "target": self.targets[a_t], "wait": self.waits[a_w], "a_w": int(a_w),
                "last_time": int(k.t[info["j"]]) if len(u) else -1}
         for nm, slot in (("fills", MK.S_FILLS), ("round_trips", MK.S_RT), ("ttl_expiry", MK.S_TTLX),
-                         ("requote", MK.S_REQ), ("reversal", MK.S_REV), ("pos_stop", MK.S_PSTOP),
-                         ("day_stop", MK.S_DSTOP), ("fees", MK.S_FEES), ("funding", MK.S_FUND),
-                         ("stop_size_sum", MK.S_DSZ), ("stop_entry_to_stop_min_sum", MK.S_DE2S),
-                         ("stop_flatten_loss_sum", MK.S_DFL), ("stop_flattens", MK.S_DNFL),
-                         ("stop_reentry_min_sum", MK.S_DRE), ("stop_reentries", MK.S_DNRE),
-                         ("stop_events", MK.S_NEV)):
+                         ("requote", MK.S_REQ), ("reversal", MK.S_REV), ("fees", MK.S_FEES), ("funding", MK.S_FUND),
+                         ("flat_minutes_k", MK.S_FLATMIN), ("kill_count", MK.S_KILLCOUNT)):
             out[nm] = float(st1[slot] - st0[slot])
         self.t_now[e] = self.d.t[gi0 + info["j"]] + SG.MIN_NS
-        out["done"] = bool(info["j"] >= len(k.t) - 1 or self.t_now[e] >= self.t_end[e])
+        out["done"] = bool(info["j"] >= len(k.t) - 1 or self.t_now[e] >= self.t_end[e] or out["fault"])
         return out
 
     def step(self, a_t: np.ndarray, a_w: np.ndarray):
@@ -171,6 +180,7 @@ class SmdpEnvs:
             off, pen = self.cells[e]
             k = MK.Kernel(d.o[s:s + n], d.h[s:s + n], d.l[s:s + n], d.c[s:s + n], d.t[s:s + n], d.ft, d.fr, off, pen)
             k.st, k.i, k.i0, k.last_target = st.copy(), int(i), int(i0), float(lt)
+            k.mpath = RW.m_of_t(d.rv[s:s + n], d.rv_ref[s:s + n], self.reward_cfg)
             self.kern[e] = k
         self.t_now, self.t_end, self.s0 = sd["t_now"].copy(), sd["t_end"].copy(), sd["s0"].copy()
 
