@@ -9,6 +9,7 @@
     },
     "reward": "Reward decomposition of one SMDP step (minutes i+1 .. j), per 5-minute block b:\nr_b = net4_b - idle_b - turnover (first block only), idle_b = 1.0 bps / 288 x clip(RV24h / train median, 0.25, 4)\nx I(|executed| < 0.125) (RV and position at the block's last minute); discounted sum with gamma(5 m x b).",
     "rv_median": "fold train [2021-01-30, year start) median of RV24h at minute closes",
+    "labels": "position_openings = flat -> position minutes (formerly reported as round_trips); completed_round_trips = position -> flat (kernel counter)",
     "tokens": [
       "K01",
       "K01_FLIP",
@@ -107,15 +108,15 @@
       },
       "fallback": 425.849478159838,
       "family_sigma": {
-        "composite": 126.38450493286298,
-        "futures": 80.18222089502851,
-        "levels": 113.42146711420531,
+        "G3": 117.0867262021985,
         "reversion": 90.76398427529233,
-        "LBR": 53.11822357138928,
-        "trend": 177.34726341555793,
         "volatility": 70.67358580188876,
+        "futures": 80.18222089502851,
+        "LBR": 53.11822357138928,
+        "levels": 113.42146711420531,
+        "trend": 177.34726341555793,
         "baseline": 126.56444373559188,
-        "G3": 117.0867262021985
+        "composite": 126.38450493286298
       },
       "rv24h_train_median": 374.24915033677996
     },
@@ -168,15 +169,15 @@
       },
       "fallback": 386.50003619473205,
       "family_sigma": {
-        "composite": 176.85866543679344,
-        "futures": 73.6125655799087,
-        "levels": 97.77150533676539,
+        "G3": 89.29170402060213,
         "reversion": 72.10723903624087,
-        "LBR": 40.690947716510756,
-        "trend": 156.31282292334876,
         "volatility": 107.72323206494778,
+        "futures": 73.6125655799087,
+        "LBR": 40.690947716510756,
+        "levels": 97.77150533676539,
+        "trend": 156.31282292334876,
         "baseline": 113.43969135945251,
-        "G3": 89.29170402060213
+        "composite": 176.85866543679344
       },
       "rv24h_train_median": 326.9816162359159
     },
@@ -229,15 +230,15 @@
       },
       "fallback": 348.36399771116214,
       "family_sigma": {
-        "composite": 179.73486886476746,
-        "futures": 65.00505703322918,
-        "levels": 84.67669209268048,
+        "G3": 94.94908353049907,
         "reversion": 64.85193223637876,
-        "LBR": 43.08486311814653,
-        "trend": 137.8046844927674,
         "volatility": 112.29682730104048,
+        "futures": 65.00505703322918,
+        "LBR": 43.08486311814653,
+        "levels": 84.67669209268048,
+        "trend": 137.8046844927674,
         "baseline": 107.6959650000954,
-        "G3": 94.94908353049907
+        "composite": 179.73486886476746
       },
       "rv24h_train_median": 281.0990317860908
     },
@@ -290,15 +291,15 @@
       },
       "fallback": 331.0281788456365,
       "family_sigma": {
-        "composite": 183.79015284810237,
-        "futures": 62.89217530047716,
-        "levels": 81.34111022629911,
+        "G3": 92.79114462229128,
         "reversion": 62.494816190621954,
-        "LBR": 41.97534852729568,
-        "trend": 133.114103078396,
         "volatility": 115.81608923389504,
+        "futures": 62.89217530047716,
+        "LBR": 41.97534852729568,
+        "levels": 81.34111022629911,
+        "trend": 133.114103078396,
         "baseline": 103.4199529503689,
-        "G3": 92.79114462229128
+        "composite": 183.79015284810237
       },
       "rv24h_train_median": 269.45925174375674
     }
@@ -311,7 +312,8 @@
             "net4": -1538.2975777315646,
             "mdd": 1947.796571585057,
             "boot60_p05": -7.540501610916487,
-            "round_trips": 1122,
+            "position_openings": 1122,
+            "completed_round_trips": 1122,
             "flat_ratio": 0.537349695585997,
             "fills": 2301,
             "fees": 1151.5,
@@ -320,7 +322,8 @@
               "net4": -1538.2975777315646,
               "idle": 156.2747765500498,
               "turnover": 29.86249999999885,
-              "reward": -1724.4348542816283
+              "reward": -1724.4348542816283,
+              "reward_discounted": -1725.2438864997025
             },
             "target_change_decisions": 2360
           },
@@ -328,7 +331,8 @@
             "net4": 309.6731065024648,
             "mdd": 1047.5674900264694,
             "boot60_p05": -2.728048802653068,
-            "round_trips": 847,
+            "position_openings": 847,
+            "completed_round_trips": 847,
             "flat_ratio": 0.6281811263318112,
             "fills": 1737,
             "fees": 870.0,
@@ -337,7 +341,8 @@
               "net4": 309.6731065024635,
               "idle": 136.06062831324195,
               "turnover": 23.5249999999992,
-              "reward": 150.08747818922143
+              "reward": 150.08747818922143,
+              "reward_discounted": 149.28908654341726
             },
             "target_change_decisions": 1877
           },
@@ -345,7 +350,8 @@
             "net4": 616.5868304624643,
             "mdd": 629.2484951419317,
             "boot60_p05": -1.1175278934240236,
-            "round_trips": 948,
+            "position_openings": 948,
+            "completed_round_trips": 947,
             "flat_ratio": 0.6246451882210079,
             "fills": 1929,
             "fees": 965.5,
@@ -354,7 +360,8 @@
               "net4": 616.5868304624645,
               "idle": 222.42654491034878,
               "turnover": 25.212499999999103,
-              "reward": 368.94778555211525
+              "reward": 368.94778555211525,
+              "reward_discounted": 368.48475684770943
             },
             "target_change_decisions": 2013
           },
@@ -362,7 +369,8 @@
             "net4": -703.2423079668305,
             "mdd": 800.1908760514141,
             "boot60_p05": -4.127247973460474,
-            "round_trips": 868,
+            "position_openings": 868,
+            "completed_round_trips": 869,
             "flat_ratio": 0.6974809741248097,
             "fills": 1777,
             "fees": 889.0,
@@ -371,7 +379,8 @@
               "net4": -703.2423079668324,
               "idle": 202.30573950382237,
               "turnover": 23.562499999999194,
-              "reward": -929.1105474706551
+              "reward": -929.1105474706551,
+              "reward_discounted": -929.0342900976568
             },
             "target_change_decisions": 1883
           }
@@ -386,7 +395,8 @@
             "net4": -1246.835296076288,
             "mdd": 1695.813505261214,
             "boot60_p05": -6.246801074963475,
-            "round_trips": 1185,
+            "position_openings": 1185,
+            "completed_round_trips": 1185,
             "flat_ratio": 0.6065772450532725,
             "fills": 2393,
             "fees": 1197.5,
@@ -395,7 +405,8 @@
               "net4": -1246.83529607629,
               "idle": 183.47493399908143,
               "turnover": 31.16249999999877,
-              "reward": -1461.4727300753764
+              "reward": -1461.4727300753764,
+              "reward_discounted": -1462.156018066968
             },
             "target_change_decisions": 2478
           },
@@ -403,7 +414,8 @@
             "net4": -757.7024140799729,
             "mdd": 1790.991295603786,
             "boot60_p05": -6.267385577618544,
-            "round_trips": 1236,
+            "position_openings": 1236,
+            "completed_round_trips": 1235,
             "flat_ratio": 0.5460407153729071,
             "fills": 2539,
             "fees": 1271.5,
@@ -412,7 +424,8 @@
               "net4": -757.7024140799757,
               "idle": 120.70908380738386,
               "turnover": 34.18749999999921,
-              "reward": -912.5989978873531
+              "reward": -912.5989978873531,
+              "reward_discounted": -913.132226975314
             },
             "target_change_decisions": 2719
           },
@@ -420,7 +433,8 @@
             "net4": -665.769040543151,
             "mdd": 1476.8593386858138,
             "boot60_p05": -5.667634927096731,
-            "round_trips": 1332,
+            "position_openings": 1332,
+            "completed_round_trips": 1332,
             "flat_ratio": 0.5273964025500911,
             "fills": 2755,
             "fees": 1381.5,
@@ -429,7 +443,8 @@
               "net4": -665.7690405431521,
               "idle": 185.73117841016622,
               "turnover": 36.08749999999963,
-              "reward": -887.587718953315
+              "reward": -887.587718953315,
+              "reward_discounted": -887.6154559936022
             },
             "target_change_decisions": 2852
           },
@@ -437,7 +452,8 @@
             "net4": -2050.268890323792,
             "mdd": 2284.3586968787895,
             "boot60_p05": -8.079883726769609,
-            "round_trips": 1330,
+            "position_openings": 1330,
+            "completed_round_trips": 1330,
             "flat_ratio": 0.5545376712328767,
             "fills": 2721,
             "fees": 1363.5,
@@ -446,7 +462,8 @@
               "net4": -2050.268890323793,
               "idle": 160.482954156887,
               "turnover": 35.98749999999962,
-              "reward": -2246.739344480682
+              "reward": -2246.739344480682,
+              "reward_discounted": -2246.3770354573358
             },
             "target_change_decisions": 2857
           }
@@ -461,7 +478,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -470,7 +488,8 @@
               "net4": 0.0,
               "idle": 304.3950918559007,
               "turnover": 0.0,
-              "reward": -304.3950918559007
+              "reward": -304.3950918559007,
+              "reward_discounted": -304.2608246281252
             },
             "target_change_decisions": 0
           },
@@ -478,7 +497,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -487,7 +507,8 @@
               "net4": 0.0,
               "idle": 235.93166473743477,
               "turnover": 0.0,
-              "reward": -235.93166473743477
+              "reward": -235.93166473743477,
+              "reward_discounted": -235.82759184466698
             },
             "target_change_decisions": 0
           },
@@ -495,7 +516,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -504,7 +526,8 @@
               "net4": 0.0,
               "idle": 348.3570766558402,
               "turnover": 0.0,
-              "reward": -348.3570766558402
+              "reward": -348.3570766558402,
+              "reward_discounted": -348.2034154091184
             },
             "target_change_decisions": 0
           },
@@ -512,7 +535,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -521,7 +545,8 @@
               "net4": 0.0,
               "idle": 296.73564831517876,
               "turnover": 0.0,
-              "reward": -296.73564831517876
+              "reward": -296.73564831517876,
+              "reward_discounted": -296.60475873147357
             },
             "target_change_decisions": 0
           }
@@ -538,7 +563,8 @@
             "net4": -1801.72975581063,
             "mdd": 2184.2515888397593,
             "boot60_p05": -8.341596421325594,
-            "round_trips": 1108,
+            "position_openings": 1108,
+            "completed_round_trips": 1108,
             "flat_ratio": 0.5397926179604262,
             "fills": 2272,
             "fees": 1137.5,
@@ -547,7 +573,8 @@
               "net4": -1801.7297558106334,
               "idle": 157.24455170181224,
               "turnover": 29.86249999999885,
-              "reward": -1988.836807512456
+              "reward": -1988.836807512456,
+              "reward_discounted": -1989.6357332452558
             },
             "target_change_decisions": 2360
           },
@@ -555,7 +582,8 @@
             "net4": 220.3491535767131,
             "mdd": 1079.650486219125,
             "boot60_p05": -2.9025349427654237,
-            "round_trips": 809,
+            "position_openings": 809,
+            "completed_round_trips": 809,
             "flat_ratio": 0.632349695585997,
             "fills": 1658,
             "fees": 830.0,
@@ -564,7 +592,8 @@
               "net4": 220.3491535767132,
               "idle": 136.67349811136413,
               "turnover": 23.5249999999992,
-              "reward": 60.15065546535125
+              "reward": 60.15065546535125,
+              "reward_discounted": 59.366509382317155
             },
             "target_change_decisions": 1877
           },
@@ -572,7 +601,8 @@
             "net4": 551.5449790388893,
             "mdd": 652.4931381031436,
             "boot60_p05": -1.3519945755354195,
-            "round_trips": 923,
+            "position_openings": 923,
+            "completed_round_trips": 922,
             "flat_ratio": 0.6254288099574985,
             "fills": 1877,
             "fees": 939.5,
@@ -581,7 +611,8 @@
               "net4": 551.5449790388894,
               "idle": 222.45457184713703,
               "turnover": 25.212499999999103,
-              "reward": 303.8779071917516
+              "reward": 303.8779071917516,
+              "reward_discounted": 303.4165092446553
             },
             "target_change_decisions": 2013
           },
@@ -589,7 +620,8 @@
             "net4": -839.066998916002,
             "mdd": 923.6783433640117,
             "boot60_p05": -4.48909650570063,
-            "round_trips": 841,
+            "position_openings": 841,
+            "completed_round_trips": 842,
             "flat_ratio": 0.7007553272450533,
             "fills": 1723,
             "fees": 862.0,
@@ -598,7 +630,8 @@
               "net4": -839.066998916005,
               "idle": 203.1737187998596,
               "turnover": 23.562499999999194,
-              "reward": -1065.8032177158611
+              "reward": -1065.8032177158611,
+              "reward_discounted": -1065.7109325638348
             },
             "target_change_decisions": 1883
           }
@@ -613,7 +646,8 @@
             "net4": -1585.6744213520035,
             "mdd": 1920.099140378804,
             "boot60_p05": -7.155971472850279,
-            "round_trips": 1168,
+            "position_openings": 1168,
+            "completed_round_trips": 1168,
             "flat_ratio": 0.6089117199391172,
             "fills": 2359,
             "fees": 1180.5,
@@ -622,7 +656,8 @@
               "net4": -1585.6744213520033,
               "idle": 184.41689498520165,
               "turnover": 31.16249999999877,
-              "reward": -1801.2538163372126
+              "reward": -1801.2538163372126,
+              "reward_discounted": -1801.925201787763
             },
             "target_change_decisions": 2478
           },
@@ -630,7 +665,8 @@
             "net4": -828.5366094807276,
             "mdd": 1813.468308907978,
             "boot60_p05": -6.313614441283621,
-            "round_trips": 1166,
+            "position_openings": 1166,
+            "completed_round_trips": 1165,
             "flat_ratio": 0.5552378234398783,
             "fills": 2398,
             "fees": 1201.5,
@@ -639,7 +675,8 @@
               "net4": -828.5366094807295,
               "idle": 122.02836175978523,
               "turnover": 34.18749999999921,
-              "reward": -984.7524712405104
+              "reward": -984.7524712405104,
+              "reward_discounted": -985.2598528772597
             },
             "target_change_decisions": 2719
           },
@@ -647,7 +684,8 @@
             "net4": -842.4501358829973,
             "mdd": 1601.466051051746,
             "boot60_p05": -6.1806523178524015,
-            "round_trips": 1303,
+            "position_openings": 1303,
+            "completed_round_trips": 1303,
             "flat_ratio": 0.5282710989678203,
             "fills": 2696,
             "fees": 1352.5,
@@ -656,7 +694,8 @@
               "net4": -842.450135882997,
               "idle": 186.06272354564103,
               "turnover": 36.08749999999963,
-              "reward": -1064.6003594286385
+              "reward": -1064.6003594286385,
+              "reward_discounted": -1064.6172840777463
             },
             "target_change_decisions": 2852
           },
@@ -664,7 +703,8 @@
             "net4": -2209.6479581427125,
             "mdd": 2436.4418000340943,
             "boot60_p05": -8.51196301010358,
-            "round_trips": 1283,
+            "position_openings": 1283,
+            "completed_round_trips": 1283,
             "flat_ratio": 0.5588584474885845,
             "fills": 2627,
             "fees": 1316.5,
@@ -673,7 +713,8 @@
               "net4": -2209.647958142713,
               "idle": 161.69668119115045,
               "turnover": 35.98749999999962,
-              "reward": -2407.332139333854
+              "reward": -2407.332139333854,
+              "reward_discounted": -2406.9284029282935
             },
             "target_change_decisions": 2857
           }
@@ -688,7 +729,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -697,7 +739,8 @@
               "net4": 0.0,
               "idle": 304.3950918559007,
               "turnover": 0.0,
-              "reward": -304.3950918559007
+              "reward": -304.3950918559007,
+              "reward_discounted": -304.2608246281252
             },
             "target_change_decisions": 0
           },
@@ -705,7 +748,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -714,7 +758,8 @@
               "net4": 0.0,
               "idle": 235.93166473743477,
               "turnover": 0.0,
-              "reward": -235.93166473743477
+              "reward": -235.93166473743477,
+              "reward_discounted": -235.82759184466698
             },
             "target_change_decisions": 0
           },
@@ -722,7 +767,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -731,7 +777,8 @@
               "net4": 0.0,
               "idle": 348.3570766558402,
               "turnover": 0.0,
-              "reward": -348.3570766558402
+              "reward": -348.3570766558402,
+              "reward_discounted": -348.2034154091184
             },
             "target_change_decisions": 0
           },
@@ -739,7 +786,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -748,7 +796,8 @@
               "net4": 0.0,
               "idle": 296.73564831517876,
               "turnover": 0.0,
-              "reward": -296.73564831517876
+              "reward": -296.73564831517876,
+              "reward_discounted": -296.60475873147357
             },
             "target_change_decisions": 0
           }
@@ -765,7 +814,8 @@
             "net4": -2249.9162340642006,
             "mdd": 2474.0498058813164,
             "boot60_p05": -9.61593580210923,
-            "round_trips": 1056,
+            "position_openings": 1056,
+            "completed_round_trips": 1056,
             "flat_ratio": 0.5408409436834094,
             "fills": 2164,
             "fees": 1084.5,
@@ -774,7 +824,8 @@
               "net4": -2249.9162340641965,
               "idle": 158.0275033494227,
               "turnover": 29.86249999999885,
-              "reward": -2437.806237413628
+              "reward": -2437.806237413628,
+              "reward_discounted": -2438.411835115369
             },
             "target_change_decisions": 2360
           },
@@ -782,7 +833,8 @@
             "net4": 339.89034811001494,
             "mdd": 957.839493489905,
             "boot60_p05": -2.395469490010075,
-            "round_trips": 722,
+            "position_openings": 722,
+            "completed_round_trips": 722,
             "flat_ratio": 0.6346955859969559,
             "fills": 1482,
             "fees": 742.0,
@@ -791,7 +843,8 @@
               "net4": 339.8903481100158,
               "idle": 138.4015811629014,
               "turnover": 23.5249999999992,
-              "reward": 177.9637669471131
+              "reward": 177.9637669471131,
+              "reward_discounted": 177.1423374975742
             },
             "target_change_decisions": 1877
           },
@@ -799,7 +852,8 @@
             "net4": 42.01672063934865,
             "mdd": 685.9324147281769,
             "boot60_p05": -2.692484894507546,
-            "round_trips": 864,
+            "position_openings": 864,
+            "completed_round_trips": 863,
             "flat_ratio": 0.6319083940497875,
             "fills": 1757,
             "fees": 879.5,
@@ -808,7 +862,8 @@
               "net4": 42.01672063934964,
               "idle": 224.2316349107685,
               "turnover": 25.212499999999103,
-              "reward": -207.42741427141894
+              "reward": -207.42741427141894,
+              "reward_discounted": -207.75579511991037
             },
             "target_change_decisions": 2013
           },
@@ -816,7 +871,8 @@
             "net4": -1171.716264013907,
             "mdd": 1208.2743406571647,
             "boot60_p05": -5.3831452461240055,
-            "round_trips": 764,
+            "position_openings": 764,
+            "completed_round_trips": 765,
             "flat_ratio": 0.7074410197869102,
             "fills": 1561,
             "fees": 781.0,
@@ -825,7 +881,8 @@
               "net4": -1171.716264013913,
               "idle": 204.8367301725677,
               "turnover": 23.562499999999194,
-              "reward": -1400.11549418648
+              "reward": -1400.11549418648,
+              "reward_discounted": -1399.858951461181
             },
             "target_change_decisions": 1883
           }
@@ -840,7 +897,8 @@
             "net4": -1920.4418248432842,
             "mdd": 2304.307245556745,
             "boot60_p05": -8.595576664276344,
-            "round_trips": 1110,
+            "position_openings": 1110,
+            "completed_round_trips": 1110,
             "flat_ratio": 0.6091400304414003,
             "fills": 2241,
             "fees": 1121.5,
@@ -849,7 +907,8 @@
               "net4": -1920.4418248432828,
               "idle": 184.84513823471204,
               "turnover": 31.16249999999877,
-              "reward": -2136.449463077993
+              "reward": -2136.449463077993,
+              "reward_discounted": -2136.967631235226
             },
             "target_change_decisions": 2478
           },
@@ -857,7 +916,8 @@
             "net4": -964.3276535489761,
             "mdd": 1801.0193191629846,
             "boot60_p05": -6.189572736285099,
-            "round_trips": 1022,
+            "position_openings": 1022,
+            "completed_round_trips": 1021,
             "flat_ratio": 0.5579851598173516,
             "fills": 2105,
             "fees": 1055.5,
@@ -866,7 +926,8 @@
               "net4": -964.3276535489775,
               "idle": 123.56983783136239,
               "turnover": 34.18749999999921,
-              "reward": -1122.084991380333
+              "reward": -1122.084991380333,
+              "reward_discounted": -1122.5320851411605
             },
             "target_change_decisions": 2719
           },
@@ -874,7 +935,8 @@
             "net4": -1466.4038460027944,
             "mdd": 1746.2846387501595,
             "boot60_p05": -7.401426883110084,
-            "round_trips": 1230,
+            "position_openings": 1230,
+            "completed_round_trips": 1230,
             "flat_ratio": 0.5337431693989071,
             "fills": 2546,
             "fees": 1278.5,
@@ -883,7 +945,8 @@
               "net4": -1466.4038460027975,
               "idle": 187.87932322305798,
               "turnover": 36.08749999999963,
-              "reward": -1690.3706692258602
+              "reward": -1690.3706692258602,
+              "reward_discounted": -1690.2090756896446
             },
             "target_change_decisions": 2852
           },
@@ -891,7 +954,8 @@
             "net4": -2600.321323305147,
             "mdd": 2781.7761767395496,
             "boot60_p05": -9.756200521732964,
-            "round_trips": 1169,
+            "position_openings": 1169,
+            "completed_round_trips": 1169,
             "flat_ratio": 0.5660768645357687,
             "fills": 2394,
             "fees": 1201.5,
@@ -900,7 +964,8 @@
               "net4": -2600.3213233051483,
               "idle": 163.40686621681874,
               "turnover": 35.98749999999962,
-              "reward": -2799.7156895219596
+              "reward": -2799.7156895219596,
+              "reward_discounted": -2799.1785456836674
             },
             "target_change_decisions": 2857
           }
@@ -915,7 +980,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -924,7 +990,8 @@
               "net4": 0.0,
               "idle": 304.3950918559007,
               "turnover": 0.0,
-              "reward": -304.3950918559007
+              "reward": -304.3950918559007,
+              "reward_discounted": -304.2608246281252
             },
             "target_change_decisions": 0
           },
@@ -932,7 +999,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -941,7 +1009,8 @@
               "net4": 0.0,
               "idle": 235.93166473743477,
               "turnover": 0.0,
-              "reward": -235.93166473743477
+              "reward": -235.93166473743477,
+              "reward_discounted": -235.82759184466698
             },
             "target_change_decisions": 0
           },
@@ -949,7 +1018,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -958,7 +1028,8 @@
               "net4": 0.0,
               "idle": 348.3570766558402,
               "turnover": 0.0,
-              "reward": -348.3570766558402
+              "reward": -348.3570766558402,
+              "reward_discounted": -348.2034154091184
             },
             "target_change_decisions": 0
           },
@@ -966,7 +1037,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -975,7 +1047,8 @@
               "net4": 0.0,
               "idle": 296.73564831517876,
               "turnover": 0.0,
-              "reward": -296.73564831517876
+              "reward": -296.73564831517876,
+              "reward_discounted": -296.60475873147357
             },
             "target_change_decisions": 0
           }
@@ -992,7 +1065,8 @@
             "net4": -1750.933456059258,
             "mdd": 2098.2252927808618,
             "boot60_p05": -8.282790114729611,
-            "round_trips": 1097,
+            "position_openings": 1097,
+            "completed_round_trips": 1098,
             "flat_ratio": 0.5556944444444445,
             "fills": 2247,
             "fees": 1126.0,
@@ -1001,7 +1075,8 @@
               "net4": -1750.9334560592613,
               "idle": 160.91014794543614,
               "turnover": 29.86249999999885,
-              "reward": -1941.706104004703
+              "reward": -1941.706104004703,
+              "reward_discounted": -1942.2501965014887
             },
             "target_change_decisions": 2360
           },
@@ -1009,7 +1084,8 @@
             "net4": 549.732047336668,
             "mdd": 911.9179005212784,
             "boot60_p05": -2.014587447474046,
-            "round_trips": 809,
+            "position_openings": 809,
+            "completed_round_trips": 809,
             "flat_ratio": 0.6500837138508372,
             "fills": 1657,
             "fees": 830.0,
@@ -1018,7 +1094,8 @@
               "net4": 549.7320473366676,
               "idle": 140.07793206336436,
               "turnover": 23.5249999999992,
-              "reward": 386.1291152733026
+              "reward": 386.1291152733026,
+              "reward_discounted": 385.3795553234398
             },
             "target_change_decisions": 1877
           },
@@ -1026,7 +1103,8 @@
             "net4": 440.9048316532196,
             "mdd": 666.656817411475,
             "boot60_p05": -1.69685432062442,
-            "round_trips": 916,
+            "position_openings": 916,
+            "completed_round_trips": 915,
             "flat_ratio": 0.645432984213722,
             "fills": 1861,
             "fees": 931.5,
@@ -1035,7 +1113,8 @@
               "net4": 440.90483165322087,
               "idle": 228.29082636199024,
               "turnover": 25.212499999999103,
-              "reward": 187.40150529122766
+              "reward": 187.40150529122766,
+              "reward_discounted": 187.12324754353187
             },
             "target_change_decisions": 2013
           },
@@ -1043,7 +1122,8 @@
             "net4": -628.8315239760193,
             "mdd": 777.9898060354485,
             "boot60_p05": -3.837348248316893,
-            "round_trips": 833,
+            "position_openings": 833,
+            "completed_round_trips": 833,
             "flat_ratio": 0.7160749619482496,
             "fills": 1701,
             "fees": 851.0,
@@ -1052,7 +1132,8 @@
               "net4": -628.831523976018,
               "idle": 206.45023422806284,
               "turnover": 23.562499999999194,
-              "reward": -858.8442582040811
+              "reward": -858.8442582040811,
+              "reward_discounted": -858.7197503074408
             },
             "target_change_decisions": 1883
           }
@@ -1067,7 +1148,8 @@
             "net4": -1507.4325754677502,
             "mdd": 1887.38801550769,
             "boot60_p05": -6.971355310048541,
-            "round_trips": 1151,
+            "position_openings": 1151,
+            "completed_round_trips": 1152,
             "flat_ratio": 0.627720700152207,
             "fills": 2324,
             "fees": 1163.0,
@@ -1076,7 +1158,8 @@
               "net4": -1507.432575467752,
               "idle": 188.9578040883877,
               "turnover": 31.16249999999877,
-              "reward": -1727.552879556145
+              "reward": -1727.552879556145,
+              "reward_discounted": -1728.018805300211
             },
             "target_change_decisions": 2478
           },
@@ -1084,7 +1167,8 @@
             "net4": -474.44885586764275,
             "mdd": 1503.5735174820907,
             "boot60_p05": -5.277095897681865,
-            "round_trips": 1184,
+            "position_openings": 1184,
+            "completed_round_trips": 1183,
             "flat_ratio": 0.577427701674277,
             "fills": 2430,
             "fees": 1217.5,
@@ -1093,7 +1177,8 @@
               "net4": -474.4488558676438,
               "idle": 126.78189798284727,
               "turnover": 34.18749999999921,
-              "reward": -635.4182538504922
+              "reward": -635.4182538504922,
+              "reward_discounted": -635.8560745190555
             },
             "target_change_decisions": 2719
           },
@@ -1101,7 +1186,8 @@
             "net4": -500.07140613130235,
             "mdd": 1324.8646815816069,
             "boot60_p05": -4.975398425889765,
-            "round_trips": 1294,
+            "position_openings": 1294,
+            "completed_round_trips": 1293,
             "flat_ratio": 0.5498975409836065,
             "fills": 2670,
             "fees": 1340.5,
@@ -1110,7 +1196,8 @@
               "net4": -500.0714061313019,
               "idle": 192.38074938663027,
               "turnover": 36.08749999999963,
-              "reward": -728.5396555179327
+              "reward": -728.5396555179327,
+              "reward_discounted": -728.5010333381957
             },
             "target_change_decisions": 2852
           },
@@ -1118,7 +1205,8 @@
             "net4": -1751.861608795156,
             "mdd": 2091.259421776428,
             "boot60_p05": -7.363748689492907,
-            "round_trips": 1276,
+            "position_openings": 1276,
+            "completed_round_trips": 1275,
             "flat_ratio": 0.5823021308980213,
             "fills": 2610,
             "fees": 1308.5,
@@ -1127,7 +1215,8 @@
               "net4": -1751.8616087951568,
               "idle": 166.77354279488569,
               "turnover": 35.98749999999962,
-              "reward": -1954.6226515900432
+              "reward": -1954.6226515900432,
+              "reward_discounted": -1954.2498799171062
             },
             "target_change_decisions": 2857
           }
@@ -1142,7 +1231,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1151,7 +1241,8 @@
               "net4": 0.0,
               "idle": 304.3950918559007,
               "turnover": 0.0,
-              "reward": -304.3950918559007
+              "reward": -304.3950918559007,
+              "reward_discounted": -304.2608246281252
             },
             "target_change_decisions": 0
           },
@@ -1159,7 +1250,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1168,7 +1260,8 @@
               "net4": 0.0,
               "idle": 235.93166473743477,
               "turnover": 0.0,
-              "reward": -235.93166473743477
+              "reward": -235.93166473743477,
+              "reward_discounted": -235.82759184466698
             },
             "target_change_decisions": 0
           },
@@ -1176,7 +1269,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1185,7 +1279,8 @@
               "net4": 0.0,
               "idle": 348.3570766558402,
               "turnover": 0.0,
-              "reward": -348.3570766558402
+              "reward": -348.3570766558402,
+              "reward_discounted": -348.2034154091184
             },
             "target_change_decisions": 0
           },
@@ -1193,7 +1288,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1202,7 +1298,8 @@
               "net4": 0.0,
               "idle": 296.73564831517876,
               "turnover": 0.0,
-              "reward": -296.73564831517876
+              "reward": -296.73564831517876,
+              "reward_discounted": -296.60475873147357
             },
             "target_change_decisions": 0
           }
@@ -1219,7 +1316,8 @@
             "net4": -1915.1281506083576,
             "mdd": 2253.165655218821,
             "boot60_p05": -8.755556083228893,
-            "round_trips": 1084,
+            "position_openings": 1084,
+            "completed_round_trips": 1085,
             "flat_ratio": 0.5573420852359209,
             "fills": 2219,
             "fees": 1112.0,
@@ -1228,7 +1326,8 @@
               "net4": -1915.1281506083571,
               "idle": 161.42887166494617,
               "turnover": 29.86249999999885,
-              "reward": -2106.419522273298
+              "reward": -2106.419522273298,
+              "reward_discounted": -2106.9491957067917
             },
             "target_change_decisions": 2360
           },
@@ -1236,7 +1335,8 @@
             "net4": 477.958272951134,
             "mdd": 939.1199611677218,
             "boot60_p05": -2.1461221654915787,
-            "round_trips": 771,
+            "position_openings": 771,
+            "completed_round_trips": 771,
             "flat_ratio": 0.6526864535768645,
             "fills": 1578,
             "fees": 790.0,
@@ -1245,7 +1345,8 @@
               "net4": 477.95827295113367,
               "idle": 140.49642161927056,
               "turnover": 23.5249999999992,
-              "reward": 313.93685133186403
+              "reward": 313.93685133186403,
+              "reward_discounted": 313.18532177884003
             },
             "target_change_decisions": 1877
           },
@@ -1253,7 +1354,8 @@
             "net4": 309.77147225046724,
             "mdd": 684.0950937683517,
             "boot60_p05": -2.077919981130045,
-            "round_trips": 890,
+            "position_openings": 890,
+            "completed_round_trips": 889,
             "flat_ratio": 0.6471634031572556,
             "fills": 1809,
             "fees": 905.5,
@@ -1262,7 +1364,8 @@
               "net4": 309.7714722504671,
               "idle": 228.45649286384682,
               "turnover": 25.212499999999103,
-              "reward": 56.1024793866199
+              "reward": 56.1024793866199,
+              "reward_discounted": 55.865464326249366
             },
             "target_change_decisions": 2013
           },
@@ -1270,7 +1373,8 @@
             "net4": -728.7443241185987,
             "mdd": 891.1616538273269,
             "boot60_p05": -4.040777967096369,
-            "round_trips": 805,
+            "position_openings": 805,
+            "completed_round_trips": 805,
             "flat_ratio": 0.7209056316590563,
             "fills": 1642,
             "fees": 822.0,
@@ -1279,7 +1383,8 @@
               "net4": -728.7443241185977,
               "idle": 207.55702535736944,
               "turnover": 23.562499999999194,
-              "reward": -959.8638494759664
+              "reward": -959.8638494759664,
+              "reward_discounted": -959.7292526277372
             },
             "target_change_decisions": 1883
           }
@@ -1294,7 +1399,8 @@
             "net4": -1669.3450822242096,
             "mdd": 1977.6743419107354,
             "boot60_p05": -7.438848798338224,
-            "round_trips": 1124,
+            "position_openings": 1124,
+            "completed_round_trips": 1125,
             "flat_ratio": 0.6299086757990867,
             "fills": 2270,
             "fees": 1136.0,
@@ -1303,7 +1409,8 @@
               "net4": -1669.3450822242098,
               "idle": 189.62945505784532,
               "turnover": 31.16249999999877,
-              "reward": -1890.1370372820604
+              "reward": -1890.1370372820604,
+              "reward_discounted": -1890.6017984168489
             },
             "target_change_decisions": 2478
           },
@@ -1311,7 +1418,8 @@
             "net4": -309.44360497699455,
             "mdd": 1359.1473740727097,
             "boot60_p05": -4.736818307444665,
-            "round_trips": 1120,
+            "position_openings": 1120,
+            "completed_round_trips": 1119,
             "flat_ratio": 0.5858542617960426,
             "fills": 2302,
             "fees": 1153.5,
@@ -1320,7 +1428,8 @@
               "net4": -309.44360497699495,
               "idle": 127.9335974151581,
               "turnover": 34.18749999999921,
-              "reward": -471.5647023921539
+              "reward": -471.5647023921539,
+              "reward_discounted": -472.07021861799103
             },
             "target_change_decisions": 2719
           },
@@ -1328,7 +1437,8 @@
             "net4": -723.5332906470409,
             "mdd": 1405.603237800929,
             "boot60_p05": -5.505486672800261,
-            "round_trips": 1258,
+            "position_openings": 1258,
+            "completed_round_trips": 1257,
             "flat_ratio": 0.5524950667880996,
             "fills": 2598,
             "fees": 1304.5,
@@ -1337,7 +1447,8 @@
               "net4": -723.5332906470409,
               "idle": 192.8857320690063,
               "turnover": 36.08749999999963,
-              "reward": -952.5065227160467
+              "reward": -952.5065227160467,
+              "reward_discounted": -952.4512566918462
             },
             "target_change_decisions": 2852
           },
@@ -1345,7 +1456,8 @@
             "net4": -1823.7948741532093,
             "mdd": 2188.5899071561835,
             "boot60_p05": -7.5897308421247525,
-            "round_trips": 1230,
+            "position_openings": 1230,
+            "completed_round_trips": 1229,
             "flat_ratio": 0.5845053272450532,
             "fills": 2517,
             "fees": 1261.5,
@@ -1354,7 +1466,8 @@
               "net4": -1823.794874153211,
               "idle": 167.58114447828763,
               "turnover": 35.98749999999962,
-              "reward": -2027.3635186315025
+              "reward": -2027.3635186315025,
+              "reward_discounted": -2026.97105125821
             },
             "target_change_decisions": 2857
           }
@@ -1369,7 +1482,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1378,7 +1492,8 @@
               "net4": 0.0,
               "idle": 304.3950918559007,
               "turnover": 0.0,
-              "reward": -304.3950918559007
+              "reward": -304.3950918559007,
+              "reward_discounted": -304.2608246281252
             },
             "target_change_decisions": 0
           },
@@ -1386,7 +1501,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1395,7 +1511,8 @@
               "net4": 0.0,
               "idle": 235.93166473743477,
               "turnover": 0.0,
-              "reward": -235.93166473743477
+              "reward": -235.93166473743477,
+              "reward_discounted": -235.82759184466698
             },
             "target_change_decisions": 0
           },
@@ -1403,7 +1520,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1412,7 +1530,8 @@
               "net4": 0.0,
               "idle": 348.3570766558402,
               "turnover": 0.0,
-              "reward": -348.3570766558402
+              "reward": -348.3570766558402,
+              "reward_discounted": -348.2034154091184
             },
             "target_change_decisions": 0
           },
@@ -1420,7 +1539,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1429,7 +1549,8 @@
               "net4": 0.0,
               "idle": 296.73564831517876,
               "turnover": 0.0,
-              "reward": -296.73564831517876
+              "reward": -296.73564831517876,
+              "reward_discounted": -296.60475873147357
             },
             "target_change_decisions": 0
           }
@@ -1446,7 +1567,8 @@
             "net4": -2291.3629634232225,
             "mdd": 2564.150987441327,
             "boot60_p05": -9.837958836340627,
-            "round_trips": 1034,
+            "position_openings": 1034,
+            "completed_round_trips": 1035,
             "flat_ratio": 0.5610844748858448,
             "fills": 2117,
             "fees": 1061.0,
@@ -1455,7 +1577,8 @@
               "net4": -2291.362963423221,
               "idle": 162.50542223206332,
               "turnover": 29.86249999999885,
-              "reward": -2483.730885655284
+              "reward": -2483.730885655284,
+              "reward_discounted": -2484.1198087225885
             },
             "target_change_decisions": 2360
           },
@@ -1463,7 +1586,8 @@
             "net4": 391.47122241174134,
             "mdd": 936.7960344954396,
             "boot60_p05": -2.215097832103574,
-            "round_trips": 684,
+            "position_openings": 684,
+            "completed_round_trips": 684,
             "flat_ratio": 0.6596461187214612,
             "fills": 1404,
             "fees": 703.0,
@@ -1472,7 +1596,8 @@
               "net4": 391.4712224117409,
               "idle": 142.66085514357218,
               "turnover": 23.5249999999992,
-              "reward": 225.28536726816955
+              "reward": 225.28536726816955,
+              "reward_discounted": 224.63948241877804
             },
             "target_change_decisions": 1877
           },
@@ -1480,7 +1605,8 @@
             "net4": -16.441524491944477,
             "mdd": 701.0979767624177,
             "boot60_p05": -3.0253684427675576,
-            "round_trips": 825,
+            "position_openings": 825,
+            "completed_round_trips": 824,
             "flat_ratio": 0.6578115513054038,
             "fills": 1675,
             "fees": 838.5,
@@ -1489,7 +1615,8 @@
               "net4": -16.44152449194389,
               "idle": 231.23709324543182,
               "turnover": 25.212499999999103,
-              "reward": -272.89111773737716
+              "reward": -272.89111773737716,
+              "reward_discounted": -272.97823052714017
             },
             "target_change_decisions": 2013
           },
@@ -1497,7 +1624,8 @@
             "net4": -1053.2573781709345,
             "mdd": 1181.7564187523712,
             "boot60_p05": -5.014824848552223,
-            "round_trips": 736,
+            "position_openings": 736,
+            "completed_round_trips": 736,
             "flat_ratio": 0.7254623287671232,
             "fills": 1504,
             "fees": 753.0,
@@ -1506,7 +1634,8 @@
               "net4": -1053.2573781709327,
               "idle": 209.04996684621653,
               "turnover": 23.562499999999194,
-              "reward": -1285.86984501715
+              "reward": -1285.86984501715,
+              "reward_discounted": -1285.5947290785962
             },
             "target_change_decisions": 1883
           }
@@ -1521,7 +1650,8 @@
             "net4": -2049.6961439716188,
             "mdd": 2339.7629636881693,
             "boot60_p05": -8.92163233994562,
-            "round_trips": 1071,
+            "position_openings": 1071,
+            "completed_round_trips": 1072,
             "flat_ratio": 0.6325437595129376,
             "fills": 2164,
             "fees": 1083.0,
@@ -1530,7 +1660,8 @@
               "net4": -2049.696143971619,
               "idle": 190.50756737495777,
               "turnover": 31.16249999999877,
-              "reward": -2271.3662113465657
+              "reward": -2271.3662113465657,
+              "reward_discounted": -2271.7358617569303
             },
             "target_change_decisions": 2478
           },
@@ -1538,7 +1669,8 @@
             "net4": -711.8136329929885,
             "mdd": 1548.627037621314,
             "boot60_p05": -5.873841894347389,
-            "round_trips": 986,
+            "position_openings": 986,
+            "completed_round_trips": 985,
             "flat_ratio": 0.5908637747336377,
             "fills": 2031,
             "fees": 1018.5,
@@ -1547,7 +1679,8 @@
               "net4": -711.8136329929911,
               "idle": 129.5848277345466,
               "turnover": 34.18749999999921,
-              "reward": -875.5859607275348
+              "reward": -875.5859607275348,
+              "reward_discounted": -875.8947734056484
             },
             "target_change_decisions": 2719
           },
@@ -1555,7 +1688,8 @@
             "net4": -1537.23209100174,
             "mdd": 1681.9863384456946,
             "boot60_p05": -7.550205413921663,
-            "round_trips": 1173,
+            "position_openings": 1173,
+            "completed_round_trips": 1172,
             "flat_ratio": 0.5653460837887068,
             "fills": 2423,
             "fees": 1216.5,
@@ -1564,7 +1698,8 @@
               "net4": -1537.2320910017402,
               "idle": 196.35448431810755,
               "turnover": 36.08749999999963,
-              "reward": -1769.6740753198508
+              "reward": -1769.6740753198508,
+              "reward_discounted": -1769.3212864122609
             },
             "target_change_decisions": 2852
           },
@@ -1572,7 +1707,8 @@
             "net4": -2315.168144434249,
             "mdd": 2581.38724354913,
             "boot60_p05": -8.780122907833379,
-            "round_trips": 1127,
+            "position_openings": 1127,
+            "completed_round_trips": 1126,
             "flat_ratio": 0.5886491628614916,
             "fills": 2307,
             "fees": 1156.5,
@@ -1581,7 +1717,8 @@
               "net4": -2315.168144434252,
               "idle": 168.78329629423502,
               "turnover": 35.98749999999962,
-              "reward": -2519.938940728474
+              "reward": -2519.938940728474,
+              "reward_discounted": -2519.332784763224
             },
             "target_change_decisions": 2857
           }
@@ -1596,7 +1733,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1605,7 +1743,8 @@
               "net4": 0.0,
               "idle": 304.3950918559007,
               "turnover": 0.0,
-              "reward": -304.3950918559007
+              "reward": -304.3950918559007,
+              "reward_discounted": -304.2608246281252
             },
             "target_change_decisions": 0
           },
@@ -1613,7 +1752,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1622,7 +1762,8 @@
               "net4": 0.0,
               "idle": 235.93166473743477,
               "turnover": 0.0,
-              "reward": -235.93166473743477
+              "reward": -235.93166473743477,
+              "reward_discounted": -235.82759184466698
             },
             "target_change_decisions": 0
           },
@@ -1630,7 +1771,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1639,7 +1781,8 @@
               "net4": 0.0,
               "idle": 348.3570766558402,
               "turnover": 0.0,
-              "reward": -348.3570766558402
+              "reward": -348.3570766558402,
+              "reward_discounted": -348.2034154091184
             },
             "target_change_decisions": 0
           },
@@ -1647,7 +1790,8 @@
             "net4": 0.0,
             "mdd": 0.0,
             "boot60_p05": 0.0,
-            "round_trips": 0,
+            "position_openings": 0,
+            "completed_round_trips": 0,
             "flat_ratio": 1.0,
             "fills": 0,
             "fees": 0.0,
@@ -1656,7 +1800,8 @@
               "net4": 0.0,
               "idle": 296.73564831517876,
               "turnover": 0.0,
-              "reward": -296.73564831517876
+              "reward": -296.73564831517876,
+              "reward_discounted": -296.60475873147357
             },
             "target_change_decisions": 0
           }
@@ -1675,21 +1820,30 @@
         "boot60_p05": -2.6261026135276366,
         "boot20_p05": -2.771515645687777,
         "boot120_p05": -2.4915013975751386,
-        "round_trips": 3785,
+        "position_openings": 3785,
+        "completed_round_trips": 3786,
         "flat_ratio": 0.6219151646513043,
         "fills": 7744,
+        "counters": {
+          "TTLX": 254,
+          "REQ": 264,
+          "REV": 34,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -1538.2975777315646,
           "2023": 309.9367823669508,
           "2024": 616.5868304624643,
           "2025": -703.0127903559927
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -1314.7867552581386,
-          "idle": 815.479664588959,
+          "idle": 717.0676892774567,
           "turnover": 102.16250000001463,
-          "reward": -2232.4289198471074
+          "reward": -2134.0169445356314,
+          "reward_discounted": -2136.0111285516186
         }
       },
       "ewa": {
@@ -1698,21 +1852,30 @@
         "boot60_p05": -5.089054481759803,
         "boot20_p05": -5.138417443730994,
         "boot120_p05": -4.980454213045371,
-        "round_trips": 5083,
+        "position_openings": 5083,
+        "completed_round_trips": 5083,
         "flat_ratio": 0.5585595862803255,
         "fills": 10407,
+        "counters": {
+          "TTLX": 366,
+          "REQ": 371,
+          "REV": 110,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -1246.835296076288,
           "2023": -759.3725767641411,
           "2024": -664.8446338066344,
           "2025": -2050.0393727129544
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -4721.091879360001,
-          "idle": 754.55410119752,
+          "idle": 650.3773170401829,
           "turnover": 137.38750000001198,
-          "reward": -5613.033480557551
+          "reward": -5508.856696400202,
+          "reward_discounted": -5509.7364615116285
         }
       },
       "flat": {
@@ -1721,21 +1884,30 @@
         "boot60_p05": 0.0,
         "boot20_p05": 0.0,
         "boot120_p05": 0.0,
-        "round_trips": 0,
+        "position_openings": 0,
+        "completed_round_trips": 0,
         "flat_ratio": 1.0,
         "fills": 0,
+        "counters": {
+          "TTLX": 0,
+          "REQ": 0,
+          "REV": 0,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": 0.0,
           "2023": 0.0,
           "2024": 0.0,
           "2025": 0.0
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": 0.0,
-          "idle": 1367.6168718304873,
+          "idle": 1185.4194815643732,
           "turnover": 0.0,
-          "reward": -1367.6168718304873
+          "reward": -1185.4194815643732,
+          "reward_discounted": -1184.8965906133835
         }
       }
     },
@@ -1746,21 +1918,30 @@
         "boot60_p05": -3.094387505197688,
         "boot20_p05": -3.215939729092411,
         "boot120_p05": -2.997286036976897,
-        "round_trips": 3681,
+        "position_openings": 3681,
+        "completed_round_trips": 3682,
         "flat_ratio": 0.6245812419195376,
         "fills": 7530,
+        "counters": {
+          "TTLX": 330,
+          "REQ": 353,
+          "REV": 35,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -1801.72975581063,
           "2023": 220.61282944119887,
           "2024": 551.5449790388893,
           "2025": -838.8374813051643
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -1868.4094286357033,
-          "idle": 818.4570603952451,
+          "idle": 719.5463404601672,
           "turnover": 102.16250000001463,
-          "reward": -2789.028989030952
+          "reward": -2690.1182690958935,
+          "reward_discounted": -2692.070442527497
         }
       },
       "ewa": {
@@ -1769,21 +1950,30 @@
         "boot60_p05": -5.63293202950075,
         "boot20_p05": -5.655153819396846,
         "boot120_p05": -5.533591277162035,
-        "round_trips": 4920,
+        "position_openings": 4920,
+        "completed_round_trips": 4920,
         "flat_ratio": 0.5627390866225569,
         "fills": 10079,
+        "counters": {
+          "TTLX": 467,
+          "REQ": 465,
+          "REV": 112,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -1585.6744213520035,
           "2023": -830.2067721648956,
           "2024": -841.5257291464807,
           "2025": -2209.4184405318747
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -5466.825363195242,
-          "idle": 759.0003329113168,
+          "idle": 654.1838281484426,
           "turnover": 137.38750000001198,
-          "reward": -6363.213196106562
+          "reward": -6258.396691343684,
+          "reward_discounted": -6259.186466689489
         }
       },
       "flat": {
@@ -1792,21 +1982,30 @@
         "boot60_p05": 0.0,
         "boot20_p05": 0.0,
         "boot120_p05": 0.0,
-        "round_trips": 0,
+        "position_openings": 0,
+        "completed_round_trips": 0,
         "flat_ratio": 1.0,
         "fills": 0,
+        "counters": {
+          "TTLX": 0,
+          "REQ": 0,
+          "REV": 0,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": 0.0,
           "2023": 0.0,
           "2024": 0.0,
           "2025": 0.0
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": 0.0,
-          "idle": 1367.6168718304873,
+          "idle": 1185.4194815643732,
           "turnover": 0.0,
-          "reward": -1367.6168718304873
+          "reward": -1185.4194815643732,
+          "reward_discounted": -1184.8965906133835
         }
       }
     },
@@ -1817,21 +2016,30 @@
         "boot60_p05": -3.987303262321095,
         "boot20_p05": -4.043567121967625,
         "boot120_p05": -3.8986069042367575,
-        "round_trips": 3406,
+        "position_openings": 3406,
+        "completed_round_trips": 3407,
         "flat_ratio": 0.6287132101300479,
         "fills": 6964,
+        "counters": {
+          "TTLX": 515,
+          "REQ": 612,
+          "REV": 35,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -2249.9162340642006,
           "2023": 340.15402397450094,
           "2024": 42.01672063934865,
           "2025": -1171.4867464030692
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -3039.2322358534193,
-          "idle": 825.283359243297,
+          "idle": 725.4939773734355,
           "turnover": 102.16250000001463,
-          "reward": -3966.6780950966977
+          "reward": -3866.8887132268483,
+          "reward_discounted": -3868.386939537759
         }
       },
       "ewa": {
@@ -1840,21 +2048,30 @@
         "boot60_p05": -6.629666666982092,
         "boot20_p05": -6.616109515604836,
         "boot120_p05": -6.523969526744343,
-        "round_trips": 4531,
+        "position_openings": 4531,
+        "completed_round_trips": 4531,
         "flat_ratio": 0.5666566849190052,
         "fills": 9285,
+        "counters": {
+          "TTLX": 706,
+          "REQ": 852,
+          "REV": 122,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -1920.4418248432842,
           "2023": -965.9978162331442,
           "2024": -1465.4794392662777,
           "2025": -2600.0918056943087
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -6952.0108860370065,
-          "idle": 765.2510628788093,
+          "idle": 659.6803321726161,
           "turnover": 137.38750000001198,
-          "reward": -7854.64944891581
+          "reward": -7749.07871820959,
+          "reward_discounted": -7749.343062768103
         }
       },
       "flat": {
@@ -1863,21 +2080,30 @@
         "boot60_p05": 0.0,
         "boot20_p05": 0.0,
         "boot120_p05": 0.0,
-        "round_trips": 0,
+        "position_openings": 0,
+        "completed_round_trips": 0,
         "flat_ratio": 1.0,
         "fills": 0,
+        "counters": {
+          "TTLX": 0,
+          "REQ": 0,
+          "REV": 0,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": 0.0,
           "2023": 0.0,
           "2024": 0.0,
           "2025": 0.0
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": 0.0,
-          "idle": 1367.6168718304873,
+          "idle": 1185.4194815643732,
           "turnover": 0.0,
-          "reward": -1367.6168718304873
+          "reward": -1185.4194815643732,
+          "reward_discounted": -1184.8965906133835
         }
       }
     },
@@ -1888,21 +2114,30 @@
         "boot60_p05": -2.7589834424629087,
         "boot20_p05": -2.8691787195781786,
         "boot120_p05": -2.6428134753759407,
-        "round_trips": 3654,
+        "position_openings": 3654,
+        "completed_round_trips": 3655,
         "flat_ratio": 0.6418201954521257,
         "fills": 7465,
+        "counters": {
+          "TTLX": 479,
+          "REQ": 250,
+          "REV": 35,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -1750.933456059258,
           "2023": 549.732047336668,
           "2024": 440.9048316532196,
           "2025": -629.3497200755655
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -1389.6462971449362,
-          "idle": 837.0044804507322,
+          "idle": 735.7259401670515,
           "turnover": 102.16250000001463,
-          "reward": -2328.813277595676
+          "reward": -2227.53473731201,
+          "reward_discounted": -2228.9822814868776
         }
       },
       "ewa": {
@@ -1911,21 +2146,30 @@
         "boot60_p05": -4.740490103303286,
         "boot20_p05": -4.729737802901664,
         "boot120_p05": -4.590480644244698,
-        "round_trips": 4903,
+        "position_openings": 4903,
+        "completed_round_trips": 4903,
         "flat_ratio": 0.5843091679975664,
         "fills": 10032,
+        "counters": {
+          "TTLX": 663,
+          "REQ": 361,
+          "REV": 106,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -1507.4325754677502,
           "2023": -474.44885586764275,
           "2024": -499.89681046998834,
           "2025": -1752.3798048947024
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -4234.158046700064,
-          "idle": 782.6983347808203,
+          "idle": 674.8907938209499,
           "turnover": 137.38750000001198,
-          "reward": -5154.243881480956
+          "reward": -5046.436340521075,
+          "reward_discounted": -5046.928832917983
         }
       },
       "flat": {
@@ -1934,21 +2178,30 @@
         "boot60_p05": 0.0,
         "boot20_p05": 0.0,
         "boot120_p05": 0.0,
-        "round_trips": 0,
+        "position_openings": 0,
+        "completed_round_trips": 0,
         "flat_ratio": 1.0,
         "fills": 0,
+        "counters": {
+          "TTLX": 0,
+          "REQ": 0,
+          "REV": 0,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": 0.0,
           "2023": 0.0,
           "2024": 0.0,
           "2025": 0.0
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": 0.0,
-          "idle": 1367.6168718304873,
+          "idle": 1185.4194815643732,
           "turnover": 0.0,
-          "reward": -1367.6168718304873
+          "reward": -1185.4194815643732,
+          "reward_discounted": -1184.8965906133835
         }
       }
     },
@@ -1959,21 +2212,30 @@
         "boot60_p05": -3.1006680476337376,
         "boot20_p05": -3.1959475933378734,
         "boot120_p05": -3.0254491875782894,
-        "round_trips": 3549,
+        "position_openings": 3549,
+        "completed_round_trips": 3550,
         "flat_ratio": 0.6445214464978325,
         "fills": 7247,
+        "counters": {
+          "TTLX": 557,
+          "REQ": 318,
+          "REV": 35,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -1915.1281506083576,
           "2023": 477.958272951134,
           "2024": 309.77147225046724,
           "2025": -729.2625202181449
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -1856.6609256248887,
-          "idle": 839.4865481125272,
+          "idle": 737.9324243874249,
           "turnover": 102.16250000001463,
-          "reward": -2798.309973737417
+          "reward": -2696.755850012303,
+          "reward_discounted": -2698.1396324540606
         }
       },
       "ewa": {
@@ -1982,21 +2244,30 @@
         "boot60_p05": -4.9254826650413,
         "boot20_p05": -4.942981274135939,
         "boot120_p05": -4.825904190247832,
-        "round_trips": 4730,
+        "position_openings": 4730,
+        "completed_round_trips": 4730,
         "flat_ratio": 0.5881611719522397,
         "fills": 9685,
+        "counters": {
+          "TTLX": 757,
+          "REQ": 443,
+          "REV": 109,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -1669.3450822242096,
           "2023": -309.44360497699455,
           "2024": -723.3586949857269,
           "2025": -1824.3130702527553
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -4526.460452439678,
-          "idle": 786.3472015283212,
+          "idle": 678.0235419022911,
           "turnover": 137.38750000001198,
-          "reward": -5450.195153968041
+          "reward": -5341.871494342009,
+          "reward_discounted": -5342.3941975079915
         }
       },
       "flat": {
@@ -2005,21 +2276,30 @@
         "boot60_p05": 0.0,
         "boot20_p05": 0.0,
         "boot120_p05": 0.0,
-        "round_trips": 0,
+        "position_openings": 0,
+        "completed_round_trips": 0,
         "flat_ratio": 1.0,
         "fills": 0,
+        "counters": {
+          "TTLX": 0,
+          "REQ": 0,
+          "REV": 0,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": 0.0,
           "2023": 0.0,
           "2024": 0.0,
           "2025": 0.0
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": 0.0,
-          "idle": 1367.6168718304873,
+          "idle": 1185.4194815643732,
           "turnover": 0.0,
-          "reward": -1367.6168718304873
+          "reward": -1185.4194815643732,
+          "reward_discounted": -1184.8965906133835
         }
       }
     },
@@ -2030,21 +2310,30 @@
         "boot60_p05": -3.957308474693972,
         "boot20_p05": -4.002157134117125,
         "boot120_p05": -3.896171181113757,
-        "round_trips": 3278,
+        "position_openings": 3278,
+        "completed_round_trips": 3279,
         "flat_ratio": 0.6510010266940451,
         "fills": 6699,
+        "counters": {
+          "TTLX": 752,
+          "REQ": 549,
+          "REV": 39,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -2291.3629634232225,
           "2023": 391.47122241174134,
           "2024": -16.441524491944477,
           "2025": -1053.775574270481
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -2970.108839773909,
-          "idle": 848.0801165590569,
+          "idle": 745.4469503492758,
           "turnover": 102.16250000001463,
-          "reward": -3920.351456332934
+          "reward": -3817.718290123146,
+          "reward_discounted": -3818.5652561342004
         }
       },
       "ewa": {
@@ -2053,21 +2342,30 @@
         "boot60_p05": -6.338218500073549,
         "boot20_p05": -6.385437189692313,
         "boot120_p05": -6.194374769831966,
-        "round_trips": 4355,
+        "position_openings": 4355,
+        "completed_round_trips": 4355,
         "flat_ratio": 0.5943256141151418,
         "fills": 8923,
+        "counters": {
+          "TTLX": 1008,
+          "REQ": 790,
+          "REV": 123,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": -2049.6961439716188,
           "2023": -711.8136329929885,
           "2024": -1537.057495340426,
           "2025": -2315.686340533795
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": -6614.253612838813,
-          "idle": 794.5416797259363,
+          "idle": 685.2237886038401,
           "turnover": 137.38750000001198,
-          "reward": -7546.18279256472
+          "reward": -7436.864901442616,
+          "reward_discounted": -7436.584578861194
         }
       },
       "flat": {
@@ -2076,28 +2374,37 @@
         "boot60_p05": 0.0,
         "boot20_p05": 0.0,
         "boot120_p05": 0.0,
-        "round_trips": 0,
+        "position_openings": 0,
+        "completed_round_trips": 0,
         "flat_ratio": 1.0,
         "fills": 0,
+        "counters": {
+          "TTLX": 0,
+          "REQ": 0,
+          "REV": 0,
+          "PSTOP": 0,
+          "DSTOP": 0
+        },
         "net4_by_year": {
           "2022": 0.0,
           "2023": 0.0,
           "2024": 0.0,
           "2025": 0.0
         },
-        "reward_rv_median_note": "F4 train median used for the whole continuous run",
+        "reward_rv_median_note": "each decision uses its own fold's train median RV24h",
         "reward": {
           "net4": 0.0,
-          "idle": 1367.6168718304873,
+          "idle": 1185.4194815643732,
           "turnover": 0.0,
-          "reward": -1367.6168718304873
+          "reward": -1185.4194815643732,
+          "reward_discounted": -1184.8965906133835
         }
       }
     }
   },
-  "git_head": "58378a05bc178cdedd48787bf38541c9d15c5cd3",
-  "created_utc": "2026-10-11T01:22:47.967032+00:00",
-  "runtime_sec": 117.8,
+  "git_head": "9f295bb77e719c52ff41616b7bda0b01151de069",
+  "created_utc": "2026-10-11T01:50:25.872445+00:00",
+  "runtime_sec": 183.3,
   "test_accessed": false,
   "input_sha256": {
     "market": {
@@ -2185,7 +2492,7 @@
   },
   "signal_store_manifest_sha256": "6641e656a7b9b18ac5aaf03543fd1bedf419fd2519bded0f3f86a8a4aa135a36",
   "code_sha256": {
-    "maker_kernel": "670f3794d71c0d6ea02a0417ed9f9b9a4d4ab21ac833176715d9e85795928b03",
+    "maker_kernel": "8b927d36cd529fe88925194b90d3fa83d941775546e179677087c2b07f010d5e",
     "signal_store": "89451ba646b6e2d3c5fedbb9dc4b6f6467f476fc2efbd4fe2733227ccf229feb"
   }
 }
