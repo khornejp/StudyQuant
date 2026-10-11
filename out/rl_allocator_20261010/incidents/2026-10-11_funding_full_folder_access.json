@@ -1,0 +1,12 @@
+{
+  "incident": "sim funding folder with 2026 months opened in a scratch diagnostic",
+  "logged_utc": "2026-10-11",
+  "call_time_utc": "between 2026-10-11T00:49:42Z (commit 9015f3f) and 01:06:53Z (commit 3f0b9ba); exact second not recoverable (the scratch file was rewritten later)",
+  "call": "st = costs._settlements(); st = st[st.time < u35.DEV_END]  (scratch ax_try.py, outside u35.dev_settlements)",
+  "path": "artifacts/funding_2020_2026h1 (all BTCUSDT-fundingRate-*.zip, 2026 months included) via out/k45_funding.load_settlements",
+  "return_value_use": "printed only: row count after filtering < 2026-01-01 (6576) and a time-equality check against the DEV table; never passed to any simulation, model, report or artifact",
+  "artifacts_affected": "none",
+  "fail_closed_now": "u35.no_full_settlements wraps u35-precompute / signal-store / u35-verify: any sim funding lookup outside u35.dev_settlements raises TestAccessError before file I/O; dev_settlements asserts the settlement grid (00/08/16 UTC, zero seconds/ms, no duplicate, < 2026-01-01); DEV funding archives are path-filtered before I/O (rl/dev_data.dev_funding_files)",
+  "fix_commit": "ca2ac46",
+  "test": "tests/rl/test_u35.py::test_settlement_grid_fail_closed_and_guard"
+}
