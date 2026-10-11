@@ -79,13 +79,47 @@ def scheduled(funding: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({"time": pd.to_datetime(sch, utc=True), "rate": funding.rate.to_numpy(float)})
 
 
+def assert_settlement_grid(f: pd.DataFrame) -> pd.DataFrame:
+    """Fail closed before any settlement array is built: every time on 00/08/16 UTC with zero seconds / sub-seconds,
+    strictly increasing (no duplicate), and before the TEST start."""
+    t = f.time.array.asi8.astype(np.int64)
+    if len(t) == 0 or np.any(t % EIGHT_H != 0):
+        raise ValueError("funding settlement off the 00/08/16 UTC grid (seconds / ms not zero)")
+    if np.any(np.diff(t) <= 0):
+        raise ValueError("funding settlements duplicated or unsorted")
+    if int(t.max()) >= DEV_END.value:
+        from .sleeve_precompute import TestAccessError
+        raise TestAccessError("TEST-period funding settlement in the DEV table")
+    return f
+
+
+def _refuse_full_folder():
+    from .sleeve_precompute import TestAccessError
+    raise TestAccessError("sim.costs._settlements opens artifacts/funding_2020_2026h1 (2026 months included): refused; "
+                          "use u35.dev_settlements")
+
+
+@contextmanager
+def no_full_settlements():
+    """For a whole DEV run: any sim funding lookup outside dev_settlements raises before any file I/O."""
+    from btcusdt_quant.sim import costs
+    old = costs._settlements
+    costs._settlements = _refuse_full_folder
+    costs._settlement_arrays.cache_clear()
+    try:
+        yield
+    finally:
+        costs._settlements = old
+        costs._settlement_arrays.cache_clear()
+
+
 @contextmanager
 def dev_settlements(funding: pd.DataFrame):
     """Replace the sim funding settlements (artifacts/funding_2020_2026h1, 2026 months included) by the DEV table
-    snapped to the settlement schedule."""
+    snapped to the settlement schedule and checked by assert_settlement_grid."""
     from btcusdt_quant.sim import costs
     old = costs._settlements
-    f = scheduled(funding)
+    f = assert_settlement_grid(scheduled(funding))
     costs._settlements = lambda: f
     costs._settlement_arrays.cache_clear()
     try:

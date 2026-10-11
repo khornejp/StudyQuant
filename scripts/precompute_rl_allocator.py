@@ -3745,7 +3745,7 @@ def u35_timeline_grid(d: Path) -> pd.DataFrame:
     return g.loc[ch].reset_index(drop=True)
 
 
-def u35_ax_book(b, ctx, fund, ax, t_glob, files, avail_rep, rec) -> dict:
+def u35_ax_book(b, ctx, fund, ax, t_glob, files, avail_rep, rec, write: bool = True) -> dict:
     from dataclasses import replace as _rp
     from btcusdt_quant.rl import u35
     from btcusdt_quant.sim import costs, rolling
@@ -3809,12 +3809,19 @@ def u35_ax_book(b, ctx, fund, ax, t_glob, files, avail_rep, rec) -> dict:
     need(abs(r["net4_total"] - r["net4_total_core"]) <= ATOL_TOT, f"{b} total net4 vs core", r)
     r["unmatched_entries"] = int((tr.entry_kind == "unmatched").sum())
     g.update(tr=tr, rows=rows, net=net, sig=ax_signal(tt, g, tr))
-    native_out(b, t_glob, [g], files, avail_rep, root=PRE35)
     tl = u35_timeline_ax(table, km, times.asi8)
     p = PRE35 / "timeline" / f"{b}.parquet"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tl.to_parquet(p, index=False, compression="zstd")
-    files[f"timeline/{b}"] = {"rows": int(len(tl)), "bytes": p.stat().st_size, "sha256": sha(p)}
+    if write:
+        native_out(b, t_glob, [g], files, avail_rep, root=PRE35)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tl.to_parquet(p, index=False, compression="zstd")
+        files[f"timeline/{b}"] = {"rows": int(len(tl)), "bytes": p.stat().st_size, "sha256": sha(p)}
+    else:
+        stored = pd.read_parquet(p)
+        r["timeline_equal_stored"] = bool(len(stored) == len(tl) and all(
+            np.array_equal(stored[c_].to_numpy(), tl[c_].to_numpy(), equal_nan=stored[c_].dtype.kind == "f")
+            for c_ in tl.columns))
+        need(r["timeline_equal_stored"], f"{b} timeline == stored", r)
     ex = pd.DatetimeIndex(trades.exit_time)
     r["closed_by_year"] = {str(y): int(((ex.year == y) & (trades.exit_reason != "data_end")).sum()) for y in (2023, 2024, 2025)}
     r["net4_by_year"] = {str(y): float(net[pd.DatetimeIndex(tt).year == y].sum()) for y in (2023, 2024, 2025)}
@@ -3823,6 +3830,12 @@ def u35_ax_book(b, ctx, fund, ax, t_glob, files, avail_rep, rec) -> dict:
 
 
 def cmd_u35_precompute(args) -> None:
+    from btcusdt_quant.rl import u35 as _u
+    with _u.no_full_settlements():                    # unpatched sim funding lookups raise before any I/O
+        return cmd_u35_precompute_run(args)
+
+
+def cmd_u35_precompute_run(args) -> None:
     import sys as _sys
     from btcusdt_quant.rl import u35
     t0 = time.time()
@@ -3960,7 +3973,32 @@ def patchtst_proof() -> dict:
     return res
 
 
+def cmd_u35_verify(args) -> None:
+    """Re-run AX books without writing: research parity, ledger, prefix/tamper, stored timeline equality."""
+    import sys as _sys
+    from btcusdt_quant.rl import u35
+    if str(ROOT / "scripts") not in _sys.path:
+        _sys.path.insert(0, str(ROOT / "scripts"))
+    import sim_adaptive_exit as ax
+    with u35.no_full_settlements():
+        ctx, fund, _ = u35.dev_context()
+        rec = {}
+        for b in [x for x in str(args.books).split(",") if x]:
+            u35_ax_book(b, ctx, fund, ax, None, {}, {}, rec, write=False)
+    out = {b: {k: v for k, v in r.items() if k != "checks"} | {"all_checks_pass": all(c["pass"] for c in r["checks"])}
+           for b, r in rec.items()}
+    dump(OUT / "verify" / "u35_verify.json", {"created_utc": datetime.now(timezone.utc).isoformat(), "books": out,
+                                             "git_head": git("rev-parse", "HEAD")})
+    log(f"u35 verify {out}")
+
+
 def cmd_signal_store(args) -> None:
+    from btcusdt_quant.rl import u35 as _u
+    with _u.no_full_settlements():                    # unpatched sim funding lookups raise before any I/O
+        return cmd_signal_store_run(args)
+
+
+def cmd_signal_store_run(args) -> None:
     from btcusdt_quant.rl import signal_store as SG, u35
     t0 = time.time()
     SS.mkdir(parents=True, exist_ok=True)
@@ -4222,7 +4260,7 @@ def main(argv=None) -> None:
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -4275,6 +4313,8 @@ def main(argv=None) -> None:
         return cmd_signal_store(args)
     if args.command == "scripted-baselines":
         return cmd_scripted_baselines(args)
+    if args.command == "u35-verify":
+        return cmd_u35_verify(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
