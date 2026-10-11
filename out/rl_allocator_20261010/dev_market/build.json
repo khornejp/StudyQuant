@@ -1,0 +1,12 @@
+{
+  "decision": "option (i): DEV-only physical market file built from artifacts/archive daily zips dated < 2026-01-01 (file-name filter before I/O); the mixed 2020..2026H1 parquet is no longer read",
+  "days": 2192,
+  "rows": 3156480,
+  "first": "2020-01-01 00:00:00+00:00",
+  "last": "2025-12-31 23:59:00+00:00",
+  "frame_sha256": "564fab0b4dd33561fe5eb51b4aa72284df897c31c658ce0fc8b4a4436dc0f0f3",
+  "equals_previous_dev_slice_sha256": true,
+  "file_sha256": "859a25d8bef94696b7a8cf869d933f595ee3bfdd65024ae2b01c17dc0cb87ace",
+  "builder": "btcusdt_quant/rl/dev_data.build_dev_market",
+  "note": "identical decoded rows -> every earlier DEV result unchanged; physical 2026 market reads from here on: 0"
+}
