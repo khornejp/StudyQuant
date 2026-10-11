@@ -41,3 +41,5 @@ btcusdt_quant/rl/maker_kernel.py text eol=lf
 tests/rl/test_maker_kernel.py text eol=lf
 btcusdt_quant/rl/signal_store.py text eol=lf
 tests/rl/test_signal_store.py text eol=lf
+btcusdt_quant/rl/smdp_ppo.py text eol=lf
+tests/rl/test_smdp_ppo.py text eol=lf
