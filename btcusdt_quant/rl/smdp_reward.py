@@ -24,6 +24,7 @@ class RewardConfig:
     turnover_bps: float | None = UNSET
     f_kind: str = "linear"                 # "const" | "linear" | "sqrt" | "log1p"
     f_param: float | None = UNSET
+    k_cap_h: float | None = None           # f(k) uses min(k, k_cap_h) when set
     m_lo: float = 0.25
     m_hi: float = 4.0
 
@@ -37,6 +38,8 @@ class RewardConfig:
 
 def f_of_k(k_hours: np.ndarray, cfg: RewardConfig) -> np.ndarray:
     p = 0.0 if cfg.f_param is None else float(cfg.f_param)
+    if cfg.k_cap_h is not None:
+        k_hours = np.minimum(k_hours, float(cfg.k_cap_h))
     if cfg.f_kind == "const":
         return np.ones_like(k_hours)
     if cfg.f_kind == "linear":
@@ -83,3 +86,9 @@ def step_reward(pnl, upath, kpath, mpath, i: int, j: int, d_target: float, cfg: 
     out = block_terms(net, upath[end], kpath[end], mpath[end], d_target, cfg, require_set)
     out["gamma_d"] = MK.gamma(float(j - i))
     return out
+
+
+# A6 user choice (option 3, 2026-10-11): idle 0.4167 bps per flat hour (10 bps/day at median volatility), f(k) = 1 +
+# 0.05 min(k, 20) (x2 after 20 flat hours), inventory 0.15 bps/h x |U|, turnover 0.25 bps x |d target|
+A6_REWARD = RewardConfig(idle_bps_per_h=0.4167, inventory_bps_per_h=0.15, turnover_bps=0.25, f_kind="linear",
+                         f_param=0.05, k_cap_h=20.0)
