@@ -39,3 +39,5 @@ btcusdt_quant/rl/u35.py text eol=lf
 tests/rl/test_u35.py text eol=lf
 btcusdt_quant/rl/maker_kernel.py text eol=lf
 tests/rl/test_maker_kernel.py text eol=lf
+btcusdt_quant/rl/signal_store.py text eol=lf
+tests/rl/test_signal_store.py text eol=lf

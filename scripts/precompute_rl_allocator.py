@@ -3884,12 +3884,169 @@ def cmd_u35_precompute(args) -> None:
         f"{tot_bytes / 1e9:.2f} GB")
 
 
+# ================================================================ signal-only 5m store (Codex SMDP redesign 2026-10-11)
+SS = OUT / "signal_store_5m"
+SS_CUT = pd.Timestamp("2024-07-01", tz="UTC")
+
+
+def ss_catalog(ctx, clk: np.ndarray) -> dict:
+    """Catalog tokens from one research context (ungated NATIVE tables; gate as a state channel)."""
+    from btcusdt_quant.rl import signal_store as SG
+    from btcusdt_quant.sim import regime
+    from btcusdt_quant.sim.strategies import CATALOG, build_variant
+    T = pd.DatetimeIndex(clk, tz="UTC")
+    m = regime._asof(ctx.regime, T, "M", pd.Timedelta(minutes=14))
+    gate_avail = np.isfinite(m).astype(np.int8)
+    C = SG.close_at(clk, ctx.minutes.open_time.array.asi8, ctx.minutes.close.to_numpy(float))
+    out = {}
+    for tok in SG.catalog_tokens():
+        spec = CATALOG[tok]
+        tb, _ = build_variant(ctx, tok, False, "NATIVE")
+        ev = SG.oco_events(tb, ctx, spec.e_head) if (tb.entry == "oco").any() else SG.market_events(tb, ctx, spec.e_head)
+        st = SG.token_state(clk, *ev, hold_min=spec.hold_min)
+        st["gate_pass"] = (regime.gate_mask(ctx.regime, T, spec.gate).astype(np.int8) if spec.gate
+                           else np.full(len(clk), -1, np.int8))
+        st["gate_avail"] = gate_avail if spec.gate else np.zeros(len(clk), np.int8)
+        st["available"] = (clk >= (ev[0][0] if len(ev[0]) else np.iinfo(np.int64).max)).astype(np.int8)
+        st.update(SG.markouts(st["side"], C))
+        st["_events"] = int(len(ev[0]))
+        out[tok] = st
+    return out, C
+
+
+def ss_equal(a: dict, b: dict, upto: int) -> list:
+    bad = []
+    for tok, ch in a.items():
+        for k, v in ch.items():
+            if k.startswith("_"):
+                continue
+            x, y = np.asarray(v)[:upto], np.asarray(b[tok][k])[:upto]
+            if not np.array_equal(x, y, equal_nan=np.issubdtype(x.dtype, np.floating)):
+                bad.append(f"{tok}.{k}")
+    return bad
+
+
+def patchtst_proof() -> dict:
+    """Existing R2-44 w730_raw predictions (DEV_FRONT / DEV_BACK only): checkpoint and prediction hashes vs the fold
+    records, rows inside [retrain_time, prediction_end), training code = archived code; cutoff rule from the code."""
+    base = ROOT / "out/k45_vol_detector_r2_44_window_20261006/folds/w730_raw"
+    res = {"folds": 0, "ckpt_hash_ok": 0, "pred_hash_ok": 0, "rows_in_window_ok": 0, "bad": [], "elapsed_sec": []}
+    for seg in ("DEV_FRONT", "DEV_BACK"):
+        for js in sorted((base / seg).glob("fold_*.json")):
+            rec = json.loads(js.read_text(encoding="utf-8"))
+            res["folds"] += 1
+            ck, pr = js.with_suffix(".pt"), js.with_name(js.stem + "_predictions.parquet")
+            ok1 = sha(ck) == rec["checkpoint_sha256"]
+            ok2 = sha(pr) == rec["predictions_sha256"]
+            p = pd.read_parquet(pr, columns=["timestamp", "retrain_time"])
+            a, b = pd.Timestamp(rec["retrain_time"]), pd.Timestamp(rec["prediction_end"])
+            ts = pd.to_datetime(p.timestamp, utc=True)
+            ok3 = bool((ts >= a).all() and (ts < b).all() and (pd.to_datetime(p.retrain_time, utc=True) == a).all()
+                       and b <= sp.TEST_START)
+            res["ckpt_hash_ok"] += ok1
+            res["pred_hash_ok"] += ok2
+            res["rows_in_window_ok"] += ok3
+            res["elapsed_sec"].append(float(rec.get("elapsed_seconds", np.nan)))
+            if not (ok1 and ok2 and ok3):
+                res["bad"].append(f"{seg}/{js.stem}")
+    code = ROOT / "out/run_k45_vol_detector_r2_44_window.py"
+    arch = ROOT / "docs/results/k45_vol_detector_r2_44_20261006/code/run_k45_vol_detector_r2_44_window.py"
+    res.update(code_sha256=sha(code), archived_code_equal=sha(code) == sha(arch),
+               cutoff_rule="split_indices: label_end = origin + 24h; train/stop rows need label_end < retrain_time - "
+                           "24h; window 730 d; scaler on train origins only (fit_fold scaler_end)",
+               first3_elapsed_sec=res["elapsed_sec"][:3], median_elapsed_sec=float(np.nanmedian(res["elapsed_sec"])))
+    res["pass"] = not res["bad"] and res["archived_code_equal"]
+    res.pop("elapsed_sec")
+    return res
+
+
+def cmd_signal_store(args) -> None:
+    from btcusdt_quant.rl import signal_store as SG, u35
+    t0 = time.time()
+    SS.mkdir(parents=True, exist_ok=True)
+    clk = SG.clock()
+    ctx, fund, in_hash = u35.dev_context()
+    base, C = ss_catalog(ctx, clk)
+    log(f"signal store: catalog {len(base)} tokens {time.time() - t0:.0f}s")
+    # prefix / tamper on the catalog part (research timelines come from the tamper-checked precompute)
+    cut_i = int(np.searchsorted(clk, SS_CUT.value, "right"))
+    pre, _ = ss_catalog(ctx.truncate(SS_CUT), clk[:cut_i])
+    mins = ctx.minutes.copy()
+    aft = (mins.open_time >= SS_CUT).to_numpy()
+    for c in ("open", "high", "low", "close"):
+        mins.loc[aft, c] = mins.loc[aft, c] * 1.7
+    from btcusdt_quant.sim.strategies import Context
+    tam, _ = ss_catalog(Context(minutes=mins, metrics=ctx.metrics, premium=ctx.premium, funding=ctx.funding,
+                                regime=ctx.regime, end=ctx.end), clk)
+    checks = {"prefix_mismatch": ss_equal(pre, base, cut_i), "tamper_mismatch": ss_equal(base, tam, cut_i),
+              "tamper_changed_after_cut_tokens": sum(
+                  any(not np.array_equal(np.asarray(v)[cut_i:], np.asarray(tam[t_][k])[cut_i:], equal_nan=True)
+                      for k, v in ch.items() if not k.startswith("_") and np.asarray(v).dtype.kind == "f")
+                  for t_, ch in base.items())}
+    log(f"signal store: prefix/tamper {len(checks['prefix_mismatch'])}/{len(checks['tamper_mismatch'])} mismatches")
+    for s in SG.RESEARCH_TOKENS:
+        st = SG.timeline_state(clk, pd.read_parquet(PRE35 / "timeline" / f"{s}.parquet"))
+        st["gate_pass"] = np.full(len(clk), -1, np.int8)
+        st["gate_avail"] = np.zeros(len(clk), np.int8)
+        st.update(SG.markouts(st["side"], C))
+        base[s] = st
+    toks = SG.tokens()
+    sides = {t_: base[t_]["side"] for t_ in toks}
+    dup = [[a, b] for i_, a in enumerate(toks) for b in toks[i_ + 1:]
+           if (sides[a] != 0).any() and (np.array_equal(sides[a], sides[b]) or np.array_equal(sides[a], -sides[b]))]
+    files, summ = {}, {}
+    (SS / "tokens").mkdir(exist_ok=True)
+    for tid, t_ in enumerate(toks):
+        ch = {k: v for k, v in base[t_].items() if not k.startswith("_")}
+        f = pd.DataFrame({"t": clk, **ch})
+        p = SS / "tokens" / f"{t_}.parquet"
+        f.to_parquet(p, index=False, compression="zstd")
+        files[t_] = {"bytes": p.stat().st_size, "sha256": sha(p)}
+        summ[t_] = {"token_id": tid, "family": SG.family_of(t_), "source_id": t_,
+                    "active_share": float(ch["active"].mean()), "long_share": float((ch["side"] > 0).mean()),
+                    "short_share": float((ch["side"] < 0).mean()), "strength_avail_share": float(ch["strength_avail"].mean()),
+                    "available_from": str(pd.Timestamp(int(clk[np.argmax(ch["available"] > 0)]), tz="UTC"))
+                    if (ch["available"] > 0).any() else None,
+                    "gate": "none" if (ch["gate_pass"] < 0).all() else "gated",
+                    "mk1440_mean_last": float(ch["mk1440_mean"][-1]), "mk1440_count_last": float(ch["mk1440_count"][-1])}
+    # market features: existing causal 1h state, primary cell, sleeve channels removed, as of the 5m clock
+    st1 = pd.read_parquet(OUT / "state/state_1h.parquet")
+    st1 = st1[st1.exec_cell == CELL_TAG[PRIMARY]].sort_values("T").reset_index(drop=True)
+    sp.guard_times(st1["T"].to_numpy(np.int64), False, "state_1h")
+    drop = [c for c in st1 if c in ("exec_cell",) or c.startswith("mask_") or any(c.startswith(s + "_") for s in SLEEVES)]
+    keep = [c for c in st1 if c not in drop]
+    j = np.searchsorted(st1["T"].to_numpy(np.int64), clk, "right") - 1
+    mk = st1[keep].iloc[np.maximum(j, 0)].reset_index(drop=True)
+    mk.loc[j < 0, [c for c in keep if c != "T"]] = np.nan
+    mk.insert(0, "t", clk)
+    mk = mk.rename(columns={"T": "state_T"})
+    p = SS / "market.parquet"
+    mk.to_parquet(p, index=False, compression="zstd")
+    files["market"] = {"bytes": p.stat().st_size, "sha256": sha(p), "columns": list(mk.columns), "dropped": drop}
+    proof = patchtst_proof()
+    man = {"name": "signal-only causal store, 5m clock", "created_utc": datetime.now(timezone.utc).isoformat(),
+           "clock": [str(SG.CLOCK_START), str(SG.CLOCK_END), "5min"], "rows": int(len(clk)),
+           "token_map": SG.reconcile(), "tokens": summ, "duplicates_or_negations": dup,
+           "channels": ["side", "active", "strength", "strength_avail", "age_min", "gate_pass", "gate_avail", "available"]
+           + [f"mk{h}_{s}" for h in SG.HORIZONS for s in ("mean", "hit", "vol", "count")],
+           "rules": SG.__doc__, "prefix_tamper": {"cut": str(SS_CUT), **checks,
+                                                  "pass": not checks["prefix_mismatch"] and not checks["tamper_mismatch"]},
+           "patchtst_reuse_proof": proof, "input_sha256": in_hash,
+           "code_sha256": {k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py") for k_ in ("signal_store", "u35", "dev_data")},
+           "research_timelines": {s: sha(PRE35 / "timeline" / f"{s}.parquet") for s in SG.RESEARCH_TOKENS},
+           "files": files, "total_bytes": int(sum(v["bytes"] for v in files.values())),
+           "git_head": git("rev-parse", "HEAD"), "runtime_sec": round(time.time() - t0, 1), "test_accessed": False}
+    dump(SS / "manifest.json", man)
+    log(f"signal store: {len(toks)} tokens, prefix/tamper {'PASS' if man['prefix_tamper']['pass'] else 'FAIL'}, "
+        f"dups {dup}, patchtst proof {proof['pass']} {man['total_bytes'] / 1e9:.2f} GB {man['runtime_sec']}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -3938,6 +4095,8 @@ def main(argv=None) -> None:
         return cmd_g3_idle_et(args)
     if args.command == "u35-precompute":
         return cmd_u35_precompute(args)
+    if args.command == "signal-store":
+        return cmd_signal_store(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
