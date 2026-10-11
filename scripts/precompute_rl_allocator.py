@@ -5336,7 +5336,7 @@ class A6Eval:
         end_idx = int(np.searchsorted(env.t, month_end_ns))
         keys = ("net4", "idle", "inventory", "turnover", "reward", "fills", "minutes")
         acc = {k: np.zeros(E) for k in keys}
-        acc.update(flat_min=np.zeros(E), rt=np.zeros(E), tcnt=np.zeros((E, 9)), wcnt=np.zeros((E, 3)),
+        acc.update(flat_min=np.zeros(E), expo=np.zeros(E), rt=np.zeros(E), tcnt=np.zeros((E, 9)), wcnt=np.zeros((E, 3)),
                    reg_sum=np.zeros((E, 3)), reg_n=np.zeros((E, 3)))
         from btcusdt_quant.rl import maker_kernel as MK
         rt0 = env.ST[:, MK.S_RT].copy()
@@ -5371,6 +5371,7 @@ class A6Eval:
             for k in keys:
                 acc[k] += rw[k] * lv
             acc["flat_min"] += rw["flat_blocks"] * 5 * lv
+            acc["expo"] += np.abs(rw["u"]) * rw["minutes"] * lv       # |U| at the step end x step minutes (approx.)
             acc["tcnt"][np.arange(E), at] += lv
             acc["wcnt"][np.arange(E), aw] += lv
             acc["reg_sum"][np.arange(E), reg] += exp_t * lv
@@ -5396,9 +5397,11 @@ def cmd_smdp_a6(args) -> None:
     torch.set_num_threads(1)
     numba.set_num_threads(16)
     dev = torch.device("cuda")
-    AD = OUT / "smdp_a6"
+    variant = "a6b" if "a6b" in set(getattr(args, "only", ()) or ()) else "a6"
+    AD = OUT / ("smdp_a6b" if variant == "a6b" else "smdp_a6")
     (AD / "ckpt").mkdir(parents=True, exist_ok=True)
-    rcfg = RW.A6_REWARD
+    rcfg = RW.A6B_REWARD if variant == "a6b" else RW.A6_REWARD
+    amend = OUT / ("freeze_amendment_A6b.json" if variant == "a6b" else "freeze_amendment_A6.json")
     minutes, fund, in_hash = DD.load_dev()
     fs = u35.assert_settlement_grid(u35.scheduled(fund))
     mk = SB.market_arrays(minutes, fs, rcfg)
@@ -5407,13 +5410,13 @@ def cmd_smdp_a6(args) -> None:
     mk["clock0"] = int(clk[0])
     cache = SB.raw_cache(SS)
     r1 = len(clk)
-    rep: dict = {"spec": {"a6": "freeze_amendment_A6.json", "reward": rcfg.values(), "targets": SP.A5_TARGETS,
+    rep: dict = {"spec": {"variant": variant, "amendment": amend.name, "reward": rcfg.values(), "targets": SP.A5_TARGETS,
                           "waits": SP.A4_WAITS, "gpu_cfg": dataclasses_asdict(SGPU.GPUConfig()),
                           "train_envs": A6_TRAIN_ENVS, "p2": f"2021 pretrain {A6_P2_DECISIONS} decisions x seeds {A6_SEEDS}",
                           "p3": f"2022-01..2025-12 monthly prequential: evaluate first ({len(A6_EVAL_RNG)} action RNG "
                                 f"sampled, continuous ledger), then add the month and train {A6_P3_DECISIONS} decisions",
                           "eval_daily_note": "daily series = step net4 summed by the decision bar's UTC day (steps <= 4h)"},
-                 "provenance": {"a6_sha256": sha(OUT / "freeze_amendment_A6.json") if (OUT / "freeze_amendment_A6.json").exists() else None,
+                 "provenance": {"amendment_sha256": sha(amend) if amend.exists() else None,
                                 "code_sha256": {k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py") for k_ in
                                                 ("maker_kernel", "smdp_reward", "smdp_batch", "smdp_gpu", "smdp_continual",
                                                  "smdp_env", "signal_store", "dev_data")},
@@ -5423,7 +5426,8 @@ def cmd_smdp_a6(args) -> None:
     rep["diagnostics_fixed_policies"] = a6_fixed_policy_diag(mk, rcfg)
     rep["diagnostics_sec"] = round(time.time() - t0, 1)
     log(f"A6 diagnostics {rep['diagnostics_sec']}s")
-    dump(AD / "smdp_a6_report.json", rep)
+    RP = AD / f"smdp_{variant}_report.json"
+    dump(RP, rep)
     # ---------------- P2: 2021 pretrain
     w21 = ("2021-01-30", "2022-01-01")
     a21, b21 = (pd.Timestamp(x, tz="UTC").value for x in w21)
@@ -5451,7 +5455,7 @@ def cmd_smdp_a6(args) -> None:
                       "curve": curve, "timing_sec": dict(tr.timing)}
         log(f"A6 P2 seed {s}: {tr.decisions} dec {time.time() - t0:.0f}s")
     rep["p2"] = p2
-    dump(AD / "smdp_a6_report.json", rep)
+    dump(RP, rep)
     # ---------------- P3: monthly prequential
     months = CT.month_starts("2022-01", "2025-12")
     all_months = CT.month_starts("2021-02", "2025-12")
@@ -5479,7 +5483,8 @@ def cmd_smdp_a6(args) -> None:
                 _, _, r, ci = ev.keys[i]
                 rec["cells"].setdefault(f"o{G_CELLS[ci][0]}_p{G_CELLS[ci][1]}", []).append(
                     {"seed": s, "who": who, "rng": r, **{k: float(accm[k][i]) for k in ("net4", "idle", "inventory", "turnover",
-                                                                                     "reward", "fills", "minutes", "rt", "flat_min")},
+                                                                                     "reward", "fills", "minutes", "rt", "flat_min",
+                                                                                     "expo")},
                      "tcnt": accm["tcnt"][i].tolist(), "wcnt": accm["wcnt"][i].tolist(),
                      "reg_sum": accm["reg_sum"][i].tolist(), "reg_n": accm["reg_n"][i].tolist(),
                      "daily": {str(d): float(v[i]) for d, v in accm["daily"].items()}})
@@ -5511,10 +5516,9 @@ def cmd_smdp_a6(args) -> None:
             f"anchor {np.mean([x['net4'] for c in rec['cells'].values() for x in c if x['who'] == 'anchor']):.1f} {rec['sec']}s")
         if mi == 0:
             rep["first_month_check"] = {"month": rec["month"], "faults": 0, "eval_minutes_exact": ok_minutes, "pass": True}
-        if mi % 6 == 5 or mi == len(months) - 1:
-            rep.update(monthly=monthly, checkpoints=ckpts, p3_curves=p3_curves,
-                       elapsed_sec=round(time.time() - t_all, 1))
-            dump(AD / "smdp_a6_report.json", rep)
+        rep.update(monthly=monthly, checkpoints=ckpts, p3_curves=p3_curves,          # refreshed every month
+                   elapsed_sec=round(time.time() - t_all, 1), last_month_done=rec["month"])
+        dump(RP, rep)
     # ---------------- summary
     base = pilot_baselines()
     cellnames = [f"o{o}_p{p}" for o, p in G_CELLS]
@@ -5562,6 +5566,8 @@ def cmd_smdp_a6(args) -> None:
                                             ("net4", "idle", "inventory", "turnover", "reward")},
                    "target_share": (np.sum([x["tcnt"] for _, x in pol], 0) / max(np.sum([x["tcnt"] for _, x in pol]), 1)).tolist(),
                    "wait_share": (np.sum([x["wcnt"] for _, x in pol], 0) / max(np.sum([x["wcnt"] for _, x in pol]), 1)).tolist(),
+                   "exposure": float(sum(x["expo"] for _, x in pol) / max(tot_min, 1)),
+                   "direction_hit": a6_direction_hit(monthly, c, mk),
                    "regime_expected_target": {nm: float(np.sum([x["reg_sum"][k] for _, x in pol]) /
                                                      max(np.sum([x["reg_n"][k] for _, x in pol]), 1))
                                               for k, nm in enumerate(("down30d", "flat30d", "up30d"))}}
@@ -5581,12 +5587,56 @@ def cmd_smdp_a6(args) -> None:
     rep.update(monthly=monthly, checkpoints=ckpts, p3_curves=p3_curves, total_decisions_trained=tot_dec,
                total_wall_sec=round(time.time() - t_all, 1), created_utc=datetime.now(timezone.utc).isoformat(),
                training_throughput_dec_per_sec=tot_dec / max(time.time() - t_all, 1))
-    dump(AD / "smdp_a6_report.json", rep)
+    if variant == "a6b":
+        rep["vs_a6_same_months"] = a6_compare(monthly)
+    dump(RP, rep)
     for s in A6_SEEDS:
-        registry.record(REGISTRY, {"experiment": f"SMDP A6 P2+P3 seed {s}", "role": "trial", "n_trials": 1,
+        registry.record(REGISTRY, {"experiment": f"SMDP {variant.upper()} P2+P3 seed {s}", "role": "trial", "n_trials": 1,
                                    "n_simulations": 48, "config": rep["spec"],
                                    "result_summary": {"pass": rep["pass"], "pass_criteria": rep["pass_criteria"]}})
-    log(f"A6 done pass={rep['pass']} {rep['pass_criteria']} {rep['total_wall_sec']}s")
+    log(f"{variant} done pass={rep['pass']} {rep['pass_criteria']} {rep['total_wall_sec']}s")
+
+
+def a6_direction_hit(monthly: list, cell: str, mk) -> dict:
+    """Per month: sign of the mean sampled target (policy, all seeds x RNG) vs the sign of the month's buy-and-hold
+    price return (favourable direction); share of months where they agree (flat-mean months counted separately)."""
+    tg = np.array([-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0])
+    t, c = mk["t"], mk["c"]
+    hit = miss = flat = 0
+    rows = {}
+    for m in monthly:
+        xs = [x for x in m["cells"][cell] if x["who"] == "policy"]
+        cnt = np.sum([x["tcnt"] for x in xs], 0)
+        mt = float(cnt @ tg / max(cnt.sum(), 1))
+        a = pd.Timestamp(m["month"] + "-01", tz="UTC")
+        ia = int(np.searchsorted(t, a.value)) - 1
+        ib = int(np.searchsorted(t, (a + pd.offsets.MonthBegin(1)).value)) - 1
+        r = float((c[ib] / c[ia] - 1) * 1e4)
+        rows[m["month"]] = {"mean_target": mt, "buy_hold_bps": r}
+        if abs(mt) < 1e-9:
+            flat += 1
+        elif np.sign(mt) == np.sign(r):
+            hit += 1
+        else:
+            miss += 1
+    return {"hit": hit, "miss": miss, "flat_months": flat, "hit_rate": hit / max(hit + miss, 1), "months": rows}
+
+
+def a6_compare(monthly: list) -> dict:
+    """A6b vs the stopped A6 run on the months both evaluated (A6 monthly means from its stopped record)."""
+    p = OUT / "smdp_a6/smdp_a6_stopped.json"
+    if not p.exists():
+        return {}
+    a6 = {r["month"]: r for r in json.loads(p.read_text(encoding="utf-8"))["monthly_mean_net4_all_cells_seeds_rng_from_log"]}
+    out = {}
+    for m in monthly:
+        if m["month"] in a6:
+            pol = [x["net4"] for xs in m["cells"].values() for x in xs if x["who"] == "policy"]
+            anc = [x["net4"] for xs in m["cells"].values() for x in xs if x["who"] == "anchor"]
+            out[m["month"]] = {"a6b_policy": float(np.mean(pol)), "a6_policy": a6[m["month"]]["policy"],
+                               "a6b_anchor": float(np.mean(anc)), "a6_anchor": a6[m["month"]]["anchor"]}
+    return {"months": out, "sum_a6b_policy": float(sum(v["a6b_policy"] for v in out.values())),
+            "sum_a6_policy": float(sum(v["a6_policy"] for v in out.values()))}
 
 
 def main(argv=None) -> None:

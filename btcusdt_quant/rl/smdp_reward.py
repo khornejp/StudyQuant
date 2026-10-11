@@ -92,3 +92,7 @@ def step_reward(pnl, upath, kpath, mpath, i: int, j: int, d_target: float, cfg: 
 # 0.05 min(k, 20) (x2 after 20 flat hours), inventory 0.15 bps/h x |U|, turnover 0.25 bps x |d target|
 A6_REWARD = RewardConfig(idle_bps_per_h=0.4167, inventory_bps_per_h=0.15, turnover_bps=0.25, f_kind="linear",
                          f_param=0.05, k_cap_h=20.0)
+
+# A6b (user 2026-10-11): idle lowered to 0.25 bps per flat hour (6 bps/day at median volatility); everything else = A6
+A6B_REWARD = RewardConfig(idle_bps_per_h=0.25, inventory_bps_per_h=0.15, turnover_bps=0.25, f_kind="linear",
+                          f_param=0.05, k_cap_h=20.0)
