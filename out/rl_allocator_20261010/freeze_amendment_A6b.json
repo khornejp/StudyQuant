@@ -1,0 +1,40 @@
+{
+  "name": "A6b amendment",
+  "status": "LOCKED",
+  "created_utc": "2026-10-11T11:58:42.757346+00:00",
+  "base": {
+    "A6_sha256": "bf0c3d431b517c0bb423ce471ab65481bdc86393e669e6bac97bf37e16d02b1c"
+  },
+  "only_change": {
+    "idle_bps_per_h": {
+      "A6": 0.4167,
+      "A6b": 0.25
+    },
+    "note": "6 bps/day at median volatility; m(t), f(k)=1+0.05 min(k,20), k reset, inventory 0.15 bps/h, turnover 0.25 bps unchanged"
+  },
+  "reward": {
+    "idle_bps_per_h": 0.25,
+    "inventory_bps_per_h": 0.15,
+    "turnover_bps": 0.25,
+    "f_kind": "linear",
+    "f_param": 0.05,
+    "k_cap_h": 20.0,
+    "m_lo": 0.25,
+    "m_hi": 4.0
+  },
+  "protocol": "identical to A6: P2 2021 pretrain 10M x seeds 0..4 from scratch (no A6 checkpoint reuse), P3 48 months x 2M, 8 RNG sampled evaluation on a continuous ledger, frozen-2021 anchor, no performance stop; fixed-policy diagnostics recomputed; report refreshed every month",
+  "a6_stopped": {
+    "record": "out/rl_allocator_20261010/smdp_a6/smdp_a6_stopped.json",
+    "sha256": "514356757d084fbb1c467866f869d916150980a6d6c2f6448de41a017b400cc0",
+    "last_evaluated_month": "2024-08"
+  },
+  "code_sha256": {
+    "maker_kernel": "0f26714ab79fe90695e6ea87cce6aa8729d946704581d8320412dc06e3d5dc76",
+    "smdp_reward": "084ead193270621910c80466a88010aef49a81bdbe8d006445376e23f68afe6f",
+    "smdp_batch": "caca10964718ea8100bb0ff9aafabddc547865f076286c20e312a5107f14bfb4",
+    "smdp_gpu": "5e8de1a11c8473ccdf29bb3944a606c41b0919c21e46aecef60098ec69c4ee79",
+    "smdp_continual": "6307ea0366a8bae59e20da8437877b387b204d491af9cb9b799e56663554cc98"
+  },
+  "test_rows_used": 0,
+  "physical_test_reads": 0
+}
