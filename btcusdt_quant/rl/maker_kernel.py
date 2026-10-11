@@ -38,7 +38,8 @@ EPS = 1e-12
 
 # state vector slots
 (S_U, S_Q, S_EQ, S_POSPNL, S_DAY0, S_DAY, S_PEND, S_PDQ, S_PLIM, S_PSTART, S_PEXP, S_PKIND, S_PTGT, S_LEG2,
- S_FPOS, S_FDAY, S_KILL, S_FILLS, S_FEES, S_FUND, S_TURN, S_NSTATE) = range(22)
+ S_FPOS, S_FDAY, S_KILL, S_FILLS, S_FEES, S_FUND, S_TURN, S_TTLX, S_REQ, S_REV, S_PSTOP, S_DSTOP, S_RT,
+ S_NSTATE) = range(28)
 K_INC, K_RED = 1.0, 2.0
 
 
@@ -97,8 +98,10 @@ def advance(o, h, l, c, day, frate, st, pnl, upath, i, j, tgt, off, pen):
             if st[S_PKIND] == K_RED:            # re-quote the passive reduction at the new close
                 side = 1 if st[S_PDQ] > 0 else -1
                 st[S_PLIM], st[S_PSTART], st[S_PEXP] = _limit(c[k - 1], side, EXIT_QUOTE_BPS), k, k + TTL
+                st[S_REQ] += 1
             else:
                 st[S_PEND] = 0.0
+                st[S_TTLX] += 1
         if st[S_PEND] > 0 and k >= st[S_PSTART]:
             dq, lim = st[S_PDQ], st[S_PLIM]
             if _fills(o, h, l, k, lim, dq > 0, pen):
@@ -118,6 +121,7 @@ def advance(o, h, l, c, day, frate, st, pnl, upath, i, j, tgt, off, pen):
                 if st[S_LEG2] > 0 and abs(st[S_PTGT]) > EPS and st[S_KILL] == 0 and st[S_FPOS] == 0 \
                         and st[S_FDAY] == 0:
                     _place(st, c, st[S_PTGT], k + 1, off)
+                    st[S_REV] += 1
         r = frate[k]
         if r == r:                                  # settlement at this minute (PESS on executed units)
             a, b = -U0 * r * 1e4, -st[S_U] * r * 1e4
@@ -132,20 +136,21 @@ def advance(o, h, l, c, day, frate, st, pnl, upath, i, j, tgt, off, pen):
             st[S_POSPNL] += v
         else:
             st[S_POSPNL] = 0.0
+            if abs(U0) > EPS:
+                st[S_RT] += 1                       # completed round trip: position -> flat
         if abs(st[S_U]) < EPS and st[S_FPOS] > 0:
             st[S_FPOS] = 0.0
         upath[k] = st[S_U]
         newly = False
         if abs(st[S_U]) > EPS and st[S_POSPNL] <= POS_STOP_BPS and st[S_FPOS] == 0:
             st[S_FPOS], newly = 1.0, True
+            st[S_PSTOP] += 1
         if st[S_EQ] - st[S_DAY0] <= DAY_STOP_BPS and st[S_FDAY] == 0:
             st[S_FDAY], newly = 1.0, True
-        if newly:
-            if st[S_PEND] > 0 and st[S_PKIND] == K_INC:
-                st[S_PEND] = 0.0
-            if st[S_PEND] > 0 and st[S_PKIND] == K_RED:
-                st[S_PTGT], st[S_LEG2] = 0.0, 0.0      # the live flatten stays; no second leg
-            elif abs(st[S_U]) > EPS and k + 1 < len(c):
+            st[S_DSTOP] += 1
+        if newly:                                   # any live order is replaced by a full flatten (dq = -U)
+            st[S_PEND] = 0.0
+            if abs(st[S_U]) > EPS and k + 1 < len(c):
                 _place(st, c, 0.0, k + 1, off)
     return eff
 

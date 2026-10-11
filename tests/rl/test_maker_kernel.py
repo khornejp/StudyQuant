@@ -116,3 +116,27 @@ def test_reward_decomposition():
     assert np.isclose(d["net4"], r["net4"]) and d["blocks"] == 12
     assert np.isclose(d["reward"], d["net4"] - d["idle"] - d["turnover"]) and np.isclose(d["turnover"], 0.05)
     assert np.isclose(MK.gamma(30 * 1440), 0.5)
+
+
+def _partial_reduce_case(mod):
+    """Long 1.0 with a live partial reduce (target 0.5, dq -0.5, limit far above) when the position stop fires."""
+    n = 400
+    c = np.full(n, 100.0)
+    c[200:] = 94.0                                                  # -600 bps: position stop at minute 200
+    o = np.r_[c[0], c[:-1]]
+    h, l = np.maximum(o, c), np.minimum(o, c)
+    t = (np.arange(n) * 60_000_000_000).astype(np.int64)
+    st = np.zeros(mod.S_NSTATE)
+    st[mod.S_U], st[mod.S_Q] = 1.0, 1.0 / 100.0
+    st[mod.S_PEND], st[mod.S_PDQ], st[mod.S_PLIM] = 1.0, -0.5, 1000.0
+    st[mod.S_PSTART], st[mod.S_PEXP], st[mod.S_PKIND], st[mod.S_PTGT] = 101, 10_000, mod.K_RED, 0.5
+    pnl, up = np.zeros(n), np.zeros(n)
+    mod.advance(o, h, l, c, (t // 86_400_000_000_000).astype(np.int64), np.full(n, np.nan), st, pnl, up, 100, 201,
+                0.5, 2.0, 0.5)
+    return st
+
+
+def test_partial_reduce_stop_becomes_full_flatten():
+    st = _partial_reduce_case(MK)
+    assert st[MK.S_FPOS] == 1 and st[MK.S_PEND] == 1 and st[MK.S_PTGT] == 0.0
+    assert st[MK.S_PDQ] == -1.0 and st[MK.S_PKIND] == MK.K_RED and st[MK.S_PSTOP] == 1
