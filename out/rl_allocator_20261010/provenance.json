@@ -180,5 +180,10 @@
   "round16_long_pullback": {
     "code_commit": "62dc5e6",
     "report_sha256": "cf0aca70958eb6ce1233e053f3d1e050de49b4f3401db0b7afb2b0112f01af15"
+  },
+  "round17_g3_idle_et": {
+    "overlay_commit": "12ec59e",
+    "code_commit": "347cd4b",
+    "report_sha256": "25e82c181e59deb38bcdea7baa8b12b10d86d58d995ad126de8184079685d31c"
   }
 }
