@@ -71,7 +71,8 @@ def model_sha(m: nn.Module) -> str:
 
 ACC_KEYS = ("net4", "idle", "turnover", "reward", "reward_discounted", "gamma_d", "blocks", "flat_blocks", "minutes",
             "flat_minutes", "exposure_sum", "fills", "round_trips", "ttl_expiry", "requote", "reversal", "pos_stop",
-            "day_stop", "fees", "funding")
+            "day_stop", "fees", "funding", "stop_size_sum", "stop_entry_to_stop_min_sum", "stop_flatten_loss_sum",
+            "stop_flattens", "stop_reentry_min_sum", "stop_reentries")
 
 
 class SmdpTrainer:
@@ -100,7 +101,7 @@ class SmdpTrainer:
     def run_update(self) -> dict:
         cfg, E = self.cfg, self.envs.E
         B = {k: [] for k in ("obs", "at", "aw", "logp", "v", "r", "g", "done")}
-        lg = {"nonfinite": 0, "identity_err": 0.0, "u_max": -9.0, "u_absmax": 0.0}
+        lg = {"nonfinite": 0, "identity_err": 0.0, "u_max": -9.0, "u_absmax": 0.0, "last_time": -1}
         acc = {k: 0.0 for k in ACC_KEYS}
         per_cell = {}
         t_cnt, w_cnt = np.zeros(len(self.envs.targets)), np.zeros(len(MK.WAITS))
@@ -124,6 +125,7 @@ class SmdpTrainer:
                     lg["identity_err"] = max(lg["identity_err"], f["identity_err"])
                     lg["u_max"] = max(lg["u_max"], f["u_max"])
                     lg["u_absmax"] = max(lg["u_absmax"], f["u_absmax"])
+                    lg["last_time"] = max(lg["last_time"], f["last_time"])
                 np.add.at(t_cnt, at.numpy(), 1)
                 np.add.at(w_cnt, aw.numpy(), 1)
                 for k_, val in (("obs", x), ("at", at), ("aw", aw), ("logp", lp), ("v", v)):
@@ -200,6 +202,7 @@ class SmdpTrainer:
             ev._reset(e, a, b)
         live = np.ones(ev.E, bool)
         acc = [{k: 0.0 for k in ACC_KEYS} | {"u_max": -9.0, "u_absmax": 0.0, "identity_err": 0.0, "nonfinite": 0,
+                                           "last_time": -1,
                                            "t_cnt": np.zeros(len(ev.targets)), "w_cnt": np.zeros(len(MK.WAITS)),
                                            "decisions": 0} for _ in range(ev.E)]
         daily = [dict() for _ in range(ev.E)]
@@ -219,6 +222,7 @@ class SmdpTrainer:
                         r[kk] += f[kk]
                     r["u_max"], r["u_absmax"] = max(r["u_max"], f["u_max"]), max(r["u_absmax"], f["u_absmax"])
                     r["identity_err"] = max(r["identity_err"], f["identity_err"])
+                    r["last_time"] = max(r["last_time"], f["last_time"])
                     r["t_cnt"][at[n]] += 1
                     r["w_cnt"][aw[n]] += 1
                     r["decisions"] += 1

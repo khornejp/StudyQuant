@@ -104,6 +104,8 @@ def test_position_stop_forces_flat():
     u = k.upath[4001:k.i + 1]
     first = int(np.argmax(u == 1.0))
     assert u[first] == 1.0 and np.any(u[first:] == 0.0)          # target 1 throughout, yet flattened by the stop
+    assert k.st[MK.S_PSTOP] >= 1 and k.st[MK.S_DNFL] >= 1 and k.st[MK.S_DSZ] >= 1.0 and k.st[MK.S_DE2S] > 0
+    assert k.st[MK.S_DNRE] >= 1 and k.st[MK.S_DFL] <= 0
 
 
 def test_reward_decomposition():

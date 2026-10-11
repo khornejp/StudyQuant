@@ -97,7 +97,7 @@ class SmdpEnvs:
             start_ns = lo + step * int(self.rng.integers(0, n + 1))
             end_ns = start_ns + self.L * SG.MIN_NS
         s = int(np.searchsorted(d.t, start_ns)) - 2                 # slice keeps close[start - 1]
-        z = min(int(np.searchsorted(d.t, end_ns)) + 1441, len(d.t))
+        z = min(int(np.searchsorted(d.t, end_ns)), len(d.t))         # truncate: last minute = end - 1 m
         off, pen = self.cells[e]
         k = MK.Kernel(d.o[s:z], d.h[s:z], d.l[s:z], d.c[s:z], d.t[s:z], d.ft, d.fr, off, pen)
         k.reset(int(np.searchsorted(k.t, start_ns)) - 1)            # decision bar closing at start
@@ -130,13 +130,17 @@ class SmdpEnvs:
                                                                                           - rw["turnover"])),
                "minutes": int(len(u)), "flat_minutes": int((np.abs(u) < 0.125).sum()), "exposure_sum": float(np.abs(u).sum()),
                "u_max": float(u.max()) if len(u) else 0.0, "u_absmax": float(np.abs(u).max()) if len(u) else 0.0,
-               "target": self.targets[a_t], "wait": MK.WAITS[a_w]}
+               "target": self.targets[a_t], "wait": MK.WAITS[a_w],
+               "last_time": int(k.t[info["j"]]) if len(u) else -1}
         for nm, slot in (("fills", MK.S_FILLS), ("round_trips", MK.S_RT), ("ttl_expiry", MK.S_TTLX),
                          ("requote", MK.S_REQ), ("reversal", MK.S_REV), ("pos_stop", MK.S_PSTOP),
-                         ("day_stop", MK.S_DSTOP), ("fees", MK.S_FEES), ("funding", MK.S_FUND)):
+                         ("day_stop", MK.S_DSTOP), ("fees", MK.S_FEES), ("funding", MK.S_FUND),
+                         ("stop_size_sum", MK.S_DSZ), ("stop_entry_to_stop_min_sum", MK.S_DE2S),
+                         ("stop_flatten_loss_sum", MK.S_DFL), ("stop_flattens", MK.S_DNFL),
+                         ("stop_reentry_min_sum", MK.S_DRE), ("stop_reentries", MK.S_DNRE)):
             out[nm] = float(st1[slot] - st0[slot])
         self.t_now[e] = self.d.t[gi0 + info["j"]] + SG.MIN_NS
-        out["done"] = bool(self.t_now[e] >= self.t_end[e] or info["j"] >= len(k.t) - 1)
+        out["done"] = bool(info["j"] >= len(k.t) - 1 or self.t_now[e] >= self.t_end[e])
         return out
 
     def step(self, a_t: np.ndarray, a_w: np.ndarray):

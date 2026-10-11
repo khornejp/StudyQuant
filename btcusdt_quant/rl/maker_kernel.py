@@ -39,7 +39,10 @@ EPS = 1e-12
 # state vector slots
 (S_U, S_Q, S_EQ, S_POSPNL, S_DAY0, S_DAY, S_PEND, S_PDQ, S_PLIM, S_PSTART, S_PEXP, S_PKIND, S_PTGT, S_LEG2,
  S_FPOS, S_FDAY, S_KILL, S_FILLS, S_FEES, S_FUND, S_TURN, S_TTLX, S_REQ, S_REV, S_PSTOP, S_DSTOP, S_RT,
- S_NSTATE) = range(28)
+ S_POSSTART, S_SPNL, S_AWFLAT, S_SFLATK, S_AWRE, S_DSZ, S_DE2S, S_DFL, S_DNFL, S_DRE, S_DNRE,
+ S_NSTATE) = range(39)
+# stop diagnostics (sums over stops): size at stop, entry->stop minutes, flatten loss (P&L from the stop to the flat
+# fill), flat->re-entry minutes; counts in S_PSTOP + S_DSTOP / S_DNFL / S_DNRE
 K_INC, K_RED = 1.0, 2.0
 
 
@@ -132,12 +135,21 @@ def advance(o, h, l, c, day, frate, st, pnl, upath, i, j, tgt, off, pen):
         st[S_EQ] += v
         if abs(U0) < EPS and abs(st[S_U]) > EPS:
             st[S_POSPNL] = v
+            st[S_POSSTART] = k
+            if st[S_AWRE] > 0:
+                st[S_DRE] += k - st[S_SFLATK]
+                st[S_DNRE] += 1
+                st[S_AWRE] = 0.0
         elif abs(st[S_U]) > EPS:
             st[S_POSPNL] += v
         else:
-            st[S_POSPNL] = 0.0
             if abs(U0) > EPS:
                 st[S_RT] += 1                       # completed round trip: position -> flat
+                if st[S_AWFLAT] > 0:
+                    st[S_DFL] += st[S_POSPNL] + v - st[S_SPNL]
+                    st[S_DNFL] += 1
+                    st[S_AWFLAT], st[S_SFLATK], st[S_AWRE] = 0.0, k, 1.0
+            st[S_POSPNL] = 0.0
         if abs(st[S_U]) < EPS and st[S_FPOS] > 0:
             st[S_FPOS] = 0.0
         upath[k] = st[S_U]
@@ -148,6 +160,10 @@ def advance(o, h, l, c, day, frate, st, pnl, upath, i, j, tgt, off, pen):
         if st[S_EQ] - st[S_DAY0] <= DAY_STOP_BPS and st[S_FDAY] == 0:
             st[S_FDAY], newly = 1.0, True
             st[S_DSTOP] += 1
+        if newly and abs(st[S_U]) > EPS:
+            st[S_DSZ] += abs(st[S_U])
+            st[S_DE2S] += k - st[S_POSSTART]
+            st[S_SPNL], st[S_AWFLAT] = st[S_POSPNL], 1.0
         if newly:                                   # any live order is replaced by a full flatten (dq = -U)
             st[S_PEND] = 0.0
             if abs(st[S_U]) > EPS and k + 1 < len(c):

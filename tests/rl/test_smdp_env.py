@@ -44,3 +44,18 @@ def test_trainer_resume_bit_exact(data):
     t2.load_state_dict(sd)
     t2.run_update(); t2.run_update()
     assert tensors_equal(t1.state_dict()["model"], t2.state_dict()["model"])
+
+
+def test_val_episode_truncated_at_end(data):
+    import pandas as pd
+    ev = SE.SmdpEnvs(data, [(2, 0.5)], (0.0, -0.5, -1.0, -0.25, -0.75), 90, seed=0)
+    a, b = pd.Timestamp("2022-01-01", tz="UTC").value, pd.Timestamp("2023-01-01", tz="UTC").value
+    ev._reset(0, a, b)
+    rng = np.random.default_rng(1)
+    mins, last, done = 0, -1, False
+    while not done:
+        f = ev.step_one(0, int(rng.integers(0, 5)), 4 if rng.random() < 0.7 else int(rng.integers(0, 5)))
+        mins += f["minutes"]
+        last = max(last, f["last_time"])
+        done = f["done"]
+    assert mins == 525_600 and last == b - 60_000_000_000
