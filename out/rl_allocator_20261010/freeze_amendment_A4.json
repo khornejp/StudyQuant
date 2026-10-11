@@ -1,0 +1,82 @@
+{
+  "name": "A4 amendment (short-only SMDP, Codex final 2026-10-11)",
+  "status": "LOCKED",
+  "created_utc": "2026-10-11T04:58:12.798603+00:00",
+  "base": {
+    "A3_sha256": "77a3b673e22fabe601435505efb68ca5b9bed5e30a710ad7c7113ea9819da114",
+    "A3_training_sha256": "be858f52dce115dd95f8d4613d63c389173a3c5db692ab12ccf56b5a47d0efa5"
+  },
+  "unchanged": "targets {0,-.25,-.5,-.75,-1}, 6 cells, maker 2 bps/side, kernel, stops, folds, scripted baselines, PASS criteria",
+  "changes": {
+    "waits": {
+      "A3": [
+        5,
+        15,
+        60,
+        240,
+        1440
+      ],
+      "A4": [
+        15,
+        60,
+        240
+      ],
+      "reason": "wait head kept (user: RL chooses its decision cadence); action set narrowed"
+    },
+    "network": "948 -> 64 Tanh -> 64 Tanh; heads target 5, wait 3, value 1 (65,481 params)",
+    "ppo": {
+      "lr": 0.0003,
+      "clip": 0.2,
+      "value_clip": 0.2,
+      "epochs": 4,
+      "reward_scale": 0.01,
+      "value_coef": 0.5,
+      "grad_norm": 0.5,
+      "minibatch": 512
+    },
+    "gae": "gamma_d = 2^(-dt/43200 m), lambda_d = 0.95^(dt/5 m), per decision",
+    "rollout": "each env collects until 7 calendar days of its own clock elapsed (last action completes; block-end truncation kept); no fixed decision count",
+    "episodes": "blocks [train_start + 90k d, min(train_start + 90(k+1) d, train_end)), non-overlapping, chronological, tail included; flat reset at block start; no random starts; min(10, n_blocks) envs per cell over the same block order; a finished env takes the next unconsumed block; after all blocks the cycle restarts",
+    "entropy": "normalized h_target = H/log5, h_wait = H/log3; betas applied to raw head entropies: u1-17 (.010,.020), u18-34 (.005,.015), u35-68 (.002,.010); h_wait < .55 -> next update beta_wait .05; back to the schedule after h_wait >= .60 twice in a row",
+    "candidates": [
+      17,
+      34,
+      51,
+      68
+    ],
+    "max_updates": 68,
+    "evaluation": "training seeds {0,1,2} x action RNG seeds 10000..10007 = 24 sampled trajectories per cell (numpy Generator seeded (rng, seed, cell index)); score = min over cells of stitched F1..F3 mean net4 minus max(0, famvol, ewa); tie -> earlier; joint argmax per seed = diagnostic; all candidates <= 0 -> A4 FAIL and F4 skipped; else U* frozen, F4 retrain to U*, single 2025 evaluation with the same 24-sample method (MDD / bootstrap on the mean daily series)",
+    "abort": "nonfinite, ledger identity > 1e-8, long exposure, block overlap -> immediate abort; h_wait < .30 or sampled dominant wait share > .95 for 3 consecutive updates while beta_wait = .05 -> collapse FAIL; no performance early stop",
+    "stop_diag_fix": "position and day stop in the same minute count as one stop event (denominator)"
+  },
+  "config": {
+    "lr": 0.0003,
+    "clip": 0.2,
+    "vclip": 0.2,
+    "epochs": 4,
+    "minibatch": 512,
+    "reward_scale": 0.01,
+    "vf_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "hidden": 64,
+    "updates": 68,
+    "rollout_min": 10080,
+    "lam_base": 0.95,
+    "floor_beta_wait": 0.05,
+    "floor_low": 0.55,
+    "floor_release": 0.6,
+    "collapse_h_wait": 0.3,
+    "collapse_dominant": 0.95,
+    "collapse_updates": 3
+  },
+  "config_sha256": "5f1131be372fa3b6ea49d2deba8534f9175ff70ed1f5c99df2d38ab534a85613",
+  "code_sha256": {
+    "smdp_env": "51f367535f0cc6807e7681bdcca3141883c01781fe9d48fd088726edb8f1ea25",
+    "smdp_ppo": "9bcc2187e2550c1a072fa2c3508d096f2624e6de3aab6811804603014b9de7ec",
+    "maker_kernel": "054fe3948a7904fb93c9eb32c2315883e11f7b2301a6e9d88c46c056e56cbc5f",
+    "signal_store": "89451ba646b6e2d3c5fedbb9dc4b6f6467f476fc2efbd4fe2733227ccf229feb",
+    "dev_data": "a87c9593c896959eecdee6be7858142de5275fb95507692915b3e2a2e8969d20"
+  },
+  "test_rows_used": 0,
+  "physical_test_reads": 0
+}
