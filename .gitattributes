@@ -30,3 +30,5 @@ btcusdt_quant/rl/event_sim.py text eol=lf
 tests/rl/test_event_sim.py text eol=lf
 btcusdt_quant/rl/pullback.py text eol=lf
 tests/rl/test_pullback.py text eol=lf
+btcusdt_quant/rl/overlay.py text eol=lf
+tests/rl/test_overlay.py text eol=lf
