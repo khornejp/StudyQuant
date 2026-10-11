@@ -1,0 +1,28 @@
+{
+  "name": "A4-L amendment (long-only run of the A4 protocol)",
+  "status": "LOCKED",
+  "created_utc": "2026-10-11T05:38:28.866908+00:00",
+  "base": {
+    "A4_sha256": "dfad04485a22514a338e09d00aa38f39f050371bf047209d3f8d79e99920e77b"
+  },
+  "trigger": "A4 short-only FAIL (all candidates min_excess <= 0) -> Codex pre-registered rule: end short PPO, run long-only with the same protocol",
+  "only_change": {
+    "targets": [
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "note": "kernel signed TARGETS order and order semantics unchanged; integrity check = short exposure 0 (wrong-side exposure abort)"
+  },
+  "unchanged": "waits {15m,1h,4h}, 948-64-64, gamma_d/lambda_d GAE, 7-day rollouts, 90-day non-overlapping blocks, entropy schedule/floor, candidates 17/34/51/68, 24 sampled evaluation, F1..F3 min-excess selection vs signed scripted baselines (famvol/ewa/flat), all <= 0 -> FAIL and F4 skipped, abort/collapse rules, PASS criteria",
+  "procedure_note": "short A4: --only smoke was ignored (args.only is a set) so the full short run preceded its smoke; fixed in b641a73",
+  "code_sha256": {
+    "smdp_env": "659610bd77b897e9be0f5be46c2db3bec0cabc290cca4906f31a58aceb245686",
+    "smdp_ppo": "e79ab61872147a5fe9dabb768557772262f1526ab97b852f8fb42d3a44a71b3e",
+    "maker_kernel": "054fe3948a7904fb93c9eb32c2315883e11f7b2301a6e9d88c46c056e56cbc5f"
+  },
+  "test_rows_used": 0,
+  "physical_test_reads": 0
+}
