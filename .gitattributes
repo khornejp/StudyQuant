@@ -35,3 +35,5 @@ tests/rl/test_overlay.py text eol=lf
 btcusdt_quant/rl/idle_et.py text eol=lf
 tests/rl/test_idle_et.py text eol=lf
 tests/rl/test_ewa7.py text eol=lf
+btcusdt_quant/rl/u35.py text eol=lf
+tests/rl/test_u35.py text eol=lf

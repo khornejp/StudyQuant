@@ -904,7 +904,7 @@ def opp_of(opp: pd.DataFrame, ntr: int) -> np.ndarray:
     return o
 
 
-def native_out(s, t_glob, segs, files, avail_rep):
+def native_out(s, t_glob, segs, files, avail_rep, root=None):
     """segs: dict(t, tr, rows, sig, seg[, mm, e_min]) on their own minute arrays, mapped onto the global grid."""
     n = len(t_glob)
     rows_all, opps, R0, Rt, lvl, arm = [], [], np.full(n, np.nan), np.full(n, np.nan), np.full(n, np.nan), np.zeros(n)
@@ -970,7 +970,8 @@ def native_out(s, t_glob, segs, files, avail_rep):
     avail_rep[s] = availability(t_glob, avail, openm)
     avail_rep[s].update(signal_active_ne_open_minutes=int(((side != 0) != openm).sum()),
                         pending_minutes=int(pend.sum()), distinct_snapshots=int(len(np.unique(snap[snap >= 0]))))
-    files[f"common/{s}"] = write_sleeve(PRE / "common" / s, gf, rows, t_glob, opp, np.arange(len(opp)))
+    files[f"common/{s}"] = write_sleeve((PRE if root is None else root) / "common" / s, gf, rows, t_glob, opp,
+                                        np.arange(len(opp)))
     log(f"wrote {s}")
     return gf
 
@@ -3704,15 +3705,195 @@ def cmd_g3_idle_et(args) -> None:
         f"no-valid {fold_fail} tamper {tam_ok} {rep['runtime_sec']}s")
 
 
+# ================================================================ U35 precompute (Codex A3 2026-10-11): 28 paper AX books
+PRE35 = OUT / "precompute_u35"
+U35_CUT = pd.Timestamp("2025-05-01", tz="UTC")            # engine tamper / prefix cut inside the DEV AX window
+
+
+def u35_timeline_ax(table: pd.DataFrame, km_full: np.ndarray, t_full: np.ndarray) -> pd.DataFrame:
+    """Causal decision-group signal timeline of an AX book: one row per decision time T (signal computed from data
+    closed before T, executed at T + 1 m): side / strength (E0 bps) of the first enterable row, k in force at T + 1 m,
+    available = inside the rolling AX window (k defined)."""
+    tb = table.reset_index(drop=True)
+    dt = pd.DatetimeIndex(tb.decision_time).as_unit("ns").asi8
+    e0 = tb.e0_bps.to_numpy(float)
+    ok = tb.allow_entry.to_numpy(bool) & (tb.side.to_numpy() != 0) & np.isfinite(e0) & (e0 > 0)
+    first = np.r_[True, dt[1:] != dt[:-1]]
+    gid = np.cumsum(first) - 1
+    g_t = dt[first]
+    side, strength, ecol = np.zeros(len(g_t), np.int8), np.full(len(g_t), np.nan), np.full(len(g_t), -1)
+    cand = np.flatnonzero(ok)
+    pick = pd.Series(cand).groupby(gid[cand]).first()
+    side[pick.index.to_numpy()] = tb.side.to_numpy()[pick.to_numpy()]
+    strength[pick.index.to_numpy()] = e0[pick.to_numpy()]
+    ecol[pick.index.to_numpy()] = tb.e_col.to_numpy()[pick.to_numpy()]
+    j = np.searchsorted(t_full, g_t)                      # execution minute T + 1 m opens at index of T
+    k = np.where(j < len(t_full), km_full[np.minimum(j, len(t_full) - 1)], np.nan)
+    f = pd.DataFrame({"decision_time": g_t, "available_time": g_t, "side": side, "signal_active": side != 0,
+                      "strength_e0_bps": strength, "e_col": ecol, "k": k, "available": np.isfinite(k),
+                      "rows_in_group": np.bincount(gid)})
+    return f[(f.decision_time >= pd.Timestamp(USABLE_FROM, tz="UTC").value) & (f.decision_time < sp.TEST_START.value)]
+
+
+def u35_timeline_grid(d: Path) -> pd.DataFrame:
+    """Signal timeline of an existing sleeve from its DEV grid partitions: minutes where the causal signal columns
+    (available, base_side, base_weight, signal_active) change; available_time = minute + 1 m."""
+    cols = ["minute_time", "available_time", "available", "base_side", "base_weight", "signal_active"]
+    g = sp.read_partitioned(d, "grid", years=set(range(2020, 2026)))[cols]
+    v = g[cols[2:]].to_numpy(float)
+    ch = np.r_[True, np.any(v[1:] != v[:-1], axis=1)]
+    return g.loc[ch].reset_index(drop=True)
+
+
+def u35_ax_book(b, ctx, fund, ax, t_glob, files, avail_rep, rec) -> dict:
+    from dataclasses import replace as _rp
+    from btcusdt_quant.rl import u35
+    from btcusdt_quant.sim import costs, rolling
+    from btcusdt_quant.sim.strategies import build_variant
+    sid = u35.SPEC_ID[b]
+    r = rec.setdefault(b, {"spec_id": sid, "family": u35.FAMILY[b], "catalog_family": u35.catalog_family(b)})
+    a, z = u35.AX_START, u35.DEV_END
+    times = pd.DatetimeIndex(ctx.minutes.open_time)
+    with u35.dev_settlements(fund):
+        table, _ = build_variant(ctx, sid, False, "NATIVE", ax=True)
+        table = table.assign(e0_bps=ax.row_e0(table, ctx.regime, sid), e_col=ax.e_cols(table, sid).astype(float))
+        e, e_min = ax.e_matrix(ctx.regime, times, ax.heads(sid))
+        km = ax.k_schedule(times, u35.k_picks(b), rolling.WINDOWS)
+        cfg = _rp(ax.CONFIG, close_at_end=True)
+        res = ax.run_ax(table, ctx.minutes, e, e_min, a, z, cfg, km)
+        ft, fr = costs._settlement_arrays()
+        if int(ft.max()) >= sp.TEST_START.value:
+            raise Fail("TEST funding settlement reached the AX run")
+        inside = ((ctx.minutes.open_time >= a) & (ctx.minutes.open_time < z)).to_numpy()
+        ci = int(np.searchsorted(ctx.minutes.open_time.array.asi8[inside], U35_CUT.value))
+        base = res.minute_pnl.to_numpy(float)
+        for tag in ("prefix", "tamper"):                  # engine invariance before the cut (table, E, k fixed)
+            mins, hi = ctx.minutes, z
+            if tag == "tamper":
+                mins = ctx.minutes.copy()
+                aft = (mins.open_time >= U35_CUT).to_numpy()
+                for c in ("open", "high", "low", "close"):
+                    mins.loc[aft, c] = mins.loc[aft, c] * 1.7
+            else:
+                hi = U35_CUT
+            p2 = ax.run_ax(table, mins, e, e_min, a, hi, cfg, km).minute_pnl.to_numpy(float)
+            lim = ci if tag == "tamper" else ci - 1
+            r[f"{tag}_invariant"] = bool(np.array_equal(p2[:lim], base[:lim]))
+            need(r[f"{tag}_invariant"], f"{b} {tag} invariance at {U35_CUT.date()}", r)
+    mm = ctx.minutes.loc[inside].reset_index(drop=True)
+    tt = mm.open_time.array.asi8.copy()
+    trades = res.trades.reset_index(drop=True)
+    ref = pd.read_parquet(u35.REF_TRADES[b]).reset_index(drop=True)
+    same = len(trades) == len(ref) and all(np.array_equal(trades[c].to_numpy(), ref[c].to_numpy())
+                                           for c in ("decision_time", "entry_time", "exit_time", "side", "units",
+                                                     "entry_price", "exit_price", "exit_reason"))
+    r["trades"], r["trades_ref"], r["trades_exact"] = int(len(trades)), int(len(ref)), bool(same)
+    need(same, f"{b} trades (count, decision/entry/exit time, side, units, prices, reason) == R2-52A research", r)
+    if same:
+        r["trade_net_max_abs_vs_ref"] = float(np.abs(trades.net_bps.to_numpy() - ref.net_bps.to_numpy()).max()) \
+            if len(ref) else 0.0
+        need(r["trade_net_max_abs_vs_ref"] <= ATOL_TOT, f"{b} per-trade net4 vs research", r)
+    rd = pd.read_parquet(u35.REF_DAILY[b])
+    days = pd.DatetimeIndex(rd.index)
+    mine = res.minute_pnl.groupby(res.minute_pnl.index.floor("D")).sum().reindex(days, fill_value=0.0)
+    r["daily_max_abs_vs_ref"] = float(np.abs(mine.to_numpy() - rd.ax_4bps.to_numpy()).max())
+    need(r["daily_max_abs_vs_ref"] <= ATOL_TOT, f"{b} daily net4 vs research", r)
+    g = dict(seg="DEV", a=a, b=z, res=res, mm=mm, table=table, e=e[inside], e_min=e_min[inside], km=km[inside],
+             cfg=cfg, t=tt)
+    tr = ax_trades(trades, tt, g, ax)
+    rows = sp.log_rows(tt, mm.close.to_numpy(float), tr, cfg.fee_per_side, ft, fr)
+    net = sp.minute_sum(rows, len(tt))
+    r["minute_max_abs_vs_core"] = float(np.abs(net - base).max())
+    need(r["minute_max_abs_vs_core"] <= ATOL_MIN, f"{b} minute ledger vs core", r)
+    r["net4_total"], r["net4_total_core"] = float(net.sum()), float(base.sum())
+    need(abs(r["net4_total"] - r["net4_total_core"]) <= ATOL_TOT, f"{b} total net4 vs core", r)
+    r["unmatched_entries"] = int((tr.entry_kind == "unmatched").sum())
+    g.update(tr=tr, rows=rows, net=net, sig=ax_signal(tt, g, tr))
+    native_out(b, t_glob, [g], files, avail_rep, root=PRE35)
+    tl = u35_timeline_ax(table, km, times.asi8)
+    p = PRE35 / "timeline" / f"{b}.parquet"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tl.to_parquet(p, index=False, compression="zstd")
+    files[f"timeline/{b}"] = {"rows": int(len(tl)), "bytes": p.stat().st_size, "sha256": sha(p)}
+    ex = pd.DatetimeIndex(trades.exit_time)
+    r["closed_by_year"] = {str(y): int(((ex.year == y) & (trades.exit_reason != "data_end")).sum()) for y in (2023, 2024, 2025)}
+    r["net4_by_year"] = {str(y): float(net[pd.DatetimeIndex(tt).year == y].sum()) for y in (2023, 2024, 2025)}
+    log(f"u35 {b}: trades {len(trades)} exact {same} net {net.sum():.1f} min-ledger {r['minute_max_abs_vs_core']:.2e}")
+    return r
+
+
+def cmd_u35_precompute(args) -> None:
+    import sys as _sys
+    from btcusdt_quant.rl import u35
+    t0 = time.time()
+    if str(ROOT / "scripts") not in _sys.path:
+        _sys.path.insert(0, str(ROOT / "scripts"))
+    import sim_adaptive_exit as ax
+    PRE35.mkdir(parents=True, exist_ok=True)
+    SLEEVE_ID.update({b: len(SLEEVES) + i for i, b in enumerate(u35.AX_NEW)})   # new ids 7..34, existing 7 unchanged
+    ctx, fund, in_hash = u35.dev_context()
+    t_glob = ctx.minutes.open_time.array.asi8.copy()
+    sp.guard_times(t_glob, False, "u35 grid")
+    files, avail_rep, rec = {}, {}, {}
+    only = [x for x in str(getattr(args, "books", "") or "").split(",") if x] or list(u35.AX_NEW)
+    for b in only:
+        u35_ax_book(b, ctx, fund, ax, t_glob, files, avail_rep, rec)
+    # existing 7: reuse unchanged; verify DEV-year partition bytes against the precompute manifest (2026 files untouched)
+    man = json.loads((PRE / "manifest.json").read_text(encoding="utf-8"))
+    reuse = {"checked_files": 0, "mismatch": [], "skipped_test_year_files": 0}
+    for key, parts in man["files"].items():
+        if not isinstance(parts, dict):
+            continue
+        for stem in ("grid", "ledger", "decisions", "outcomes"):
+            for fn, meta in (parts.get(stem) or {}).items():
+                if int(fn.rsplit("_", 1)[1].split(".")[0]) >= sp.TEST_START.year:
+                    reuse["skipped_test_year_files"] += 1
+                    continue
+                reuse["checked_files"] += 1
+                if sha(PRE / key / fn) != meta["sha256"]:
+                    reuse["mismatch"].append(f"{key}/{fn}")
+    reuse["pass"] = not reuse["mismatch"]
+    for s in u35.EXISTING7:                               # timelines of the existing 7 (G3 family: every cell checked)
+        if s in G3_FAMILY:
+            tls = {c: u35_timeline_grid(PRE / "g3_family" / c / s) for c in CELL_TAG.values()}
+            ref_tl = tls[CELL_TAG[PRIMARY]]
+            reuse.setdefault("timeline_cells_equal", {})[s] = all(
+                len(v) == len(ref_tl) and np.array_equal(v.to_numpy(float), ref_tl.to_numpy(float)) for v in tls.values())
+            tl = ref_tl
+        else:
+            tl = u35_timeline_grid(PRE / "common" / s)
+        p = PRE35 / "timeline" / f"{s}.parquet"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tl.to_parquet(p, index=False, compression="zstd")
+        files[f"timeline/{s}"] = {"rows": int(len(tl)), "bytes": p.stat().st_size, "sha256": sha(p)}
+    tot_bytes = sum(p_.stat().st_size for p_ in PRE35.rglob("*.parquet"))
+    ok = all(all(c["pass"] for c in r_["checks"]) for r_ in rec.values()) and reuse["pass"]
+    manifest = {"name": "RL U35 precompute (28 AX books; existing 7 reused)", "created_utc": datetime.now(timezone.utc).isoformat(),
+                "universe": list(u35.UNIVERSE), "family": u35.FAMILY, "ax_books": list(only),
+                "window": {"ax_available": [str(u35.AX_START), str(u35.DEV_END)], "grid": [str(pd.Timestamp(int(t_glob[0]), tz="UTC")),
+                                                                                  str(pd.Timestamp(int(t_glob[-1]), tz="UTC"))]},
+                "engine": "build_variant(ax=True) -> row_e0/e_matrix -> rolling k (research selected_k, W01..W10) -> "
+                          "sim core R2_52A (scripts/sim_adaptive_exit.run_ax, close_at_end) = R2-52A research run; "
+                          "native fill, one cell (not replicated per exec cell)",
+                "input_sha256": in_hash, "code_sha256": {k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py") for k_ in ("u35", "dev_data", "sleeve_precompute")},
+                "git_head": git("rev-parse", "HEAD"), "parity": rec, "existing7_reuse": reuse, "availability": avail_rep,
+                "files": files, "total_bytes": int(tot_bytes), "runtime_sec": round(time.time() - t0, 1), "pass": bool(ok),
+                "test_accessed": False}
+    dump(PRE35 / "manifest.json", manifest)
+    log(f"u35 precompute {'PASS' if ok else 'FAIL'} books {len(only)} reuse {reuse['pass']} {manifest['runtime_sec']}s "
+        f"{tot_bytes / 1e9:.2f} GB")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
+    ap.add_argument("--books", default="")
     ap.add_argument("--only", default="g3,c,ax")
     ap.add_argument("--no-registry", action="store_true")
     ap.add_argument("--allow-test-parity", action="store_true",
@@ -3755,6 +3936,8 @@ def main(argv=None) -> None:
         return cmd_long_pullback(args)
     if args.command == "g3-idle-et":
         return cmd_g3_idle_et(args)
+    if args.command == "u35-precompute":
+        return cmd_u35_precompute(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
