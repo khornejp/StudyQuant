@@ -190,6 +190,7 @@ class BatchEnv:
     def obs(self) -> np.ndarray:
         st = self.ST
         rows = ((self.t[self.gi] + MK.MIN_NS - self.clock0) // (5 * MK.MIN_NS)).astype(np.int64)
+        rows = np.minimum(rows, len(self.tok) - 1)       # envs that finished at the data end (their obs is unused)
         ref = self.rv_ref[self.gi]
         ref = np.where(np.isfinite(ref), ref, self.rv_med)
         age = np.where(st[:, MK.S_PEND] > 0, (self.gi - st[:, MK.S_PPLACED]) / 60.0, 0.0)

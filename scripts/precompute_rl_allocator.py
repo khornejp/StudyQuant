@@ -5392,7 +5392,7 @@ def cmd_smdp_a6(args) -> None:
     import numba
     import torch
     from btcusdt_quant.rl import signal_store as SG, smdp_batch as SB, smdp_continual as CT, smdp_gpu as SGPU
-    from btcusdt_quant.rl import smdp_ppo as SP, smdp_reward as RW, dev_data as DD, u35, gates as GT
+    from btcusdt_quant.rl import smdp_ppo as SP, smdp_reward as RW, dev_data as DD, u35
     t_all = time.time()
     torch.set_num_threads(1)
     numba.set_num_threads(16)
@@ -5520,69 +5520,7 @@ def cmd_smdp_a6(args) -> None:
                    elapsed_sec=round(time.time() - t_all, 1), last_month_done=rec["month"])
         dump(RP, rep)
     # ---------------- summary
-    base = pilot_baselines()
-    cellnames = [f"o{o}_p{p}" for o, p in G_CELLS]
-    summ = {}
-    for c in cellnames:
-        pol = [(m["month"], x) for m in monthly for x in m["cells"][c] if x["who"] == "policy"]
-        anc = [(m["month"], x) for m in monthly for x in m["cells"][c] if x["who"] == "anchor"]
-        days = sorted({int(d) for _, x in pol for d in x["daily"]})
-        traj = sorted({(x["seed"], x["rng"]) for _, x in pol})
-        D = np.zeros((len(traj), len(days)))
-        tix = {k: i for i, k in enumerate(traj)}
-        dix = {d: i for i, d in enumerate(days)}
-        for _, x in pol:
-            for d, v in x["daily"].items():
-                D[tix[(x["seed"], x["rng"])], dix[int(d)]] += v
-        mean_daily = D.mean(0)
-        eq = np.r_[0.0, np.cumsum(mean_daily)]
-        mdd = float((np.maximum.accumulate(eq) - eq).max())
-        net = float(mean_daily.sum())
-        yearly = {}
-        for y in (2022, 2023, 2024, 2025):
-            xs = [x for mo, x in pol if mo.startswith(str(y))]
-            yearly[str(y)] = {"net4": float(sum(x["net4"] for x in xs) / len(traj)),
-                              "round_trips": float(sum(x["rt"] for x in xs) / len(traj))}
-        bf = sum(base[(c, y)]["famvol"] for y in (2022, 2023, 2024, 2025))
-        be = sum(base[(c, y)]["ewa"] for y in (2022, 2023, 2024, 2025))
-        seed_net = {str(s): float(sum(x["net4"] for _, x in pol if x["seed"] == s) / len(A6_EVAL_RNG)) for s in A6_SEEDS}
-        months_ = [m["month"] for m in monthly]
-        dl = [np.mean([x["net4"] for x in m["cells"][c] if x["who"] == "policy"])
-              - np.mean([x["net4"] for x in m["cells"][c] if x["who"] == "anchor"]) for m in monthly]
-        tot_min = sum(x["minutes"] for _, x in pol)
-        summ[c] = {"net4": net, "mdd_daily": mdd, "net_over_mdd": net / mdd if mdd > 0 else None,
-                   "beats_baselines": bool(net > max(0.0, bf, be)), "famvol": bf, "ewa": be, "yearly": yearly,
-                   "boot_p05": {str(bl): GT.boot_p05(mean_daily, bl) for bl in (20, 60, 120)},
-                   "flat_ratio": float(sum(x["flat_min"] for _, x in pol) / max(tot_min, 1)),
-                   "seed_stitched": seed_net,
-                   "monthly_net4_dist": {mo: {"mean": float(np.mean([x["net4"] for m2, x in pol if m2 == mo])),
-                                              "min": float(np.min([x["net4"] for m2, x in pol if m2 == mo])),
-                                              "max": float(np.max([x["net4"] for m2, x in pol if m2 == mo]))} for mo in months_},
-                   "anchor_delta": {"monthly": dict(zip(months_, map(float, dl))),
-                                    "rolling6_mean": dict(zip(months_, map(float, pd.Series(dl).rolling(6, min_periods=1).mean()))),
-                                    "theil_sen_slope_per_month": theil_sen(np.array(dl))},
-                   "anchor_net4": float(sum(x["net4"] for _, x in anc) / len(traj)),
-                   "reward_decomposition": {k: float(sum(x[k] for _, x in pol) / len(traj)) for k in
-                                            ("net4", "idle", "inventory", "turnover", "reward")},
-                   "target_share": (np.sum([x["tcnt"] for _, x in pol], 0) / max(np.sum([x["tcnt"] for _, x in pol]), 1)).tolist(),
-                   "wait_share": (np.sum([x["wcnt"] for _, x in pol], 0) / max(np.sum([x["wcnt"] for _, x in pol]), 1)).tolist(),
-                   "exposure": float(sum(x["expo"] for _, x in pol) / max(tot_min, 1)),
-                   "direction_hit": a6_direction_hit(monthly, c, mk),
-                   "regime_expected_target": {nm: float(np.sum([x["reg_sum"][k] for _, x in pol]) /
-                                                     max(np.sum([x["reg_n"][k] for _, x in pol]), 1))
-                                              for k, nm in enumerate(("down30d", "flat30d", "up30d"))}}
-    allc = summ.values()
-    nseed = sum(all(summ[c]["seed_stitched"][str(s)] > 0 for c in summ) for s in A6_SEEDS)
-    rep["summary"] = summ
-    rep["pass_criteria"] = {
-        "integrity": True, "stitched_net4>0_6of6": bool(all(x["net4"] > 0 for x in allc)),
-        "beats_baselines_6of6": bool(all(x["beats_baselines"] for x in allc)),
-        "yearly_net4>0_24of24": bool(all(v["net4"] > 0 for x in allc for v in x["yearly"].values())),
-        "yearly_round_trips>=30_24of24": bool(all(v["round_trips"] >= 30 for x in allc for v in x["yearly"].values())),
-        "boot_p05>0_18of18": bool(all(b > 0 for x in allc for b in x["boot_p05"].values())),
-        "net4/mdd>=1_6of6": bool(all((x["net_over_mdd"] or 0) >= 1 for x in allc)),
-        "flat<0.95": bool(all(x["flat_ratio"] < 0.95 for x in allc)), "seeds_6of6_positive>=3of5": bool(nseed >= 3)}
-    rep["pass"] = bool(all(rep["pass_criteria"].values()))
+    a6_summarize(rep, monthly, mk)
     tot_dec = sum(t_.decisions for t_ in trainers.values())
     rep.update(monthly=monthly, checkpoints=ckpts, p3_curves=p3_curves, total_decisions_trained=tot_dec,
                total_wall_sec=round(time.time() - t_all, 1), created_utc=datetime.now(timezone.utc).isoformat(),
@@ -6094,12 +6032,150 @@ def a7_verify(wg, mk, cache, clk, r1, rv_med, sampler21, hashes, AD, RP, rep, t_
     return w
 
 
+def a6_summarize(rep: dict, monthly: list, mk) -> None:
+    from btcusdt_quant.rl import gates as GT
+    base = pilot_baselines()
+    cellnames = [f"o{o}_p{p}" for o, p in G_CELLS]
+    summ = {}
+    for c in cellnames:
+        pol = [(m["month"], x) for m in monthly for x in m["cells"][c] if x["who"] == "policy"]
+        anc = [(m["month"], x) for m in monthly for x in m["cells"][c] if x["who"] == "anchor"]
+        days = sorted({int(d) for _, x in pol for d in x["daily"]})
+        traj = sorted({(x["seed"], x["rng"]) for _, x in pol})
+        D = np.zeros((len(traj), len(days)))
+        tix = {k: i for i, k in enumerate(traj)}
+        dix = {d: i for i, d in enumerate(days)}
+        for _, x in pol:
+            for d, v in x["daily"].items():
+                D[tix[(x["seed"], x["rng"])], dix[int(d)]] += v
+        mean_daily = D.mean(0)
+        eq = np.r_[0.0, np.cumsum(mean_daily)]
+        mdd = float((np.maximum.accumulate(eq) - eq).max())
+        net = float(mean_daily.sum())
+        yearly = {}
+        for y in (2022, 2023, 2024, 2025):
+            xs = [x for mo, x in pol if mo.startswith(str(y))]
+            yearly[str(y)] = {"net4": float(sum(x["net4"] for x in xs) / len(traj)),
+                              "round_trips": float(sum(x["rt"] for x in xs) / len(traj))}
+        bf = sum(base[(c, y)]["famvol"] for y in (2022, 2023, 2024, 2025))
+        be = sum(base[(c, y)]["ewa"] for y in (2022, 2023, 2024, 2025))
+        seed_net = {str(s): float(sum(x["net4"] for _, x in pol if x["seed"] == s) / len(A6_EVAL_RNG)) for s in A6_SEEDS}
+        months_ = [m["month"] for m in monthly]
+        dl = [np.mean([x["net4"] for x in m["cells"][c] if x["who"] == "policy"])
+              - np.mean([x["net4"] for x in m["cells"][c] if x["who"] == "anchor"]) for m in monthly]
+        tot_min = sum(x["minutes"] for _, x in pol)
+        summ[c] = {"net4": net, "mdd_daily": mdd, "net_over_mdd": net / mdd if mdd > 0 else None,
+                   "beats_baselines": bool(net > max(0.0, bf, be)), "famvol": bf, "ewa": be, "yearly": yearly,
+                   "boot_p05": {str(bl): GT.boot_p05(mean_daily, bl) for bl in (20, 60, 120)},
+                   "flat_ratio": float(sum(x["flat_min"] for _, x in pol) / max(tot_min, 1)),
+                   "seed_stitched": seed_net,
+                   "monthly_net4_dist": {mo: {"mean": float(np.mean([x["net4"] for m2, x in pol if m2 == mo])),
+                                              "min": float(np.min([x["net4"] for m2, x in pol if m2 == mo])),
+                                              "max": float(np.max([x["net4"] for m2, x in pol if m2 == mo]))} for mo in months_},
+                   "anchor_delta": {"monthly": dict(zip(months_, map(float, dl))),
+                                    "rolling6_mean": dict(zip(months_, map(float, pd.Series(dl).rolling(6, min_periods=1).mean()))),
+                                    "theil_sen_slope_per_month": theil_sen(np.array(dl))},
+                   "anchor_net4": float(sum(x["net4"] for _, x in anc) / len(traj)),
+                   "reward_decomposition": {k: float(sum(x[k] for _, x in pol) / len(traj)) for k in
+                                            ("net4", "idle", "inventory", "turnover", "reward")},
+                   "target_share": (np.sum([x["tcnt"] for _, x in pol], 0) / max(np.sum([x["tcnt"] for _, x in pol]), 1)).tolist(),
+                   "wait_share": (np.sum([x["wcnt"] for _, x in pol], 0) / max(np.sum([x["wcnt"] for _, x in pol]), 1)).tolist(),
+                   "exposure": float(sum(x["expo"] for _, x in pol) / max(tot_min, 1)),
+                   "direction_hit": a6_direction_hit(monthly, c, mk),
+                   "regime_expected_target": {nm: float(np.sum([x["reg_sum"][k] for _, x in pol]) /
+                                                     max(np.sum([x["reg_n"][k] for _, x in pol]), 1))
+                                              for k, nm in enumerate(("down30d", "flat30d", "up30d"))}}
+    allc = summ.values()
+    nseed = sum(all(summ[c]["seed_stitched"][str(s)] > 0 for c in summ) for s in A6_SEEDS)
+    rep["summary"] = summ
+    rep["pass_criteria"] = {
+        "integrity": True, "stitched_net4>0_6of6": bool(all(x["net4"] > 0 for x in allc)),
+        "beats_baselines_6of6": bool(all(x["beats_baselines"] for x in allc)),
+        "yearly_net4>0_24of24": bool(all(v["net4"] > 0 for x in allc for v in x["yearly"].values())),
+        "yearly_round_trips>=30_24of24": bool(all(v["round_trips"] >= 30 for x in allc for v in x["yearly"].values())),
+        "boot_p05>0_18of18": bool(all(b > 0 for x in allc for b in x["boot_p05"].values())),
+        "net4/mdd>=1_6of6": bool(all((x["net_over_mdd"] or 0) >= 1 for x in allc)),
+        "flat<0.95": bool(all(x["flat_ratio"] < 0.95 for x in allc)), "seeds_6of6_positive>=3of5": bool(nseed >= 3)}
+    rep["pass"] = bool(all(rep["pass_criteria"].values()))
+
+
+def cmd_smdp_a6_recover(args) -> None:
+    """A6b crashed in the very last evaluation month (obs row index = clock end for envs that had finished the month;
+    smdp_batch.obs fixed). Recovery of 2025-12 only: candidate = the 2025-11 checkpoints, anchor = the P2 checkpoints,
+    evaluation restarted FLAT on 2025-12-01 (the continuous ledger state was not checkpointed) - flagged in the report."""
+    import numba
+    import torch
+    from btcusdt_quant.rl import signal_store as SG, smdp_batch as SB, smdp_gpu as SGPU, smdp_reward as RW, dev_data as DD, u35
+    torch.set_num_threads(1)
+    numba.set_num_threads(16)
+    dev = torch.device("cuda")
+    AD = OUT / "smdp_a6b"
+    RP = AD / "smdp_a6b_report.json"
+    rep = json.loads(RP.read_text(encoding="utf-8"))
+    monthly = rep["monthly"]
+    if monthly[-1]["month"] != "2025-11":
+        raise SystemExit(f"unexpected last month {monthly[-1]['month']}")
+    rcfg = RW.A6B_REWARD
+    minutes, fund, in_hash = DD.load_dev()
+    fs = u35.assert_settlement_grid(u35.scheduled(fund))
+    mk = SB.market_arrays(minutes, fs, rcfg)
+    del minutes
+    clk = SG.clock()
+    mk["clock0"] = int(clk[0])
+    cache = SB.raw_cache(SS)
+    r1 = len(clk)
+    a21, b21 = (pd.Timestamp(x, tz="UTC").value for x in ("2021-01-30", "2022-01-01"))
+    ia, ib = np.searchsorted(mk["t"], [a21, b21])
+    rv_med = float(np.median(mk["rv"][ia + 1440:ib]))
+    M = pd.Timestamp("2025-12-01", tz="UTC")
+    Mend = pd.Timestamp("2026-01-01", tz="UTC")
+    feats = a6_feats(cache, clk, M.value, r1)
+    models = {}
+    obs_dim = feats[0].shape[1] + feats[1].shape[1] + 8
+    for s in A6_SEEDS:
+        for who, f in (("policy", f"P3_202511_s{s}.pt"), ("anchor", f"P2_s{s}.pt")):
+            st = torch.load(AD / "ckpt" / f, map_location="cpu", weights_only=False)
+            m = SGPU.PolicyA6(obs_dim).to(dev)
+            m.load_state_dict(st["model"])
+            m.eval()
+            models[(s, who)] = m
+    ev = A6Eval(mk, feats, rcfg, rv_med, A6_SEEDS, M.value, Mend.value, dev)
+    accm = ev.run_month(models, Mend.value)
+    want = int((Mend - M) / pd.Timedelta(minutes=1))
+    rec = {"month": "2025-12", "eval_minutes_exact": bool(np.all(accm["minutes"] == want)), "cells": {},
+           "recovery": "evaluation restarted flat on 2025-12-01 from the 2025-11 checkpoints (ledger state not "
+                       "checkpointed); no 2025-12 training (nothing after it is evaluated)"}
+    for (s, who), idx in ev.groups.items():
+        for i in idx:
+            _, _, r, ci = ev.keys[i]
+            rec["cells"].setdefault(f"o{G_CELLS[ci][0]}_p{G_CELLS[ci][1]}", []).append(
+                {"seed": s, "who": who, "rng": r, **{k: float(accm[k][i]) for k in ("net4", "idle", "inventory", "turnover",
+                                                                                 "reward", "fills", "minutes", "rt", "flat_min",
+                                                                                 "expo")},
+                 "tcnt": accm["tcnt"][i].tolist(), "wcnt": accm["wcnt"][i].tolist(), "reg_sum": accm["reg_sum"][i].tolist(),
+                 "reg_n": accm["reg_n"][i].tolist(), "daily": {str(d): float(v[i]) for d, v in accm["daily"].items()}})
+    monthly.append(rec)
+    a6_summarize(rep, monthly, mk)
+    rep["vs_a6_same_months"] = a6_compare(monthly)
+    rep.update(monthly=monthly, recovered_utc=datetime.now(timezone.utc).isoformat(),
+               crash="IndexError in BatchEnv.obs at the final month (rows == clock length for finished envs); fixed by "
+                     "clipping rows; months 2022-01..2025-11 are the original run",
+               total_wall_sec_original_run=rep.get("elapsed_sec"))
+    dump(RP, rep)
+    for s in A6_SEEDS:
+        registry.record(REGISTRY, {"experiment": f"SMDP A6B P2+P3 seed {s}", "role": "trial", "n_trials": 1,
+                                   "n_simulations": 48, "config": rep["spec"],
+                                   "result_summary": {"pass": rep["pass"], "pass_criteria": rep["pass_criteria"],
+                                                      "note": "2025-12 recovered flat-start"}})
+    log(f"a6b recovered pass={rep['pass']} {rep['pass_criteria']}")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4", "smdp-a5", "smdp-a6-bench", "smdp-a6", "smdp-a7"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4", "smdp-a5", "smdp-a6-bench", "smdp-a6", "smdp-a7", "smdp-a6-recover"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -6168,6 +6244,8 @@ def main(argv=None) -> None:
         return cmd_smdp_a6(args)
     if args.command == "smdp-a7":
         return cmd_smdp_a7(args)
+    if args.command == "smdp-a6-recover":
+        return cmd_smdp_a6_recover(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
