@@ -83,12 +83,13 @@
   },
   "config_sha256": "cdabf296bb5c4fb2c16b9463698ca53c8bc80fcf304de5d1341a2e0080312a07",
   "code_sha256": {
-    "smdp_env": "74915d260ac705b52398d459b2c3c4080be10b9712899d088875ecc8088821ad",
+    "smdp_env": "88f8c486e0340a49b3546afbf6ae04268cb2a7a53170a44028708dc49e9a7b7e",
     "smdp_ppo": "a188ea1c0a354a533a922feb18ef47eb364dce0e23aa8549e8a49565ecba84a1",
     "maker_kernel": "054fe3948a7904fb93c9eb32c2315883e11f7b2301a6e9d88c46c056e56cbc5f",
     "signal_store": "89451ba646b6e2d3c5fedbb9dc4b6f6467f476fc2efbd4fe2733227ccf229feb",
     "dev_data": "a87c9593c896959eecdee6be7858142de5275fb95507692915b3e2a2e8969d20"
   },
   "test_rows_used": 0,
-  "physical_test_reads": 0
+  "physical_test_reads": 0,
+  "revision": "code hash refreshed after the smoke-found window-type fix (no spec change)"
 }
