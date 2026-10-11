@@ -193,56 +193,62 @@ class SmdpTrainer:
         return out
 
     def validate(self, data, cells, start: str, end: str) -> dict:
-        """Deterministic argmax, one continuous flat-start episode per cell over [start, end); cells advance
-        independently (one batched forward per iteration over the unfinished cells)."""
-        from .smdp_env import SmdpEnvs
-        ev = SmdpEnvs(data, cells, self.envs.targets, 1, seed=0)
-        a, b = (pd_ts(x) for x in (start, end))
-        for e in range(ev.E):
-            ev._reset(e, a, b)
-        live = np.ones(ev.E, bool)
-        acc = [{k: 0.0 for k in ACC_KEYS} | {"u_max": -9.0, "u_absmax": 0.0, "identity_err": 0.0, "nonfinite": 0,
-                                           "last_time": -1,
-                                           "t_cnt": np.zeros(len(ev.targets)), "w_cnt": np.zeros(len(MK.WAITS)),
-                                           "decisions": 0} for _ in range(ev.E)]
-        daily = [dict() for _ in range(ev.E)]
-        with torch.no_grad():
-            while live.any():
-                idx = np.flatnonzero(live)
-                x = torch.as_tensor(ev.obs(idx))
-                lt, lw, _ = self.model(x)
-                at, aw = lt.argmax(-1).numpy(), lw.argmax(-1).numpy()
-                for n, e in enumerate(idx):
-                    k = ev.kern[e]
-                    i0 = k.i
-                    f = ev.step_one(e, int(at[n]), int(aw[n]))
-                    r = acc[e]
-                    r["nonfinite"] += int((~torch.isfinite(x[n])).sum())
-                    for kk in ACC_KEYS:
-                        r[kk] += f[kk]
-                    r["u_max"], r["u_absmax"] = max(r["u_max"], f["u_max"]), max(r["u_absmax"], f["u_absmax"])
-                    r["identity_err"] = max(r["identity_err"], f["identity_err"])
-                    r["last_time"] = max(r["last_time"], f["last_time"])
-                    r["t_cnt"][at[n]] += 1
-                    r["w_cnt"][aw[n]] += 1
-                    r["decisions"] += 1
-                    seg = k.pnl[i0 + 1:k.i + 1]
-                    days = k.day[i0 + 1:k.i + 1]
-                    for dd_ in np.unique(days):
-                        daily[e][int(dd_)] = daily[e].get(int(dd_), 0.0) + float(seg[days == dd_].sum())
-                    if f["done"]:
-                        live[e] = False
-        out = {}
-        for e, c in enumerate(cells):
-            r = acc[e]
-            dser = np.array([daily[e][k_] for k_ in sorted(daily[e])])
-            eq = np.r_[0.0, np.cumsum(dser)]
-            out[f"o{c[0]}_p{c[1]}"] = {**{kk: (vv.tolist() if isinstance(vv, np.ndarray) else vv) for kk, vv in r.items()},
-                                       "flat_minute_ratio": r["flat_minutes"] / max(r["minutes"], 1),
-                                       "flat_block_ratio": r["flat_blocks"] / max(r["blocks"], 1),
-                                       "exposure": r["exposure_sum"] / max(r["minutes"], 1),
-                                       "mdd_daily": float((np.maximum.accumulate(eq) - eq).max())}
-        return out
+        return evaluate([self.model], data, cells, self.envs.targets, start, end)
+
+
+def evaluate(models: list, data, cells, targets, start: str, end: str) -> dict:
+    """Deterministic policy over [start, end): one flat-start episode per cell, truncated at `end`. With several models
+    the target logits and the wait logits are averaged across models before each argmax (seed ensemble)."""
+    from .smdp_env import SmdpEnvs
+    ev = SmdpEnvs(data, cells, targets, 1, seed=0)
+    a, b = pd_ts(start), pd_ts(end)
+    for e in range(ev.E):
+        ev._reset(e, a, b)
+    live = np.ones(ev.E, bool)
+    acc = [{k: 0.0 for k in ACC_KEYS} | {"u_max": -9.0, "u_absmax": 0.0, "identity_err": 0.0, "nonfinite": 0,
+                                       "last_time": -1, "t_cnt": np.zeros(len(ev.targets)),
+                                       "w_cnt": np.zeros(len(MK.WAITS)), "decisions": 0} for _ in range(ev.E)]
+    daily = [dict() for _ in range(ev.E)]
+    with torch.no_grad():
+        while live.any():
+            idx = np.flatnonzero(live)
+            x = torch.as_tensor(ev.obs(idx))
+            outs = [m(x) for m in models]
+            lt = torch.stack([o[0] for o in outs]).mean(0)
+            lw = torch.stack([o[1] for o in outs]).mean(0)
+            at, aw = lt.argmax(-1).numpy(), lw.argmax(-1).numpy()
+            for n, e in enumerate(idx):
+                k = ev.kern[e]
+                i0 = k.i
+                f = ev.step_one(e, int(at[n]), int(aw[n]))
+                r = acc[e]
+                r["nonfinite"] += int((~torch.isfinite(x[n])).sum())
+                for kk in ACC_KEYS:
+                    r[kk] += f[kk]
+                r["u_max"], r["u_absmax"] = max(r["u_max"], f["u_max"]), max(r["u_absmax"], f["u_absmax"])
+                r["identity_err"] = max(r["identity_err"], f["identity_err"])
+                r["last_time"] = max(r["last_time"], f["last_time"])
+                r["t_cnt"][at[n]] += 1
+                r["w_cnt"][aw[n]] += 1
+                r["decisions"] += 1
+                seg = k.pnl[i0 + 1:k.i + 1]
+                days = k.day[i0 + 1:k.i + 1]
+                for dd_ in np.unique(days):
+                    daily[e][int(dd_)] = daily[e].get(int(dd_), 0.0) + float(seg[days == dd_].sum())
+                if f["done"]:
+                    live[e] = False
+    out = {}
+    d0, d1 = a // 86_400_000_000_000, b // 86_400_000_000_000
+    for e, c in enumerate(cells):
+        r = acc[e]
+        dser = np.array([daily[e].get(dd_, 0.0) for dd_ in range(d0, d1)])
+        eq = np.r_[0.0, np.cumsum(dser)]
+        out[f"o{c[0]}_p{c[1]}"] = {**{kk: (vv.tolist() if isinstance(vv, np.ndarray) else vv) for kk, vv in r.items()},
+                                   "flat_minute_ratio": r["flat_minutes"] / max(r["minutes"], 1),
+                                   "flat_block_ratio": r["flat_blocks"] / max(r["blocks"], 1),
+                                   "exposure": r["exposure_sum"] / max(r["minutes"], 1),
+                                   "mdd_daily": float((np.maximum.accumulate(eq) - eq).max()), "daily": dser.tolist()}
+    return out
 
 
 def pd_ts(x: str) -> int:

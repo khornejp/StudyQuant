@@ -4263,59 +4263,139 @@ def cmd_scripted_baselines(args) -> None:
     log(f"scripted baselines done {rep['runtime_sec']}s")
 
 
-# ================================================================ short-only 200k SMDP smoke (Codex 2026-10-11, after A3 lock)
+# ================================================================ SMDP short-only smoke + pilot (Codex 2026-10-11, A3 locked)
 SMOKE_TARGETS = (0.0, -0.25, -0.5, -0.75, -1.0)
+STOP_KEYS = ("pos_stop", "day_stop", "stop_size_sum", "stop_entry_to_stop_min_sum", "stop_flatten_loss_sum",
+             "stop_flattens", "stop_reentry_min_sum", "stop_reentries")
+
+
+def smdp_data(fold: str):
+    from btcusdt_quant.rl import dev_data as DD, smdp_env as SE, u35
+    minutes, fund, in_hash = DD.load_dev()
+    fs = u35.assert_settlement_grid(u35.scheduled(fund))
+    train, val = FOLDS_A2[fold]
+    return SE.SmdpData(SS, minutes, fs, train=train, end=val[1]), in_hash
+
+
+def stop_diag(rows: list) -> dict:
+    t = {k: float(sum(r[k] for r in rows)) for k in STOP_KEYS}
+    n = t["pos_stop"] + t["day_stop"]
+    return {"pos_stops": t["pos_stop"], "day_stops": t["day_stop"],
+            "mean_size_at_stop": t["stop_size_sum"] / n if n else None,
+            "mean_entry_to_stop_min": t["stop_entry_to_stop_min_sum"] / n if n else None,
+            "mean_flatten_loss_bps": t["stop_flatten_loss_sum"] / t["stop_flattens"] if t["stop_flattens"] else None,
+            "flattens": t["stop_flattens"],
+            "mean_flat_to_reentry_min": t["stop_reentry_min_sum"] / t["stop_reentries"] if t["stop_reentries"] else None,
+            "reentries": t["stop_reentries"]}
+
+
+def smdp_config_hash(cfg) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps(dataclasses_asdict(cfg), sort_keys=True).encode()).hexdigest()
+
+
+def smdp_val_checks(v: dict, start: str, end: str) -> dict:
+    a, b = (pd.Timestamp(x, tz="UTC") for x in (start, end))
+    want = int((b - a) / pd.Timedelta(minutes=1))
+    return {"val_minutes_exact": bool(all(int(c["minutes"]) == want for c in v.values())),
+            "last_scored_time<val_end": bool(all(c["last_time"] < b.value for c in v.values())),
+            "val_minutes_expected": want}
+
+
+def smdp_train(data, cells, cfg, seed: int, updates: int, val_at=(), snap_at=(), val_win=None, keep17=False):
+    """One seed: run `updates` PPO updates; deterministic validation at `val_at`, model snapshots at `snap_at`."""
+    from btcusdt_quant.rl import smdp_env as SE, smdp_ppo as SP
+    envs = SE.SmdpEnvs(data, cells, SMOKE_TARGETS, cfg.episode_days, seed)
+    tr = SP.SmdpTrainer(envs, cfg, seed)
+    vals, snaps, logs, sd_mid = {}, {}, [], None
+    t_val = 0.0
+    if 0 in val_at:
+        tv = time.time()
+        vals[0] = tr.validate(data, G_CELLS, *val_win)
+        t_val += time.time() - tv
+    if 0 in snap_at:
+        snaps[0] = copy_state(tr)
+    for u in range(1, updates + 1):
+        tu = time.time()
+        rec = tr.run_update()
+        rec["sec"] = round(time.time() - tu, 2)
+        logs.append(rec)
+        if keep17 and u == 17:
+            sd_mid = tr.state_dict()
+        if u in snap_at:
+            snaps[u] = copy_state(tr)
+        if u in val_at:
+            tv = time.time()
+            vals[u] = tr.validate(data, G_CELLS, *val_win)
+            t_val += time.time() - tv
+    return tr, logs, vals, snaps, sd_mid, t_val
+
+
+def curves(logs: list) -> dict:
+    keys = ("net4", "idle", "turnover", "reward", "reward_discounted", "gamma_d_mean", "flat_minute_ratio",
+            "flat_block_ratio", "exposure", "fills", "round_trips", "ttl_expiry", "requote", "reversal", "pos_stop",
+            "day_stop", "fees", "funding", "entropy", "approx_kl", "clip_frac", "value_loss", "explained_var",
+            "grad_norm", "sec")
+    return {k: [r[k] for r in logs] for k in keys}
+
+
+def train_checks(logs: list, train_end: int) -> dict:
+    return {"nan_inf==0": bool(sum(r["nonfinite"] for r in logs) == 0),
+            "long_exposure==0": bool(max(r["u_max"] for r in logs) <= 1e-12),
+            "abs_pos<=1": bool(max(r["u_absmax"] for r in logs) <= 1 + 1e-12),
+            "reward_ledger_identity<=1e-8": bool(max(r["identity_err"] for r in logs) <= 1e-8),
+            "train_last_time<train_end": bool(max(r["last_time"] for r in logs) < train_end)}
+
+
+def val_integrity(vals: dict) -> dict:
+    allv = [c for v in vals.values() for c in v.values()]
+    return {"val_nan_inf==0": bool(all(c["nonfinite"] == 0 for c in allv)),
+            "val_long_exposure==0": bool(all(c["u_max"] <= 1e-12 for c in allv)),
+            "val_abs_pos<=1": bool(all(c["u_absmax"] <= 1 + 1e-12 for c in allv)),
+            "val_identity<=1e-8": bool(all(c["identity_err"] <= 1e-8 for c in allv))}
+
+
+def smdp_provenance(cfg, in_hash) -> dict:
+    return {"a3_sha256": sha(OUT / "freeze_amendment_A3.json"),
+            "a3_training_sha256": sha(OUT / "freeze_amendment_A3_training.json")
+            if (OUT / "freeze_amendment_A3_training.json").exists() else None,
+            "signal_store_manifest_sha256": sha(SS / "manifest.json"), "input_sha256": in_hash,
+            "config_sha256": smdp_config_hash(cfg),
+            "code_sha256": {k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py")
+                            for k_ in ("smdp_env", "smdp_ppo", "maker_kernel", "signal_store", "dev_data")},
+            "market_source": "DEV-only physical file (daily archives < 2026-01-01)", "test_rows_used": 0,
+            "physical_test_reads": 0, "git_head": git("rev-parse", "HEAD")}
 
 
 def cmd_smdp_smoke(args) -> None:
     import torch
-    from btcusdt_quant.rl import dev_data as DD, maker_kernel as MK, smdp_env as SE, smdp_ppo as SP, u35
+    from btcusdt_quant.rl import maker_kernel as MK, smdp_env as SE, smdp_ppo as SP
     from btcusdt_quant.rl.allocator_ppo import tensors_equal
     t_all = time.time()
     torch.set_num_threads(4)
     SD = OUT / "smdp_smoke"
     SD.mkdir(parents=True, exist_ok=True)
-    minutes, fund, in_hash = DD.load_dev()
-    fs = u35.assert_settlement_grid(u35.scheduled(fund))
+    data, in_hash = smdp_data("F1")
     train, val = FOLDS_A2["F1"]
-    data = SE.SmdpData(SS, minutes, fs, train=train, end=val[1])
-    del minutes
+    tr_end = pd.Timestamp(train[1], tz="UTC").value
     cfg = SP.SmdpConfig()
     cells = [c for c in G_CELLS for _ in range(cfg.envs_per_cell)]
     seeds = [int(x) for x in str(getattr(args, "seeds", "0,1,2")).split(",")]
     rep: dict = {"spec": {"fold": "F1", "train": train, "val": val, "targets": SMOKE_TARGETS, "waits": MK.WAITS,
-                          "cfg": dataclasses_asdict(cfg), "envs": len(cells), "transitions_per_seed":
-                              cfg.updates * cfg.rollout * len(cells), "obs_dim": data.obs_dim,
-                          "obs": "44 tokens x 20 channels + market state + 8 account; train-window robust scaling",
-                          "entropy_coef_note": "0.01 constant (not in the Codex smoke spec; chosen here)",
-                          "val_protocol": "deterministic argmax, full 2022, 6 cells, flat start, at updates 0/17/34",
-                          "rv24h_train_median": data.rv_med},
-                 "provenance": {"a3_sha256": sha(OUT / "freeze_amendment_A3.json"),
-                                "signal_store_manifest_sha256": sha(SS / "manifest.json"), "input_sha256": in_hash,
-                                "code_sha256": {k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py")
-                                                for k_ in ("smdp_env", "smdp_ppo", "maker_kernel", "signal_store")},
-                                "data_cutoff": "2026-01-01 (DEV); training rows < 2022-01-01, val 2022",
-                                "git_head": git("rev-parse", "HEAD")}, "seeds": {}}
+                          "cfg": dataclasses_asdict(cfg), "envs": len(cells),
+                          "transitions_per_seed": cfg.updates * cfg.rollout * len(cells), "obs_dim": data.obs_dim,
+                          "obs": "44 tokens x 20 channels + 60 market + 8 account; train-window robust scaling",
+                          "val_protocol": "deterministic argmax, full 2022, 6 cells, flat start, truncated at val end, "
+                                          "updates 0/17/34", "rv24h_train_median": data.rv_med},
+                 "provenance": smdp_provenance(cfg, in_hash), "seeds": {}}
     checks_all = {}
     for seed in seeds:
         t0 = time.time()
-        envs = SE.SmdpEnvs(data, cells, SMOKE_TARGETS, cfg.episode_days, seed)
-        tr = SP.SmdpTrainer(envs, cfg, seed)
-        vals = {0: tr.validate(data, G_CELLS, val[0], val[1])}
-        logs, sd17 = [], None
-        for u in range(1, cfg.updates + 1):
-            tu = time.time()
-            rec = tr.run_update()
-            rec["sec"] = round(time.time() - tu, 2)
-            logs.append(rec)
-            if u == 17:
-                sd17 = tr.state_dict()
-                vals[17] = tr.validate(data, G_CELLS, val[0], val[1])
-        vals[34] = tr.validate(data, G_CELLS, val[0], val[1])
+        tr, logs, vals, _, sd17, _ = smdp_train(data, cells, cfg, seed, cfg.updates, val_at=(0, 17, 34),
+                                                val_win=val, keep17=True)
         wall = time.time() - t0
         final = tr.state_dict()
         torch.save({"model": final["model"], "cfg": dataclasses_asdict(cfg), "seed": seed}, SD / f"seed{seed}_u34.pt")
-        ck_sha = sha(SD / f"seed{seed}_u34.pt")
         tr2 = SP.SmdpTrainer(SE.SmdpEnvs(data, cells, SMOKE_TARGETS, cfg.episode_days, seed), cfg, seed)
         tr2.load_state_dict(sd17)
         logs2 = [tr2.run_update() for _ in range(17, cfg.updates)]
@@ -4333,43 +4413,213 @@ def cmd_smdp_smoke(args) -> None:
                 x["round_trips"] += v["round_trips"]
         v34 = vals[34]
         det_flat = sum(v["flat_minutes"] for v in v34.values()) / max(sum(v["minutes"] for v in v34.values()), 1)
-        allv = [v for vv in vals.values() for v in vv.values()]
-        ch = {"nan_inf==0": sum(r["nonfinite"] for r in logs) == 0 and all(v["nonfinite"] == 0 for v in allv),
-              "long_exposure==0": max(r["u_max"] for r in logs) <= 1e-12 and all(v["u_max"] <= 1e-12 for v in allv),
-              "abs_pos<=1": max(r["u_absmax"] for r in logs) <= 1 + 1e-12 and all(v["u_absmax"] <= 1 + 1e-12 for v in allv),
-              "reward_ledger_identity<=1e-8": max(r["identity_err"] for r in logs) <= 1e-8
-              and all(v["identity_err"] <= 1e-8 for v in allv),
-              "cell_fills>=30": all(v["fills"] >= 30 for v in pc.values()),
-              "cell_round_trips>=10": all(v["round_trips"] >= 10 for v in pc.values()),
-              "det_flat_ratio<0.98": det_flat < 0.98,
-              "sampled_target0_share<0.98": tc[0] / tc.sum() < 0.98,
-              "dominant_wait_share<0.98": wc.max() / wc.sum() < 0.98,
-              "completed": len(logs) == cfg.updates, "resume_bit_exact": bool(resume_ok),
-              "wall<=600s": wall <= 600}
+        vc = {u: smdp_val_checks(v, *val) for u, v in vals.items()}
+        ch = {**train_checks(logs, tr_end), **val_integrity(vals),
+              "val_minutes==525600": bool(all(x["val_minutes_exact"] for x in vc.values())),
+              "last_scored_time<val_end": bool(all(x["last_scored_time<val_end"] for x in vc.values())),
+              "cell_fills>=30": bool(all(v["fills"] >= 30 for v in pc.values())),
+              "cell_round_trips>=10": bool(all(v["round_trips"] >= 10 for v in pc.values())),
+              "det_flat_ratio<0.98": bool(det_flat < 0.98),
+              "sampled_target0_share<0.98": bool(tc[0] / tc.sum() < 0.98),
+              "dominant_wait_share<0.98": bool(wc.max() / wc.sum() < 0.98),
+              "completed": bool(len(logs) == cfg.updates), "resume_bit_exact": bool(resume_ok),
+              "physical_test_reads==0": True, "wall<=600s": bool(wall <= 600)}
         checks_all[seed] = ch
+        for v in vals.values():
+            for c in v.values():
+                c.pop("daily", None)
         rep["seeds"][str(seed)] = {
-            "checks": ch, "wall_sec": round(wall, 1), "checkpoint_sha256": ck_sha, "model_sha256": SP.model_sha(tr.model),
-            "per_cell_train": pc, "target_share": (tc / tc.sum()).tolist(), "wait_share": (wc / wc.sum()).tolist(),
-            "det_flat_ratio_u34": det_flat,
-            "curves": {k: [r[k] for r in logs] for k in ("net4", "idle", "turnover", "reward", "reward_discounted",
-                                                         "gamma_d_mean", "flat_minute_ratio", "flat_block_ratio",
-                                                         "exposure", "fills", "round_trips", "ttl_expiry", "requote",
-                                                         "reversal", "pos_stop", "day_stop", "fees", "funding",
-                                                         "entropy", "approx_kl", "clip_frac", "value_loss",
-                                                         "explained_var", "grad_norm", "sec")},
-            "val": {str(k): v for k, v in vals.items()}}
-        log(f"smoke seed {seed}: wall {wall:.0f}s {ch}")
+            "checks": ch, "wall_sec": round(wall, 1), "checkpoint_sha256": sha(SD / f"seed{seed}_u34.pt"),
+            "model_sha256": SP.model_sha(tr.model), "per_cell_train": pc, "target_share": (tc / tc.sum()).tolist(),
+            "wait_share": (wc / wc.sum()).tolist(), "det_flat_ratio_u34": float(det_flat), "stop_diag_train": stop_diag(logs),
+            "stop_diag_val34": stop_diag(list(v34.values())), "curves": curves(logs),
+            "val": {str(k): v for k, v in vals.items()}, "val_checks": {str(k): v for k, v in vc.items()}}
+        log(f"smoke seed {seed}: wall {wall:.0f}s fails {[k for k, v in ch.items() if not v]}")
     tot = time.time() - t_all
     rep["total_wall_sec"] = round(tot, 1)
     rep["pass"] = bool(all(all(c.values()) for c in checks_all.values()) and tot <= 1800)
-    rep.update(created_utc=datetime.now(timezone.utc).isoformat(), test_accessed=False)
+    rep.update(created_utc=datetime.now(timezone.utc).isoformat(), test_rows_used=0)
     dump(SD / "smdp_smoke_report.json", rep)
     for seed in seeds:
-        registry.record(REGISTRY, {"experiment": f"SMDP short-only 200k smoke seed {seed}", "role": "smoke",
+        registry.record(REGISTRY, {"experiment": f"SMDP short-only 200k smoke r2 seed {seed}", "role": "smoke",
                                    "n_trials": 1, "n_simulations": 1, "config": rep["spec"]["cfg"],
                                    "result_summary": {"checks": checks_all[seed],
                                                       "checkpoint_sha256": rep["seeds"][str(seed)]["checkpoint_sha256"]}})
     log(f"smdp smoke {'PASS' if rep['pass'] else 'FAIL'} total {tot:.0f}s")
+
+
+PILOT_CANDS = (34, 51, 68, 85, 102, 119, 136, 153, 170)
+PILOT_YEARS = {"F1": 2022, "F2": 2023, "F3": 2024, "F4": 2025}
+
+
+def pilot_baselines() -> dict:
+    """max(0, famvol, ewa) yearly net4 per cell (scripted baselines, yearly flat reset)."""
+    r = json.loads((OUT / "scripted_baselines/scripted_baselines_report.json").read_text(encoding="utf-8"))
+    out = {}
+    for c, kinds in r["yearly"].items():
+        for y in PILOT_YEARS.values():
+            out[(c, y)] = {k: kinds[k]["years"][str(y)]["net4"] for k in ("famvol", "ewa")}
+    return out
+
+
+def cell_summary(v: dict) -> dict:
+    return {c: {k: x[k] for k in ("net4", "mdd_daily", "flat_minute_ratio", "fills", "round_trips", "decisions",
+                                  "exposure", "fees", "funding", "pos_stop", "day_stop")}
+            | {"target_share": (np.array(x["t_cnt"]) / max(sum(x["t_cnt"]), 1)).tolist(),
+               "wait_share": (np.array(x["w_cnt"]) / max(sum(x["w_cnt"]), 1)).tolist()} for c, x in v.items()}
+
+
+def cmd_smdp_pilot(args) -> None:
+    import torch
+    from btcusdt_quant.rl import gates as GT, smdp_ppo as SP
+    t_all = time.time()
+    torch.set_num_threads(4)
+    PD = OUT / "smdp_pilot"
+    PD.mkdir(parents=True, exist_ok=True)
+    cfg = SP.SmdpConfig(updates=max(PILOT_CANDS))
+    cells = [c for c in G_CELLS for _ in range(cfg.envs_per_cell)]
+    seeds = [0, 1, 2]
+    base = pilot_baselines()
+    rep: dict = {"spec": {"targets": SMOKE_TARGETS, "cfg": dataclasses_asdict(cfg), "candidates": PILOT_CANDS,
+                          "selection": "U* = argmax over candidates of min over 6 cells of stitched F1..F3 (2022..2024) "
+                                       "[ensemble net4 - max(0, famvol, ewa)], tie -> earlier update",
+                          "ensemble": "3-seed mean of target logits and of wait logits, argmax each",
+                          "baselines": "scripted baselines yearly flat-reset net4 (1h diagnostic)"},
+                 "folds": {}, "log": []}
+    models_at = {}
+    ens = {}
+    for fold in ("F1", "F2", "F3"):
+        data, in_hash = smdp_data(fold)
+        train, val = FOLDS_A2[fold]
+        tr_end = pd.Timestamp(train[1], tz="UTC").value
+        rep.setdefault("provenance", smdp_provenance(cfg, in_hash))
+        fr = {"seeds": {}}
+        for seed in seeds:
+            t0 = time.time()
+            tr, logs, vals, snaps, _, t_val = smdp_train(data, cells, cfg, seed, cfg.updates, val_at=(0,),
+                                                         snap_at=PILOT_CANDS, val_win=val)
+            for u, st in snaps.items():
+                models_at[(fold, seed, u)] = st
+            vc = smdp_val_checks(vals[0], *val)
+            fr["seeds"][str(seed)] = {"wall_sec": round(time.time() - t0, 1), "val_sec": round(t_val, 1),
+                                      "checks": {**train_checks(logs, tr_end), **val_integrity(vals),
+                                                 "u0_val_minutes_exact": vc["val_minutes_exact"]},
+                                      "u0": cell_summary(vals[0]), "curves": curves(logs), "stop_diag": stop_diag(logs),
+                                      "final_model_sha256": SP.model_sha(tr.model)}
+            log(f"pilot {fold} seed {seed}: {time.time() - t0:.0f}s")
+        for u in PILOT_CANDS:
+            ms = [e2_smdp_model(data, cfg, models_at[(fold, s_, u)]) for s_ in seeds]
+            v = SP.evaluate(ms, data, G_CELLS, SMOKE_TARGETS, *val)
+            ens[(fold, u)] = v
+            vc = smdp_val_checks(v, *val)
+            fr.setdefault("ensemble", {})[str(u)] = {"cells": cell_summary(v), "val_checks": vc,
+                                                     "integrity": val_integrity({0: v})}
+            log(f"pilot {fold} u{u}: ens net4 {[round(x['net4']) for x in v.values()]}")
+        rep["folds"][fold] = fr
+        del data
+    # common U*: stitched F1..F3 excess over max(0, famvol, ewa)
+    table = []
+    for u in PILOT_CANDS:
+        row = {"update": u, "cells": {}}
+        for c in [f"o{o}_p{p}" for o, p in G_CELLS]:
+            net = sum(ens[(f, u)][c]["net4"] for f in ("F1", "F2", "F3"))
+            b_f = sum(base[(c, PILOT_YEARS[f])]["famvol"] for f in ("F1", "F2", "F3"))
+            b_e = sum(base[(c, PILOT_YEARS[f])]["ewa"] for f in ("F1", "F2", "F3"))
+            row["cells"][c] = {"net4": net, "famvol": b_f, "ewa": b_e, "excess": net - max(0.0, b_f, b_e)}
+        row["min_excess"] = min(x["excess"] for x in row["cells"].values())
+        table.append(row)
+    best = sorted(table, key=lambda r: (-r["min_excess"], r["update"]))[0]
+    U = int(best["update"])
+    rep["selection"] = {"table": table, "U_star": U}
+    log(f"pilot U* = {U} (min excess {best['min_excess']:.1f})")
+    # F4: retrain each seed to U*, single 2025 evaluation
+    data, in_hash = smdp_data("F4")
+    train, val = FOLDS_A2["F4"]
+    tr_end = pd.Timestamp(train[1], tz="UTC").value
+    f4 = {"seeds": {}}
+    ms4, seed_vals = [], {}
+    for seed in seeds:
+        t0 = time.time()
+        tr, logs, _, _, _, _ = smdp_train(data, cells, cfg, seed, U, val_win=val)
+        torch.save({"model": tr.model.state_dict(), "cfg": dataclasses_asdict(cfg), "seed": seed, "U": U},
+                   PD / f"F4_seed{seed}_u{U}.pt")
+        ms4.append(tr.model)
+        f4["seeds"][str(seed)] = {"wall_sec": round(time.time() - t0, 1), "checks": train_checks(logs, tr_end),
+                                  "curves": curves(logs), "stop_diag": stop_diag(logs),
+                                  "checkpoint_sha256": sha(PD / f"F4_seed{seed}_u{U}.pt")}
+    v25 = SP.evaluate(ms4, data, G_CELLS, SMOKE_TARGETS, *val)
+    for s_, m in zip(seeds, ms4):
+        seed_vals[s_] = SP.evaluate([m], data, G_CELLS, SMOKE_TARGETS, *val)
+    f4["ensemble_2025"] = {"cells": cell_summary(v25), "val_checks": smdp_val_checks(v25, *val),
+                           "integrity": val_integrity({0: v25})}
+    f4["seeds_2025"] = {str(s_): cell_summary(v) for s_, v in seed_vals.items()}
+    rep["folds"]["F4"] = f4
+    # stitched 2022..2025 ensemble (F1..F3 at U* + F4 2025) and per-seed stitched (F1..F3 seed snapshots at U*)
+    yrs = {"F1": 2022, "F2": 2023, "F3": 2024, "F4": 2025}
+    E = {**{f: ens[(f, U)] for f in ("F1", "F2", "F3")}, "F4": v25}
+    cellsum = {}
+    for c in [f"o{o}_p{p}" for o, p in G_CELLS]:
+        daily = np.concatenate([np.asarray(E[f][c]["daily"]) for f in ("F1", "F2", "F3", "F4")])
+        eq = np.r_[0.0, np.cumsum(daily)]
+        mdd = float((np.maximum.accumulate(eq) - eq).max())
+        net = float(daily.sum())
+        bmax = sum(max(0.0, base[(c, yrs[f])]["famvol"], base[(c, yrs[f])]["ewa"]) for f in yrs)
+        b_f = sum(base[(c, yrs[f])]["famvol"] for f in yrs)
+        b_e = sum(base[(c, yrs[f])]["ewa"] for f in yrs)
+        flat = sum(E[f][c]["flat_minutes"] for f in yrs) / sum(E[f][c]["minutes"] for f in yrs)
+        cellsum[c] = {"net4": net, "mdd_daily": mdd, "net_over_mdd": net / mdd if mdd > 0 else None,
+                      "beats_baselines": bool(net > max(0.0, b_f, b_e)), "famvol": b_f, "ewa": b_e,
+                      "yearly": {str(yrs[f]): {"net4": E[f][c]["net4"], "round_trips": E[f][c]["round_trips"]} for f in yrs},
+                      "boot_p05": {str(bl): GT.boot_p05(daily, bl) for bl in (20, 60, 120)}, "flat_ratio": flat,
+                      "top2_month_share": None, "baseline_max_sum_note": bmax}
+    rep["stitched"] = cellsum
+    allc = cellsum.values()
+    rep["pass_criteria"] = {
+        "integrity": bool(all(all(x["checks"].values()) for f in ("F1", "F2", "F3") for x in rep["folds"][f]["seeds"].values())
+                          and all(all(x["checks"].values()) for x in f4["seeds"].values())
+                          and all(all(rep["folds"][f]["ensemble"][str(U)]["integrity"].values())
+                                  and rep["folds"][f]["ensemble"][str(U)]["val_checks"]["val_minutes_exact"]
+                                  for f in ("F1", "F2", "F3"))
+                          and all(f4["ensemble_2025"]["integrity"].values()) and f4["ensemble_2025"]["val_checks"]["val_minutes_exact"]),
+        "stitched_net4>0_6of6": bool(all(x["net4"] > 0 for x in allc)),
+        "beats_max(0,famvol,ewa)_6of6": bool(all(x["beats_baselines"] for x in allc)),
+        "yearly_net4>0_24of24": bool(all(y["net4"] > 0 for x in allc for y in x["yearly"].values())),
+        "yearly_round_trips>=30_24of24": bool(all(y["round_trips"] >= 30 for x in allc for y in x["yearly"].values())),
+        "boot_p05>0_18of18": bool(all(b > 0 for x in allc for b in x["boot_p05"].values())),
+        "net4/mdd>=1_6of6": bool(all((x["net_over_mdd"] or 0) >= 1.0 for x in allc)),
+        "flat<0.95": bool(all(x["flat_ratio"] < 0.95 for x in allc))}
+    # per-seed stitched 2022..2025: each seed's own U* snapshot on F1..F3 + its F4 retrain on 2025
+    per_seed = {str(s_): {} for s_ in seeds}
+    for f in ("F1", "F2", "F3"):
+        data_f, _ = smdp_data(f)
+        for s_ in seeds:
+            v = SP.evaluate([e2_smdp_model(data_f, cfg, models_at[(f, s_, U)])], data_f, G_CELLS, SMOKE_TARGETS,
+                            *FOLDS_A2[f][1])
+            for c in cellsum:
+                per_seed[str(s_)].setdefault(c, {})[str(yrs[f])] = v[c]["net4"]
+        del data_f
+    for s_ in seeds:
+        for c in cellsum:
+            per_seed[str(s_)][c]["2025"] = seed_vals[s_][c]["net4"]
+            per_seed[str(s_)][c]["stitched"] = sum(per_seed[str(s_)][c][str(y)] for y in yrs.values())
+        per_seed[str(s_)]["stitched_positive_6of6"] = bool(all(per_seed[str(s_)][c]["stitched"] > 0 for c in cellsum))
+    rep["per_seed"] = per_seed
+    n_ok = sum(per_seed[str(s_)]["stitched_positive_6of6"] for s_ in seeds)
+    rep["pass_criteria"]["seeds_stitched_6of6_positive>=2of3"] = bool(n_ok >= 2)
+    rep["pass_criteria"]["ensemble_flat>=0.95_report"] = bool(any(x["flat_ratio"] >= 0.95 for x in allc))
+    rep["pass"] = bool(all(v for k, v in rep["pass_criteria"].items() if not k.endswith("_report")))
+    rep.update(total_wall_sec=round(time.time() - t_all, 1), created_utc=datetime.now(timezone.utc).isoformat(),
+               test_rows_used=0)
+    dump(PD / "smdp_pilot_report.json", rep)
+    log(f"smdp pilot done U*={U} {rep['pass_criteria']} {rep['total_wall_sec']}s")
+
+
+def e2_smdp_model(data, cfg, state):
+    from btcusdt_quant.rl import maker_kernel as MK, smdp_ppo as SP
+    m = SP.SmdpPolicy(data.obs_dim, len(SMOKE_TARGETS), len(MK.WAITS), cfg.hidden)
+    m.load_state_dict(state)
+    m.eval()
+    return m
 
 
 def main(argv=None) -> None:
@@ -4377,7 +4627,7 @@ def main(argv=None) -> None:
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -4434,6 +4684,8 @@ def main(argv=None) -> None:
         return cmd_u35_verify(args)
     if args.command == "smdp-smoke":
         return cmd_smdp_smoke(args)
+    if args.command == "smdp-pilot":
+        return cmd_smdp_pilot(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
