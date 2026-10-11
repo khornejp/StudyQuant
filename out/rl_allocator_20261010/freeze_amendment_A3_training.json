@@ -1,0 +1,55 @@
+{
+  "name": "A3-training amendment (SMDP smoke / short-only pilot)",
+  "status": "LOCKED",
+  "created_utc": "2026-10-11T02:22:32.231571+00:00",
+  "base": {
+    "A3_sha256": "77a3b673e22fabe601435505efb68ca5b9bed5e30a710ad7c7113ea9819da114"
+  },
+  "test_access_definition": {
+    "choice": "(i) DEV-only physical source",
+    "detail": "market = out/rl_allocator_20261010/dev_market/btcusdt_1m_dev_2020_2025.parquet built from artifacts/archive daily zips dated < 2026-01-01 (name filter before I/O); decoded rows identical to the previous DEV slice (frame sha 564fab0b...); funding = monthly archives < 2026-01 snapped to settlements with grid assert; the mixed 2026H1 parquet and the full funding folder are not opened",
+    "field": "test_rows_used (replaces test_accessed); physical_test_reads = 0",
+    "dev_market_build_sha256": "bc5c715cf9afbd20f0ba9aff61344cedf84486bdd5c3960841fa98edff140121"
+  },
+  "episode_boundary": "kernel slice ends at the episode end: last scored minute = end - 1 m; train episodes end <= train_end, validation at val_end (2022: 525,600 minutes; 2024: 527,040); the final action is truncated, open positions are marked at the last close",
+  "approved": {
+    "ent_coef": 0.01,
+    "obs_dim": 948,
+    "obs": "44 tokens x 20 channels (6 flags + 14 robust-scaled continuous) + 60 market state columns + 8 account channels; train-window median/IQR scaling, NaN -> 0, clip +-10"
+  },
+  "config": {
+    "lr": 0.0003,
+    "lam": 0.95,
+    "clip": 0.2,
+    "vclip": 0.2,
+    "epochs": 4,
+    "minibatch": 1200,
+    "reward_scale": 0.01,
+    "rollout": 100,
+    "updates": 34,
+    "envs_per_cell": 10,
+    "episode_days": 90,
+    "ent_coef": 0.01,
+    "vf_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "hidden": 256
+  },
+  "config_sha256": "d30efb6c8682b00cf7968fb56c3c958e2ef0b2603acdd56696ff3a297866a62c",
+  "code_sha256": {
+    "smdp_env": "2bc49c3d1ea4998512b28974cfeb0f005b1f7eec8b747070ec157c7be4162d25",
+    "smdp_ppo": "0f3ed3d3be3f86974de8c5ac5c98c7787f882efb94b6ab323337f94cacacf23a",
+    "maker_kernel": "495ce5da7bd1d1fad38d9266b83186f2114de447e4071ad64bfcd5a41afe3fb5",
+    "signal_store": "89451ba646b6e2d3c5fedbb9dc4b6f6467f476fc2efbd4fe2733227ccf229feb",
+    "dev_data": "a87c9593c896959eecdee6be7858142de5275fb95507692915b3e2a2e8969d20",
+    "u35": "ecc6a5f0c37ec5f9423c5d13eba01a00b3a4c0396e3209a6b359fa7dbdc6d1b2"
+  },
+  "stop_diagnostics": [
+    "pos_stops",
+    "day_stops",
+    "mean_size_at_stop",
+    "mean_entry_to_stop_min",
+    "mean_flatten_loss_bps (stop -> flat fill)",
+    "mean_flat_to_reentry_min"
+  ],
+  "json_booleans": "every check stored via bool(...)"
+}
