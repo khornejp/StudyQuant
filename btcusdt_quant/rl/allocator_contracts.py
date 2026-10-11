@@ -110,6 +110,14 @@ def step_reward(d_rl: float, d_st: float, dmdd_rl: float, dmdd_st: float, to_rl:
     return (d_rl - d_st) - DD_PENALTY * max(0.0, dmdd_rl - dmdd_st) - TURNOVER_PENALTY * max(0.0, to_rl - to_st)
 
 
+def ewa_levels(on) -> np.ndarray:
+    """EWA7 / binary-ON equal weighting (Codex redesign 2026-10-11): each ON (available) sleeve gets
+    min(1, GROSS_CAP / k) with k = number of ON sleeves at the decision; OFF / unavailable 0. Rows = decisions."""
+    on = np.asarray(on, bool)
+    k = on.sum(-1, keepdims=True)
+    return np.where(on, np.minimum(1.0, GROSS_CAP / np.maximum(k, 1)), 0.0)
+
+
 def static_action(weights, masks: Masks) -> Action:
     """RL action equal to a LEVELS-valued static baseline: entry level = frozen weight (OFF where masked), pending
     KEEP, open HOLD. (The env's static book applies any weights in [0, 1] directly.)"""

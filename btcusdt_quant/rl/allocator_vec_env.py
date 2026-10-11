@@ -64,10 +64,18 @@ class _Book:
 
 class VecAllocatorEnv:
     def __init__(self, data: AE.CellData, n_envs: int, cadence_h: int = 1, static_weights=None,
-                 terminal_fee: bool = True):
+                 terminal_fee: bool = True, static_mode: str = "weights", binary: bool = False,
+                 penalties: bool = True):
+        """static_mode "ewa7": the static book allocates C.ewa_levels(available at T) (static_weights ignored).
+        binary: entry head OFF (0) / ON (1) only, ON sleeves re-weighted by C.ewa_levels, open head HOLD only (canonical
+        exits). penalties False: reward = net_rl - net_static (no drawdown / turnover terms)."""
         if cadence_h not in (1, 4):
             raise ValueError("cadence 1h or 4h")
+        if static_mode not in ("weights", "ewa7"):
+            raise ValueError(f"static_mode {static_mode!r}")
         self.d, self.N, self.cad, self.terminal_fee = data, int(n_envs), cadence_h, terminal_fee
+        self.static_mode, self.binary = static_mode, bool(binary)
+        self.dd_coef, self.to_coef = (C.DD_PENALTY, C.TURNOVER_PENALTY) if penalties else (0.0, 0.0)
         w = np.asarray(static_weights if static_weights is not None else np.zeros(len(C.SLEEVES)), float)
         w = np.broadcast_to(w, (self.N, len(C.SLEEVES))).copy()
         for r in w:
@@ -167,6 +175,10 @@ class VecAllocatorEnv:
             if s in C.TIGHTEN_SLEEVES:
                 mo[:, si, 1] = ok & (tfmin > 0.75)
                 mo[:, si, 2] = ok & (tfmin > 0.50)
+        if self.binary:
+            me[:, :, 2:] = False
+            mp[:, :, 1] = False
+            mo[:, :, 1:] = False
         return me, mp, mo
 
     def observation(self):
@@ -342,9 +354,9 @@ class VecAllocatorEnv:
         if not (me[rr, cc, entry].all() and mp[rr, cc, pending].all() and mo[rr, cc, open_].all()):
             raise ValueError("masked action")
         last = k + 1 == self.L
-        lv_rl = np.asarray(C.LEVELS)[entry]
         av = self.d.avail_T[self.ti[:, k]]
-        lv_st = np.where(av, self.static_w, 0.0)
+        lv_rl = C.ewa_levels((entry == 1) & av) if self.binary else np.asarray(C.LEVELS)[entry]
+        lv_st = C.ewa_levels(av) if self.static_mode == "ewa7" else np.where(av, self.static_w, 0.0)
         out = {}
         for tag, book, lv, pa, oa in (("rl", self.rl, lv_rl, pending, open_),
                                       ("st", self.st, lv_st, np.zeros_like(pending), np.zeros_like(open_))):
@@ -365,5 +377,6 @@ class VecAllocatorEnv:
         info = {"net_rl": out["rl"][0], "net_st": out["st"][0], "turnover_rl": out["rl"][2],
                 "turnover_st": out["st"][2], "dmdd_rl": out["rl"][1], "dmdd_st": out["st"][1],
                 "gross_open": g_open, "gross_reserved": g_res, "cap_scaled": self.rl.cap_scaled.copy(),
-                "new_alloc": self.rl.new_alloc.copy(), "alloc_sum": self.rl.alloc_sum.copy()}
+                "new_alloc": self.rl.new_alloc.copy(), "alloc_sum": self.rl.alloc_sum.copy(),
+                "dd_coef": self.dd_coef, "to_coef": self.to_coef}
         return (None if done else self.observation()), rew, done, info

@@ -69,8 +69,8 @@ class AllocPPOConfig:
 
 
 def reward_parts(info: dict):
-    dd = C.DD_PENALTY * np.maximum(0.0, info["dmdd_rl"] - info["dmdd_st"])
-    to = C.TURNOVER_PENALTY * np.maximum(0.0, info["turnover_rl"] - info["turnover_st"])
+    dd = info.get("dd_coef", C.DD_PENALTY) * np.maximum(0.0, info["dmdd_rl"] - info["dmdd_st"])
+    to = info.get("to_coef", C.TURNOVER_PENALTY) * np.maximum(0.0, info["turnover_rl"] - info["turnover_st"])
     return info["net_rl"] - info["net_st"], dd, to
 
 
