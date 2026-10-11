@@ -3520,12 +3520,196 @@ def cmd_long_pullback(args) -> None:
         f"{tam_ok} {rep['runtime_sec']}s")
 
 
+# ================================================================ G3-IDLE-EXTRATREES-4H-r1 (Codex spec 2026-10-11)
+def ev_book(b2, m, dec, side, cell, lo, hi, hold):
+    """Standalone NEW event run (weight 1, entry TTL 15 m) -> Book."""
+    tr, od = b2.simulate(m, "event", dec, side, np.ones(len(dec)), cell[0], b2.TTL_EVENT, cell[1], lo, hi, hold=hold)
+    return b2.Book(m, tr, od, lo, hi)
+
+
+def overlay_cells(b2, m, base: dict, dec, side, hold: int) -> dict:
+    """G3 1.0/1.0 (priority, unchanged books) + NEW under the residual gross cap 2.0, one joint run per cell."""
+    from btcusdt_quant.rl import gates as GT, overlay as OV
+    lo = m.idx(GT.START)
+    out = {}
+    for cell in G_CELLS:
+        c = f"o{cell[0]}_p{cell[1]}"
+        bkl, bks = base[c]["books"]
+        g = sum(OV.gross_profile(m.N, bk.tr, bk.orders, b2.TTL_TREND, bk.hi) for bk in (bkl, bks))
+        tr, od, st = OV.simulate_overlay(m.o, m.h, m.l, m.c, dec, side, hold, cell[0], b2.TTL_EVENT, cell[1], lo, m.N,
+                                         g)
+        bk = b2.Book(m, tr, od, lo, m.N)
+        closed = {}
+        for y in GT.YEARS:
+            closed[y] = bk.window(m.idx(pd.Timestamp(f"{y}-01-01", tz="UTC")),
+                                  m.idx(pd.Timestamp(f"{y + 1}-01-01", tz="UTC")))["closed"]
+        out[c] = {"new_daily": bk.daily(lo, m.N), "new_closed": closed, "new_daily8": daily8(bk, lo, m.N),
+                  "stats": st}
+    return out
+
+
+def cmd_g3_idle_et(args) -> None:
+    from btcusdt_quant.rl import gates as GT, idle_et as IE, regime_short as RS
+    t0 = time.time()
+    PD = OUT / "g3_idle_extratrees_4h_r1"
+    PD.mkdir(parents=True, exist_ok=True)
+    b2, m, _, in_hash = regime_inputs()
+    st = pd.read_parquet(OUT / "state/state_4h.parquet", columns=["T", "exec_cell"] + list(IE.FEATURES) +
+                         list(IE.IDLE_COLS))
+    st = st[st.exec_cell == CELL_TAG[PRIMARY]].sort_values("T").reset_index(drop=True)
+    T = st["T"].to_numpy(np.int64)
+    sp.guard_times(T, False, "state_4h")
+    if T.max() >= pd.Timestamp("2026-01-01", tz="UTC").value:
+        raise SystemExit("state_4h holds TEST rows")
+    in_hash["state_4h"] = sha(OUT / "state/state_4h.parquet")
+    MAT, mg, dec4, stg, _ = g3_setup()
+    sig = g3_signals(MAT, stg)
+    if not (np.array_equal(m.t, mg.t) and np.array_equal(m.c, mg.c)):
+        raise SystemExit("market grids differ")
+    d = np.searchsorted(m.t, T) - 1
+    if not np.array_equal(m.t[d] + sp.MIN, T):
+        raise SystemExit("decision bars misaligned")
+    X = st[list(IE.FEATURES)].to_numpy(float)
+    uni = IE.idle(st)
+    yl, lend = RS.long_labels(m.t, m.c, m.ft, m.fr, d, hold=IE.HOLD)
+    y = yl + RS.COST_BPS                                   # target: 4h long price return - actual PESS funding
+    ts = lambda x: pd.Timestamp(x, tz="UTC").value  # noqa: E731
+    H = IE.HOLD * sp.MIN
+    rep: dict = {"spec": {"universe": "G3_LONG and G3_SHORT open = pending = signal_active = 0 (state_4h, "
+                                      f"{CELL_TAG[PRIMARY]}; identical in all 6 cells)",
+                          "target": "4h long price return - actual PESS funding (bps); directional P&L = side x "
+                                    "target - 4 bps", "features": list(IE.FEATURES), "model": IE.ET_PARAMS,
+                          "impute": "train median", "purge": "4h", "folds": FOLDS_A2,
+                          "selection": "inner blocked OOF, {LONG, SHORT, BOTH} x |pred| quantile {0.50, 0.65, 0.80}; "
+                                       "valid only if every inner block x cell closed >= 30; rank worst block x cell "
+                                       "net4 -> min-cell boot60 -> max-cell MDD; no valid candidate -> FAIL, no "
+                                       "fallback (fold emits no signals)",
+                          "execution": "4h cadence, one NEW position, entry TTL 15 m, hold 240 m, exit 2 bps / 60 m "
+                                       "requote, maker 4 bps, PESS funding, 6 cells, folds stitched into one 2022..2025 "
+                                       "run", "portfolio": "G3 1.0/1.0 + NEW residual gross overlay (cap 2.0), joint "
+                                                           "event sim (btcusdt_quant/rl/overlay.py)",
+                          "data": "DEV loader (< 2026-01-01) + state_4h DEV", "input_sha256": in_hash},
+                 "folds": {}}
+    parts, tamper, fold_fail = [], {}, []
+    for f, (tr_w, va_w) in FOLDS_A2.items():
+        a_tr, b_tr, a_va, b_va = ts(tr_w[0]), ts(tr_w[1]), ts(va_w[0]), ts(va_w[1])
+        in_tr = uni & (T >= a_tr) & (T < b_tr)
+        trn = in_tr & (lend <= a_va - H) & np.isfinite(y)
+        idx = np.flatnonzero(trn)
+        blk = RS.block_ids(T[idx])
+        oof = np.full(len(idx), np.nan)
+        for b in np.unique(blk):
+            te = blk == b
+            t0_, t1_ = T[idx][te].min(), T[idx][te].max()
+            fit_rows = idx[~te & ((lend[idx] < t0_) | (T[idx] > t1_ + H))]
+            oof[te] = IE.Model(X[fit_rows], y[fit_rows]).predict(X[idx][te])
+        table = []
+        for mode in IE.MODES:
+            for q in IE.QUANTILES:
+                thr = float(np.quantile(np.abs(oof), q))
+                nets, dailies, closed_bc = [], {c: [] for c in G_CELLS}, []
+                for b in np.unique(blk):
+                    te = blk == b
+                    rows = idx[te]
+                    sd = IE.sides(oof[te], mode, thr)
+                    lo = m.idx(pd.Timestamp(int(T[rows].min()), tz="UTC"))
+                    hi = min(m.idx(pd.Timestamp(int(T[rows].max() + H), tz="UTC")), m.N)
+                    lo -= lo % 1440
+                    hi -= hi % 1440
+                    for cell in G_CELLS:
+                        bk = ev_book(b2, m, d[rows][sd != 0], sd[sd != 0], cell, lo, hi, IE.HOLD)
+                        dly = bk.daily(lo, hi)
+                        nets.append(float(dly.sum()))
+                        dailies[cell].append(dly)
+                        closed_bc.append(bk.window(lo, hi)["closed"])
+                cat = {c: np.concatenate(v) for c, v in dailies.items()}
+                table.append({"mode": mode, "quantile": q, "threshold": thr, "worst_block_cell_net4": min(nets),
+                              "boot60_min_cell": min(GT.boot_p05(v, 60) for v in cat.values()),
+                              "mdd_max_cell": max(GT.mdd(v) for v in cat.values()),
+                              "min_block_cell_closed": int(min(closed_bc)), "valid": bool(min(closed_bc) >= 30),
+                              "sum_net4_all_cells": float(sum(nets))})
+        valid = [r for r in table if r["valid"]]
+        best = sorted(valid, key=lambda r: (-r["worst_block_cell_net4"], -r["boot60_min_cell"], r["mdd_max_cell"]))[0] \
+            if valid else None
+        model = IE.Model(X[trn], y[trn])
+        va = uni & (T >= a_va) & (T < b_va)
+        pred = model.predict(X[va])
+        if best is None:
+            fold_fail.append(f)
+            sd = np.zeros(int(va.sum()), int)
+        else:
+            sd = IE.sides(pred, best["mode"], best["threshold"])
+        parts.append((d[va][sd != 0], sd[sd != 0]))
+        c2 = m.c.copy()
+        c2[int(np.searchsorted(m.t, a_va - H)):] *= 1.7
+        y2 = RS.long_labels(m.t, c2, m.ft, np.where(m.ft > a_va - H, m.fr * 1.7, m.fr), d, hold=IE.HOLD)[0] + RS.COST_BPS
+        X3 = X.copy()
+        cut = a_va + (b_va - a_va) // 2
+        X3[T > cut] = 99.0
+        p3 = model.predict(X3[va])
+        tamper[f] = {"train_labels_equal": bool(np.array_equal(y[trn], y2[trn])),
+                     "model_equal": bool(np.array_equal(IE.Model(X[trn], y2[trn]).predict(X[va]), pred)),
+                     "pred_before_cut_equal": bool(np.array_equal(p3[T[va] <= cut], pred[T[va] <= cut]))}
+        imp = model.et.feature_importances_
+        top = np.argsort(-imp)[:8]
+        rep["folds"][f] = {"train": tr_w, "val": va_w, "rows_universe_train": int(in_tr.sum()),
+                           "rows_train_after_purge": int(trn.sum()), "rows_val": int(va.sum()),
+                           "inner_blocks": [int(b) for b in np.unique(blk)], "candidates": table, "selected": best,
+                           "val_signals": {"long": int((sd > 0).sum()), "short": int((sd < 0).sum())},
+                           "importance_top": {IE.FEATURES[i]: float(imp[i]) for i in top}, "tamper": tamper[f]}
+        log(f"idle-et {f}: rows {in_tr.sum()}/{trn.sum()} val {va.sum()} valid {len(valid)} sel "
+            f"{None if best is None else (best['mode'], best['quantile'])} sig +{(sd > 0).sum()} -{(sd < 0).sum()}")
+    dd_all, side_all = stitch_folds(parts)
+    lo = m.idx(GT.START)
+    base = g3_combined(MAT.b2, mg, dec4, sig)
+    new, gb = {}, {}
+    for cell in G_CELLS:
+        c = f"o{cell[0]}_p{cell[1]}"
+        bk = ev_book(b2, m, dd_all, side_all, cell, lo, m.N, IE.HOLD)
+        closed, win = {}, {}
+        for yv in GT.YEARS:
+            w_ = bk.window(m.idx(pd.Timestamp(f"{yv}-01-01", tz="UTC")), m.idx(pd.Timestamp(f"{yv + 1}-01-01", tz="UTC")))
+            closed[yv], win[str(yv)] = w_["closed"], w_["win"]
+        wa = bk.window(lo, m.N)
+        new[c] = {"daily": bk.daily(lo, m.N), "daily8": daily8(bk, lo, m.N), "closed": closed}
+        gb[c] = {"win": {"all": wa["win"], **win}, "long_net4": wa["long_net4"], "short_net4": wa["short_net4"],
+                 "entries_long": wa["long_entries"], "entries_short": wa["short_entries"]}
+    g_new = GT.evaluate(new)
+    ov = overlay_cells(b2, m, base, dd_all, side_all, IE.HOLD)
+    port = {c: {"daily": base[c]["daily"] + ov[c]["new_daily"], "daily8": base[c]["daily8"] + ov[c]["new_daily8"],
+                "closed": {yv: base[c]["closed"][yv] + ov[c]["new_closed"][yv] for yv in GT.YEARS}} for c in new}
+    g_port = GT.evaluate(port, baseline={c: v["daily"] for c, v in base.items()})
+    corr = {c: float(np.corrcoef(new[c]["daily"], base[c]["daily"])[0, 1]) for c in new}
+    same = {c: bool(np.allclose(ov[c]["new_daily"], new[c]["daily"])) for c in new}
+    tam_ok = all(all(v.values()) for v in tamper.values())
+    rep.update(new_standalone=g_new, overlay=g_port, overlay_stats={c: v["stats"] for c, v in ov.items()},
+               overlay_new_equals_standalone=same, corr_new_vs_g3=corr, new_detail=gb, tamper_all=tam_ok,
+               folds_without_valid_candidate=fold_fail)
+    rep["pass"] = bool(not fold_fail and g_new["absolute"]["pass"] and g_port["replacement"]["pass"] and tam_ok)
+    rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
+               runtime_sec=round(time.time() - t0, 1), test_accessed=False,
+               code_sha256={k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py") for k_ in ("idle_et", "overlay", "gates",
+                                                                                   "regime_short", "dev_data")})
+    dump(PD / "g3_idle_et_report.json", rep)
+    registry.record(REGISTRY, {"experiment": "G3-IDLE-EXTRATREES-4H-r1", "role": "trial",
+                               "n_trials": len(IE.MODES) * len(IE.QUANTILES), "n_simulations": 12,
+                               "input_hashes": in_hash, "config": {"model": IE.ET_PARAMS, "hold": IE.HOLD},
+                               "result_summary": {"pass": rep["pass"], "new_absolute": g_new["absolute"],
+                                                  "overlay_replacement": g_port["replacement"],
+                                                  "folds_without_valid": fold_fail,
+                                                  "selected": {f: None if x["selected"] is None else
+                                                               [x["selected"]["mode"], x["selected"]["quantile"]]
+                                                               for f, x in rep["folds"].items()}}})
+    log(f"idle-et {'PASS' if rep['pass'] else 'FAIL'} new {g_new['absolute']} overlay {g_port['replacement']} "
+        f"no-valid {fold_fail} tamper {tam_ok} {rep['runtime_sec']}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback"))
+                                       "short-hsel", "long-pullback", "g3-idle-et"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -3569,6 +3753,8 @@ def main(argv=None) -> None:
         return cmd_hsel(args)
     if args.command == "long-pullback":
         return cmd_long_pullback(args)
+    if args.command == "g3-idle-et":
+        return cmd_g3_idle_et(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
