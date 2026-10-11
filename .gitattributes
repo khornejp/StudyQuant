@@ -49,3 +49,6 @@ tests/rl/test_smdp_a4.py text eol=lf
 btcusdt_quant/rl/smdp_reward.py text eol=lf
 btcusdt_quant/rl/smdp_batch.py text eol=lf
 tests/rl/test_smdp_batch.py text eol=lf
+btcusdt_quant/rl/smdp_continual.py text eol=lf
+tests/rl/test_smdp_continual.py text eol=lf
+btcusdt_quant/rl/smdp_gpu.py text eol=lf

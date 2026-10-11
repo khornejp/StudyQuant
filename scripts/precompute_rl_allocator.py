@@ -5158,12 +5158,112 @@ def cmd_smdp_a5(args) -> None:
         f"{rep['total_wall_sec']}s")
 
 
+# ================================================================ A6-P1 throughput benchmark (engineering; reward values UNSET)
+def a6_setup(win=("2021-01-30", "2022-01-01")):
+    from btcusdt_quant.rl import dev_data as DD, signal_store as SG, smdp_batch as SB, smdp_reward as RW, u35
+    minutes, fund, in_hash = DD.load_dev()
+    fs = u35.assert_settlement_grid(u35.scheduled(fund))
+    rcfg = RW.RewardConfig()
+    mk = SB.market_arrays(minutes, fs, rcfg)
+    cache = SB.raw_cache(SS)
+    clk = SG.clock()
+    a, b = (pd.Timestamp(x, tz="UTC").value for x in win)
+    r1 = int(np.searchsorted(clk, b))
+    train_rows = np.flatnonzero((clk[:r1] >= a) & (clk[:r1] < b))
+    feats = SB.scaled_features(cache, train_rows, r1)
+    mk["clock0"] = int(clk[0])
+    ia, ib = np.searchsorted(mk["t"], [a, b])
+    rv_med = float(np.median(mk["rv"][ia + 1440:ib]))
+    return mk, feats, rcfg, rv_med, (a, b), in_hash
+
+
+def a6_sampler(win, days: int = 28):
+    a, b = win
+    step = 5 * 60 * 10**9
+    L = days * 86_400 * 10**9
+
+    def sample(rng, idx):
+        n = (b - L - a) // step
+        st = a + step * rng.integers(0, n + 1, len(idx))
+        return st, st + L
+    return sample
+
+
+def cmd_smdp_a6_bench(args) -> None:
+    import numba
+    import torch
+    from btcusdt_quant.rl import smdp_batch as SB, smdp_gpu as SGPU, smdp_ppo as SP
+    t_all = time.time()
+    torch.set_num_threads(1)
+    BD = OUT / "smdp_a6_bench"
+    BD.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    mk, feats, rcfg, rv_med, win, in_hash = a6_setup()
+    load_sec = time.time() - t0
+    sampler = a6_sampler(win)
+    cells_all = [c for c in G_CELLS]
+    rows = []
+
+    def make(E, seed=0):
+        cells = [cells_all[e % 6] for e in range(E)]
+        env = SB.BatchEnv(mk, feats, cells, SP.A5_TARGETS, SP.A4_WAITS, rcfg, rv_med, require_set=False)
+        return SGPU.GPUTrainer(env, sampler, SGPU.GPUConfig(), seed)
+
+    for th in (8, 16, 24):
+        numba.set_num_threads(th)
+        for E in (2048, 4096):
+            tr = make(E)
+            tr.rollout_and_update()                       # warm-up (JIT, CUDA init)
+            for k in tr.timing:
+                tr.timing[k] = 0.0
+            tr.decisions = 0
+            t1 = time.perf_counter()
+            st = [tr.rollout_and_update() for _ in range(2)]
+            wall = time.perf_counter() - t1
+            rows.append({"numba_threads": th, "envs": E, "rollout_T": tr.T, "decisions": tr.decisions, "wall_sec": wall,
+                         "decisions_per_sec": tr.decisions / wall, "timing_sec": dict(tr.timing),
+                         "faults": sum(x["faults"] for x in st), "identity_max": max(x["identity_max"] for x in st)})
+            log(f"bench th={th} E={E}: {tr.decisions / wall:.0f} dec/s {tr.timing}")
+            del tr
+            torch.cuda.empty_cache()
+    best = max(rows, key=lambda r: r["decisions_per_sec"])
+    numba.set_num_threads(best["numba_threads"])
+    tr = make(best["envs"], seed=0)
+    for k in tr.timing:
+        tr.timing[k] = 0.0
+    t1 = time.perf_counter()
+    curve = []
+    while tr.decisions < 2_000_000:
+        s = tr.rollout_and_update()
+        curve.append({k: (float(v) if isinstance(v, (int, float, np.floating)) else v) for k, v in s.items()})
+    wall = time.perf_counter() - t1
+    run = {"numba_threads": best["numba_threads"], "envs": best["envs"], "decisions": tr.decisions, "wall_sec": wall,
+           "decisions_per_sec": tr.decisions / wall, "timing_sec": dict(tr.timing),
+           "gate>=25k": bool(tr.decisions / wall >= 25_000), "target_50k": bool(tr.decisions / wall >= 50_000),
+           "faults": int(sum(c["faults"] for c in curve)), "identity_max": float(max(c["identity_max"] for c in curve)),
+           "curve": curve}
+    rep = {"spec": {"window": "2021 (2021-01-30 .. 2022-01-01) only", "episodes": "random 28-day, flat start",
+                    "policy": "948 -> 256 -> 256 LayerNorm + SiLU, heads 9 / 3 / 1, value dropout 0.1, AdamW wd 1e-4",
+                    "ppo": dataclasses_asdict(SGPU.GPUConfig()), "reward": "UNSET idle / inventory / turnover -> net4 only "
+                                                                         "(engineering run, not a training result)",
+                    "torch_threads": 1, "device": torch.cuda.get_device_name(0)},
+           "load_sec": round(load_sec, 1), "bench": rows, "run_2m": run, "total_wall_sec": round(time.time() - t_all, 1),
+           "input_sha256": in_hash, "git_head": git("rev-parse", "HEAD"),
+           "created_utc": datetime.now(timezone.utc).isoformat(), "test_rows_used": 0, "physical_test_reads": 0}
+    dump(BD / "smdp_a6_bench_report.json", rep)
+    registry.record(REGISTRY, {"experiment": "SMDP A6-P1 throughput benchmark (2021, reward UNSET)", "role": "engineering",
+                               "n_trials": 0, "n_simulations": 0, "config": rep["spec"],
+                               "result_summary": {k: run[k] for k in ("envs", "numba_threads", "decisions_per_sec", "gate>=25k")}})
+    log(f"A6 bench done best {best['numba_threads']}/{best['envs']} 2M run {run['decisions_per_sec']:.0f} dec/s "
+        f"gate {run['gate>=25k']} {rep['total_wall_sec']}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4", "smdp-a5"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4", "smdp-a5", "smdp-a6-bench"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -5226,6 +5326,8 @@ def main(argv=None) -> None:
         return cmd_smdp_a4(args)
     if args.command == "smdp-a5":
         return cmd_smdp_a5(args)
+    if args.command == "smdp-a6-bench":
+        return cmd_smdp_a6_bench(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
