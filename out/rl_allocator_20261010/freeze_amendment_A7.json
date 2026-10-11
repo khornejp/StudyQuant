@@ -7,7 +7,7 @@
     "sha256": "488c4148bb490746ff6cf91f8589cbeda92fcbc44d2a61a773eee10eb57153f7"
   },
   "code_sha256": {
-    "a7_rpbt": "f8e95c9bf08fa70a152677ce6c4e3ced7915dd5c5995ab70bbc9b66ecf46ef2d",
+    "a7_rpbt": "47a7f18799db7d27c703815dc2444b1d3275b47d0f575bf3284b934a89c2f796",
     "maker_kernel": "0f26714ab79fe90695e6ea87cce6aa8729d946704581d8320412dc06e3d5dc76",
     "smdp_reward": "084ead193270621910c80466a88010aef49a81bdbe8d006445376e23f68afe6f",
     "smdp_batch": "aa1ab9afa3feb05dac527b01195957216b8fdf4c28a32f0b70fbc62bb9871d0f",
@@ -363,5 +363,21 @@
   },
   "a6b_final_report_sha256": "58c6bc5ad502ab1a1aaa423ff2013ddba967319b6b17469283479ae7dda2900a",
   "test_rows_used": 0,
-  "physical_test_reads": 0
+  "physical_test_reads": 0,
+  "revision": {
+    "r": 2,
+    "utc": "2026-10-11T17:45:27.471479+00:00",
+    "reason": "r1 crashed at the 2022-06 exploit (CUDA generator bug in value-head re-init); fixed; full restart (no resume across a code-hash change)",
+    "r1_report_sha256": "77e36b5332826966ecef2c39757a6a2d3d342c94b64552990d7f71de32e24d1f",
+    "previous_code_sha256": {
+      "a7_rpbt": "f8e95c9bf08fa70a152677ce6c4e3ced7915dd5c5995ab70bbc9b66ecf46ef2d",
+      "maker_kernel": "0f26714ab79fe90695e6ea87cce6aa8729d946704581d8320412dc06e3d5dc76",
+      "smdp_reward": "084ead193270621910c80466a88010aef49a81bdbe8d006445376e23f68afe6f",
+      "smdp_batch": "aa1ab9afa3feb05dac527b01195957216b8fdf4c28a32f0b70fbc62bb9871d0f",
+      "smdp_gpu": "5e8de1a11c8473ccdf29bb3944a606c41b0919c21e46aecef60098ec69c4ee79",
+      "smdp_continual": "6307ea0366a8bae59e20da8437877b387b204d491af9cb9b799e56663554cc98",
+      "signal_store": "89451ba646b6e2d3c5fedbb9dc4b6f6467f476fc2efbd4fe2733227ccf229feb",
+      "dev_data": "a87c9593c896959eecdee6be7858142de5275fb95507692915b3e2a2e8969d20"
+    }
+  }
 }
