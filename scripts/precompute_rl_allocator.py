@@ -4704,7 +4704,7 @@ def cmd_smdp_a4(args) -> None:
     from btcusdt_quant.rl import gates as GT, smdp_ppo as SP
     t_all = time.time()
     torch.set_num_threads(4)
-    smoke = str(getattr(args, "only", "")) == "smoke"
+    smoke = "smoke" in set(getattr(args, "only", ()) or ())
     AD = OUT / ("smdp_a4_smoke" if smoke else "smdp_a4")
     AD.mkdir(parents=True, exist_ok=True)
     cfg = SP.A4Config()
