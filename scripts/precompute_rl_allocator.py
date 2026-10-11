@@ -4041,12 +4041,188 @@ def cmd_signal_store(args) -> None:
         f"dups {dup}, patchtst proof {proof['pass']} {man['total_bytes'] / 1e9:.2f} GB {man['runtime_sec']}s")
 
 
+# ================================================================ scripted baselines on the maker kernel (Codex SMDP 2026-10-11)
+SB_WAIT = 60                     # decision every hour on the 5m clock (scripted baselines only)
+U35_YEARS = (2022, 2023, 2024, 2025)
+U35_FOLD_OF = {2022: "F1", 2023: "F2", 2024: "F3", 2025: "F4"}
+
+
+def sb_token_arrays():
+    from btcusdt_quant.rl import signal_store as SG
+    toks = SG.tokens()
+    side, avail = [], []
+    for t_ in toks:
+        f = pd.read_parquet(SS / "tokens" / f"{t_}.parquet", columns=["t", "side", "available"])
+        side.append(f.side.to_numpy(np.int8))
+        avail.append(f.available.to_numpy(np.int8))
+    return toks, np.stack(side, 1), np.stack(avail, 1), f.t.to_numpy(np.int64)
+
+
+def sb_invvol_weights(toks, side, clk, C, a_ns: int, b_ns: int) -> dict:
+    """Fold-train statistics for the family-balanced inverse-vol vote: sigma_i = std of the token's raw matured 24h
+    markouts on [a, b) (needs >= 60 distinct days, else the 75th percentile of the valid sigmas); u_i within family
+    ~ 1/sigma_i; sigma_f = std of sum_i u_i m_i; q_f ~ 1/sigma_f."""
+    from btcusdt_quant.rl import signal_store as SG
+    lag = 1440 * SG.MIN_NS // SG.STEP_NS
+    sel = np.flatnonzero((clk >= a_ns) & (clk < b_ns))
+    sel = sel[sel >= lag]
+    ret = (C[sel] / C[sel - lag] - 1.0) * 1e4
+    s0 = side[sel - lag].astype(float)
+    mk = s0 * ret[:, None] - SG.COST_BPS * (s0 != 0)
+    day = clk[sel] // (86400 * 10**9)
+    sig = {}
+    for k, t_ in enumerate(toks):
+        on = (s0[:, k] != 0) & np.isfinite(mk[:, k])
+        sig[t_] = float(np.std(mk[on, k], ddof=1)) if len(np.unique(day[on])) >= 60 else None
+    valid = [v for v in sig.values() if v and v > 0]
+    fb = float(np.percentile(valid, 75)) if valid else 1.0
+    sig = {k: (v if v and v > 0 else fb) for k, v in sig.items()}
+    fam = {t_: SG.family_of(t_) for t_ in toks}
+    u, fsig = np.zeros(len(toks)), {}
+    for f in set(fam.values()):
+        idx = [k for k, t_ in enumerate(toks) if fam[t_] == f]
+        inv = np.array([1 / sig[toks[k]] for k in idx])
+        u[idx] = inv / inv.sum()
+        r = np.nansum(mk[:, idx] * u[idx], axis=1)
+        fsig[f] = float(np.std(r, ddof=1)) if np.std(r) > 0 else fb
+    return {"sigma": sig, "fallback": fb, "u": u, "family_sigma": fsig, "family": fam}
+
+
+def sb_targets(kind: str, side, avail, W) -> np.ndarray:
+    """Per decision row: quantized vote in TARGETS."""
+    s = side.astype(float) * (avail > 0)
+    if kind == "flat":
+        v = np.zeros(len(s))
+    elif kind == "ewa":
+        n = (avail > 0).sum(1)
+        v = np.where(n > 0, s.sum(1) / np.maximum(n, 1), 0.0)
+    else:
+        fams = sorted(set(W["family"].values()))
+        toks = list(W["family"])
+        fidx = {f: [k for k, t_ in enumerate(toks) if W["family"][t_] == f] for f in fams}
+        num = np.zeros(len(s))
+        den = np.zeros(len(s))
+        for f in fams:
+            ix = fidx[f]
+            av = avail[:, ix] > 0
+            uu = W["u"][ix] * av
+            tot = uu.sum(1)
+            vf = np.where(tot > 0, (s[:, ix] * uu).sum(1) / np.where(tot > 0, tot, 1), 0.0)
+            q = np.where(tot > 0, 1.0 / W["family_sigma"][f], 0.0)
+            num += q * vf
+            den += q
+        v = np.where(den > 0, num / np.where(den > 0, den, 1), 0.0)
+    return np.clip(np.round(v * 4) / 4, -1, 1)
+
+
+def sb_run(K, dec_i: np.ndarray, tg: np.ndarray, rv, rv_med: float) -> dict:
+    from btcusdt_quant.rl import maker_kernel as MK
+    K.reset(int(dec_i[0]))
+    tot = {"net4": 0.0, "idle": 0.0, "turnover": 0.0, "reward": 0.0}
+    for q in range(len(dec_i)):
+        w = SB_WAIT
+        i0 = K.i
+        info = K.step(float(tg[q]), w)
+        d = MK.step_reward(K.pnl, K.upath, rv, rv_med, i0, info["j"], info["d_target"])
+        for k_ in tot:
+            tot[k_] += d[k_]
+    return tot
+
+
+def cmd_scripted_baselines(args) -> None:
+    from btcusdt_quant.rl import gates as GT, maker_kernel as MK, signal_store as SG, u35, dev_data as DD
+    t0 = time.time()
+    BD = OUT / "scripted_baselines"
+    BD.mkdir(parents=True, exist_ok=True)
+    minutes, fund, in_hash = DD.load_dev()
+    fs = u35.scheduled(fund)
+    t_min = minutes.open_time.array.asi8.copy()
+    o, h, l, c = (minutes[x].to_numpy(float) for x in ("open", "high", "low", "close"))
+    rv = MK.rv24h(c)
+    toks, side, avail, clk = sb_token_arrays()
+    C = SG.close_at(clk, t_min, c)
+    ts = lambda x: pd.Timestamp(x, tz="UTC").value  # noqa: E731
+    kinds = ("famvol", "ewa", "flat")
+    rep: dict = {"spec": {"kernel": MK.__doc__, "decision": f"every {SB_WAIT} m on the 5m clock (t = hour), target = "
+                                                          "vote quantized to 0.25, wait 1h",
+                          "votes": {"famvol": sb_invvol_weights.__doc__, "ewa": "mean side over available tokens",
+                                    "flat": "always 0"},
+                          "reward": MK.step_reward.__doc__, "rv_median": "fold train [2021-01-30, year start) median "
+                                                                          "of RV24h at minute closes",
+                          "tokens": toks, "data": "DEV loader (< 2026-01-01), funding snapped to settlements"},
+                 "folds": {}, "yearly": {}, "continuous": {}}
+    W_by_year, tg_by = {}, {k: {} for k in kinds}
+    for y in U35_YEARS:
+        a_tr, b_tr = ts(FOLDS_A2[U35_FOLD_OF[y]][0][0]), ts(FOLDS_A2[U35_FOLD_OF[y]][0][1])
+        W = sb_invvol_weights(toks, side, clk, C, a_tr, b_tr)
+        W_by_year[y] = W
+        ia, ib = np.searchsorted(t_min, [a_tr, b_tr])
+        rep["folds"][U35_FOLD_OF[y]] = {"sigma": W["sigma"], "fallback": W["fallback"], "family_sigma": W["family_sigma"],
+                                        "rv24h_train_median": float(np.median(rv[ia + 1440:ib]))}
+    for cell in G_CELLS:
+        ctag = f"o{cell[0]}_p{cell[1]}"
+        K = MK.Kernel(o, h, l, c, t_min, fs.time.array.asi8, fs.rate.to_numpy(float), cell[0], cell[1])
+        for kind in kinds:
+            days_all, stats = [], {}
+            for y in U35_YEARS:
+                a, b = ts(f"{y}-01-01"), ts(f"{y + 1}-01-01")
+                dts = np.arange(a, b, SB_WAIT * SG.MIN_NS, dtype=np.int64)
+                row = (dts - SG.CLOCK_START.value) // SG.STEP_NS
+                tg = sb_targets(kind, side[row], avail[row], W_by_year[y])
+                tg_by[kind][(ctag, y)] = tg
+                dec_i = np.searchsorted(t_min, dts) - 1
+                med = rep["folds"][U35_FOLD_OF[y]]["rv24h_train_median"]
+                tot = sb_run(K, dec_i, tg, rv, med)
+                ia, ib = np.searchsorted(t_min, [a, b])
+                pnl, up = K.pnl[ia:ib].copy(), K.upath[ia:ib].copy()
+                d = pnl.reshape(-1, 1440).sum(1)
+                days_all.append(d)
+                flat = np.abs(up) < 0.125
+                stats[str(y)] = {"net4": float(pnl.sum()), "mdd": GT.mdd(d), "boot60_p05": GT.boot_p05(d, 60),
+                                 "round_trips": int((flat[:-1] & ~flat[1:]).sum()), "flat_ratio": float(flat.mean()),
+                                 "fills": int(K.st[MK.S_FILLS]), "fees": float(K.st[MK.S_FEES]),
+                                 "funding": float(K.st[MK.S_FUND]), "reward": tot,
+                                 "target_change_decisions": int((np.diff(np.r_[0.0, tg]) != 0).sum())}
+            dd = np.concatenate(days_all)
+            rep["yearly"].setdefault(ctag, {})[kind] = {"years": stats, "pooled_net4": float(dd.sum()), "mdd": GT.mdd(dd),
+                                                        "boot60_p05": GT.boot_p05(dd, 60)}
+            # continuous 2022..2025 run (one episode, year-end carry; fold weights switch at each year start)
+            a, b = ts("2022-01-01"), ts("2026-01-01")
+            dts = np.arange(a, b, SB_WAIT * SG.MIN_NS, dtype=np.int64)
+            tg = np.concatenate([tg_by[kind][(ctag, y)] for y in U35_YEARS])
+            dec_i = np.searchsorted(t_min, dts) - 1
+            tot = sb_run(K, dec_i, tg, rv, rep["folds"]["F4"]["rv24h_train_median"])
+            ia, ib = np.searchsorted(t_min, [a, b])
+            pnl, up = K.pnl[ia:ib].copy(), K.upath[ia:ib].copy()
+            d = pnl.reshape(-1, 1440).sum(1)
+            flat = np.abs(up) < 0.125
+            yrs = pd.DatetimeIndex(t_min[ia:ib], tz="UTC").year
+            rep["continuous"].setdefault(ctag, {})[kind] = {
+                "net4": float(pnl.sum()), "mdd": GT.mdd(d), "boot60_p05": GT.boot_p05(d, 60),
+                "boot20_p05": GT.boot_p05(d, 20), "boot120_p05": GT.boot_p05(d, 120),
+                "round_trips": int((flat[:-1] & ~flat[1:]).sum()), "flat_ratio": float(flat.mean()),
+                "fills": int(K.st[MK.S_FILLS]), "net4_by_year": {str(y): float(pnl[yrs == y].sum()) for y in U35_YEARS},
+                "reward_rv_median_note": "F4 train median used for the whole continuous run", "reward": tot}
+        log(f"baselines {ctag}: " + " ".join(f"{k}={rep['continuous'][ctag][k]['net4']:.0f}" for k in kinds))
+    rep.update(git_head=git("rev-parse", "HEAD"), created_utc=datetime.now(timezone.utc).isoformat(),
+               runtime_sec=round(time.time() - t0, 1), test_accessed=False, input_sha256=in_hash,
+               signal_store_manifest_sha256=sha(SS / "manifest.json"),
+               code_sha256={k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py") for k_ in ("maker_kernel", "signal_store")})
+    dump(BD / "scripted_baselines_report.json", rep)
+    registry.record(REGISTRY, {"experiment": "SMDP scripted baselines (famvol / ewa / flat) on the maker kernel",
+                               "role": "trial", "n_trials": 3, "n_simulations": 36,
+                               "config": {"wait_min": SB_WAIT, "tokens": len(toks)},
+                               "result_summary": {c_: {k: round(v["net4"], 3) for k, v in r.items()}
+                                                  for c_, r in rep["continuous"].items()}})
+    log(f"scripted baselines done {rep['runtime_sec']}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -4097,6 +4273,8 @@ def main(argv=None) -> None:
         return cmd_u35_precompute(args)
     if args.command == "signal-store":
         return cmd_signal_store(args)
+    if args.command == "scripted-baselines":
+        return cmd_scripted_baselines(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
