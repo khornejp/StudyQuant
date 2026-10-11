@@ -1,0 +1,61 @@
+{
+  "name": "A6 amendment (stops removed, shaped reward, GPU continual prequential)",
+  "status": "LOCKED",
+  "created_utc": "2026-10-11T09:08:55.570692+00:00",
+  "base": {
+    "A5_sha256": "774290e2d31de56e7e03cb4e13d7cb8a365309aacea1da842423ad5abe3725aa"
+  },
+  "kernel": "no position/day stop, no forced target; kill = fault only (gap/discontinuity, nonfinite, OHLC invariant, ledger identity, manual) -> episode aborted, valid prefix kept, no simulated flatten, run FAIL",
+  "account": "executed U, last target, pending flag, signed pending qty, clip(position_pnl/100,-10,10), pending age/60 m, clip(flat_streak_h/24,0,4), log(RV24h/RV_ref)",
+  "reward": {
+    "formula": "net4 - idle - inventory - turnover per 5-minute block",
+    "values": {
+      "idle_bps_per_h": 0.4167,
+      "inventory_bps_per_h": 0.15,
+      "turnover_bps": 0.25,
+      "f_kind": "linear",
+      "f_param": 0.05,
+      "k_cap_h": 20.0,
+      "m_lo": 0.25,
+      "m_hi": 4.0
+    },
+    "user_choice": "option 3 (middle): idle 0.4167 bps per flat hour (10 bps/day at median volatility), m(t) = clip(RV24h/RV_ref, .25, 4) with RV_ref the expanding past median fixed per month, f(k) = 1 + 0.05 min(k, 20) (k = consecutive flat hours, reset after 60 consecutive executed non-flat minutes), inventory 0.15 bps/h x |U|, turnover 0.25 bps x |d target|"
+  },
+  "engineering": {
+    "batch_kernel": "numba SoA, parity 100k decisions <= 1e-8 vs scalar",
+    "policy": "948-256-256 LayerNorm+SiLU, heads 9/3/1, value dropout 0.1, AdamW wd 1e-4",
+    "ppo": {
+      "lr": 0.0003,
+      "weight_decay": 0.0001,
+      "clip": 0.2,
+      "vclip": 0.2,
+      "epochs": 4,
+      "minibatch": 8192,
+      "rollout_batch": 65536,
+      "reward_scale": 0.01,
+      "vf_coef": 0.5,
+      "max_grad_norm": 0.5,
+      "beta_target": 0.00732,
+      "beta_wait": 0.02
+    },
+    "throughput": "bench 44-46k decisions/s"
+  },
+  "runs": {
+    "P2": "2021 (2021-01-30..2022-01-01) pretrain 10M decisions x seeds 0..4, random 28-day flat-start episodes",
+    "P3": "2022-01..2025-12 monthly prequential: normalizer refit on rows before the month; evaluate first with 8 action RNG sampled trajectories x 6 cells on a continuous ledger; frozen-2021 anchor evaluated alongside; then the month joins the pool (replay 50/25/25, regime-balanced starts, 28-day episodes) and every seed trains 2M decisions",
+    "stop_rules": "only fault / leakage / TEST read / parity failure; no performance stop",
+    "pass_criteria": "A3: stitched net4 6/6 > 0, baseline excess 6/6, yearly 24/24 > 0, round trips 24/24 >= 30, bootstrap p05 18/18 > 0, net4/MDD 6/6 >= 1, flat < .95, >= 3/5 seeds 6/6"
+  },
+  "code_sha256": {
+    "maker_kernel": "0f26714ab79fe90695e6ea87cce6aa8729d946704581d8320412dc06e3d5dc76",
+    "smdp_reward": "76b72016b3b7d329a91c3cf7f794c55eb578aab83137191f7a1c7d8a2836efad",
+    "smdp_batch": "caca10964718ea8100bb0ff9aafabddc547865f076286c20e312a5107f14bfb4",
+    "smdp_gpu": "5e8de1a11c8473ccdf29bb3944a606c41b0919c21e46aecef60098ec69c4ee79",
+    "smdp_continual": "6307ea0366a8bae59e20da8437877b387b204d491af9cb9b799e56663554cc98",
+    "smdp_env": "37deae0bb3c3e4da84ec3a49ac3cc5c25e72f49ffe7d6b7b0aac259771a37f05",
+    "signal_store": "89451ba646b6e2d3c5fedbb9dc4b6f6467f476fc2efbd4fe2733227ccf229feb",
+    "dev_data": "a87c9593c896959eecdee6be7858142de5275fb95507692915b3e2a2e8969d20"
+  },
+  "test_rows_used": 0,
+  "physical_test_reads": 0
+}
