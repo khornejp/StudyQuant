@@ -4642,9 +4642,9 @@ def a4_curves(logs: list) -> dict:
     return out
 
 
-def a4_train(data, cfg, seed: int, updates: int, snap_at=()):
+def a4_train(data, cfg, seed: int, updates: int, snap_at=(), targets=None):
     from btcusdt_quant.rl import smdp_env as SE, smdp_ppo as SP
-    envs = SE.SmdpBlockEnvs(data, G_CELLS, SP.A4_TARGETS, SP.A4_WAITS)
+    envs = SE.SmdpBlockEnvs(data, G_CELLS, targets or SP.A4_TARGETS, SP.A4_WAITS)
     tr = SP.A4Trainer(envs, cfg, seed)
     logs, snaps, status = [], {}, "ok"
     for u in range(1, updates + 1):
@@ -4662,16 +4662,18 @@ def a4_train(data, cfg, seed: int, updates: int, snap_at=()):
 
 def a4_model(data, cfg, state):
     from btcusdt_quant.rl import smdp_ppo as SP
-    m = SP.SmdpPolicy(data.obs_dim, len(SP.A4_TARGETS), len(SP.A4_WAITS), cfg.hidden)
+    m = SP.SmdpPolicy(data.obs_dim, 5, len(SP.A4_WAITS), cfg.hidden)
     m.load_state_dict(state)
     m.eval()
     return m
 
 
-def a4_eval(models: dict, data, val, rng=A4_RNG) -> dict:
+def a4_eval(models: dict, data, val, rng=A4_RNG, targets=None) -> dict:
     """24 sampled trajectories per cell (3 training seeds x 8 action seeds); per-cell means and mean daily series."""
     from btcusdt_quant.rl import smdp_ppo as SP
-    res = SP.evaluate_sampled(models, data, G_CELLS, SP.A4_TARGETS, SP.A4_WAITS, *val, rng)
+    targets = targets or SP.A4_TARGETS
+    side = 1 if max(targets) > 0 else -1
+    res = SP.evaluate_sampled(models, data, G_CELLS, targets, SP.A4_WAITS, *val, rng)
     want = int((pd.Timestamp(val[1], tz="UTC") - pd.Timestamp(val[0], tz="UTC")) / pd.Timedelta(minutes=1))
     end_ns = pd.Timestamp(val[1], tz="UTC").value
     out = {}
@@ -4686,7 +4688,7 @@ def a4_eval(models: dict, data, val, rng=A4_RNG) -> dict:
                   "decisions_mean": float(np.mean([v["decisions"] for v in rs])),
                   "daily_mean": np.mean([v["daily"] for v in rs], 0),
                   "integrity": {"nan_inf==0": bool(all(v["nonfinite"] == 0 for v in rs)),
-                                "long_exposure==0": bool(all(v["u_max"] <= 1e-12 for v in rs)),
+                                "wrong_side_exposure==0": bool(all(not SP.wrong_side(v, side) for v in rs)),
                                 "identity<=1e-8": bool(all(v["identity_err"] <= 1e-8 for v in rs)),
                                 "minutes_exact": bool(all(int(v["minutes"]) == want for v in rs)),
                                 "last_time<end": bool(all(v["last_time"] < end_ns for v in rs))},
@@ -4705,11 +4707,15 @@ def cmd_smdp_a4(args) -> None:
     t_all = time.time()
     torch.set_num_threads(4)
     smoke = "smoke" in set(getattr(args, "only", ()) or ())
-    AD = OUT / ("smdp_a4_smoke" if smoke else "smdp_a4")
+    long_ = "long" in set(getattr(args, "only", ()) or ())
+    TG = SP.A4_TARGETS_LONG if long_ else SP.A4_TARGETS
+    tag = "smdp_a4_long" if long_ else "smdp_a4"
+    AD = OUT / (tag + "_smoke" if smoke else tag)
     AD.mkdir(parents=True, exist_ok=True)
     cfg = SP.A4Config()
     base = pilot_baselines()
-    rep: dict = {"spec": {"a4": "freeze_amendment_A4.json", "targets": SP.A4_TARGETS, "waits": SP.A4_WAITS,
+    rep: dict = {"spec": {"a4": "freeze_amendment_A4.json" + (" + freeze_amendment_A4L.json" if long_ else ""),
+                          "side": "long-only" if long_ else "short-only", "targets": TG, "waits": SP.A4_WAITS,
                           "cfg": dataclasses_asdict(cfg), "candidates": A4_CANDS, "eval_rng": A4_RNG,
                           "eval": "3 training seeds x 8 action RNG seeds, categorical sampling of both heads, per-cell "
                                   "mean net4; joint argmax per seed = diagnostic only",
@@ -4729,10 +4735,10 @@ def cmd_smdp_a4(args) -> None:
         t0 = time.time()
         status, err = "ok", None
         try:
-            tr, logs, _, status, envs = a4_train(data, cfg, 0, 6)
+            tr, logs, _, status, envs = a4_train(data, cfg, 0, 6, targets=TG)
         except SP.A4Abort as ex:
             status, err, logs, envs = "abort", str(ex), [], None
-        ev = a4_eval({0: tr.model}, data, ("2022-01-01", "2022-02-01"), rng=(10000, 10001)) if status == "ok" else {}
+        ev = a4_eval({0: tr.model}, data, ("2022-01-01", "2022-02-01"), rng=(10000, 10001), targets=TG) if status == "ok" else {}
         fin = [b for r in logs for b in r["blocks_finished"]]
         rep["smoke"] = {"status": status, "error": err, "wall_sec": round(time.time() - t0, 1),
                         "blocks": [list(map(int, b)) for b in envs.blocks] if envs else None,
@@ -4745,8 +4751,8 @@ def cmd_smdp_a4(args) -> None:
                                    "floor_triggered_in_smoke": bool(any(r["floor_next"] for r in logs))}}
         rep["pass"] = bool(rep["smoke"]["checks"]["no_abort"] and rep["smoke"]["checks"]["blocks_nonoverlap"]
                            and rep["smoke"]["checks"]["eval_integrity"])
-        dump(AD / "smdp_a4_smoke_report.json", rep)
-        registry.record(REGISTRY, {"experiment": "SMDP A4 smoke", "role": "smoke", "n_trials": 1, "n_simulations": 1,
+        dump(AD / f"{tag}_smoke_report.json", rep)
+        registry.record(REGISTRY, {"experiment": f"SMDP {tag} smoke", "role": "smoke", "n_trials": 1, "n_simulations": 1,
                                    "config": rep["spec"]["cfg"], "result_summary": rep["smoke"]["checks"]})
         log(f"A4 smoke {'PASS' if rep['pass'] else 'FAIL'} {rep['smoke']['checks']} {rep['smoke']['wall_sec']}s")
         return
@@ -4760,7 +4766,7 @@ def cmd_smdp_a4(args) -> None:
         for seed in seeds:
             t0 = time.time()
             try:
-                tr, logs, snaps, status, envs = a4_train(data, cfg, seed, max(A4_CANDS), snap_at=A4_CANDS)
+                tr, logs, snaps, status, envs = a4_train(data, cfg, seed, max(A4_CANDS), snap_at=A4_CANDS, targets=TG)
             except SP.A4Abort as ex:
                 fr["seeds"][str(seed)] = {"status": "abort", "error": str(ex)}
                 fail_reason = f"abort {fold} seed {seed}"
@@ -4780,9 +4786,9 @@ def cmd_smdp_a4(args) -> None:
         for u in A4_CANDS:
             te = time.time()
             ms = {s_: a4_model(data, cfg, models_at[(fold, s_, u)]) for s_ in seeds}
-            ev = a4_eval(ms, data, val)
+            ev = a4_eval(ms, data, val, targets=TG)
             ens[(fold, u)] = ev
-            diag = {str(s_): {c: x["net4"] for c, x in SP.evaluate([ms[s_]], data, G_CELLS, SP.A4_TARGETS, *val,
+            diag = {str(s_): {c: x["net4"] for c, x in SP.evaluate([ms[s_]], data, G_CELLS, TG, *val,
                                                                    waits=SP.A4_WAITS).items()} for s_ in seeds}
             fr.setdefault("candidates", {})[str(u)] = {"sampled": a4_public(ev), "argmax_diag_net4": diag,
                                                        "sec": round(time.time() - te, 1)}
@@ -4817,12 +4823,12 @@ def cmd_smdp_a4(args) -> None:
             ms4, f4 = {}, {"seeds": {}}
             for seed in seeds:
                 t0 = time.time()
-                tr, logs, _, status, envs = a4_train(data, cfg, seed, U)
+                tr, logs, _, status, envs = a4_train(data, cfg, seed, U, targets=TG)
                 torch.save({"model": tr.model.state_dict(), "seed": seed, "U": U}, AD / f"F4_seed{seed}_u{U}.pt")
                 ms4[seed] = tr.model
                 f4["seeds"][str(seed)] = {"status": status, "wall_sec": round(time.time() - t0, 1), "curves": a4_curves(logs),
                                           "stop_diag": stop_diag(logs), "checkpoint_sha256": sha(AD / f"F4_seed{seed}_u{U}.pt")}
-            ev4 = a4_eval(ms4, data, val)
+            ev4 = a4_eval(ms4, data, val, targets=TG)
             f4["eval_2025"] = a4_public(ev4)
             rep["folds"]["F4"] = f4
             yrs = {"F1": 2022, "F2": 2023, "F3": 2024, "F4": 2025}
@@ -4857,9 +4863,12 @@ def cmd_smdp_a4(args) -> None:
             rep["pass"] = bool(all(rep["pass_criteria"].values()))
     rep.update(total_wall_sec=round(time.time() - t_all, 1), created_utc=datetime.now(timezone.utc).isoformat(),
                test_rows_used=0, physical_test_reads=0)
-    dump(AD / "smdp_a4_report.json", rep)
+    if long_:
+        rep["procedure_note"] = ("short A4 run: the --only smoke flag was ignored (args.only is a set), so the full short "
+                                 "run preceded its smoke; smoke run afterwards (PASS), flag fixed in b641a73")
+    dump(AD / f"{tag}_report.json", rep)
     for seed in seeds:
-        registry.record(REGISTRY, {"experiment": f"SMDP A4 short-only seed {seed}", "role": "trial",
+        registry.record(REGISTRY, {"experiment": f"SMDP {tag} seed {seed}", "role": "trial",
                                    "n_trials": len(A4_CANDS), "n_simulations": 4, "config": rep["spec"]["cfg"],
                                    "result_summary": {"pass": rep["pass"], "fail_reason": rep.get("fail_reason"),
                                                       "U_star": (rep.get("selection") or {}).get("U_star")}})

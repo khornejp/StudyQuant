@@ -260,6 +260,12 @@ def pd_ts(x: str) -> int:
 # ---------------------------------------------------------------- A4 (Codex final): block episodes, 7-day rollouts, entropy floor
 A4_WAITS = (15, 60, 240)
 A4_TARGETS = (0.0, -0.25, -0.5, -0.75, -1.0)
+A4_TARGETS_LONG = (0.0, 0.25, 0.5, 0.75, 1.0)
+
+
+def wrong_side(f: dict, side: int) -> bool:
+    """Exposure on the forbidden side: short-only -> any long minute, long-only -> any short minute."""
+    return f["u_max"] > 1e-12 if side < 0 else f["u_min"] < -1e-12
 A4_ROLLOUT_MIN = 7 * 1440
 
 
@@ -333,6 +339,7 @@ class A4Trainer:
         self.update = 0
         self.floor = EntropyFloor(cfg)
         self.collapse_run = 0
+        self.side = 1 if max(envs.targets) > 0 else -1
         self.obs = envs.obs()
 
     def run_update(self) -> dict:
@@ -342,7 +349,7 @@ class A4Trainer:
         traj = [[] for _ in range(E)]
         elapsed = np.zeros(E)
         blocks_seen = []
-        lg = {"nonfinite": 0, "identity_err": 0.0, "u_max": -9.0, "u_absmax": 0.0}
+        lg = {"nonfinite": 0, "identity_err": 0.0, "u_max": -9.0, "u_min": 9.0, "u_absmax": 0.0, "wrong_side": 0}
         acc = {k: 0.0 for k in ACC_KEYS}
         with torch.no_grad():
             live = np.ones(E, bool)
@@ -363,6 +370,8 @@ class A4Trainer:
                     lg["identity_err"] = max(lg["identity_err"], f["identity_err"])
                     lg["u_max"] = max(lg["u_max"], f["u_max"])
                     lg["u_absmax"] = max(lg["u_absmax"], f["u_absmax"])
+                    lg["u_min"] = min(lg["u_min"], f["u_min"])
+                    lg["wrong_side"] += int(wrong_side(f, self.side))
                     dt = f["minutes"]
                     traj[e].append({"obs": x[n], "at": int(at[n]), "aw": int(aw[n]), "logp": float(lp[n]),
                                     "v": float(v[n]), "r": f["reward_discounted"], "reward": f["reward"],
@@ -375,7 +384,7 @@ class A4Trainer:
                     if elapsed[e] >= cfg.rollout_min:
                         live[e] = False
             last_v = self.model(torch.as_tensor(ev.obs()))[2]
-        if lg["nonfinite"] or lg["identity_err"] > 1e-8 or lg["u_max"] > 1e-12:
+        if lg["nonfinite"] or lg["identity_err"] > 1e-8 or lg["wrong_side"] or lg["u_absmax"] > 1 + 1e-12:
             raise A4Abort(f"integrity abort: {lg}")
         # per-env duration-aware GAE (gamma_d, lambda_d per step)
         rows, advs, rets = [], [], []
@@ -496,9 +505,9 @@ def evaluate_sampled(models: dict, data, cells, targets, waits, start: str, end:
         ev._reset(e, a, b)
     rngs = [np.random.default_rng([r, s, ci]) for s, r, ci in keys]
     live = np.ones(ev.E, bool)
-    acc = [{k: 0.0 for k in ACC_KEYS} | {"u_max": -9.0, "u_absmax": 0.0, "identity_err": 0.0, "nonfinite": 0,
-                                       "last_time": -1, "t_cnt": np.zeros(len(targets)), "w_cnt": np.zeros(len(waits)),
-                                       "decisions": 0} for _ in range(ev.E)]
+    acc = [{k: 0.0 for k in ACC_KEYS} | {"u_max": -9.0, "u_min": 9.0, "u_absmax": 0.0, "identity_err": 0.0,
+                                       "nonfinite": 0, "last_time": -1, "t_cnt": np.zeros(len(targets)),
+                                       "w_cnt": np.zeros(len(waits)), "decisions": 0} for _ in range(ev.E)]
     d0, d1 = a // 86_400_000_000_000, b // 86_400_000_000_000
     daily = np.zeros((ev.E, d1 - d0))
     seeds_of = np.array([s for s, _, _ in keys])
@@ -523,6 +532,7 @@ def evaluate_sampled(models: dict, data, cells, targets, waits, start: str, end:
                     for kk in ACC_KEYS:
                         r_[kk] += f[kk]
                     r_["u_max"], r_["u_absmax"] = max(r_["u_max"], f["u_max"]), max(r_["u_absmax"], f["u_absmax"])
+                    r_["u_min"] = min(r_["u_min"], f["u_min"])
                     r_["identity_err"] = max(r_["identity_err"], f["identity_err"])
                     r_["last_time"] = max(r_["last_time"], f["last_time"])
                     r_["t_cnt"][at] += 1

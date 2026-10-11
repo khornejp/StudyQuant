@@ -130,7 +130,7 @@ class SmdpEnvs:
         out = {**rw, "identity_err": abs(rw["net4"] - info["net4"]) + abs(rw["reward"] - (rw["net4"] - rw["idle"]
                                                                                           - rw["turnover"])),
                "minutes": int(len(u)), "flat_minutes": int((np.abs(u) < 0.125).sum()), "exposure_sum": float(np.abs(u).sum()),
-               "u_max": float(u.max()) if len(u) else 0.0, "u_absmax": float(np.abs(u).max()) if len(u) else 0.0,
+               "u_max": float(u.max()) if len(u) else 0.0, "u_min": float(u.min()) if len(u) else 0.0, "u_absmax": float(np.abs(u).max()) if len(u) else 0.0,
                "target": self.targets[a_t], "wait": self.waits[a_w], "a_w": int(a_w),
                "last_time": int(k.t[info["j"]]) if len(u) else -1}
         for nm, slot in (("fills", MK.S_FILLS), ("round_trips", MK.S_RT), ("ttl_expiry", MK.S_TTLX),
