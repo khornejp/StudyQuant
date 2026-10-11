@@ -5639,12 +5639,467 @@ def a6_compare(monthly: list) -> dict:
             "sum_a6_policy": float(sum(v["a6_policy"] for v in out.values()))}
 
 
+# ================================================================ A7-RPBT run (Codex final spec 2026-10-11)
+A7_SPEC = ROOT / ".superpowers/sdd/rl_allocator/a7_rpbt_spec_2026-10-11.md"
+A7_POP_SEED = 20261011
+A7_EXPLOIT_MONTHS = ("2022-06", "2022-09", "2022-12", "2023-03", "2023-06", "2023-09", "2023-12")
+A7_HARD_CAP_SEC = 13 * 3600
+A7_DISK_CAP = 2 * 1024**3
+
+
+class A7Member:
+    def __init__(self, idx: int, geno, trainer, seed: int):
+        self.idx, self.geno, self.trainer, self.seed = idx, geno, trainer, seed
+        self.anchor = None
+        self.history = [{"event": "init", "genotype": geno.to_json()}]
+        self.daily = {}            # month -> {"raw": {cell: [days]}, "anc": {cell: [days]}}
+
+
+def a7_state_dump(path, members, ev, rep, month_done, hashes):
+    """Atomic full state after a committed month (or P2): every member (model, optimizer, genotype, history, decisions,
+    NumPy / torch CPU / CUDA generator states), anchors, evaluation ledger (env arrays + 8 action RNG states), daily
+    history and the report."""
+    import torch
+    from btcusdt_quant.rl import a7_rpbt as A7
+    st = {"month_done": month_done, "torch_cpu_rng": torch.get_rng_state(),
+          "members": [{"idx": m.idx, "seed": m.seed, "genotype": m.geno.to_json(), "history": m.history,
+                       "daily": m.daily, "model": m.trainer.model.state_dict(), "opt": m.trainer.opt.state_dict(),
+                       "cfg": dataclasses_asdict(m.trainer.cfg), "decisions": m.trainer.decisions,
+                       "np_rng": m.trainer.rng.bit_generator.state, "cuda_gen": m.trainer.gen.get_state(),
+                       "anchor": m.anchor.state_dict()} for m in members],
+          "ledger": None if ev is None else {"ST": ev.env.ST.copy(), "gi": ev.env.gi.copy(), "endx": ev.env.endx.copy(),
+                                             "last_t": ev.env.last_t.copy(), "rngs": [g.bit_generator.state for g in ev.rngs]},
+          "report": rep}
+    return A7.save_checkpoint(path, st, hashes)
+
+
+def a7_state_load(path, members, ev, hashes):
+    import torch
+    from dataclasses import replace as _rp
+    from btcusdt_quant.rl import a7_rpbt as A7, smdp_gpu as SGPU
+    st = A7.load_checkpoint(path, hashes)
+    torch.set_rng_state(st["torch_cpu_rng"])
+    for m, d in zip(members, st["members"]):
+        m.geno = A7.Genotype.from_json(d["genotype"])
+        m.history, m.daily = d["history"], d["daily"]
+        m.trainer.model.load_state_dict(d["model"])
+        m.trainer.opt.load_state_dict(d["opt"])
+        m.trainer.cfg = _rp(SGPU.GPUConfig(), **d["cfg"])
+        m.trainer.env.cfg = m.geno.reward_cfg()
+        m.trainer.decisions = d["decisions"]
+        m.trainer.rng.bit_generator.state = d["np_rng"]
+        m.trainer.gen.set_state(d["cuda_gen"])
+        if m.anchor is None:
+            import copy as _copy
+            m.anchor = _copy.deepcopy(m.trainer.model)
+        m.anchor.load_state_dict(d["anchor"])
+        m.anchor.eval()
+    if ev is not None and st["ledger"] is not None:
+        L = st["ledger"]
+        ev.env.ST[:], ev.env.gi[:], ev.env.endx[:], ev.env.last_t[:] = L["ST"], L["gi"], L["endx"], L["last_t"]
+        for g, s_ in zip(ev.rngs, L["rngs"]):
+            g.bit_generator.state = s_
+    return st
+
+
+def a7_hashes() -> dict:
+    return {"spec": sha(A7_SPEC),
+            "code": {k_: sha(ROOT / f"btcusdt_quant/rl/{k_}.py") for k_ in
+                     ("a7_rpbt", "maker_kernel", "smdp_reward", "smdp_batch", "smdp_gpu", "smdp_continual", "signal_store",
+                      "dev_data")}}
+
+
+def a7_make_trainer(mk, feats, rv_med, geno, seed, envs, sampler, dev_cells=None):
+    from dataclasses import replace as _rp
+    from btcusdt_quant.rl import smdp_batch as SB, smdp_gpu as SGPU, smdp_ppo as SP
+    cells = [G_CELLS[e % 6] for e in range(envs)]
+    env = SB.BatchEnv(mk, feats, cells, SP.A5_TARGETS, SP.A4_WAITS, geno.reward_cfg(), rv_med, require_set=True)
+    cfg = _rp(SGPU.GPUConfig(), lr=geno.lr, beta_target=geno.beta_t, beta_wait=geno.beta_w)
+    return SGPU.GPUTrainer(env, sampler, cfg, seed)
+
+
+def a7_set_lr(tr, lr: float):
+    for g in tr.opt.param_groups:
+        g["lr"] = lr
+
+
+def a7_month_daily(accm, ev, member_ids) -> dict:
+    """Per member: mean over the 8 action RNG of the daily raw net4 per cell, for candidate and anchor."""
+    days = sorted(accm["daily"])
+    out = {}
+    for m in member_ids:
+        for who in ("policy", "anchor"):
+            idx = ev.groups[(m, who)]
+            for c in range(6):
+                sel = [i for i in idx if ev.keys[i][3] == c]
+                arr = np.array([[accm["daily"][d][i] for d in days] for i in sel]).mean(0)
+                out.setdefault(m, {}).setdefault(who, {})[f"o{G_CELLS[c][0]}_p{G_CELLS[c][1]}"] = arr.tolist()
+    return out
+
+
+def a7_summary_cells(ev, accm, member_ids) -> dict:
+    out = {}
+    for m in member_ids:
+        for who in ("policy", "anchor"):
+            idx = ev.groups[(m, who)]
+            for c in range(6):
+                sel = [i for i in idx if ev.keys[i][3] == c]
+                cn = f"o{G_CELLS[c][0]}_p{G_CELLS[c][1]}"
+                out.setdefault(str(m), {}).setdefault(who, {})[cn] = {
+                    k: float(np.mean([accm[k][i] for i in sel])) for k in ("net4", "idle", "inventory", "turnover", "reward",
+                                                                         "fills", "rt", "flat_min", "expo", "minutes")}
+                if who == "policy":
+                    tc = np.sum([accm["tcnt"][i] for i in sel], 0)
+                    wc = np.sum([accm["wcnt"][i] for i in sel], 0)
+                    out[str(m)][who][cn].update(tcnt=tc.tolist(), wcnt=wc.tolist(),
+                                                reg_sum=np.sum([accm["reg_sum"][i] for i in sel], 0).tolist(),
+                                                reg_n=np.sum([accm["reg_n"][i] for i in sel], 0).tolist())
+    return out
+
+
+def cmd_smdp_a7(args) -> None:
+    import copy as _copy
+    import numba
+    import torch
+    from dataclasses import replace as _rp
+    from btcusdt_quant.rl import a7_rpbt as A7, signal_store as SG, smdp_batch as SB, smdp_continual as CT
+    from btcusdt_quant.rl import smdp_reward as RW, dev_data as DD, u35
+    t_all = time.time()
+    smoke = "smoke" in set(getattr(args, "only", ()) or ())
+    resume = "resume" in set(getattr(args, "only", ()) or ())
+    stop_after = next((x.split("=")[1] for x in (getattr(args, "only", ()) or ()) if str(x).startswith("stop_after=")), None)
+    torch.set_num_threads(1)
+    numba.set_num_threads(16)
+    dev = torch.device("cuda")
+    AD = OUT / ("smdp_a7_smoke" if smoke else "smdp_a7")
+    (AD / "ckpt" / "immutable").mkdir(parents=True, exist_ok=True)
+    P2_DEC = 300_000 if smoke else A6_P2_DECISIONS
+    P3_DEC = 140_000 if smoke else A6_P3_DECISIONS
+    ENVS = 1024 if smoke else A6_TRAIN_ENVS
+    disc_months = CT.month_starts("2022-01", "2022-02" if smoke else "2023-12")
+    exploit_months = ("2022-01",) if smoke else A7_EXPLOIT_MONTHS
+    minutes, fund, in_hash = DD.load_dev()
+    fs = u35.assert_settlement_grid(u35.scheduled(fund))
+    mk = SB.market_arrays(minutes, fs, RW.A6_REWARD)
+    del minutes
+    clk = SG.clock()
+    mk["clock0"] = int(clk[0])
+    cache = SB.raw_cache(SS)
+    r1 = len(clk)
+    hashes = {**a7_hashes(), "input": in_hash}
+    pop = A7.population(A7_POP_SEED)
+    rep = {"spec": {"spec_file": str(A7_SPEC.relative_to(ROOT)), "population_seed": A7_POP_SEED, "smoke": smoke,
+                    "genotypes": [g.to_json() for g in pop], "exploit_months": exploit_months, "p2_decisions": P2_DEC,
+                    "p3_decisions": P3_DEC, "envs": ENVS, "eval_rng": A6_EVAL_RNG,
+                    "interpretations": {"transfer_significance": "all 6 cells rejected by the joint Romano-Wolf stepdown "
+                                                                 "(block 60) and stationary-bootstrap p05 of the mean "
+                                                                 "difference > 0 at blocks 20 and 120 for every cell",
+                                        "verification": "5 seeds: P2 2021 from scratch, then train-only months "
+                                                        "2022-01..2023-12, then eval-first forward 2024-01..2025-12",
+                                        "eval_reward": "evaluation ledger uses the RAW reward (only raw net4 is used)",
+                                        "report_commit": "monthly report written atomically (tmp + replace)"}},
+           "provenance": {"hashes": hashes, "amendment": "freeze_amendment_A7.json",
+                          "amendment_sha256": sha(OUT / "freeze_amendment_A7.json") if (OUT / "freeze_amendment_A7.json").exists() else None,
+                          "git_head": git("rev-parse", "HEAD"), "cutoff": "< 2026-01-01", "test_rows_used": 0,
+                          "physical_test_reads": 0}, "months": [], "exploits": []}
+    RP = AD / "smdp_a7_report.json"
+    A7.atomic_json(RP, rep)
+
+    def budget_ok():
+        used = sum(p.stat().st_size for p in AD.rglob("*") if p.is_file())
+        return (time.time() - t_all) <= A7_HARD_CAP_SEC and used <= A7_DISK_CAP, used
+
+    w21 = ("2021-01-30", "2022-01-01")
+    a21, b21 = (pd.Timestamp(x, tz="UTC").value for x in w21)
+    feats21 = a6_feats(cache, clk, b21, r1)
+    ia, ib = np.searchsorted(mk["t"], [a21, b21])
+    rv_med = float(np.median(mk["rv"][ia + 1440:ib]))
+    sampler21 = a6_sampler((a21, b21))
+    # ---------------- P2 for 13 members (sequential), own frozen anchors
+    members = []
+    STATE = AD / "ckpt" / "state_latest.pt"
+    if resume and STATE.exists():                              # members are rebuilt, then their state is restored
+        for i, g in enumerate(pop):
+            tr = a7_make_trainer(mk, feats21, rv_med, g, 1000 + i, ENVS, sampler21)
+            members.append(A7Member(i, g, tr, 1000 + i))
+    for i, g in enumerate(pop):
+        if resume and STATE.exists():
+            break
+        t0 = time.time()
+        tr = a7_make_trainer(mk, feats21, rv_med, g, 1000 + i, ENVS, sampler21)
+        while tr.decisions < P2_DEC:
+            st = tr.rollout_and_update()
+            if st["faults"] or st["identity_max"] > 1e-8:
+                raise SystemExit(f"A7 P2 abort {g.name}: {st['faults']} {st['identity_max']}")
+        mb = A7Member(i, g, tr, 1000 + i)
+        mb.anchor = _copy.deepcopy(tr.model).eval()
+        h = A7.save_checkpoint(AD / "ckpt" / "immutable" / f"P2_{g.name}.pt",
+                               {"model": tr.model.state_dict(), "opt": tr.opt.state_dict(), "genotype": g.to_json(),
+                                "decisions": tr.decisions}, hashes)
+        mb.history.append({"event": "P2_done", "decisions": tr.decisions, "sec": round(time.time() - t0, 1), "sha256": h})
+        members.append(mb)
+        log(f"A7 P2 {g.name}: {tr.decisions} {time.time() - t0:.0f}s")
+    if not (resume and STATE.exists()):
+        rep["p2"] = {m.geno.name: m.history[-1] for m in members}
+        A7.atomic_json(RP, rep)
+        a7_state_dump(AD / "ckpt" / "immutable" / "state_P2.pt", members, None, rep, None, hashes)
+    # ---------------- discovery 2022-01..2023-12 (monthly lockstep)
+    ids = [m.idx for m in members]
+    all_months = CT.month_starts("2021-02", "2025-12")
+    ev = A6Eval(mk, feats21, RW.RewardConfig(idle_bps_per_h=0.0, inventory_bps_per_h=0.0, turnover_bps=0.0,
+                                              f_kind="const"), rv_med, ids, disc_months[0].value,
+                pd.Timestamp("2026-01-01", tz="UTC").value, dev)
+    status = "ok"
+    start_mi = 0
+    if resume and STATE.exists():
+        st0 = a7_state_load(STATE, members, ev, hashes)
+        rep = st0["report"]
+        rep["resumed_from"] = st0["month_done"]
+        start_mi = [f"{m:%Y-%m}" for m in disc_months].index(st0["month_done"]) + 1
+        log(f"A7 resume after {st0['month_done']}")
+    for mi, M in enumerate(disc_months):
+        if mi < start_mi:
+            continue
+        ok, used = budget_ok()
+        if not ok:
+            status = f"budget_stop_before_{M:%Y-%m} (elapsed {time.time() - t_all:.0f}s, disk {used} B)"
+            break
+        tm = time.time()
+        Mend = M + pd.offsets.MonthBegin(1)
+        feats = a6_feats(cache, clk, M.value, r1)
+        ev.env.tok, ev.env.mk = feats
+        models = {}
+        for mb in members:
+            mb.trainer.model.eval()
+            models[(mb.idx, "policy")] = mb.trainer.model
+            models[(mb.idx, "anchor")] = mb.anchor
+        accm = ev.run_month(models, Mend.value)
+        want = int((Mend - M) / pd.Timedelta(minutes=1))
+        if accm["faults"] or not np.all(accm["minutes"] == want):
+            raise SystemExit(f"A7 abort at {M:%Y-%m}: faults {accm['faults']}")
+        dd = a7_month_daily(accm, ev, ids)
+        for mb in members:
+            mb.daily[f"{M:%Y-%m}"] = dd[mb.idx]
+        rec = {"month": f"{M:%Y-%m}", "members": a7_summary_cells(ev, accm, ids),
+               "genotypes": {str(mb.idx): mb.geno.to_json() for mb in members}}
+        # month joins the replay pool; every member trains (own replay mix, lr decay)
+        for mb in members:
+            tr, g = mb.trainer, mb.geno
+            cfgc = CT.ContinualConfig(mix_latest=g.replay[0], mix_recent6=g.replay[1], mix_earlier=g.replay[2])
+            smp = CT.ReplaySampler(mk["t"], mk["c"], [m for m in all_months if m <= M], Mend, cfgc,
+                                   pd.Timestamp("2026-01-01", tz="UTC").value)
+            tr.env.tok, tr.env.mk = feats
+            tr.sample_episode = smp.sample
+            st_, en_ = smp.sample(tr.rng, np.arange(tr.E))
+            tr.env.reset_env(np.arange(tr.E), st_, en_)
+            a7_set_lr(tr, A7.lr_at(g, mi))
+            d0 = tr.decisions
+            while tr.decisions - d0 < P3_DEC:
+                s_ = tr.rollout_and_update()
+                if s_["faults"] or s_["identity_max"] > 1e-8:
+                    raise SystemExit(f"A7 abort {M:%Y-%m} {g.name}")
+            A7.save_checkpoint(AD / "ckpt" / f"latest_{mb.idx:02d}.pt",
+                               {"model": tr.model.state_dict(), "opt": tr.opt.state_dict(), "genotype": g.to_json(),
+                                "lr_month": mi, "decisions": tr.decisions, "np_rng": tr.rng.bit_generator.state,
+                                "torch_rng": torch.get_rng_state(), "cuda_gen": tr.gen.get_state(),
+                                "last_month": f"{M:%Y-%m}"}, hashes)
+        # exploit
+        if f"{M:%Y-%m}" in exploit_months:
+            months_k = sorted(next(iter(members)).daily)[-6:]
+            raw = {mb.idx: {c: np.concatenate([np.asarray(mb.daily[m_]["policy"][c]) for m_ in months_k])
+                            for c in mb.daily[months_k[0]]["policy"]} for mb in members}
+            anc = {mb.idx: {c: np.concatenate([np.asarray(mb.daily[m_]["anchor"][c]) for m_ in months_k])
+                            for c in mb.daily[months_k[0]]["anchor"]} for mb in members}
+            nb_ = 500 if smoke else 10_000
+            fit = {mb.idx: A7.fitness(raw[mb.idx], anc[mb.idx], n_boot=nb_) for mb in members}
+            genos = {mb.idx: mb.geno for mb in members}
+            plan = A7.exploit_plan(fit, genos, raw, n_boot=nb_)
+            if smoke and not plan["transfers"]:                    # smoke: force one synthetic transfer path
+                plan["transfers"] = {plan["recipients"][0]: plan["donors"][0]}
+                plan["smoke_forced"] = True
+            xrec = {"month": f"{M:%Y-%m}", "fitness": {str(k): v for k, v in fit.items()},
+                    "plan": {k: (v if k != "transfers" else {str(a): b for a, b in v.items()}) for k, v in plan.items()},
+                    "applied": []}
+            for r_, d_ in plan["transfers"].items():
+                rm, dm = members[r_], members[d_]
+                pre = A7.save_checkpoint(AD / "ckpt" / "immutable" / f"pre_{M:%Y%m}_{rm.geno.name}.pt",
+                                         {"model": rm.trainer.model.state_dict(), "genotype": rm.geno.to_json()}, hashes)
+                allow_rp = M >= pd.Timestamp("2022-09-01", tz="UTC")
+                newg = A7.copy_genotype(A7.mutate(dm.geno, np.random.default_rng([A7_POP_SEED, mi, r_]), allow_rp),
+                                        rm.geno.name)
+                reinit = A7.reward_changed(newg, dm.geno)
+                A7.exploit_weights(rm.trainer.model, dm.trainer.model.state_dict(), reinit, seed=rm.seed + mi)
+                rm.trainer.opt = torch.optim.AdamW(rm.trainer.model.parameters(), lr=A7.lr_at(newg, mi),
+                                                   weight_decay=rm.trainer.cfg.weight_decay)
+                rm.trainer.cfg = _rp(rm.trainer.cfg, lr=newg.lr, beta_target=newg.beta_t, beta_wait=newg.beta_w)
+                rm.trainer.env.cfg = newg.reward_cfg()
+                rm.trainer.env.m = RW.m_of_t(mk["rv"], mk["rv_ref"], newg.reward_cfg())
+                rm.geno = newg
+                post = A7.save_checkpoint(AD / "ckpt" / "immutable" / f"post_{M:%Y%m}_{rm.geno.name}.pt",
+                                          {"model": rm.trainer.model.state_dict(), "genotype": newg.to_json()}, hashes)
+                ev_ = {"recipient": rm.geno.name, "donor": dm.geno.name, "new_genotype": newg.to_json(),
+                       "value_head_reinit": bool(reinit), "pre_sha256": pre, "post_sha256": post}
+                rm.history.append({"event": "exploit", "month": f"{M:%Y-%m}", **ev_})
+                xrec["applied"].append(ev_)
+            rep["exploits"].append(xrec)
+            rec["exploit"] = xrec
+        rec["sec"] = round(time.time() - tm, 1)
+        rep["months"].append(rec)
+        rep["genotype_history"] = {mb.geno.name: mb.history for mb in members}
+        rep.update(last_month_done=rec["month"], elapsed_sec=round(time.time() - t_all, 1))
+        A7.atomic_json(RP, rep)
+        a7_state_dump(STATE, members, ev, rep, rec["month"], hashes)          # commit point: discard partial months
+        log(f"A7 {M:%Y-%m}: raw net4 by member {[round(np.mean([v['net4'] for v in rec['members'][str(i)]['policy'].values()])) for i in ids]} "
+            f"{rec['sec']}s")
+        if stop_after == rec["month"]:
+            status = f"stopped_after_{rec['month']}"
+            break
+    # ---------------- genotype freeze (full discovery fitness) and gate
+    if status == "ok":
+        months_all = sorted(members[0].daily)
+        nb_ = 500 if smoke else 10_000
+        full = {}
+        for mb in members:
+            raw = {c: np.concatenate([np.asarray(mb.daily[m_]["policy"][c]) for m_ in months_all]) for c in mb.daily[months_all[0]]["policy"]}
+            anc = {c: np.concatenate([np.asarray(mb.daily[m_]["anchor"][c]) for m_ in months_all]) for c in raw}
+            full[mb.idx] = (A7.fitness(raw, anc, n_boot=nb_), {c: float(np.sum(v)) for c, v in raw.items()})
+        win = max(full, key=lambda k: full[k][0])
+        wg = members[win].geno
+        cum = full[win][1]
+        gate = bool(all(v > 0 for v in cum.values()))
+        rep["freeze"] = {"winner": wg.name, "genotype": wg.to_json(), "fitness": full[win][0], "raw_cum_net4": cum,
+                         "all_fitness": {members[k].geno.name: v[0] for k, v in full.items()}, "gate_6of6": gate}
+        for mb in members:
+            A7.save_checkpoint(AD / "ckpt" / "immutable" / f"final_2023_{mb.geno.name}.pt",
+                               {"model": mb.trainer.model.state_dict(), "genotype": mb.geno.to_json()}, hashes)
+        A7.atomic_json(RP, rep)
+        log(f"A7 freeze winner {wg.name} gate {gate} cum {cum}")
+        if gate and not smoke:
+            rep["verification"] = a7_verify(wg, mk, cache, clk, r1, rv_med, sampler21, hashes, AD, RP, rep, t_all)
+        elif gate and smoke:
+            rep["verification"] = {"skipped": "smoke"}
+        else:
+            rep["verification"] = {"skipped": "discovery gate failed (winner raw cumulative net4 not 6/6 > 0)"}
+    rep.update(status=status, total_wall_sec=round(time.time() - t_all, 1),
+               disk_bytes=sum(p.stat().st_size for p in AD.rglob("*") if p.is_file()),
+               created_utc=datetime.now(timezone.utc).isoformat())
+    A7.atomic_json(RP, rep)
+    registry.record(REGISTRY, {"experiment": f"SMDP A7-RPBT{' smoke' if smoke else ''}", "role": "smoke" if smoke else "trial",
+                               "n_trials": len(pop), "n_simulations": len(disc_months),
+                               "config": {"population_seed": A7_POP_SEED},
+                               "result_summary": {"status": status, "freeze": rep.get("freeze", {}).get("winner"),
+                                                  "gate": rep.get("freeze", {}).get("gate_6of6"),
+                                                  "verification_pass": (rep.get("verification") or {}).get("pass")}})
+    log(f"A7 done status {status} {rep['total_wall_sec']}s")
+
+
+def a7_verify(wg, mk, cache, clk, r1, rv_med, sampler21, hashes, AD, RP, rep, t_all) -> dict:
+    """Winner genotype only: 5 seeds from scratch (P2 2021), train-only 2022-01..2023-12, then eval-first forward
+    2024-01..2025-12 (add month to replay only after its evaluation); no hyperparameter change, no exploit."""
+    import copy as _copy
+    import torch
+    from btcusdt_quant.rl import a7_rpbt as A7, smdp_continual as CT, smdp_reward as RW, gates as GT
+    dev = torch.device("cuda")
+    w = {"seeds": {}, "months": []}
+    all_months = CT.month_starts("2021-02", "2025-12")
+    seeds = (0, 1, 2, 3, 4)
+    a21 = pd.Timestamp("2021-01-30", tz="UTC").value
+    feats21 = a6_feats(cache, clk, pd.Timestamp("2022-01-01", tz="UTC").value, r1)
+    trs, anchors = {}, {}
+    for s in seeds:
+        tr = a7_make_trainer(mk, feats21, rv_med, wg, 5000 + s, A6_TRAIN_ENVS, sampler21)
+        while tr.decisions < A6_P2_DECISIONS:
+            tr.rollout_and_update()
+        anchors[s] = _copy.deepcopy(tr.model).eval()
+        A7.save_checkpoint(AD / "ckpt" / "immutable" / f"verify_P2_s{s}.pt", {"model": tr.model.state_dict()}, hashes)
+        trs[s] = tr
+    del a21
+
+    def train_month(M, mi):
+        Mend = M + pd.offsets.MonthBegin(1)
+        feats = a6_feats(cache, clk, M.value, r1)
+        for s in seeds:
+            tr = trs[s]
+            cfgc = CT.ContinualConfig(mix_latest=wg.replay[0], mix_recent6=wg.replay[1], mix_earlier=wg.replay[2])
+            smp = CT.ReplaySampler(mk["t"], mk["c"], [m for m in all_months if m <= M], Mend, cfgc,
+                                   pd.Timestamp("2026-01-01", tz="UTC").value)
+            tr.env.tok, tr.env.mk = feats
+            tr.sample_episode = smp.sample
+            st_, en_ = smp.sample(tr.rng, np.arange(tr.E))
+            tr.env.reset_env(np.arange(tr.E), st_, en_)
+            a7_set_lr(tr, A7.lr_at(wg, mi))
+            d0 = tr.decisions
+            while tr.decisions - d0 < A6_P3_DECISIONS:
+                tr.rollout_and_update()
+        return feats
+
+    mi = 0
+    for M in CT.month_starts("2022-01", "2023-12"):
+        train_month(M, mi)
+        mi += 1
+    fwd = CT.month_starts("2024-01", "2025-12")
+    ev = A6Eval(mk, feats21, RW.RewardConfig(idle_bps_per_h=0.0, inventory_bps_per_h=0.0, turnover_bps=0.0, f_kind="const"),
+                rv_med, list(seeds), fwd[0].value, pd.Timestamp("2026-01-01", tz="UTC").value, dev)
+    monthly = []
+    for k, M in enumerate(fwd):
+        Mend = M + pd.offsets.MonthBegin(1)
+        feats = a6_feats(cache, clk, M.value, r1)
+        ev.env.tok, ev.env.mk = feats
+        models = {}
+        for s in seeds:
+            trs[s].model.eval()
+            models[(s, "policy")] = trs[s].model
+            models[(s, "anchor")] = anchors[s]
+        accm = ev.run_month(models, Mend.value)
+        rec = {"month": f"{M:%Y-%m}", "members": a7_summary_cells(ev, accm, list(seeds)),
+               "daily": a7_month_daily(accm, ev, list(seeds))}
+        monthly.append(rec)
+        train_month(M, mi)
+        mi += 1
+        if k % 3 == 2:
+            for s in seeds:
+                A7.save_checkpoint(AD / "ckpt" / "immutable" / f"verify_{M:%Y%m}_s{s}.pt", {"model": trs[s].model.state_dict()}, hashes)
+        w["months"] = [{kk: v for kk, v in m.items() if kk != "daily"} for m in monthly]
+        rep["verification_progress"] = w["months"]
+        A7.atomic_json(RP, rep)
+        log(f"A7 verify {M:%Y-%m}")
+    cells = [f"o{o}_p{p}" for o, p in G_CELLS]
+    summ = {}
+    for c in cells:
+        raw = np.concatenate([np.mean([m["daily"][s]["policy"][c] for s in seeds], 0) for m in monthly])
+        anc = np.concatenate([np.mean([m["daily"][s]["anchor"][c] for s in seeds], 0) for m in monthly])
+        eq = np.r_[0.0, np.cumsum(raw)]
+        mdd = float((np.maximum.accumulate(eq) - eq).max())
+        yearly = {str(y): {"net4": float(np.mean([sum(m["members"][str(s)]["policy"][c]["net4"] for m in monthly if m["month"].startswith(str(y))) for s in seeds])),
+                           "round_trips": float(np.mean([sum(m["members"][str(s)]["policy"][c]["rt"] for m in monthly if m["month"].startswith(str(y))) for s in seeds]))}
+                  for y in (2024, 2025)}
+        tot = sum(m["members"][str(s)]["policy"][c]["minutes"] for m in monthly for s in seeds)
+        summ[c] = {"net4": float(raw.sum()), "anchor_excess": float((raw - anc).sum()), "mdd_daily": mdd,
+                   "net_over_mdd": float(raw.sum()) / mdd if mdd > 0 else None, "yearly": yearly,
+                   "boot_p05": {str(b): GT.boot_p05(raw, b) for b in (20, 60, 120)},
+                   "flat_ratio": float(sum(m["members"][str(s)]["policy"][c]["flat_min"] for m in monthly for s in seeds) / max(tot, 1)),
+                   "exposure": float(sum(m["members"][str(s)]["policy"][c]["expo"] for m in monthly for s in seeds) / max(tot, 1)),
+                   "seed_net4": {str(s): float(sum(m["members"][str(s)]["policy"][c]["net4"] for m in monthly)) for s in seeds}}
+    allc = summ.values()
+    nseed = sum(all(summ[c]["seed_net4"][str(s)] > 0 for c in cells) for s in seeds)
+    crit = {"cum_net4>0_6of6": bool(all(x["net4"] > 0 for x in allc)),
+            "anchor_excess>0_6of6": bool(all(x["anchor_excess"] > 0 for x in allc)),
+            "year_cell_net4>0_12of12": bool(all(v["net4"] > 0 for x in allc for v in x["yearly"].values())),
+            "year_cell_rt>=30_12of12": bool(all(v["round_trips"] >= 30 for x in allc for v in x["yearly"].values())),
+            "boot_p05>0_18of18": bool(all(b > 0 for x in allc for b in x["boot_p05"].values())),
+            "net4/mdd>=1_6of6": bool(all((x["net_over_mdd"] or 0) >= 1 for x in allc)),
+            "flat<0.95": bool(all(x["flat_ratio"] < 0.95 for x in allc)),
+            "seeds_6of6>=3of5": bool(nseed >= 3)}
+    w.update(summary=summ, pass_criteria=crit, **{"pass": bool(all(crit.values()))})
+    return w
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4", "smdp-a5", "smdp-a6-bench", "smdp-a6"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4", "smdp-a5", "smdp-a6-bench", "smdp-a6", "smdp-a7"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -5711,6 +6166,8 @@ def main(argv=None) -> None:
         return cmd_smdp_a6_bench(args)
     if args.command == "smdp-a6":
         return cmd_smdp_a6(args)
+    if args.command == "smdp-a7":
+        return cmd_smdp_a7(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
