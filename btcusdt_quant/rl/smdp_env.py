@@ -235,7 +235,8 @@ class SmdpYearBlockEnvs(SmdpBlockEnvs):
 
     def __init__(self, data: SmdpData, cells6: list, targets: tuple, waits: tuple, windows: list, env_per: int = 3):
         self.d, self.targets, self.waits = data, tuple(float(x) for x in targets), tuple(int(w) for w in waits)
-        self.year_blocks = [make_blocks(tuple(pd.Timestamp(int(x), tz="UTC").isoformat() for x in w)) for w in windows]
+        self.year_blocks = [make_blocks(tuple(x if isinstance(x, str) else pd.Timestamp(int(x), tz="UTC").isoformat()
+                                                for x in w)) for w in windows]
         self.blocks = [b for yb in self.year_blocks for b in yb]
         self.n_env = env_per
         self.slots = [(c, y) for c in cells6 for y in range(len(windows)) for _ in range(env_per)]
