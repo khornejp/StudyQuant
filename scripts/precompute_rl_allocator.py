@@ -6188,12 +6188,212 @@ def cmd_smdp_a6_recover(args) -> None:
     log(f"a6b recovered pass={rep['pass']} {rep['pass_criteria']}")
 
 
+# ================================================================ Gate-0 (Codex): scripted replays through the SMDP kernel
+G0_YEARS = (2022, 2023, 2024, 2025)
+G0_START = "2021-01-30"
+
+
+def g0_replay(mk, targets, dec, wait: int, cells_e, start_bar: int, keep_u: bool = False) -> dict:
+    """Batched kernel replay: env e follows targets[:, e] at decision bars dec (every `wait` minutes), continuous from
+    start_bar to the data end. Returns per env yearly net4, completed round trips and fills (2022..2025), optionally the
+    executed U at every decision (before the decision)."""
+    from btcusdt_quant.rl import maker_kernel as MK, smdp_batch as SB
+    D, E = targets.shape
+    ST = np.zeros((E, MK.S_NSTATE))
+    off = np.array([c[0] for c in cells_e], float)
+    pen = np.array([c[1] for c in cells_e], float)
+    endx = np.full(E, len(mk["t"]), np.int64)
+    nb = np.zeros(E, np.int64)
+    jo = np.zeros(E, np.int64)
+    net_b, u_b, k_b = (np.zeros((E, SB.MAX_BLOCKS)) for _ in range(3))
+    yr_edges = np.array([pd.Timestamp(f"{y}-01-01", tz="UTC").value for y in (*G0_YEARS, 2026)], np.int64)
+    yidx = np.searchsorted(mk["t"], yr_edges)
+    net_y = np.zeros((E, len(G0_YEARS)))
+    rt_at = np.zeros((E, len(yr_edges)))
+    fills_at = np.zeros((E, len(yr_edges)))
+    U = np.zeros((D, E), np.float32) if keep_u else None
+    first = int(np.searchsorted(dec, start_bar))
+    wt = np.full(E, wait, np.int64)
+    for q in range(first, D):
+        i = int(dec[q])
+        if keep_u:
+            U[q] = ST[:, MK.S_U]
+        gi = np.full(E, i, np.int64)
+        SB.advance_batch(mk["o"], mk["h"], mk["l"], mk["c"], mk["t"], mk["frate"], ST, gi, targets[q].astype(float), wt,
+                         endx, off, pen, net_b, u_b, k_b, nb, jo)
+        if (ST[:, MK.S_FAULT] > 0).any():
+            raise SystemExit(f"gate0 fault at bar {i}")
+        B = int(nb.max())
+        if B:
+            bstart = i + 1 + 5 * np.arange(B)
+            yb = np.searchsorted(yidx, bstart, "right") - 1               # index into G0_YEARS (-1 = before 2022)
+            for b in range(B):
+                if 0 <= yb[b] < len(G0_YEARS):
+                    net_y[:, yb[b]] += net_b[:, b]
+        for k_, yi in enumerate(yidx):
+            if i < yi <= i + wait:
+                rt_at[:, k_] = ST[:, MK.S_RT]
+                fills_at[:, k_] = ST[:, MK.S_FILLS]
+    rt_y = np.diff(rt_at, axis=1)
+    fill_y = np.diff(fills_at, axis=1)
+    return {"net_y": net_y, "rt_y": rt_y, "fills_y": fill_y, "U": U}
+
+
+def g0_cell_year(arr) -> dict:
+    return {f"o{G_CELLS[e][0]}_p{G_CELLS[e][1]}": {str(y): float(arr[e, k]) for k, y in enumerate(G0_YEARS)}
+            for e in range(arr.shape[0])}
+
+
+def cmd_gate0(args) -> None:
+    """Gate-0: (1) G3 exact continuous shadow and 9-level base through the SMDP kernel vs the G3 Books; (2) every
+    research / catalog token followed alone (side x strength, 9 levels, 15-min decisions) vs its original ledger where
+    one exists; (3) equal-weight combination of the profitable token rules."""
+    import numba
+    from btcusdt_quant.rl import signal_store as SG, smdp_batch as SB, smdp_reward as RW, dev_data as DD, u35
+    t_all = time.time()
+    numba.set_num_threads(16)
+    GD = OUT / "gate0"
+    GD.mkdir(parents=True, exist_ok=True)
+    minutes, fund, in_hash = DD.load_dev()
+    fs = u35.assert_settlement_grid(u35.scheduled(fund))
+    mk = SB.market_arrays(minutes, fs, RW.A6_REWARD)
+    del minutes
+    rep: dict = {"spec": {"kernel": "SMDP maker kernel (batched), maker 4 bps, PESS funding, 6 cells",
+                          "warmup": f"continuous from {G0_START}; ledger compared 2022..2025",
+                          "tolerance_g3_exact": "cell-year |net4 diff| <= max(1 bps, 0.1 % of |G3 net4|) and equal "
+                                                "round trips"},
+                 "input_sha256": in_hash, "git_head": git("rev-parse", "HEAD"), "test_rows_used": 0}
+    start_bar = int(np.searchsorted(mk["t"], pd.Timestamp(G0_START, tz="UTC").value))
+    # ---------------- (1) G3
+    t0 = time.time()
+    MAT, mg, dec4, stg, _ = g3_setup()
+    if not (np.array_equal(mg.t, mk["t"]) and np.array_equal(mg.c, mk["c"])):
+        raise SystemExit("G3 market != kernel market")
+    sig = g3_signals(MAT, stg)
+    base = g3_combined(MAT.b2, mg, dec4, sig)
+    D = len(dec4)
+    held = {}
+    for c in [f"o{o}_p{p}" for o, p in G_CELLS]:
+        U0 = np.zeros(D)
+        for trs in base[c]["trades"]:
+            for r in trs.itertuples():
+                a = int(np.searchsorted(dec4, r.entry_idx))             # first decision bar >= entry fill
+                b = D if r.open_at_end else int(np.searchsorted(dec4, r.exit_idx))
+                U0[a:b] += r.side * r.entry_weight_frozen
+        held[c] = U0
+    raw = (sig["long"]["side"] * sig["long"]["w"] + sig["short"]["side"] * sig["short"]["w"]).astype(float)
+    raw = np.nan_to_num(raw)
+    # exact shadow target: the Book's held signed weight where a position is open (frozen at entry), else the signal
+    exact = np.column_stack([np.where(held[c] != 0, np.where(np.sign(raw) == np.sign(held[c]), held[c], raw), raw)
+                             for c in held])
+    q9 = np.clip(np.round(raw * 4) / 4, -1, 1)
+    rx = g0_replay(mk, exact, dec4, 240, G_CELLS, start_bar, keep_u=True)
+    rq = g0_replay(mk, np.repeat(q9[:, None], 6, 1), dec4, 240, G_CELLS, start_bar)
+    g3 = {}
+    for e, c in enumerate(held):
+        ref = {y: float(base[c]["daily"][(pd.Timestamp(f"{y}-01-01") - pd.Timestamp("2022-01-01")).days:
+                                         (pd.Timestamp(f"{y + 1}-01-01") - pd.Timestamp("2022-01-01")).days].sum()) for y in G0_YEARS}
+        rows = {}
+        for k, y in enumerate(G0_YEARS):
+            d_ = rx["net_y"][e, k] - ref[y]
+            tol = max(1.0, 0.001 * abs(ref[y]))
+            rows[str(y)] = {"g3_net4": ref[y], "shadow_net4": float(rx["net_y"][e, k]), "diff": float(d_),
+                            "within_tol": bool(abs(d_) <= tol), "g3_closed": int(base[c]["closed"][y]),
+                            "shadow_rt": int(rx["rt_y"][e, k]), "rt_equal": bool(int(base[c]["closed"][y]) == int(rx["rt_y"][e, k])),
+                            "q9_net4": float(rq["net_y"][e, k])}
+        Uk = rx["U"][:, e].astype(float)
+        ok = np.flatnonzero(dec4 >= start_bar)
+        dv = ok[np.abs(Uk[ok] - held[c][ok]) > 1e-6]
+        div = None
+        if len(dv):
+            q = int(dv[0])
+            i = int(dec4[q])
+            tr_near = [r._asdict() for trs in base[c]["trades"] for r in trs.itertuples()
+                       if r.decision_idx <= i + 240 and (r.open_at_end or r.exit_idx >= i - 2880)][-3:]
+            div = {"time": str(pd.Timestamp(int(mk["t"][i]), tz="UTC")), "decision": q, "book_U": float(held[c][q]),
+                   "kernel_U": float(Uk[q]), "target_prev": float(exact[q - 1, e]) if q else None,
+                   "target": float(exact[q, e]), "nearby_book_trades": [{k: (int(v) if isinstance(v, (np.integer,)) else
+                                                                           (float(v) if isinstance(v, (float, np.floating)) else v))
+                                                                       for k, v in t_.items() if k != "Index"} for t_ in tr_near]}
+        g3[c] = {"years": rows, "pass": bool(all(r_["within_tol"] and r_["rt_equal"] for r_ in rows.values())),
+                 "first_divergence": div, "divergent_decisions_2021on": int(len(dv)),
+                 "q9_vs_g3_pooled_ratio": float(sum(r_["q9_net4"] for r_ in rows.values()) / sum(ref.values()))
+                 if sum(ref.values()) else None,
+                 "q9_positive_years": int(sum(r_["q9_net4"] > 0 for r_ in rows.values()))}
+    rep["g3"] = {"cells": g3, "exact_pass_6of6": bool(all(v["pass"] for v in g3.values())), "sec": round(time.time() - t0, 1)}
+    log(f"gate0 G3 exact pass {rep['g3']['exact_pass_6of6']} {time.time() - t0:.0f}s")
+    dump(GD / "gate0_report.json", rep)
+    # ---------------- (2) tokens followed alone, 15-min decisions
+    t0 = time.time()
+    toks = SG.tokens()
+    clk = SG.clock()
+    dt15 = np.arange(pd.Timestamp(G0_START, tz="UTC").value, pd.Timestamp("2026-01-01", tz="UTC").value, 15 * SG.MIN_NS,
+                     dtype=np.int64)
+    dec15 = np.searchsorted(mk["t"], dt15) - 1
+    rows15 = (dt15 - clk[0]) // SG.STEP_NS
+    T = np.zeros((len(dt15), len(toks)))
+    for k, tk in enumerate(toks):
+        f = pd.read_parquet(SS / "tokens" / f"{tk}.parquet", columns=["side", "strength", "available"])
+        sd = f.side.to_numpy(float)[rows15] * (f.available.to_numpy()[rows15] > 0)
+        st = f.strength.to_numpy(float)[rows15]
+        w = np.where(np.isfinite(st), np.clip(st, 0, 1), 1.0) if tk in SG.RESEARCH_TOKENS else 1.0
+        T[:, k] = np.clip(np.round(sd * w * 4) / 4, -1, 1)
+    E_cells = [c for c in G_CELLS for _ in toks]
+    TT = np.tile(T, (1, 6))
+    rr = g0_replay(mk, TT, dec15, 15, E_cells, start_bar)
+    tokres = {}
+    for k, tk in enumerate(toks):
+        cells_ = {}
+        for ci, cc in enumerate(G_CELLS):
+            e = ci * len(toks) + k
+            cells_[f"o{cc[0]}_p{cc[1]}"] = {"years": {str(y): float(rr["net_y"][e, j]) for j, y in enumerate(G0_YEARS)},
+                                           "rt": {str(y): int(rr["rt_y"][e, j]) for j, y in enumerate(G0_YEARS)}}
+        tokres[tk] = {"cells": cells_, "net4_total_mean_cells": float(np.mean([sum(v["years"].values()) for v in cells_.values()]))}
+    # original ledgers where they exist (sleeve partitions; DEV years only)
+    def grid_years(d: Path) -> dict:
+        g = sp.read_partitioned(d, "grid", years=set(range(2021, 2026)))[["minute_time", "net4"]]
+        y = pd.DatetimeIndex(g.minute_time, tz="UTC").year
+        return {str(yy): float(g.net4[y == yy].sum()) for yy in G0_YEARS}
+    orig = {}
+    for tk in ("G3_LONG", "G3_SHORT", "LBR_FUND"):
+        orig[tk] = {c: grid_years(PRE / "g3_family" / c / tk) for c in CELL_TAG.values()}
+    for tk in ("C1v2", "C4v2"):
+        orig[tk] = {"native": grid_years(PRE / "common" / tk)}
+    orig["B3"] = {"native_B3_AXC0": grid_years(PRE / "common" / "B3_AXC0")}
+    orig["K04"] = {"native_K04_AXC0": grid_years(PRE / "common" / "K04_AXC0")}
+    for b, sid in u35.SPEC_ID.items():
+        if sid in tokres and sid not in orig:
+            orig[sid] = {f"native_{b}": grid_years(PRE35 / "common" / b)}
+    for tk, o_ in orig.items():
+        tokres[tk]["original_ledger"] = o_
+    rep["tokens"] = {"results": tokres, "decision": "15 min", "target": "side x (weight for research tokens, 1 otherwise), "
+                                                                      "9 levels", "sec": round(time.time() - t0, 1)}
+    log(f"gate0 tokens {time.time() - t0:.0f}s")
+    dump(GD / "gate0_report.json", rep)
+    # ---------------- (3) equal-weight combination of the profitable token rules
+    prof = [tk for tk in toks if tokres[tk]["net4_total_mean_cells"] > 0]
+    if prof:
+        idx = [toks.index(tk) for tk in prof]
+        comb = np.clip(np.round(T[:, idx].mean(1) * 4) / 4, -1, 1)
+        rc = g0_replay(mk, np.repeat(comb[:, None], 6, 1), dec15, 15, G_CELLS, start_bar)
+        rep["combination"] = {"rules": prof, "cells": g0_cell_year(rc["net_y"]), "rt": g0_cell_year(rc["rt_y"]),
+                              "note": "profitable = positive 2022..2025 net4 mean over cells in this same replay "
+                                      "(in-sample selection; reference only)"}
+    rep.update(total_wall_sec=round(time.time() - t_all, 1), created_utc=datetime.now(timezone.utc).isoformat())
+    dump(GD / "gate0_report.json", rep)
+    registry.record(REGISTRY, {"experiment": "Gate-0 scripted replays through the SMDP kernel", "role": "validation",
+                               "n_trials": 0, "n_simulations": len(toks) + 3, "config": rep["spec"],
+                               "result_summary": {"g3_exact_pass_6of6": rep["g3"]["exact_pass_6of6"],
+                                                  "profitable_tokens": prof}})
+    log(f"gate0 done {rep['total_wall_sec']}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4", "smdp-a5", "smdp-a6-bench", "smdp-a6", "smdp-a7", "smdp-a6-recover"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4", "smdp-a5", "smdp-a6-bench", "smdp-a6", "smdp-a7", "smdp-a6-recover", "gate0"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -6264,6 +6464,8 @@ def main(argv=None) -> None:
         return cmd_smdp_a7(args)
     if args.command == "smdp-a6-recover":
         return cmd_smdp_a6_recover(args)
+    if args.command == "gate0":
+        return cmd_gate0(args)
     if args.command == "precompute":
         sp.require_unlock(args.allow_test_parity, "precompute parity (reported TEST numbers)")
         return cmd_precompute(args)
