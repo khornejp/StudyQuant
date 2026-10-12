@@ -1,0 +1,97 @@
+{
+  "name": "A8 amendment (GA + recurrent PPO + renewable exposure lease + RL-selected SL/TP)",
+  "status": "LOCKED",
+  "created_utc": "2026-10-12T04:15:53.5116137Z",
+  "spec": {
+    "file": ".superpowers/sdd/rl_allocator/a8_ga_rl_spec_2026-10-12.md",
+    "sha256": "b7c95e922c2e2c1648d9bd87a4755ae4eca0ea7c753077626fcd5dae184d65fd"
+  },
+  "source_design_sha256": {
+    "a8_design.md": "2476cb4aad39fd906297f15f7995f0291f815749b86554ae0cf0459cee930384",
+    "a8_cap_result.md": "5f7076867672a5c74874cbb0f111e18332a0492db7eff4cdc8e0de4f6824bd93"
+  },
+  "baseline_code_sha256": {
+    "maker_kernel": "0f26714ab79fe90695e6ea87cce6aa8729d946704581d8320412dc06e3d5dc76",
+    "smdp_batch": "aa1ab9afa3feb05dac527b01195957216b8fdf4c28a32f0b70fbc62bb9871d0f",
+    "smdp_reward": "084ead193270621910c80466a88010aef49a81bdbe8d006445376e23f68afe6f",
+    "gates": "6bb46bec6b80f170f8500e1c23d3b6ce098619a2b609c6fa6dde2ac8a335f36a",
+    "signal_store": "89451ba646b6e2d3c5fedbb9dc4b6f6467f476fc2efbd4fe2733227ccf229feb",
+    "dev_data": "a87c9593c896959eecdee6be7858142de5275fb95507692915b3e2a2e8969d20"
+  },
+  "data": {
+    "cutoff": "< 2026-01-01",
+    "market_path": "out/rl_allocator_20261010/dev_market/btcusdt_1m_dev_2020_2025.parquet",
+    "market_file_sha256": "859a25d8bef94696b7a8cf869d933f595ee3bfdd65024ae2b01c17dc0cb87ace",
+    "market_dev_slice_sha256": "564fab0b4dd33561fe5eb51b4aa72284df897c31c658ce0fc8b4a4436dc0f0f3",
+    "market_rows": 3156480,
+    "market_last": "2025-12-31 23:59:00+00:00",
+    "scaler": "fixed-2021",
+    "pretrain": [2021, 2021],
+    "ga_selection": [2022, 2023],
+    "evaluation": [2024, 2025],
+    "test_rows_used": 0,
+    "physical_test_reads": 0
+  },
+  "tokens": {
+    "count": 44,
+    "all_required": true,
+    "names": ["K01", "K01_FLIP", "K02", "K03", "K04", "K05", "B1", "B2", "B3", "K06_k0.5", "K07_k0.5", "K06_k1.0", "K07_k1.0", "K08", "K09", "K11_15m", "K11_1h", "K12_30m", "K12_1h", "K13", "K14", "K15", "K16", "K17_N5", "K17_N7", "K18", "K19", "K20_A", "K21_A", "K20_B", "K22", "K23", "K24", "K25", "K26", "K27", "K28", "K29", "K30", "G3_LONG", "G3_SHORT", "LBR_FUND", "C1v2", "C4v2"]
+  },
+  "action": {
+    "target": [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0],
+    "cadence_min": [5, 15, 60, 240, 1440],
+    "joint_target_cadence_actions": 45,
+    "sl_sigma_multipliers": [0.0, 1.0, 2.0, 3.0, 5.0],
+    "tp_sigma_multipliers": [0.0, 1.0, 2.0, 4.0, 8.0],
+    "factorization": "joint target/cadence head + SL head + TP head",
+    "sigma": "causal RV24h at decision multiplied by sqrt(wait/1440), bps",
+    "wake_trigger": "excluded"
+  },
+  "execution": {
+    "cap_minutes": 1440,
+    "cap_mode": "renewable exposure lease",
+    "event_done": false,
+    "automatic_reentry": false,
+    "same_direction_reentry": true,
+    "decision_gap_max_min": 1,
+    "sl_tp_same_bar": "SL first",
+    "sl_gap": "trigger or adverse minute open when open gaps through trigger",
+    "tp_fill": "trigger price, no favorable gap improvement",
+    "new_fill_exit_activation": "next minute",
+    "fee_bps_per_side": 2.0,
+    "ledger_identity_tolerance": 1e-8
+  },
+  "ga": {
+    "seed": 20261012,
+    "population": 8,
+    "generations_including_initial": 6,
+    "elite": 2,
+    "weight_inheritance": false,
+    "fitness": "raw net4",
+    "token_gate_bounds": [0.1, 2.0],
+    "token_gate_normalization": "geometric mean 1",
+    "gae_lambda_half_life_hours": [6, 12, 24],
+    "token_width": [32, 64],
+    "final_seeds": [20261012, 20261013, 20261014, 20261015, 20261016]
+  },
+  "budget": {
+    "selection_decisions": 3016000000,
+    "final_decisions": 530000000,
+    "total_decisions": 3546000000,
+    "selection_authorized_now": false,
+    "smoke": {
+      "cell": "o2_p0.5",
+      "months": 1,
+      "population": 2,
+      "generations": 1,
+      "decisions": 100000,
+      "profit_judgment": false
+    }
+  },
+  "resume": {
+    "atomic": true,
+    "hash_mismatch_refused": true,
+    "partial_unit_discarded": true,
+    "committed_evaluation_repeated": false
+  }
+}
