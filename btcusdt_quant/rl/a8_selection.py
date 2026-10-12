@@ -32,6 +32,7 @@ CELL_NAMES = [f"o{offset}_p{penetration}" for offset, penetration in CELLS]
 PRETRAIN_START = "2021-01-30"
 PRETRAIN_END = "2022-01-01"
 FULL_SELECTION_DECISIONS = 3_016_000_000
+AMENDMENT_REVISION = "r2.1"
 
 
 def _utc() -> str:
@@ -279,7 +280,7 @@ def _write_genome_report(path: Path, base: dict, monthly: list, trainer, status:
 
 def _run_genome(genome, generation, seed: int, config: SelectionConfig, months, market, features, rv_median,
                 hashes: dict, hash_id: str, scaler: dict, run_dir: Path, logger: RunLog,
-                counter: CommitCounter, recheck=False) -> dict:
+                counter: CommitCounter, recheck=False, compatible_hash_ids=None) -> dict:
     branch = run_dir / ("rechecks" if recheck else "genomes")
     generation_name = "confirmation" if recheck else f"generation_{int(generation):02d}"
     genome_dir = branch / generation_name / genome.name / f"seed_{seed}"
@@ -288,7 +289,7 @@ def _run_genome(genome, generation, seed: int, config: SelectionConfig, months, 
     if report_path.exists():
         existing = json.loads(report_path.read_text(encoding="utf-8"))
         if existing.get("status") == "complete":
-            if existing.get("hash_id") != hash_id:
+            if existing.get("hash_id") not in (compatible_hash_ids or {hash_id}):
                 raise RuntimeError(f"completed genome hash mismatch: {report_path}")
             return existing
     base = {"generation": generation_name, "genome": genome.to_json(), "seed": seed, "hash_id": hash_id,
@@ -333,10 +334,16 @@ def _run_genome(genome, generation, seed: int, config: SelectionConfig, months, 
         _write_genome_report(report_path, base, monthly, trainer, "running", progress)
 
     all_months = CT.month_starts("2021-02", config.end)
-    for index, month in enumerate(months):
+    start_index = 0
+    if phase.startswith(("evaluated:", "trained:")):
+        if not 0 <= month_index < len(months) or phase.split(":", 1)[1] != f"{months[month_index]:%Y-%m}":
+            raise RuntimeError(f"invalid A8 resume phase/index: {phase} {month_index}")
+        if len(monthly) != month_index + 1:
+            raise RuntimeError(f"invalid A8 resume monthly length: {len(monthly)} for {phase}")
+        start_index = month_index + int(phase.startswith("trained:"))
+    for index in range(start_index, len(months)):
+        month = months[index]
         month_name = f"{month:%Y-%m}"
-        if phase.startswith("trained:") and index <= month_index:
-            continue
         if phase == f"evaluated:{month_name}":
             record = monthly[index]
         else:
@@ -400,12 +407,14 @@ def _run_genome(genome, generation, seed: int, config: SelectionConfig, months, 
 
 
 def _report_base(config: SelectionConfig, hashes: dict, input_hash: dict, scaler: dict) -> dict:
-    return {"run_id": config.run_id, "status": "running", "created_utc": _utc(), "amendment_revision": "r2",
+    return {"run_id": config.run_id, "status": "running", "created_utc": _utc(),
+            "amendment_revision": AMENDMENT_REVISION,
             "config": asdict(config),
             "locked": {"population": 8, "generations": 6, "elite": 2, "tournament": 3,
                        "crossover": "uniform", "mutation": "log-space", "seed": A8.POPULATION_SEED,
                        "pretrain_decisions": 10_000_000, "monthly_decisions": 2_000_000,
-                       "weight_inheritance": False, "fitness": "raw net4", "amendment_revision": "r2"},
+                       "weight_inheritance": False, "fitness": "raw net4",
+                       "amendment_revision": AMENDMENT_REVISION},
             "hashes": hashes, "hash_id": _canonical_sha({"hashes": hashes, "config": _identity_config(config),
                                                            "input": input_hash, "scaler": scaler}),
             "input_hash": input_hash, "scaler": scaler, "git_head": _git_head(), "data_cutoff": "< 2026-01-01",
@@ -436,12 +445,34 @@ def run_selection(config: SelectionConfig, resume: bool = False) -> dict:
         candidate = _report_base(config, hashes["code"], input_hash, scaler)
         hash_id = _canonical_sha(hashes)
         candidate["hash_id"] = hash_id
+        compatible_hash_ids = {hash_id}
         if report_path.exists():
             if not resume:
                 raise FileExistsError(f"A8 run exists; use --resume: {run_dir}")
             report = json.loads(report_path.read_text(encoding="utf-8"))
             if report.get("hash_id") != hash_id:
-                raise RuntimeError("A8 run hash/config mismatch")
+                amendment = json.loads(AMENDMENT.read_text(encoding="utf-8"))
+                migration = amendment.get("resume_migration", {})
+                stored_config = dict(report.get("config", {}))
+                stored_config.pop("stop_after_commits", None)
+                if (migration.get("run_id") != config.run_id
+                        or migration.get("from_hash_id") != report.get("hash_id")
+                        or migration.get("to_revision") != AMENDMENT_REVISION
+                        or stored_config != _identity_config(config)
+                        or report.get("input_hash") != input_hash or report.get("scaler") != scaler):
+                    raise RuntimeError("A8 run hash/config mismatch")
+                previous_hash_id = report["hash_id"]
+                compatible_hash_ids.add(previous_hash_id)
+                report.update(hash_id=hash_id, hashes=candidate["hashes"],
+                              amendment_revision=AMENDMENT_REVISION,
+                              previous_hash_id=previous_hash_id,
+                              compatible_hash_ids=sorted(compatible_hash_ids),
+                              bugfix_migration={"from_revision": report.get("amendment_revision"),
+                                                "to_revision": AMENDMENT_REVISION,
+                                                "reason": migration["reason"], "migrated_utc": _utc()})
+                report["locked"]["amendment_revision"] = AMENDMENT_REVISION
+            else:
+                compatible_hash_ids.update(report.get("compatible_hash_ids", []))
             report["resume_count"] = int(report.get("resume_count", 0)) + 1
             report["status"] = "running"
         else:
@@ -461,7 +492,7 @@ def run_selection(config: SelectionConfig, resume: bool = False) -> dict:
             summary_path = run_dir / f"generation_{generation:02d}_summary.json"
             if summary_path.exists():
                 summary = json.loads(summary_path.read_text(encoding="utf-8"))
-                if summary.get("status") != "complete" or summary.get("hash_id") != hash_id:
+                if summary.get("status") != "complete" or summary.get("hash_id") not in compatible_hash_ids:
                     raise RuntimeError(f"invalid generation summary: {summary_path}")
                 generation_results = summary["results"]
                 if generation + 1 < config.generations:
@@ -470,7 +501,8 @@ def run_selection(config: SelectionConfig, resume: bool = False) -> dict:
             generation_results = []
             for genome in population:
                 result = _run_genome(genome, generation, config.seed, config, months, market, features, rv_median,
-                                     hashes, hash_id, scaler, run_dir, logger, counter)
+                                     hashes, hash_id, scaler, run_dir, logger, counter,
+                                     compatible_hash_ids=compatible_hash_ids)
                 generation_results.append({"genome": genome.to_json(), "fitness_raw_net4": result["fitness_raw_net4"],
                                            "result": str((run_dir / "genomes" / f"generation_{generation:02d}" /
                                                           genome.name / f"seed_{config.seed}" / "result.json").relative_to(run_dir))})
@@ -498,7 +530,8 @@ def run_selection(config: SelectionConfig, resume: bool = False) -> dict:
             seed_results = {str(config.seed): row["result"]}
             for seed in (config.seed + 1, config.seed + 2):
                 result = _run_genome(genome, "confirmation", seed, config, months, market, features, rv_median,
-                                     hashes, hash_id, scaler, run_dir, logger, counter, recheck=True)
+                                     hashes, hash_id, scaler, run_dir, logger, counter, recheck=True,
+                                     compatible_hash_ids=compatible_hash_ids)
                 seed_scores[seed] = tuple(result["fitness_raw_net4"])
                 seed_results[str(seed)] = str((run_dir / "rechecks" / "confirmation" / genome.name /
                                                 f"seed_{seed}" / "result.json").relative_to(run_dir))
@@ -563,7 +596,7 @@ def run_calibration(run_id: str, env_counts: list[int], decisions: int = 131_072
     report = {"run_id": run_id, "status": "running", "created_utc": _utc(), "env_counts": env_counts,
               "measurement_decisions_target": decisions, "gpu": torch.cuda.get_device_name(0),
               "shared_process_pid": 34640, "shared_process_killed": False, "rows": [],
-              "locked_assumptions_changed": False, "amendment_revision": "r2",
+              "locked_assumptions_changed": False, "amendment_revision": AMENDMENT_REVISION,
               "test_rows_used": 0, "physical_test_reads": 0, "profit_judgment": False}
     A8.json_write(report_path, report)
     try:

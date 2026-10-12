@@ -1,9 +1,9 @@
 {
-  "name": "A8 amendment r2 (exit-reason reward shaping)",
-  "revision": "r2",
+  "name": "A8 amendment r2.1 (resume bugfix only)",
+  "revision": "r2.1",
   "status": "LOCKED",
   "created_utc": "2026-10-12T04:15:53.5116137Z",
-  "amended_utc": "2026-10-12T06:31:00Z",
+  "amended_utc": "2026-10-12T16:23:29.7108785Z",
   "spec": {
     "file": ".superpowers/sdd/rl_allocator/a8_ga_rl_spec_2026-10-12.md",
     "sha256": "3176c91fb87e8adcb3bb90957ab606d619f33d92808073348f7e3cd0b5b4f3e2"
@@ -14,6 +14,13 @@
       "amendment_sha256": "5e0d4589bf226d5033f6c11a8e28450f6c694ae4ecf5fb7d427e7171b9cd9016",
       "run_id": "a8_ga_selection_20261012",
       "status": "stopped by user; never resumable as r2"
+    },
+    "r2": {
+      "spec_sha256": "3176c91fb87e8adcb3bb90957ab606d619f33d92808073348f7e3cd0b5b4f3e2",
+      "amendment_sha256": "ce26afb6c949c806e2465c0d02d06ed01b97b20c5506f1f1aa7af0b48a69ae0a",
+      "a8_selection_sha256": "d6cac76fb4dfa4e959c91d152cf5ba7e97d2b649e6c08430e09fc5aaee191be6",
+      "run_id": "a8_ga_selection_r2_20261012",
+      "status": "superseded by r2.1 resume bugfix; reward, search, fitness, seed, and budget unchanged"
     }
   },
   "source_design_sha256": {
@@ -26,7 +33,7 @@
     "smdp_reward": "ed44c8fc1bfb0580817b80df41a79074029fb41d170a2a9c9d5086fb9bd72419",
     "smdp_env": "913b346a48325014b66dea6df0d5cbd37d3b5195f649322962c99af1667d0324",
     "a8_ga_rl": "96bcd7582d6f01273d4d14ec4c465870dfd73e2e4108b09a7916fa403d077105",
-    "a8_selection": "d6cac76fb4dfa4e959c91d152cf5ba7e97d2b649e6c08430e09fc5aaee191be6",
+    "a8_selection": "32ba10f92c3b8fe3aa8fe5334b2b3128e31eae934162ecc1aa2c41ec6ef81bf9",
     "entrypoint": "26c2f7b833dc5f24c6034db25dbafdd33d06ebcabcf5fdf4493c84ecefe703d5",
     "gates": "6bb46bec6b80f170f8500e1c23d3b6ce098619a2b609c6fa6dde2ac8a335f36a",
     "signal_store": "89451ba646b6e2d3c5fedbb9dc4b6f6467f476fc2efbd4fe2733227ccf229feb",
@@ -127,6 +134,16 @@
     "atomic": true,
     "hash_mismatch_refused": true,
     "partial_unit_discarded": true,
-    "committed_evaluation_repeated": false
+    "committed_evaluation_repeated": false,
+    "r2_1_fix": "resume iteration starts at committed month_index; evaluated month trains next, trained month advances",
+    "progress_validation": "phase month must equal months[month_index] and monthly length must equal month_index + 1",
+    "cuda_unknown_error_policy": "no in-process retry because CUDA context may be invalid; restart process from last atomic genome-month checkpoint",
+    "existing_test_gap": "driver smoke checked config identity and trainer state only; it never executed _run_genome after an evaluated monthly checkpoint"
+  },
+  "resume_migration": {
+    "run_id": "a8_ga_selection_r2_20261012",
+    "from_hash_id": "d927ce0c8201ed153180b894385c20720c2c45fdbe983b56ffee9d08f3484687",
+    "to_revision": "r2.1",
+    "reason": "bugfix only: restore month iteration from committed phase/index; reward and GA search unchanged"
   }
 }

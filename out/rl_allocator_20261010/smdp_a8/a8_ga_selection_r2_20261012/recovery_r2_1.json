@@ -1,0 +1,65 @@
+{
+  "run_id": "a8_ga_selection_r2_20261012",
+  "recorded_utc": "2026-10-12T16:24:06.3731687Z",
+  "source": {
+    "stdout": "../a8_ga_selection_r2_20261012.stdout.log",
+    "selection_log": "selection.log",
+    "failure_utc": "2026-10-12T16:13:07.734648+00:00",
+    "bad_resume_utc": "2026-10-12T16:15:54.649195+00:00",
+    "manual_stop_utc_approx": "2026-10-12T16:17:00Z",
+    "git_head": "83af20ba7131b1cbb7077f303fe1153ea6b275a0"
+  },
+  "incident": {
+    "failure": "torch.AcceleratorError: CUDA error: unknown error during G02_03 2023-09 continual training",
+    "root_cause": "resume restored evaluated:2023-09 state and evaluator cursor but restarted month iteration at index 0",
+    "observed_bad_result": "2022-01 and 2022-02 evaluations had zero decisions after resume",
+    "known_overwrites": [
+      "months/202201.json",
+      "months/202202.json",
+      "progress.json",
+      "result.json",
+      "checkpoints/evaluated_202201.pt",
+      "checkpoints/evaluated_202202.pt",
+      "checkpoints/trained_202201.pt"
+    ],
+    "contamination_scope": "entire interrupted G02_03 directory treated as contaminated"
+  },
+  "recovery": {
+    "method": "preserve contaminated directory by rename; leave canonical G02_03 absent for deterministic restart from scratch",
+    "preserved_path": "genomes/generation_02/G02_03_corrupt_resume_20261012T1617Z",
+    "preserved_file_count": 46,
+    "preserved_tree_sha256": "7d67199860052aeabf266c717a967e901e7aebfe3bb367e3771761b3ad47b12e",
+    "canonical_G02_03_present": false,
+    "long_run_restarted": false,
+    "resume_command": ".\\venv_btcusdt\\Scripts\\python.exe -u scripts\\precompute_rl_allocator.py smdp-a8 --only selection --run-id a8_ga_selection_r2_20261012 --resume *>> out\\rl_allocator_20261010\\smdp_a8\\a8_ga_selection_r2_20261012.stdout.log",
+    "first_run_reference": "stdout contains 21 nonzero monthly evaluations from 2022-01 through 2023-09; compare after rerun",
+    "first_run_comparison": "pending deterministic G02_03 rerun"
+  },
+  "unchanged_completed_artifacts": {
+    "scope": "generation_00 all; generation_01 all; generation_02 G02_00, G02_01, G02_02",
+    "file_count": 969,
+    "tree_sha256_before": "565fb353f934c9ab677371944d005d8bf2e965c2eb3586033f32ab99089ab6ac",
+    "tree_sha256_after": "565fb353f934c9ab677371944d005d8bf2e965c2eb3586033f32ab99089ab6ac",
+    "match": true,
+    "generation_00_summary_sha256": "18006e61834f76163a4f34e0334674dcca55ee007364e3b83231b4a56828131c",
+    "generation_01_summary_sha256": "939f219d589aa3711fbbeadea96aebb84b8b7c353261de2c16b6fa4ba167276f"
+  },
+  "freeze_r2_1": {
+    "reason": "resume cursor bugfix only",
+    "reward_changed": false,
+    "search_changed": false,
+    "fitness_changed": false,
+    "seed_changed": false,
+    "new_run_hash_id": "d98fb82e8fe9fcaaa4fdc7dc87257a4e7e42cc070de9ff5628f553602f871943",
+    "a8_selection_sha256": "32ba10f92c3b8fe3aa8fe5334b2b3128e31eae934162ecc1aa2c41ec6ef81bf9",
+    "freeze_amendment_A8_sha256": "ec05aef48255a34e1b9cf3d4d87fedb33e55f9cd4e841daee60dbedb146ba05c"
+  },
+  "research_boundary": {
+    "data_cutoff": "< 2026-01-01",
+    "frozen_hypothesis": "A8 r2 reward, GA search, and raw-net4 fitness remain unchanged; only committed resume position changes",
+    "out_of_sample_result": "not executed",
+    "test_rows_used": 0,
+    "physical_test_reads": 0,
+    "profit_judgment": false
+  }
+}
