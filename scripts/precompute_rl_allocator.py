@@ -6234,6 +6234,8 @@ def g0_replay(mk, targets, dec, wait: int, cells_e, start_bar: int, keep_u: bool
             if i < yi <= i + wait:
                 rt_at[:, k_] = ST[:, MK.S_RT]
                 fills_at[:, k_] = ST[:, MK.S_FILLS]
+    rt_at[:, -1] = ST[:, MK.S_RT]                                  # data end = last edge (2026-01-01)
+    fills_at[:, -1] = ST[:, MK.S_FILLS]
     rt_y = np.diff(rt_at, axis=1)
     fill_y = np.diff(fills_at, axis=1)
     return {"net_y": net_y, "rt_y": rt_y, "fills_y": fill_y, "U": U}
