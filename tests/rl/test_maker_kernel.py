@@ -40,9 +40,7 @@ def test_parity_with_batch2_state_sleeve(seed, side, off, pen):
     for q in range(len(dec)):
         k.step(float(tgt[q]), 240 if q + 1 < len(dec) else 1440)
     hi = int(dec[-1]) + 1440
-    closed = tr[~tr.open_at_end]
-    assert len(closed) > 20
-    end = int(closed.exit_idx.max()) + 1                    # compare where the sleeve path has no open-at-end mark
+    end = int(dec[0]) + 1200                                # legacy sleeve parity before A8's 24 h lease can fire
     assert np.allclose(k.pnl[:end], bk.pnl[:end], rtol=0, atol=1e-9)
     assert hi <= m.N
 
@@ -122,7 +120,7 @@ def test_fault_kill_records_prefix_without_flatten():
         assert n["fault"] and n["minutes_valid"] == 0
 
 
-def test_no_stop_large_loss_keeps_target():
+def test_no_unselected_stop_but_renewable_cap_applies():
     m = market(seed=8)
     m.c[5000:] = m.c[5000:] * np.linspace(1.0, 0.9, m.N - 5000)                  # -10 % slide: no stop in A6
     m.o[5000:] = np.r_[m.c[4999], m.c[5000:-1]]
@@ -134,9 +132,89 @@ def test_no_stop_large_loss_keeps_target():
         k.step(1.0, 60)
     u = k.upath[4001:k.i + 1]
     first = int(np.argmax(u == 1.0))
-    assert u[first] == 1.0 and np.all(u[first:] == 1.0)                         # never flattened
+    assert u[first] == 1.0 and k.st[MK.S_SLCOUNT] == 0 and k.st[MK.S_TPCOUNT] == 0
+    assert k.st[MK.S_CAPCOUNT] > 0 and k.st[MK.S_MAXHOLD] <= 1440               # only lease renewals flatten
     d = MK.diagnostics(k.st)
     assert d["kill_count"] == 0 and not d["episode_aborted"]
+
+
+def flat_market(n=5000):
+    from types import SimpleNamespace
+    c = np.full(n, 100.0)
+    o = c.copy(); h = np.full(n, 101.0); l = np.full(n, 99.0)
+    t = (pd.Timestamp("2024-01-01", tz="UTC").value + np.arange(n) * MK.MIN_NS).astype(np.int64)
+    return SimpleNamespace(o=o, h=h, l=l, c=c, t=t, ft=np.array([], np.int64), fr=np.array([]), N=n)
+
+
+def test_a8_cap_boundary_clock_and_no_automatic_reentry():
+    m = flat_market()
+    k = kernel(m, 2, 0.5)
+    i = k.reset(100)
+    r = k.step(1.0, 1440)
+    assert r["j"] == i + 1440 and r["step_exit_reason"] == "cap"
+    assert k.st[MK.S_MAXHOLD] == 1440 and k.st[MK.S_U] == 0 and not k.st[MK.S_PEND]
+    assert k.upath[r["j"] - 1] == 1.0 and k.upath[r["j"]] == 0.0                # 1439 / 1440 boundary
+    assert r["fault"] is False and r["renewal_count"] == 1
+    before = k.i
+    assert k.st[MK.S_REENTRYFILL] == 0                                          # cap never auto re-enters
+    k.step(1.0, 5)
+    assert k.i - before == 5 and k.st[MK.S_REENTRYREQ] == 1 and k.st[MK.S_REENTRYFILL] == 1
+    assert k.st[MK.S_RENEWCOST] == 4.0 and k.st[MK.S_FLATGAP] == 0
+
+
+def test_a8_increase_reduction_do_not_reset_clock_flat_and_reversal_do():
+    m = flat_market()
+    k = kernel(m, 2, 0.5)
+    k.reset(100)
+    k.step(0.5, 5); opened = k.st[MK.S_OPENK]
+    k.step(1.0, 5)
+    assert k.st[MK.S_OPENK] == opened
+    k.step(0.25, 5)
+    assert k.st[MK.S_OPENK] == opened
+    k.step(0.0, 5)
+    assert k.st[MK.S_U] == 0 and k.st[MK.S_OPENK] == -1
+    k.step(-1.0, 5)
+    assert k.st[MK.S_U] == -1 and k.st[MK.S_OPENK] > opened
+
+
+def test_a8_passive_exit_and_leg2_are_cancelled_by_cap():
+    m = flat_market()
+    m.h[:] = 100.0                                                        # buy entry fills; sell reduction never does
+    k = kernel(m, 2, 0.5)
+    k.reset(100)
+    k.step(1.0, 5)
+    assert k.st[MK.S_U] == 1
+    r = k.step(-1.0, 1440)
+    assert r["step_exit_reason"] == "cap" and k.st[MK.S_U] == 0
+    assert k.st[MK.S_PEND] == 0 and k.st[MK.S_LEG2] == 0 and k.st[MK.S_REQ] > 0
+
+
+def test_a8_same_bar_sl_wins_gap_price_and_tp_is_trigger_price():
+    m = flat_market()
+    k = kernel(m, 2, 0.5)
+    k.reset(100)
+    k.step(1.0, 5)
+    basis = k.st[MK.S_BASIS]
+    i = k.i
+    rv = 1000.0
+    sigma = rv * np.sqrt(5 / 1440)
+    trigger = basis * (1 - sigma / 1e4)
+    m.o[i + 1] = trigger - 5.0
+    m.l[i + 1] = m.o[i + 1]
+    m.h[i + 1] = basis * (1 + sigma / 1e4) + 1.0                            # both barriers touch
+    r = k.step(1.0, 5, sl_mult=1, tp_mult=1, rv_bps=rv)
+    assert r["step_exit_reason"] == "SL" and r["j"] == i + 1 and k.st[MK.S_SLCOUNT] == 1
+    expected = (m.o[i + 1] / basis - 1) * 1e4 - 2 * MK.FEE_SIDE
+    assert np.isclose(k.st[MK.S_SLPNL], expected, atol=1e-9)                  # gap open, full RT fees
+
+    m = flat_market(); k = kernel(m, 2, 0.5); k.reset(100); k.step(1.0, 5)
+    basis, i = k.st[MK.S_BASIS], k.i
+    trigger = basis * (1 + sigma / 1e4)
+    m.h[i + 1], m.l[i + 1], m.o[i + 1] = trigger + 5, basis, trigger + 3
+    r = k.step(1.0, 5, tp_mult=1, rv_bps=rv)
+    assert r["step_exit_reason"] == "TP" and r["j"] == i + 1 and k.st[MK.S_TPCOUNT] == 1
+    expected = (trigger / basis - 1) * 1e4 - 2 * MK.FEE_SIDE
+    assert np.isclose(k.st[MK.S_TPPNL], expected, atol=1e-9)                  # trigger price, full RT fees
 
 
 def test_flat_diagnostics_and_k_reset():

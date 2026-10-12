@@ -16,7 +16,8 @@ MAX_BLOCKS = 1440 // 5
 
 
 @numba.njit(parallel=True, cache=True)
-def advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_b, u_b, k_b, nb, jout):
+def _advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_b, u_b, k_b, nb, jout,
+                   sl_mult, tp_mult, rv_dec):
     """Every env e: decision at global bar gi[e] with target tgt[e]; minutes gi+1 .. min(gi+wait, endx-1) unless a
     fault stops it. Block arrays are [E, MAX_BLOCKS]; nb[e] full blocks, jout[e] last processed minute."""
     E = ST.shape[0]
@@ -24,7 +25,12 @@ def advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_b
         st = ST[e]
         i = gi[e]
         n = endx[e]
-        j = i + wait[e]
+        requested_wait = wait[e]
+        effective_wait = requested_wait
+        if abs(st[MK.S_U]) > MK.EPS and st[MK.S_OPENK] >= 0:
+            age = i - int(st[MK.S_OPENK]) + 1
+            effective_wait = min(effective_wait, max(MK.CAP_MIN - age, 1))
+        j = i + effective_wait
         if j > n - 1:
             j = n - 1
         for b in range(MAX_BLOCKS):
@@ -37,6 +43,17 @@ def advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_b
             st[MK.S_FAULT], st[MK.S_FAULTK], st[MK.S_FAULTCODE] = 1.0, i + 1, 5.0
             st[MK.S_KILLCOUNT] += 1
             continue
+        st[MK.S_EVENT], st[MK.S_EVENTK], st[MK.S_CAPFLAG], st[MK.S_CURTGT] = 0.0, float(i), 0.0, tgt[e]
+        sigma = rv_dec[e] * np.sqrt(requested_wait / MK.CAP_MIN)
+        st[MK.S_SL_MULT], st[MK.S_TP_MULT] = sl_mult[e], tp_mult[e]
+        st[MK.S_SL_BPS], st[MK.S_TP_BPS] = sl_mult[e] * sigma, tp_mult[e] * sigma
+        st[MK.S_LASTWAIT] = requested_wait
+        if st[MK.S_REENTRYAWAIT] > 0:
+            if abs(tgt[e]) > MK.EPS and st[MK.S_REENTRYACTIVE] == 0:
+                st[MK.S_REENTRYREQ] += 1
+                st[MK.S_REENTRYACTIVE] = 1.0
+            elif abs(tgt[e]) <= MK.EPS:
+                st[MK.S_REENTRYAWAIT], st[MK.S_REENTRYACTIVE] = 0.0, 0.0
         if st[MK.S_PEND] > 0:
             if abs(st[MK.S_PTGT] - tgt[e]) > MK.EPS:
                 st[MK.S_PEND] = 0.0
@@ -54,12 +71,25 @@ def advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_b
             b = (k - i - 1) // 5
             if b < MAX_BLOCKS:
                 net_b[e, b] += v
-                if (k - i) % 5 == 0:
+                if (k - i) % 5 == 0 or st[MK.S_EVENT] in (MK.EXIT_SL, MK.EXIT_TP, MK.EXIT_CAP) or k == j:
                     u_b[e, b] = st[MK.S_U]
                     k_b[e, b] = st[MK.S_KSTREAK]
             last = k
+            if st[MK.S_EVENT] in (MK.EXIT_SL, MK.EXIT_TP, MK.EXIT_CAP):
+                break
         jout[e] = last
-        nb[e] = (last - i) // 5
+        nb[e] = (last - i + 4) // 5
+
+
+def advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_b, u_b, k_b, nb, jout,
+                  sl_mult=None, tp_mult=None, rv_dec=None):
+    """Python compatibility wrapper. Scalar and batch share ``maker_kernel._minute`` for all fills and exits."""
+    E = ST.shape[0]
+    z = np.zeros(E, np.float64)
+    _advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_b, u_b, k_b, nb, jout,
+                   z if sl_mult is None else np.asarray(sl_mult, np.float64),
+                   z if tp_mult is None else np.asarray(tp_mult, np.float64),
+                   z if rv_dec is None else np.asarray(rv_dec, np.float64))
 
 
 def frate_global(t_ns: np.ndarray, ft_ns: np.ndarray, fr: np.ndarray) -> np.ndarray:
@@ -70,7 +100,7 @@ def frate_global(t_ns: np.ndarray, ft_ns: np.ndarray, fr: np.ndarray) -> np.ndar
     return out
 
 
-def batch_reward(net_b, u_b, k_b, m_glob, gi, nb, d_target, cfg, require_set: bool = True) -> dict:
+def batch_reward(net_b, u_b, k_b, m_glob, gi, nb, d_target, cfg, require_set: bool = True, jout=None) -> dict:
     """Vectorized smdp_reward over envs: arrays [E, B] (valid b < nb[e])."""
     from .smdp_reward import f_of_k
     if require_set and not cfg.is_set():
@@ -80,10 +110,14 @@ def batch_reward(net_b, u_b, k_b, m_glob, gi, nb, d_target, cfg, require_set: bo
     bidx = np.arange(B)[None, :]
     valid = bidx < nb[:, None]
     end = gi[:, None] + 5 * (bidx + 1)
+    if jout is not None:
+        last = np.maximum(nb - 1, 0)
+        end[np.arange(E), last] = np.asarray(jout)
     m = m_glob[np.minimum(end, len(m_glob) - 1)]
     flat = np.abs(u_b) < MK.FLAT_ABS
     idle = z(cfg.idle_bps_per_h) / 12.0 * m * f_of_k(k_b / 60.0, cfg) * flat * valid
-    inv = z(cfg.inventory_bps_per_h) / 12.0 * np.abs(u_b) * valid
+    inv = z(cfg.inventory_bps_per_h) / 12.0 * ((m * m * u_b * u_b) if cfg.quadratic_inventory
+                                                else np.abs(u_b)) * valid
     net = net_b * valid
     turn = z(cfg.turnover_bps) * d_target * (nb > 0)            # like the scalar step: no block, no turnover term
     disc = np.exp(-np.log(2.0) * 5.0 * bidx / MK.HALF_LIFE_MIN)
@@ -159,7 +193,7 @@ class BatchEnv:
     """E envs on global minute arrays; episodes [start, end) chosen by the caller (`reset_env`)."""
 
     def __init__(self, mkt: dict, feats: tuple, cells: list, targets: tuple, waits: tuple, reward_cfg, rv_med: float,
-                 require_set: bool = False):
+                 require_set: bool = False, sl_grid=(0.0,), tp_grid=(0.0,)):
         self.o, self.h, self.l, self.c, self.t = mkt["o"], mkt["h"], mkt["l"], mkt["c"], mkt["t"]
         self.frate, self.rv, self.rv_ref, self.m = mkt["frate"], mkt["rv"], mkt["rv_ref"], mkt["m"]
         self.clock0 = mkt["clock0"]
@@ -169,6 +203,7 @@ class BatchEnv:
         self.pen = np.array([c[1] for c in cells], float)
         self.targets = np.asarray(targets, float)
         self.waits = np.asarray(waits, np.int64)
+        self.sl_grid, self.tp_grid = np.asarray(sl_grid, float), np.asarray(tp_grid, float)
         self.cfg, self.require_set, self.rv_med = reward_cfg, require_set, rv_med
         self.ST = np.zeros((self.E, MK.S_NSTATE))
         self.gi = np.zeros(self.E, np.int64)
@@ -183,6 +218,7 @@ class BatchEnv:
     def reset_env(self, idx, start_ns, end_ns):
         idx = np.asarray(idx)
         self.ST[idx] = 0.0
+        self.ST[idx, MK.S_OPENK] = -1.0
         self.gi[idx] = np.searchsorted(self.t, start_ns) - 1
         self.endx[idx] = np.searchsorted(self.t, end_ns)
         self.last_t[idx] = 0.0
@@ -199,16 +235,21 @@ class BatchEnv:
                         np.log(np.maximum(self.rv[self.gi], 1e-6) / ref)], 1).astype(np.float32)
         return np.concatenate([self.tok[rows], self.mk[rows], acc], 1)
 
-    def step(self, a_t: np.ndarray, a_w: np.ndarray) -> dict:
+    def step(self, a_t: np.ndarray, a_w: np.ndarray, a_sl=None, a_tp=None) -> dict:
         tg = self.targets[a_t]
         wt = self.waits[a_w]
+        a_sl = np.zeros(self.E, np.int64) if a_sl is None else np.asarray(a_sl, np.int64)
+        a_tp = np.zeros(self.E, np.int64) if a_tp is None else np.asarray(a_tp, np.int64)
+        sl, tp = self.sl_grid[a_sl], self.tp_grid[a_tp]
         eq0 = self.ST[:, MK.S_EQ].copy()
         f0 = self.ST[:, MK.S_FILLS].copy()
+        st0 = self.ST.copy()
         gi0 = self.gi.copy()
         advance_batch(self.o, self.h, self.l, self.c, self.t, self.frate, self.ST, self.gi, tg, wt, self.endx,
-                      self.off, self.pen, self.net_b, self.u_b, self.k_b, self.nb, self.jout)
+                      self.off, self.pen, self.net_b, self.u_b, self.k_b, self.nb, self.jout, sl, tp, self.rv[self.gi])
         dtg = np.abs(tg - self.last_t)
-        rw = batch_reward(self.net_b, self.u_b, self.k_b, self.m, gi0, self.nb, dtg, self.cfg, self.require_set)
+        rw = batch_reward(self.net_b, self.u_b, self.k_b, self.m, gi0, self.nb, dtg, self.cfg, self.require_set,
+                          self.jout)
         eqd = self.ST[:, MK.S_EQ] - eq0
         ident = np.abs(rw["net4"] - eqd)
         bad = ident > 1e-8
@@ -221,7 +262,20 @@ class BatchEnv:
         done = (self.gi >= self.endx - 1) | (self.ST[:, MK.S_FAULT] > 0)
         rw["gamma_d"] = np.exp(-np.log(2.0) * (self.jout - gi0) / MK.HALF_LIFE_MIN)
         rw.update(identity_err=ident, fills=self.ST[:, MK.S_FILLS] - f0, done=done, minutes=self.jout - gi0,
-                  fault=self.ST[:, MK.S_FAULT] > 0, u=self.ST[:, MK.S_U].copy())
+                  fault=self.ST[:, MK.S_FAULT] > 0, u=self.ST[:, MK.S_U].copy(),
+                  exit_reason=self.ST[:, MK.S_EVENT].astype(np.int64).copy(),
+                  renewal_count=self.ST[:, MK.S_CAPCOUNT] - st0[:, MK.S_CAPCOUNT],
+                  renewal_cost=self.ST[:, MK.S_RENEWCOST] - st0[:, MK.S_RENEWCOST],
+                  reentry_requests=self.ST[:, MK.S_REENTRYREQ] - st0[:, MK.S_REENTRYREQ],
+                  reentry_fills=self.ST[:, MK.S_REENTRYFILL] - st0[:, MK.S_REENTRYFILL],
+                  flat_gap_min=self.ST[:, MK.S_FLATGAP] - st0[:, MK.S_FLATGAP],
+                  sl_count=self.ST[:, MK.S_SLCOUNT] - st0[:, MK.S_SLCOUNT],
+                  tp_count=self.ST[:, MK.S_TPCOUNT] - st0[:, MK.S_TPCOUNT],
+                  sl_pnl=self.ST[:, MK.S_SLPNL] - st0[:, MK.S_SLPNL],
+                  tp_pnl=self.ST[:, MK.S_TPPNL] - st0[:, MK.S_TPPNL],
+                  cap_pnl=self.ST[:, MK.S_CAPPNL] - st0[:, MK.S_CAPPNL],
+                  rl_exit_pnl=self.ST[:, MK.S_RLPNL] - st0[:, MK.S_RLPNL],
+                  max_hold_min=self.ST[:, MK.S_MAXHOLD].copy())
         return rw
 
 

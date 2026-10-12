@@ -27,6 +27,7 @@ class RewardConfig:
     k_cap_h: float | None = None           # f(k) uses min(k, k_cap_h) when set
     m_lo: float = 0.25
     m_hi: float = 4.0
+    quadratic_inventory: bool = False
 
     def is_set(self) -> bool:
         base = all(v is not None for v in (self.idle_bps_per_h, self.inventory_bps_per_h, self.turnover_bps))
@@ -65,7 +66,8 @@ def block_terms(net_b, u_b, k_b, m_b, d_target: float, cfg: RewardConfig, requir
     nb = len(net_b)
     flat = np.abs(u_b) < MK.FLAT_ABS
     idle = z(cfg.idle_bps_per_h) / 12.0 * m_b * f_of_k(np.asarray(k_b, float) / 60.0, cfg) * flat
-    inv = z(cfg.inventory_bps_per_h) / 12.0 * np.abs(u_b)
+    inv = z(cfg.inventory_bps_per_h) / 12.0 * ((m_b * m_b * u_b * u_b) if cfg.quadratic_inventory
+                                               else np.abs(u_b))
     turn = np.zeros(nb)
     if nb:
         turn[0] = z(cfg.turnover_bps) * d_target
@@ -80,9 +82,14 @@ def block_terms(net_b, u_b, k_b, m_b, d_target: float, cfg: RewardConfig, requir
 def step_reward(pnl, upath, kpath, mpath, i: int, j: int, d_target: float, cfg: RewardConfig,
                 require_set: bool = True) -> dict:
     """Scalar-kernel step (minute arrays): blocks of 5 minutes over i+1 .. j."""
-    nb = (j - i) // 5
-    net = pnl[i + 1:i + 1 + 5 * nb].reshape(nb, 5).sum(1) if nb else np.zeros(0)
-    end = i + 5 * (np.arange(nb) + 1)
+    minutes = max(j - i, 0)
+    nb = (minutes + 4) // 5
+    if nb:
+        seg = pnl[i + 1:j + 1]
+        net = np.add.reduceat(seg, np.arange(0, len(seg), 5))
+        end = np.minimum(i + 5 * (np.arange(nb) + 1), j)
+    else:
+        net, end = np.zeros(0), np.zeros(0, dtype=int)
     out = block_terms(net, upath[end], kpath[end], mpath[end], d_target, cfg, require_set)
     out["gamma_d"] = MK.gamma(float(j - i))
     return out
