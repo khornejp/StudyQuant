@@ -95,3 +95,79 @@ def evaluate(cells: dict, baseline: dict | None = None) -> dict:
         out["replacement"] = {"paired_excess_boot60_p05>0": f"{sum(rep_ok)}/{len(rep_ok)}", "pass": bool(all(rep_ok))}
     out["diagnostics"] = {"year_cell_block_boot_p05>0": f"{diag_pos}/{len(cells) * len(YEARS) * len(BLOCKS)}"}
     return out
+
+
+def evaluate_period(cells: dict, start_year: int, end_year: int, baseline: dict | None = None,
+                    comparators: dict | None = None) -> dict:
+    """Generic DEV-period gate used by A8. ``evaluate`` above remains the frozen 2022-2025 implementation.
+
+    ``comparators`` maps a report name to the same ``cell -> daily`` shape as ``baseline``. Optional A8 execution
+    fields in each cell are gated when present: max hold, cap violations, identity error, faults, and side RT counts.
+    """
+    if start_year > end_year or start_year < 2021 or end_year >= 2026:
+        raise ValueError("period must be ordered and wholly before TEST/2026")
+    if set(cells) != set(CELLS) or len(cells) != len(CELLS):
+        raise ValueError(f"gate needs exactly the 6 cells {CELLS}, got {sorted(cells)}")
+    all_base = ({"baseline": baseline} if baseline is not None else {}) | (comparators or {})
+    for name, base in all_base.items():
+        if set(base) != set(CELLS):
+            raise ValueError(f"{name} needs exactly the 6 cells {CELLS}, got {sorted(base)}")
+    years = tuple(range(start_year, end_year + 1))
+    start = pd.Timestamp(f"{start_year}-01-01", tz="UTC")
+    end = pd.Timestamp(f"{end_year + 1}-01-01", tz="UTC")
+    n_days = (end - start).days
+    slices = {y: slice((pd.Timestamp(f"{y}-01-01", tz="UTC") - start).days,
+                       (pd.Timestamp(f"{y + 1}-01-01", tz="UTC") - start).days) for y in years}
+    out = {"period": [start_year, end_year], "cells": {}}
+    net_ok, rt_ok, pool_ok, exec_ok = [], [], [], []
+    replacement = {name: [] for name in all_base}
+    for cell, value in cells.items():
+        daily = np.asarray(value["daily"], float)
+        if len(daily) != n_days:
+            raise ValueError(f"{cell}: daily series must cover {start.date()}..{(end - pd.Timedelta(days=1)).date()}")
+        months = pd.date_range(start, periods=n_days, freq="D").strftime("%Y-%m")
+        monthly = pd.Series(daily).groupby(months).sum()
+        total = float(daily.sum())
+        row = {"pooled_net4": total, "pooled_boot_p05": {str(b): boot_p05(daily, b) for b in BLOCKS},
+               "mdd": mdd(daily),
+               "top2_month_share": (float(monthly.nlargest(2).sum() / total) if total > 0 else None), "years": {}}
+        for year, sl in slices.items():
+            closed = int(value["closed"][year])
+            net4 = float(daily[sl].sum())
+            row["years"][str(year)] = {"net4": net4, "closed": closed,
+                                        "boot_p05": {str(b): boot_p05(daily[sl], b) for b in BLOCKS}}
+            net_ok.append(net4 > 0)
+            rt_ok.append(closed >= 30)
+        pool_ok.append(row["pooled_boot_p05"][str(MAIN_BLOCK)] > 0)
+        row["paired_excess"] = {}
+        for name, base in all_base.items():
+            bd = np.asarray(base[cell], float)
+            if len(bd) != n_days:
+                raise ValueError(f"{name}/{cell}: baseline daily length {len(bd)} != {n_days}")
+            excess = daily - bd
+            p = {str(b): boot_p05(excess, b) for b in BLOCKS}
+            row["paired_excess"][name] = {"net4": float(excess.sum()), "boot_p05": p}
+            replacement[name].append(p[str(MAIN_BLOCK)] > 0)
+        present = any(k in value for k in ("max_hold_min", "cap_violations", "identity_err", "faults",
+                                            "long_round_trips", "short_round_trips"))
+        if present:
+            checks = {"max_hold<=1440": float(value.get("max_hold_min", np.inf)) <= 1440,
+                      "cap_violations=0": int(value.get("cap_violations", 1)) == 0,
+                      "identity<=1e-8": float(value.get("identity_err", np.inf)) <= 1e-8,
+                      "faults=0": int(value.get("faults", 1)) == 0,
+                      "long_rt>=30": int(value.get("long_round_trips", 0)) >= 30,
+                      "short_rt>=30": int(value.get("short_round_trips", 0)) >= 30}
+            row["execution"] = checks
+            exec_ok.append(all(checks.values()))
+        out["cells"][cell] = row
+    out["absolute"] = {"year_cell_net4>0": f"{sum(net_ok)}/{len(net_ok)}",
+                       "year_cell_closed>=30": f"{sum(rt_ok)}/{len(rt_ok)}",
+                       "pooled_boot60_p05>0": f"{sum(pool_ok)}/{len(pool_ok)}",
+                       "pass": bool(all(net_ok) and all(rt_ok) and all(pool_ok))}
+    out["replacement"] = {name: {"paired_excess_boot60_p05>0": f"{sum(v)}/{len(v)}", "pass": bool(all(v))}
+                          for name, v in replacement.items()}
+    if exec_ok:
+        out["execution"] = {"cells_pass": f"{sum(exec_ok)}/{len(exec_ok)}", "pass": bool(all(exec_ok))}
+    out["pass"] = bool(out["absolute"]["pass"] and all(v["pass"] for v in out["replacement"].values())
+                       and (not exec_ok or all(exec_ok)))
+    return out

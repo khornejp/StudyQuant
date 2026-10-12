@@ -6390,12 +6390,128 @@ def cmd_gate0(args) -> None:
     log(f"gate0 done {rep['total_wall_sec']}s")
 
 
+# ================================================================ A8 implementation smoke only (selection stays locked)
+def cmd_smdp_a8(args) -> None:
+    """Authorized A8 smoke: two fresh genomes, one generation, one cell/month, 100k total decisions."""
+    import numba
+    import torch
+    from btcusdt_quant.rl import a8_ga_rl as A8, a8_model as AM, dev_data as DD, signal_store as SG
+    from btcusdt_quant.rl import maker_kernel as MK, smdp_batch as SB, u35
+
+    if "smoke" not in set(getattr(args, "only", ()) or ()):
+        raise SystemExit("A8 GA selection is locked; use --only smoke")
+    started = time.time()
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = OUT / "smdp_a8_smoke"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    report_path = run_dir / f"run_{run_id}.json"
+    latest_path = run_dir / "smdp_a8_smoke_report.json"
+    report = {"run_id": run_id, "status": "running", "profit_judgment": False,
+              "scope": {"cell": "o2_p0.5", "period": ["2022-01-01", "2022-02-01"], "tokens": 44,
+                        "population": 2, "generations": 1, "decisions": 100000},
+              "test_rows_used": 0, "physical_test_reads": 0}
+    A8.json_write(report_path, report); A8.json_write(latest_path, report)
+    try:
+        if not torch.cuda.is_available():
+            raise RuntimeError("A8 smoke requires CUDA; no GPU available")
+        torch.set_num_threads(1)
+        numba.set_num_threads(16)
+        spec = ROOT / ".superpowers/sdd/rl_allocator/a8_ga_rl_spec_2026-10-12.md"
+        amendment = OUT / "freeze_amendment_A8.json"
+        hashes = {"spec": sha(spec), "amendment": sha(amendment), "script": sha(Path(__file__)),
+                  "code": {name: sha(ROOT / f"btcusdt_quant/rl/{name}.py") for name in
+                           ("a8_model", "a8_ga_rl", "maker_kernel", "smdp_batch", "smdp_reward")}}
+        minutes, funding, input_hash = DD.load_dev()
+        settlement = u35.assert_settlement_grid(u35.scheduled(funding))
+        genomes = A8.population(A8.POPULATION_SEED, 2)
+        market = SB.market_arrays(minutes, settlement, genomes[0].reward_config())
+        del minutes, funding
+        clock = SG.clock()
+        market["clock0"] = int(clock[0])
+        end_ns = pd.Timestamp("2022-02-01", tz="UTC").value
+        r1 = int(np.searchsorted(clock, end_ns))
+        cache = SB.raw_cache(SS)
+        features = A8.scaled_features_fixed_2021(cache, clock, r1)
+        a = pd.Timestamp("2022-01-01", tz="UTC").value
+        b = end_ns
+        ia, ib = np.searchsorted(market["t"], [pd.Timestamp("2021-01-01", tz="UTC").value, a])
+        rv_med = float(np.nanmedian(market["rv"][ia + 1440:ib]))
+        env_count = 50
+        episode_ns = 48 * 3600 * 10**9
+        clock_step = 5 * MK.MIN_NS
+
+        def sampler(rng, indices):
+            count = len(indices)
+            slots = (b - a - episode_ns) // clock_step
+            starts = a + clock_step * rng.integers(0, slots + 1, count)
+            return starts, starts + episode_ns
+
+        def make_env(genome):
+            environment = A8.A8BatchEnv(market, features, [PRIMARY] * env_count, tuple(AM.TARGETS), tuple(AM.WAITS),
+                                         genome.reward_config(), rv_med, require_set=True)
+            return environment
+
+        members = []
+        for index, genome in enumerate(genomes):
+            member_start = time.time()
+            trainer = A8.A8Trainer(make_env(genome), genome, A8.POPULATION_SEED + index, device="cuda",
+                                   episode_sampler=sampler)
+            shape = {"observation": list(trainer.observation.shape), "joint": 45, "sl": 5, "tp": 5,
+                     "hidden": [1, env_count, 256]}
+            trainer.train_decisions(25000)
+            checkpoint = run_dir / f"{run_id}_{genome.name}_resume.pt"
+            checkpoint_sha = A8.save_checkpoint(checkpoint, trainer.state_dict(), {**hashes, "input": input_hash})
+            resumed = A8.A8Trainer(make_env(genome), genome, A8.POPULATION_SEED + index, device="cuda",
+                                   episode_sampler=sampler)
+            resumed.load_state_dict(A8.load_checkpoint(checkpoint, {**hashes, "input": input_hash}))
+            resume_verified = (resumed.decisions == trainer.decisions
+                               and np.array_equal(resumed.env.ST, trainer.env.ST)
+                               and np.array_equal(resumed.env.gi, trainer.env.gi)
+                               and np.array_equal(resumed.observation, trainer.observation)
+                               and all(torch.equal(a_, b_) for a_, b_ in
+                                       zip(resumed.model.state_dict().values(), trainer.model.state_dict().values())))
+            del trainer
+            stats = resumed.train_decisions(25000)
+            final_sha = A8.save_checkpoint(run_dir / f"{run_id}_{genome.name}_final.pt", resumed.state_dict(),
+                                           {**hashes, "input": input_hash})
+            stats = {key: (int(value) if key in ("decisions", "renewal_count", "sl_count", "tp_count",
+                                                  "reentry_requests", "reentry_fills", "faults", "max_hold_min")
+                           else float(value)) for key, value in stats.items() if key != "loss"}
+            stats["reentry_fill_rate"] = (stats["reentry_fills"] / stats["reentry_requests"]
+                                           if stats["reentry_requests"] else None)
+            members.append({"genome": genome.to_json(), "shape": shape, "stats": stats,
+                            "resume_verified": bool(resume_verified), "resume_checkpoint_sha256": checkpoint_sha,
+                            "final_checkpoint_sha256": final_sha, "wall_sec": round(time.time() - member_start, 3)})
+            del resumed
+            torch.cuda.empty_cache()
+
+        total_decisions = sum(member["stats"]["decisions"] for member in members)
+        wall = time.time() - started
+        report.update(status="passed", hashes=hashes, input_hash=input_hash, members=members,
+                      total_decisions=total_decisions, wall_sec=round(wall, 3),
+                      decisions_per_sec=round(total_decisions / wall, 3),
+                      renewal_count=sum(member["stats"]["renewal_count"] for member in members),
+                      sl_count=sum(member["stats"]["sl_count"] for member in members),
+                      tp_count=sum(member["stats"]["tp_count"] for member in members),
+                      max_hold_min=max(member["stats"]["max_hold_min"] for member in members),
+                      identity_error=max(member["stats"]["identity_error"] for member in members),
+                      resume_verified=all(member["resume_verified"] for member in members),
+                      created_utc=datetime.now(timezone.utc).isoformat())
+    except BaseException as error:
+        report.update(status="failed", error=f"{type(error).__name__}: {error}", wall_sec=round(time.time() - started, 3),
+                      created_utc=datetime.now(timezone.utc).isoformat())
+        A8.json_write(report_path, report); A8.json_write(latest_path, report)
+        raise
+    A8.json_write(report_path, report); A8.json_write(latest_path, report)
+    log(f"A8 smoke done {report['total_decisions']} decisions {report['wall_sec']}s")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=("freeze", "amend", "amend2", "precompute", "signals", "state", "env-check",
                                        "vec-check", "baselines", "smoke", "pilot-g3", "pilot-e2", "router",
                                        "regime-short", "regime-bidir", "regime-bidir-r2", "gates",
-                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4", "smdp-a5", "smdp-a6-bench", "smdp-a6", "smdp-a7", "smdp-a6-recover", "gate0"))
+                                       "short-hsel", "long-pullback", "g3-idle-et", "u35-precompute", "signal-store", "scripted-baselines", "u35-verify", "smdp-smoke", "smdp-pilot", "smdp-a4", "smdp-a5", "smdp-a6-bench", "smdp-a6", "smdp-a7", "smdp-a8", "smdp-a6-recover", "gate0"))
     ap.add_argument("--paths", type=int, default=100)
     ap.add_argument("--updates", type=int, default=30)
     ap.add_argument("--seeds", default="0,1,2")
@@ -6464,6 +6580,8 @@ def main(argv=None) -> None:
         return cmd_smdp_a6(args)
     if args.command == "smdp-a7":
         return cmd_smdp_a7(args)
+    if args.command == "smdp-a8":
+        return cmd_smdp_a8(args)
     if args.command == "smdp-a6-recover":
         return cmd_smdp_a6_recover(args)
     if args.command == "gate0":

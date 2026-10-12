@@ -48,6 +48,22 @@ def test_evaluate_counts_and_paired():
         GT.evaluate(bad)
 
 
+def test_evaluate_period_2024_2025_and_execution_gates():
+    start, end = pd.Timestamp("2024-01-01", tz="UTC"), pd.Timestamp("2026-01-01", tz="UTC")
+    n = (end - start).days
+    cells = {cell: {"daily": np.full(n, 2.0), "closed": {2024: 40, 2025: 41}, "max_hold_min": 1440,
+                    "cap_violations": 0, "identity_err": 1e-10, "faults": 0,
+                    "long_round_trips": 31, "short_round_trips": 32} for cell in GT.CELLS}
+    base = {cell: np.full(n, 1.0) for cell in GT.CELLS}
+    result = GT.evaluate_period(cells, 2024, 2025, comparators={"gate0": base, "g3": base})
+    assert result["absolute"]["year_cell_net4>0"] == "12/12"
+    assert result["absolute"]["year_cell_closed>=30"] == "12/12"
+    assert result["execution"] == {"cells_pass": "6/6", "pass": True}
+    assert result["replacement"]["gate0"]["pass"] and result["replacement"]["g3"]["pass"] and result["pass"]
+    with pytest.raises(ValueError):
+        GT.evaluate_period(cells, 2024, 2026)
+
+
 def test_veto_episode_fixed_at_first_decision():
     mod = _load("pra_gate_t", "scripts/precompute_rl_allocator.py")
     side = np.array([0, 1, 1, 1, 0, 1, 1, -1, -1, 0])
