@@ -47,6 +47,36 @@ def test_ga_has_no_weight_inheritance_and_raw_fitness():
     assert next_gen[0].gates == population[-1].gates and next_gen[1].gates == population[-2].gates
 
 
+def test_exit_shaping_genome_bounds_serialization_and_determinism():
+    genomes = A8.population(n=64)
+    for genome in genomes:
+        assert genome.cap_penalty_bps == 0 or A8.CAP_PENALTY_BOUNDS[0] <= genome.cap_penalty_bps <= A8.CAP_PENALTY_BOUNDS[1]
+        assert genome.tp_profit_reward == 0 or A8.EXIT_MULTIPLIER_BOUNDS[0] <= genome.tp_profit_reward <= A8.EXIT_MULTIPLIER_BOUNDS[1]
+        assert genome.loss_penalty == 0 or A8.EXIT_MULTIPLIER_BOUNDS[0] <= genome.loss_penalty <= A8.EXIT_MULTIPLIER_BOUNDS[1]
+        assert A8.Genome.from_json(genome.to_json()) == genome
+    assert any(g.cap_penalty_bps == 0 for g in genomes)
+    left = A8.crossover_mutate(genomes[0], genomes[1], np.random.default_rng(9), "X")
+    right = A8.crossover_mutate(genomes[0], genomes[1], np.random.default_rng(9), "X")
+    assert left == right
+    rng = np.random.default_rng(10)
+    for index in range(1000):
+        A8.crossover_mutate(genomes[index % 64], genomes[(index + 1) % 64], rng, f"M{index}")
+
+
+@pytest.mark.parametrize("reason,pnl,size,expected", [
+    (MK.EXIT_CAP, 10.0, 0.5, -1.5),
+    (MK.EXIT_CAP, -10.0, 0.5, -5.5),
+    (MK.EXIT_TP, 10.0, 0.5, 2.0),
+    (MK.EXIT_TP, -10.0, 0.5, -4.0),
+    (MK.EXIT_SL, 10.0, 0.5, 0.0),
+    (MK.EXIT_SL, -10.0, 0.5, -4.0),
+    (MK.EXIT_RL, 10.0, 0.5, 0.0),
+    (MK.EXIT_RL, -10.0, 0.5, -4.0),
+])
+def test_exit_shaping_reason_profit_and_loss(reason, pnl, size, expected):
+    assert MK._exit_shaping(reason, pnl, size, 3.0, 0.2, 0.4) == expected
+
+
 def test_fixed_2021_scaler_rows_evaluate_first_and_test_guard():
     clock = np.array([pd.Timestamp(f"{year}-06-01", tz="UTC").value for year in (2021, 2022, 2023)])
     assert A8.fixed_2021_rows(clock).tolist() == [0]
@@ -110,6 +140,22 @@ def test_a8_batch_observation_and_cap_step_done_false():
     next_obs = env.obs()[0, -len(A8.ACCOUNT_CHANNELS):]
     assert next_obs[A8.ACCOUNT_CHANNELS.index("cap_event")] == 1
     assert next_obs[A8.ACCOUNT_CHANNELS.index("exit_cap")] == 1
+
+
+def test_cap_shaping_is_immediate_and_raw_ledger_unchanged():
+    env = _batch_env()
+    genome = A8.population(n=1)[0]
+    cfg = RW.RewardConfig(genome.idle, genome.risk, genome.turnover, "linear", genome.slope, 24.0,
+                          quadratic_inventory=True, cap_penalty_bps=3.0, tp_profit_reward=0.2,
+                          loss_penalty=0.4)
+    env.cfg = cfg
+    eq0 = env.ST[0, MK.S_EQ]
+    result = env.step(np.array([8]), np.array([4]), np.array([0]), np.array([0]))
+    expected = MK._exit_shaping(MK.EXIT_CAP, result["cap_pnl"][0], 1.0, 3.0, 0.2, 0.4)
+    assert np.isclose(result["shaping"][0], expected)
+    assert np.isclose(result["net4"][0], env.ST[0, MK.S_EQ] - eq0)
+    assert np.isclose(result["reward"][0], result["net4"][0] - result["idle"][0]
+                      - result["inventory"][0] - result["turnover"][0] + result["shaping"][0])
 
 
 def test_recurrent_trainer_resume_is_deterministic():

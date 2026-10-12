@@ -1,19 +1,33 @@
 {
-  "name": "A8 amendment (GA + recurrent PPO + renewable exposure lease + RL-selected SL/TP)",
+  "name": "A8 amendment r2 (exit-reason reward shaping)",
+  "revision": "r2",
   "status": "LOCKED",
   "created_utc": "2026-10-12T04:15:53.5116137Z",
+  "amended_utc": "2026-10-12T06:31:00Z",
   "spec": {
     "file": ".superpowers/sdd/rl_allocator/a8_ga_rl_spec_2026-10-12.md",
-    "sha256": "b7c95e922c2e2c1648d9bd87a4755ae4eca0ea7c753077626fcd5dae184d65fd"
+    "sha256": "3176c91fb87e8adcb3bb90957ab606d619f33d92808073348f7e3cd0b5b4f3e2"
+  },
+  "revision_history": {
+    "r1": {
+      "spec_sha256": "b7c95e922c2e2c1648d9bd87a4755ae4eca0ea7c753077626fcd5dae184d65fd",
+      "amendment_sha256": "5e0d4589bf226d5033f6c11a8e28450f6c694ae4ecf5fb7d427e7171b9cd9016",
+      "run_id": "a8_ga_selection_20261012",
+      "status": "stopped by user; never resumable as r2"
+    }
   },
   "source_design_sha256": {
     "a8_design.md": "2476cb4aad39fd906297f15f7995f0291f815749b86554ae0cf0459cee930384",
     "a8_cap_result.md": "5f7076867672a5c74874cbb0f111e18332a0492db7eff4cdc8e0de4f6824bd93"
   },
   "baseline_code_sha256": {
-    "maker_kernel": "0f26714ab79fe90695e6ea87cce6aa8729d946704581d8320412dc06e3d5dc76",
-    "smdp_batch": "aa1ab9afa3feb05dac527b01195957216b8fdf4c28a32f0b70fbc62bb9871d0f",
-    "smdp_reward": "084ead193270621910c80466a88010aef49a81bdbe8d006445376e23f68afe6f",
+    "maker_kernel": "b033e4841a4bfbf53cb3adf944044d373802c7ca65037e528b35c3e58ad5af0c",
+    "smdp_batch": "0afb268519ec757b96e0a795b28f964daba86e2d31117bc4d0bec5c02836df7b",
+    "smdp_reward": "ed44c8fc1bfb0580817b80df41a79074029fb41d170a2a9c9d5086fb9bd72419",
+    "smdp_env": "913b346a48325014b66dea6df0d5cbd37d3b5195f649322962c99af1667d0324",
+    "a8_ga_rl": "96bcd7582d6f01273d4d14ec4c465870dfd73e2e4108b09a7916fa403d077105",
+    "a8_selection": "d6cac76fb4dfa4e959c91d152cf5ba7e97d2b649e6c08430e09fc5aaee191be6",
+    "entrypoint": "26c2f7b833dc5f24c6034db25dbafdd33d06ebcabcf5fdf4493c84ecefe703d5",
     "gates": "6bb46bec6b80f170f8500e1c23d3b6ce098619a2b609c6fa6dde2ac8a335f36a",
     "signal_store": "89451ba646b6e2d3c5fedbb9dc4b6f6467f476fc2efbd4fe2733227ccf229feb",
     "dev_data": "a87c9593c896959eecdee6be7858142de5275fb95507692915b3e2a2e8969d20"
@@ -72,7 +86,28 @@
     "token_gate_normalization": "geometric mean 1",
     "gae_lambda_half_life_hours": [6, 12, 24],
     "token_width": [32, 64],
-    "final_seeds": [20261012, 20261013, 20261014, 20261015, 20261016]
+    "final_seeds": [20261012, 20261013, 20261014, 20261015, 20261016],
+    "exit_shaping_genes": {
+      "cap_penalty_bps": {"support": [0.0, 0.25, 16.0], "nonzero_sampling": "log-uniform"},
+      "tp_profit_reward": {"support": [0.0, 0.01, 0.5], "nonzero_sampling": "log-uniform"},
+      "loss_penalty": {"support": [0.0, 0.01, 0.5], "nonzero_sampling": "log-uniform"},
+      "initial_zero_probability_each": 0.25
+    },
+    "fitness_unchanged": "raw net4"
+  },
+  "reward_shaping": {
+    "cap": "-cap_penalty_bps * abs(position immediately before cap settlement)",
+    "tp": "tp_profit_reward * max(completed_position_pnl, 0) only for TP exits",
+    "loss": "loss_penalty * min(completed_position_pnl, 0) for every exit reason",
+    "booking": "exit minute's five-minute reward block",
+    "shared_implementation": "maker_kernel._minute",
+    "raw_net4_ledger_changed": false,
+    "hacking_controls": [
+      "no fixed TP bonus",
+      "all losing exits share loss penalty",
+      "cap penalty scales with settled exposure",
+      "GA fitness remains raw net4"
+    ]
   },
   "budget": {
     "selection_decisions": 3016000000,
@@ -83,8 +118,8 @@
       "cell": "o2_p0.5",
       "months": 1,
       "population": 2,
-      "generations": 1,
-      "decisions": 100000,
+      "generations": 2,
+      "planned_resume_count": 1,
       "profit_judgment": false
     }
   },

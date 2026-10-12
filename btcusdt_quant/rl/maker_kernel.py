@@ -53,6 +53,16 @@ FAULTS = {0: "none", 1: "data_gap_or_timestamp_discontinuity", 2: "nonfinite_ohl
 
 
 @numba.njit(cache=True)
+def _exit_shaping(reason, episode_pnl, exit_size, cap_penalty_bps, tp_profit_reward, loss_penalty):
+    shaping = -cap_penalty_bps * exit_size if reason == EXIT_CAP else 0.0
+    if reason == EXIT_TP and episode_pnl > 0:
+        shaping += tp_profit_reward * episode_pnl
+    if episode_pnl < 0:
+        shaping += loss_penalty * episode_pnl
+    return shaping
+
+
+@numba.njit(cache=True)
 def _limit(close, side, off):
     if side > 0:
         return math.floor(close * (1 - off / 1e4) / TICK + 1e-9) * TICK
@@ -98,10 +108,10 @@ def _fault_at(o, h, l, c, t, k):
 
 
 @numba.njit(cache=True)
-def _minute(o, h, l, c, frate, st, k, off, pen, n):
-    """One minute of the shared scalar/batch book. Returns net4 P&L; event code lives in ``S_EVENT``."""
+def _minute(o, h, l, c, frate, st, k, off, pen, n, cap_penalty_bps, tp_profit_reward, loss_penalty):
+    """One shared scalar/batch minute. Returns raw net4 and exit shaping; ledger contains raw net4 only."""
     U0, Q0, pos0 = st[S_U], st[S_Q], st[S_POSPNL]
-    v, reason = Q0 * (c[k] - c[k - 1]) * 1e4, EXIT_NONE
+    v, shaping, reason, exit_size = Q0 * (c[k] - c[k - 1]) * 1e4, 0.0, EXIT_NONE, 0.0
     renew0 = st[S_REENTRYAWAIT] > 0
     if abs(U0) > EPS and st[S_OPENK] >= 0:
         held0 = k - int(st[S_OPENK]) + 1
@@ -122,6 +132,7 @@ def _minute(o, h, l, c, frate, st, k, off, pen, n):
             tp_hit = h[k] >= tp_px if U0 > 0 else l[k] <= tp_px
         if sl_hit or tp_hit:
             reason = EXIT_SL if sl_hit else EXIT_TP
+            exit_size = abs(U0)
             px = sl_px if sl_hit else tp_px
             if sl_hit:                           # adverse gap: next executable minute open, never better than trigger
                 px = min(px, o[k]) if U0 > 0 else max(px, o[k])
@@ -166,6 +177,7 @@ def _minute(o, h, l, c, frate, st, k, off, pen, n):
                 elif abs(new_u) < EPS:
                     st[S_BASIS], st[S_OPENK] = 0.0, -1.0
                     reason = EXIT_RL
+                    exit_size = abs(U)
                 st[S_FILLS] += 1
                 st[S_FEES] += FEE_SIDE * abs(dq)
                 st[S_PEND] = 0.0
@@ -187,6 +199,7 @@ def _minute(o, h, l, c, frate, st, k, off, pen, n):
             st[S_MAXHOLD] = held
         if held >= CAP_MIN:
             cap_u = st[S_U]
+            exit_size = abs(cap_u)
             v -= FEE_SIDE * abs(cap_u)
             st[S_FEES] += FEE_SIDE * abs(cap_u)
             st[S_RENEWCOST] += FEE_SIDE * abs(cap_u)
@@ -205,6 +218,7 @@ def _minute(o, h, l, c, frate, st, k, off, pen, n):
     else:
         if abs(U0) > EPS:
             episode_pnl = pos0 + v
+            shaping = _exit_shaping(reason, episode_pnl, exit_size, cap_penalty_bps, tp_profit_reward, loss_penalty)
             st[S_RT] += 1
             st[S_LASTEXIT], st[S_EVENT], st[S_EVENTK] = reason, reason, k
             if reason == EXIT_SL:
@@ -235,11 +249,12 @@ def _minute(o, h, l, c, frate, st, k, off, pen, n):
     if renew0 and flat1:
         st[S_FLATGAP] += 1
     st[S_VALID] += 1
-    return v
+    return v, shaping
 
 
 @numba.njit(cache=True)
-def advance(o, h, l, c, t, frate, st, pnl, upath, kpath, i, j, tgt, off, pen):
+def advance(o, h, l, c, t, frate, st, pnl, shaping_path, upath, kpath, i, j, tgt, off, pen,
+            cap_penalty_bps, tp_profit_reward, loss_penalty):
     """Decision at bar i with agent target tgt; run minutes i+1 .. j (inclusive) unless a fault stops it first.
     Writes pnl[k], executed position upath[k] and the reward flat streak kpath[k] (minutes, end of minute k)."""
     n = len(c)
@@ -268,7 +283,8 @@ def advance(o, h, l, c, t, frate, st, pnl, upath, kpath, i, j, tgt, off, pen):
             st[S_FAULT], st[S_FAULTK], st[S_FAULTCODE] = 1.0, k, code
             st[S_KILLCOUNT] += 1
             return
-        pnl[k] = _minute(o, h, l, c, frate, st, k, off, pen, n)
+        pnl[k], shaping_path[k] = _minute(o, h, l, c, frate, st, k, off, pen, n, cap_penalty_bps,
+                                         tp_profit_reward, loss_penalty)
         upath[k] = st[S_U]
         kpath[k] = st[S_KSTREAK]
         if st[S_EVENT] in (EXIT_SL, EXIT_TP, EXIT_CAP):
@@ -287,6 +303,7 @@ class Kernel:
         self.frate[k[ok]] = np.asarray(fr, float)[ok]
         self.offset, self.pen = float(offset), float(pen)
         self.pnl = np.zeros(len(self.t))
+        self.shaping_path = np.zeros(len(self.t))
         self.upath = np.zeros(len(self.t))
         self.kpath = np.zeros(len(self.t))
 
@@ -296,6 +313,7 @@ class Kernel:
         self.st[S_KILL] = float(kill)
         self.i, self.i0 = int(i0), int(i0)
         self.pnl[:] = 0.0
+        self.shaping_path[:] = 0.0
         self.upath[:] = 0.0
         self.kpath[:] = 0.0
         self.last_target = 0.0
@@ -308,11 +326,15 @@ class Kernel:
             self.st[S_KILLCOUNT] += 1
 
     def step(self, target: float, wait: int, sl_mult: float = 0.0, tp_mult: float = 0.0,
-             rv_bps: float = 0.0) -> dict:
+             rv_bps: float = 0.0, cap_penalty_bps: float = 0.0, tp_profit_reward: float = 0.0,
+             loss_penalty: float = 0.0) -> dict:
         if float(target) not in TARGETS or int(wait) not in WAITS:
             raise ValueError(f"illegal action target={target} wait={wait}")
         if sl_mult < 0 or tp_mult < 0 or rv_bps < 0 or not all(math.isfinite(x) for x in (sl_mult, tp_mult, rv_bps)):
             raise ValueError("SL/TP multipliers and RV must be finite and non-negative")
+        if (cap_penalty_bps < 0 or tp_profit_reward < 0 or loss_penalty < 0
+                or not all(math.isfinite(x) for x in (cap_penalty_bps, tp_profit_reward, loss_penalty))):
+            raise ValueError("exit shaping coefficients must be finite and non-negative")
         requested_wait = int(wait)
         effective_wait = requested_wait
         if abs(self.st[S_U]) > EPS and self.st[S_OPENK] >= 0:
@@ -324,8 +346,9 @@ class Kernel:
         self.st[S_SL_BPS], self.st[S_TP_BPS] = float(sl_mult) * sigma, float(tp_mult) * sigma
         self.st[S_LASTWAIT] = requested_wait
         eq0, f0, v0 = self.st[S_EQ], self.st[S_FILLS], self.st[S_VALID]
-        advance(self.o, self.h, self.l, self.c, self.t, self.frate, self.st, self.pnl, self.upath, self.kpath,
-                self.i, j, float(target), self.offset, self.pen)
+        advance(self.o, self.h, self.l, self.c, self.t, self.frate, self.st, self.pnl, self.shaping_path,
+                self.upath, self.kpath, self.i, j, float(target), self.offset, self.pen, float(cap_penalty_bps),
+                float(tp_profit_reward), float(loss_penalty))
         fault = bool(self.st[S_FAULT])
         jj = j if not fault else int(self.st[S_FAULTK]) - 1
         if not fault and self.st[S_EVENT] in (EXIT_SL, EXIT_TP, EXIT_CAP):
@@ -334,6 +357,7 @@ class Kernel:
                 "requested_wait": requested_wait, "effective_wait": max(jj - self.i, 0),
                 "sl_mult": float(sl_mult), "tp_mult": float(tp_mult), "sigma_bps": sigma,
                 "d_target": abs(float(target) - self.last_target), "net4": float(self.st[S_EQ] - eq0),
+                "shaping": float(self.shaping_path[self.i + 1:max(jj, self.i) + 1].sum()),
                 "fills": int(self.st[S_FILLS] - f0), "executed": float(self.st[S_U]), "pending": bool(self.st[S_PEND]),
                 "fault": fault, "minutes_valid": int(self.st[S_VALID] - v0), **diagnostics(self.st, self.t)}
         self.last_target = float(target)

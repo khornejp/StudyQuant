@@ -6421,7 +6421,7 @@ def cmd_smdp_a8(args) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     report_path = run_dir / f"run_{run_id}.json"
     latest_path = run_dir / "smdp_a8_smoke_report.json"
-    report = {"run_id": run_id, "status": "running", "profit_judgment": False,
+    report = {"run_id": run_id, "status": "running", "amendment_revision": "r2", "profit_judgment": False,
               "scope": {"cell": "o2_p0.5", "period": ["2022-01-01", "2022-02-01"], "tokens": 44,
                         "population": 2, "generations": 1, "decisions": 100000},
               "test_rows_used": 0, "physical_test_reads": 0}

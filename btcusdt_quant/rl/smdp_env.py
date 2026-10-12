@@ -134,14 +134,15 @@ class SmdpEnvs:
         k = self.kern[e]
         st0 = k.st.copy()
         i0 = k.i
-        info = k.step(self.targets[a_t], self.waits[a_w])
+        info = k.step(self.targets[a_t], self.waits[a_w], cap_penalty_bps=self.reward_cfg.cap_penalty_bps,
+                      tp_profit_reward=self.reward_cfg.tp_profit_reward, loss_penalty=self.reward_cfg.loss_penalty)
         gi0 = self.s0[e]
         rv = self.d.rv[gi0:gi0 + len(k.t)]
         del rv
         rw = RW.step_reward(k.pnl, k.upath, k.kpath, k.mpath, i0, info["j"], info["d_target"], self.reward_cfg,
-                            self.require_set)
+                            self.require_set, k.shaping_path)
         ident = abs(rw["net4"] - info["net4"]) + abs(rw["reward"] - (rw["net4"] - rw["idle"] - rw["inventory"]
-                                                                     - rw["turnover"]))
+                                                                     - rw["turnover"] + rw["shaping"]))
         if ident > 1e-8:
             k.fault(4, info["j"])
         u = k.upath[i0 + 1:info["j"] + 1]

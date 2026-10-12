@@ -195,8 +195,9 @@ def _continual_sampler(market, genome, month, all_months):
 
 
 def _stats_delta(before: dict, after: dict) -> dict:
-    additive = ("net4", "round_trips", "renewal_count", "sl_count", "tp_count", "sl_pnl", "tp_pnl", "cap_pnl",
-                "renewal_cost", "reentry_requests", "reentry_fills", "flat_gap_min", "faults")
+    additive = ("net4", "shaping", "round_trips", "renewal_count", "sl_count", "tp_count", "rl_count",
+                "sl_pnl", "tp_pnl", "cap_pnl", "rl_pnl", "renewal_cost", "reentry_requests", "reentry_fills",
+                "flat_gap_min", "faults")
     output = {key: float(after[key] - before[key]) for key in additive}
     output.update(identity_error=float(after["identity_error"]), max_hold_min=int(after["max_hold_min"]))
     return output
@@ -205,7 +206,7 @@ def _stats_delta(before: dict, after: dict) -> dict:
 def _month_record(raw: dict) -> dict:
     cells = {}
     for index, name in enumerate(CELL_NAMES):
-        cells[name] = {key: (int(raw[key][index]) if key in ("renewal_count", "sl_count", "tp_count",
+        cells[name] = {key: (int(raw[key][index]) if key in ("renewal_count", "sl_count", "tp_count", "rl_count",
                                                              "reentry_requests", "reentry_fills")
                               else float(raw[key][index]))
                        for key in A8.A8Evaluator.METRICS}
@@ -214,7 +215,11 @@ def _month_record(raw: dict) -> dict:
             "faults": int(raw["faults"]), "max_hold_min": int(raw["max_hold_min"]),
             "raw_net4_mean_cells": float(np.mean(raw["net4"])), "raw_net4_sum_cells": float(np.sum(raw["net4"])),
             "round_trips": float(np.sum(raw["round_trips"])), "sl_count": int(np.sum(raw["sl_count"])),
-            "tp_count": int(np.sum(raw["tp_count"])), "renewal_count": int(np.sum(raw["renewal_count"]))}
+            "tp_count": int(np.sum(raw["tp_count"])), "renewal_count": int(np.sum(raw["renewal_count"])),
+            "rl_count": int(np.sum(raw["rl_count"])), "sl_pnl": float(np.sum(raw["sl_pnl"])),
+            "tp_pnl": float(np.sum(raw["tp_pnl"])), "cap_pnl": float(np.sum(raw["cap_pnl"])),
+            "rl_pnl": float(np.sum(raw["rl_exit_pnl"])), "reentry_fills": int(np.sum(raw["reentry_fills"])),
+            "shaping": float(np.sum(raw["shaping"]))}
 
 
 def _fitness(monthly: list) -> tuple[float, float]:
@@ -315,8 +320,12 @@ def _run_genome(genome, generation, seed: int, config: SelectionConfig, months, 
             logger.write(f"event=pretrain generation={generation_name} genome={genome.name} seed={seed} month=2021 "
                          f"decisions={trainer.decisions} dec/s={(trainer.decisions - before_decisions) / max(wall, 1e-9):.3f} "
                          f"raw_net4={delta['net4']:.6f} RT={delta['round_trips']:.3f} "
-                         f"SL={int(delta['sl_count'])} TP={int(delta['tp_count'])} "
-                         f"renewal={int(delta['renewal_count'])} max_hold={delta['max_hold_min']} "
+                         f"cap_count={int(delta['renewal_count'])} cap_pnl={delta['cap_pnl']:.6f} "
+                         f"SL_count={int(delta['sl_count'])} SL_pnl={delta['sl_pnl']:.6f} "
+                         f"TP_count={int(delta['tp_count'])} TP_pnl={delta['tp_pnl']:.6f} "
+                         f"RL_count={int(delta['rl_count'])} RL_pnl={delta['rl_pnl']:.6f} "
+                         f"reentry_fills={int(delta['reentry_fills'])} shaping={delta['shaping']:.6f} "
+                         f"max_hold={delta['max_hold_min']} "
                          f"identity_error={delta['identity_error']:.3e} fault={int(delta['faults'])}")
         phase = "pretrained"
         progress = _save_progress(genome_dir, trainer, evaluator, phase, -1, monthly, hashes, scaler,
@@ -350,7 +359,11 @@ def _run_genome(genome, generation, seed: int, config: SelectionConfig, months, 
             logger.write(f"event=evaluate generation={generation_name} genome={genome.name} seed={seed} month={month_name} "
                          f"decisions={record['decisions']} dec/s={record['decisions'] / max(wall, 1e-9):.3f} "
                          f"raw_net4={record['raw_net4_mean_cells']:.6f} RT={record['round_trips']:.3f} "
-                         f"SL={record['sl_count']} TP={record['tp_count']} renewal={record['renewal_count']} "
+                         f"cap_count={record['renewal_count']} cap_pnl={record['cap_pnl']:.6f} "
+                         f"SL_count={record['sl_count']} SL_pnl={record['sl_pnl']:.6f} "
+                         f"TP_count={record['tp_count']} TP_pnl={record['tp_pnl']:.6f} "
+                         f"RL_count={record['rl_count']} RL_pnl={record['rl_pnl']:.6f} "
+                         f"reentry_fills={record['reentry_fills']} shaping={record['shaping']:.6f} "
                          f"max_hold={record['max_hold_min']} identity_error={record['identity_error']:.3e} "
                          f"fault={record['faults']}")
 
@@ -373,7 +386,11 @@ def _run_genome(genome, generation, seed: int, config: SelectionConfig, months, 
                      f"decisions={trainer.decisions - before_decisions} "
                      f"dec/s={(trainer.decisions - before_decisions) / max(wall, 1e-9):.3f} "
                      f"raw_net4={record['raw_net4_mean_cells']:.6f} RT={record['round_trips']:.3f} "
-                     f"SL={record['sl_count']} TP={record['tp_count']} renewal={record['renewal_count']} "
+                     f"cap_count={int(delta['renewal_count'])} cap_pnl={delta['cap_pnl']:.6f} "
+                     f"SL_count={int(delta['sl_count'])} SL_pnl={delta['sl_pnl']:.6f} "
+                     f"TP_count={int(delta['tp_count'])} TP_pnl={delta['tp_pnl']:.6f} "
+                     f"RL_count={int(delta['rl_count'])} RL_pnl={delta['rl_pnl']:.6f} "
+                     f"reentry_fills={int(delta['reentry_fills'])} shaping={delta['shaping']:.6f} "
                      f"max_hold={max(record['max_hold_min'], delta['max_hold_min'])} "
                      f"identity_error={max(record['identity_error'], delta['identity_error']):.3e} "
                      f"fault={record['faults'] + int(delta['faults'])}")
@@ -383,11 +400,12 @@ def _run_genome(genome, generation, seed: int, config: SelectionConfig, months, 
 
 
 def _report_base(config: SelectionConfig, hashes: dict, input_hash: dict, scaler: dict) -> dict:
-    return {"run_id": config.run_id, "status": "running", "created_utc": _utc(), "config": asdict(config),
+    return {"run_id": config.run_id, "status": "running", "created_utc": _utc(), "amendment_revision": "r2",
+            "config": asdict(config),
             "locked": {"population": 8, "generations": 6, "elite": 2, "tournament": 3,
                        "crossover": "uniform", "mutation": "log-space", "seed": A8.POPULATION_SEED,
                        "pretrain_decisions": 10_000_000, "monthly_decisions": 2_000_000,
-                       "weight_inheritance": False, "fitness": "raw net4"},
+                       "weight_inheritance": False, "fitness": "raw net4", "amendment_revision": "r2"},
             "hashes": hashes, "hash_id": _canonical_sha({"hashes": hashes, "config": _identity_config(config),
                                                            "input": input_hash, "scaler": scaler}),
             "input_hash": input_hash, "scaler": scaler, "git_head": _git_head(), "data_cutoff": "< 2026-01-01",
@@ -545,7 +563,7 @@ def run_calibration(run_id: str, env_counts: list[int], decisions: int = 131_072
     report = {"run_id": run_id, "status": "running", "created_utc": _utc(), "env_counts": env_counts,
               "measurement_decisions_target": decisions, "gpu": torch.cuda.get_device_name(0),
               "shared_process_pid": 34640, "shared_process_killed": False, "rows": [],
-              "locked_assumptions_changed": False, "amendment_revision": None,
+              "locked_assumptions_changed": False, "amendment_revision": "r2",
               "test_rows_used": 0, "physical_test_reads": 0, "profit_judgment": False}
     A8.json_write(report_path, report)
     try:

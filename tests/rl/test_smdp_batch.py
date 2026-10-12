@@ -6,7 +6,8 @@ from tests.rl.test_maker_kernel import market
 
 def test_batch_equals_scalar_100k():
     m = market(n=60 * 1440, seed=21)
-    cfg = RW.RewardConfig(idle_bps_per_h=0.4, inventory_bps_per_h=0.2, turnover_bps=0.05, f_kind="sqrt", f_param=0.3)
+    cfg = RW.RewardConfig(idle_bps_per_h=0.4, inventory_bps_per_h=0.2, turnover_bps=0.05, f_kind="sqrt", f_param=0.3,
+                          cap_penalty_bps=3.0, tp_profit_reward=0.2, loss_penalty=0.3)
     rv = MK.rv24h(m.c)
     mglob = RW.m_of_t(rv, np.full(m.N, float(np.median(rv[1440:]))), cfg)
     fr = SB.frate_global(m.t, m.ft, m.fr)
@@ -25,7 +26,7 @@ def test_batch_equals_scalar_100k():
     endx = np.full(E, m.N, np.int64)
     off = np.array([c[0] for c in ce], float); pen = np.array([c[1] for c in ce], float)
     nb_ = np.zeros(E, np.int64); jo = np.zeros(E, np.int64)
-    net_b, u_b, k_b = (np.zeros((E, SB.MAX_BLOCKS)) for _ in range(3))
+    net_b, shaping_b, u_b, k_b = (np.zeros((E, SB.MAX_BLOCKS)) for _ in range(4))
     last = np.zeros(E)
     worst = 0.0
     n_dec = 0
@@ -47,15 +48,19 @@ def test_batch_equals_scalar_100k():
         tp = np.asarray((0, 1, 2, 4, 8))[rng.integers(0, 5, E)]
         rv_dec = rv[gi]
         SB.advance_batch(m.o, m.h, m.l, m.c, m.t, fr, ST, gi, tg, wt, endx, off, pen, net_b, u_b, k_b, nb_, jo,
-                         sl, tp, rv_dec)
-        rb = SB.batch_reward(net_b, u_b, k_b, mglob, gi0, nb_, np.abs(tg - last), cfg, jout=jo)
+                         sl, tp, rv_dec, shaping_b, cfg.cap_penalty_bps, cfg.tp_profit_reward, cfg.loss_penalty)
+        rb = SB.batch_reward(net_b, u_b, k_b, mglob, gi0, nb_, np.abs(tg - last), cfg, jout=jo,
+                             shaping_b=shaping_b)
         for e in np.flatnonzero(live):
             k = scal[e]
             i0 = k.i
-            r = k.step(float(tg[e]), int(wt[e]), float(sl[e]), float(tp[e]), float(rv_dec[e]))
-            rs = RW.step_reward(k.pnl, k.upath, k.kpath, mglob, i0, r["j"], r["d_target"], cfg)
+            r = k.step(float(tg[e]), int(wt[e]), float(sl[e]), float(tp[e]), float(rv_dec[e]),
+                       cfg.cap_penalty_bps, cfg.tp_profit_reward, cfg.loss_penalty)
+            rs = RW.step_reward(k.pnl, k.upath, k.kpath, mglob, i0, r["j"], r["d_target"], cfg,
+                                shaping_path=k.shaping_path)
             worst = max(worst, abs(rs["net4"] - rb["net4"][e]), abs(rs["reward"] - rb["reward"][e]),
-                        abs(rs["reward_discounted"] - rb["reward_discounted"][e]), abs(k.st[MK.S_U] - ST[e, MK.S_U]),
+                        abs(rs["reward_discounted"] - rb["reward_discounted"][e]),
+                        abs(rs["shaping"] - rb["shaping"][e]), abs(k.st[MK.S_U] - ST[e, MK.S_U]),
                         abs(k.st[MK.S_FILLS] - ST[e, MK.S_FILLS]), abs(k.st[MK.S_EQ] - ST[e, MK.S_EQ]))
             assert r["j"] == jo[e]
             n_dec += 1

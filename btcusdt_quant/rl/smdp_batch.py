@@ -17,7 +17,7 @@ MAX_BLOCKS = 1440 // 5
 
 @numba.njit(parallel=True, cache=True)
 def _advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_b, u_b, k_b, nb, jout,
-                   sl_mult, tp_mult, rv_dec):
+                   sl_mult, tp_mult, rv_dec, shaping_b, cap_penalty_bps, tp_profit_reward, loss_penalty):
     """Every env e: decision at global bar gi[e] with target tgt[e]; minutes gi+1 .. min(gi+wait, endx-1) unless a
     fault stops it. Block arrays are [E, MAX_BLOCKS]; nb[e] full blocks, jout[e] last processed minute."""
     E = ST.shape[0]
@@ -35,6 +35,7 @@ def _advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_
             j = n - 1
         for b in range(MAX_BLOCKS):
             net_b[e, b] = 0.0
+            shaping_b[e, b] = 0.0
         jout[e] = i
         nb[e] = 0
         if st[MK.S_FAULT] > 0:
@@ -67,10 +68,12 @@ def _advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_
                 st[MK.S_FAULT], st[MK.S_FAULTK], st[MK.S_FAULTCODE] = 1.0, k, code
                 st[MK.S_KILLCOUNT] += 1
                 break
-            v = MK._minute(o, h, l, c, frate, st, k, off[e], pen[e], n)
+            v, shaping = MK._minute(o, h, l, c, frate, st, k, off[e], pen[e], n, cap_penalty_bps,
+                                    tp_profit_reward, loss_penalty)
             b = (k - i - 1) // 5
             if b < MAX_BLOCKS:
                 net_b[e, b] += v
+                shaping_b[e, b] += shaping
                 if (k - i) % 5 == 0 or st[MK.S_EVENT] in (MK.EXIT_SL, MK.EXIT_TP, MK.EXIT_CAP) or k == j:
                     u_b[e, b] = st[MK.S_U]
                     k_b[e, b] = st[MK.S_KSTREAK]
@@ -82,14 +85,17 @@ def _advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_
 
 
 def advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_b, u_b, k_b, nb, jout,
-                  sl_mult=None, tp_mult=None, rv_dec=None):
+                  sl_mult=None, tp_mult=None, rv_dec=None, shaping_b=None, cap_penalty_bps=0.0,
+                  tp_profit_reward=0.0, loss_penalty=0.0):
     """Python compatibility wrapper. Scalar and batch share ``maker_kernel._minute`` for all fills and exits."""
     E = ST.shape[0]
     z = np.zeros(E, np.float64)
+    shaping_b = np.zeros_like(net_b) if shaping_b is None else shaping_b
     _advance_batch(o, h, l, c, t, frate, ST, gi, tgt, wait, endx, off, pen, net_b, u_b, k_b, nb, jout,
                    z if sl_mult is None else np.asarray(sl_mult, np.float64),
                    z if tp_mult is None else np.asarray(tp_mult, np.float64),
-                   z if rv_dec is None else np.asarray(rv_dec, np.float64))
+                   z if rv_dec is None else np.asarray(rv_dec, np.float64), shaping_b, float(cap_penalty_bps),
+                   float(tp_profit_reward), float(loss_penalty))
 
 
 def frate_global(t_ns: np.ndarray, ft_ns: np.ndarray, fr: np.ndarray) -> np.ndarray:
@@ -100,7 +106,8 @@ def frate_global(t_ns: np.ndarray, ft_ns: np.ndarray, fr: np.ndarray) -> np.ndar
     return out
 
 
-def batch_reward(net_b, u_b, k_b, m_glob, gi, nb, d_target, cfg, require_set: bool = True, jout=None) -> dict:
+def batch_reward(net_b, u_b, k_b, m_glob, gi, nb, d_target, cfg, require_set: bool = True, jout=None,
+                 shaping_b=None) -> dict:
     """Vectorized smdp_reward over envs: arrays [E, B] (valid b < nb[e])."""
     from .smdp_reward import f_of_k
     if require_set and not cfg.is_set():
@@ -119,11 +126,13 @@ def batch_reward(net_b, u_b, k_b, m_glob, gi, nb, d_target, cfg, require_set: bo
     inv = z(cfg.inventory_bps_per_h) / 12.0 * ((m * m * u_b * u_b) if cfg.quadratic_inventory
                                                 else np.abs(u_b)) * valid
     net = net_b * valid
+    shaping = (np.zeros_like(net_b) if shaping_b is None else shaping_b) * valid
     turn = z(cfg.turnover_bps) * d_target * (nb > 0)            # like the scalar step: no block, no turnover term
     disc = np.exp(-np.log(2.0) * 5.0 * bidx / MK.HALF_LIFE_MIN)
-    r = net - idle - inv
+    r = net - idle - inv + shaping
     r_disc = (disc * r).sum(1) - turn
     return {"net4": net.sum(1), "idle": idle.sum(1), "inventory": inv.sum(1), "turnover": turn,
+            "shaping": shaping.sum(1),
             "reward": r.sum(1) - turn, "reward_discounted": r_disc,
             "gamma_d": np.exp(-np.log(2.0) * (5.0 * nb) / MK.HALF_LIFE_MIN), "flat_blocks": (flat * valid).sum(1)}
 
@@ -210,6 +219,7 @@ class BatchEnv:
         self.endx = np.zeros(self.E, np.int64)
         self.last_t = np.zeros(self.E)
         self.net_b = np.zeros((self.E, MAX_BLOCKS))
+        self.shaping_b = np.zeros((self.E, MAX_BLOCKS))
         self.u_b = np.zeros((self.E, MAX_BLOCKS))
         self.k_b = np.zeros((self.E, MAX_BLOCKS))
         self.nb = np.zeros(self.E, np.int64)
@@ -246,10 +256,11 @@ class BatchEnv:
         st0 = self.ST.copy()
         gi0 = self.gi.copy()
         advance_batch(self.o, self.h, self.l, self.c, self.t, self.frate, self.ST, self.gi, tg, wt, self.endx,
-                      self.off, self.pen, self.net_b, self.u_b, self.k_b, self.nb, self.jout, sl, tp, self.rv[self.gi])
+                      self.off, self.pen, self.net_b, self.u_b, self.k_b, self.nb, self.jout, sl, tp, self.rv[self.gi],
+                      self.shaping_b, self.cfg.cap_penalty_bps, self.cfg.tp_profit_reward, self.cfg.loss_penalty)
         dtg = np.abs(tg - self.last_t)
         rw = batch_reward(self.net_b, self.u_b, self.k_b, self.m, gi0, self.nb, dtg, self.cfg, self.require_set,
-                          self.jout)
+                          self.jout, self.shaping_b)
         eqd = self.ST[:, MK.S_EQ] - eq0
         ident = np.abs(rw["net4"] - eqd)
         bad = ident > 1e-8
@@ -271,6 +282,7 @@ class BatchEnv:
                   flat_gap_min=self.ST[:, MK.S_FLATGAP] - st0[:, MK.S_FLATGAP],
                   sl_count=self.ST[:, MK.S_SLCOUNT] - st0[:, MK.S_SLCOUNT],
                   tp_count=self.ST[:, MK.S_TPCOUNT] - st0[:, MK.S_TPCOUNT],
+                  rl_count=self.ST[:, MK.S_RLEXITCOUNT] - st0[:, MK.S_RLEXITCOUNT],
                   sl_pnl=self.ST[:, MK.S_SLPNL] - st0[:, MK.S_SLPNL],
                   tp_pnl=self.ST[:, MK.S_TPPNL] - st0[:, MK.S_TPPNL],
                   cap_pnl=self.ST[:, MK.S_CAPPNL] - st0[:, MK.S_CAPPNL],

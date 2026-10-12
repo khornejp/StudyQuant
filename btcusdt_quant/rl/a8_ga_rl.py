@@ -30,6 +30,9 @@ ACCOUNT_DIM = len(ACCOUNT_CHANNELS)
 GA_SELECTION = ("2022-01-01", "2024-01-01")
 FINAL_EVALUATION = ("2024-01-01", "2026-01-01")
 SELECTION_END_NS = np.datetime64("2024-01-01T00:00:00", "ns").astype(np.int64)
+CAP_PENALTY_BOUNDS = (0.25, 16.0)
+EXIT_MULTIPLIER_BOUNDS = (0.01, 0.50)
+SHAPING_ZERO_PROBABILITY = 0.25
 
 
 def normalize_gates(values) -> tuple[float, ...]:
@@ -55,6 +58,9 @@ class Genome:
     slope: float
     risk: float
     turnover: float
+    cap_penalty_bps: float
+    tp_profit_reward: float
+    loss_penalty: float
     lambda_half_life_h: int
     lr: float
     entropy_joint: float
@@ -70,10 +76,16 @@ class Genome:
             raise ValueError("A8 token gates must have geometric mean one")
         if self.lambda_half_life_h not in (6, 12, 24) or self.token_width not in (32, 64):
             raise ValueError("illegal discrete A8 gene")
+        bounded = ((self.cap_penalty_bps, CAP_PENALTY_BOUNDS),
+                   (self.tp_profit_reward, EXIT_MULTIPLIER_BOUNDS),
+                   (self.loss_penalty, EXIT_MULTIPLIER_BOUNDS))
+        if any(value != 0 and not (bounds[0] <= value <= bounds[1]) for value, bounds in bounded):
+            raise ValueError("illegal A8 exit-shaping gene")
 
     def reward_config(self):
         return RW.RewardConfig(self.idle, self.risk, self.turnover, "linear", self.slope, 24.0,
-                               quadratic_inventory=True)
+                               quadratic_inventory=True, cap_penalty_bps=self.cap_penalty_bps,
+                               tp_profit_reward=self.tp_profit_reward, loss_penalty=self.loss_penalty)
 
     def ppo_config(self):
         return PPOConfig(lr=self.lr, entropy_joint=self.entropy_joint, entropy_sl=self.entropy_sl,
@@ -95,6 +107,10 @@ def _log_uniform(rng, lo, hi):
     return float(np.exp(rng.uniform(np.log(lo), np.log(hi))))
 
 
+def _zero_log_uniform(rng, lo, hi):
+    return 0.0 if rng.random() < SHAPING_ZERO_PROBABILITY else _log_uniform(rng, lo, hi)
+
+
 def population(seed: int = POPULATION_SEED, n: int = 8) -> list[Genome]:
     rng = np.random.default_rng(seed)
     out = []
@@ -103,6 +119,9 @@ def population(seed: int = POPULATION_SEED, n: int = 8) -> list[Genome]:
         out.append(Genome(f"G{i:02d}", normalize_gates(np.exp(rng.uniform(np.log(0.1), np.log(2), N_TOKENS))),
                           _log_uniform(rng, 0.005, 0.60), float(rng.uniform(0.005, 0.05)),
                           _log_uniform(rng, 0.02, 0.20), _log_uniform(rng, 0.02, 0.25),
+                          _zero_log_uniform(rng, *CAP_PENALTY_BOUNDS),
+                          _zero_log_uniform(rng, *EXIT_MULTIPLIER_BOUNDS),
+                          _zero_log_uniform(rng, *EXIT_MULTIPLIER_BOUNDS),
                           int(rng.choice((6, 12, 24))), _log_uniform(rng, 1e-4, 6e-4),
                           _log_uniform(rng, 0.001, 0.02), _log_uniform(rng, 0.001, 0.02),
                           _log_uniform(rng, 0.001, 0.02), tuple(float(x) for x in replay),
@@ -120,12 +139,25 @@ def crossover_mutate(a: Genome, b: Genome, rng, name: str) -> Genome:
         if rng.random() < 0.25:
             value *= math.exp(rng.normal(0, 0.15))
         return float(np.clip(value, lo, hi))
+    def zero_gene(key, lo, hi):
+        value = float(pick(key))
+        if rng.random() < 0.25:
+            if rng.random() < SHAPING_ZERO_PROBABILITY:
+                value = 0.0
+            elif value == 0:
+                value = _log_uniform(rng, lo, hi)
+            else:
+                value *= math.exp(rng.normal(0, 0.15))
+        return 0.0 if value == 0 else float(np.clip(value, lo, hi))
     replay = np.asarray(pick("replay"), float)
     if rng.random() < 0.25:
         replay = np.exp(np.log(replay) + rng.normal(0, 0.15, 3))
         replay /= replay.sum()
     return Genome(name, normalize_gates(gates), gene("idle", 0.005, 0.60), gene("slope", 0.005, 0.05),
-                  gene("risk", 0.02, 0.20), gene("turnover", 0.02, 0.25), int(pick("lambda_half_life_h")),
+                  gene("risk", 0.02, 0.20), gene("turnover", 0.02, 0.25),
+                  zero_gene("cap_penalty_bps", *CAP_PENALTY_BOUNDS),
+                  zero_gene("tp_profit_reward", *EXIT_MULTIPLIER_BOUNDS),
+                  zero_gene("loss_penalty", *EXIT_MULTIPLIER_BOUNDS), int(pick("lambda_half_life_h")),
                   gene("lr", 1e-4, 6e-4), gene("entropy_joint", 0.001, 0.02), gene("entropy_sl", 0.001, 0.02),
                   gene("entropy_tp", 0.001, 0.02), tuple(float(x) for x in replay), int(pick("token_width")))
 
@@ -293,9 +325,10 @@ class A8Trainer:
         self.hidden = self.model.initial_state(env.E, self.device)
         self.observation = env.obs()
         self.decisions = 0
-        self.stats = {"net4": 0.0, "renewal_count": 0, "sl_count": 0, "tp_count": 0,
+        self.stats = {"net4": 0.0, "shaping": 0.0, "renewal_count": 0, "sl_count": 0, "tp_count": 0,
+                      "rl_count": 0,
                       "round_trips": 0.0,
-                      "sl_pnl": 0.0, "tp_pnl": 0.0, "cap_pnl": 0.0, "renewal_cost": 0.0,
+                      "sl_pnl": 0.0, "tp_pnl": 0.0, "cap_pnl": 0.0, "rl_pnl": 0.0, "renewal_cost": 0.0,
                       "reentry_requests": 0, "reentry_fills": 0, "flat_gap_min": 0,
                       "identity_error": 0.0, "faults": 0, "max_hold_min": 0}
 
@@ -368,6 +401,7 @@ class A8Trainer:
             records["minutes"].append(torch.as_tensor(result["minutes"], dtype=torch.float32, device=self.device))
             records["learn"].append(torch.as_tensor(self.env.burnin_mask(self.cfg.burnin_hours), device=self.device))
             self.stats["net4"] += float(result["net4"].sum())
+            self.stats["shaping"] += float(result["shaping"].sum())
             self.stats["round_trips"] += float(self.env.ST[:, MK.S_RT].sum() - round_trips_before)
             self.stats["identity_error"] = max(self.stats["identity_error"], float(result["identity_err"].max()))
             self.stats["faults"] += int(result["fault"].sum())
@@ -379,8 +413,10 @@ class A8Trainer:
             self.stats["renewal_count"] += int((reason == MK.EXIT_CAP).sum())
             self.stats["sl_count"] += int((reason == MK.EXIT_SL).sum())
             self.stats["tp_count"] += int((reason == MK.EXIT_TP).sum())
+            self.stats["rl_count"] += int((reason == MK.EXIT_RL).sum())
             for key in ("sl_pnl", "tp_pnl", "cap_pnl", "renewal_cost", "flat_gap_min"):
                 self.stats[key] += float(result[key].sum())
+            self.stats["rl_pnl"] += float(result["rl_exit_pnl"].sum())
             self.stats["reentry_requests"] += int(result["reentry_requests"].sum())
             self.stats["reentry_fills"] += int(result["reentry_fills"].sum())
             done_index = np.flatnonzero(result["done"])
@@ -443,8 +479,9 @@ class A8Trainer:
 class A8Evaluator:
     """Continuous six-cell sampled-policy ledger for 2022-2023 selection only."""
 
-    METRICS = ("net4", "fills", "minutes", "renewal_count", "sl_count", "tp_count", "sl_pnl", "tp_pnl",
-               "cap_pnl", "rl_exit_pnl", "renewal_cost", "reentry_requests", "reentry_fills", "flat_gap_min")
+    METRICS = ("net4", "shaping", "fills", "minutes", "renewal_count", "sl_count", "tp_count", "rl_count",
+               "sl_pnl", "tp_pnl", "cap_pnl", "rl_exit_pnl", "renewal_cost", "reentry_requests",
+               "reentry_fills", "flat_gap_min")
 
     def __init__(self, market: dict, features: tuple, reward_config, rv_median: float, cells: list,
                  start_ns: int, end_ns: int, seed: int, device="cuda"):

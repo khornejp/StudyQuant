@@ -28,6 +28,9 @@ class RewardConfig:
     m_lo: float = 0.25
     m_hi: float = 4.0
     quadratic_inventory: bool = False
+    cap_penalty_bps: float = 0.0
+    tp_profit_reward: float = 0.0
+    loss_penalty: float = 0.0
 
     def is_set(self) -> bool:
         base = all(v is not None for v in (self.idle_bps_per_h, self.inventory_bps_per_h, self.turnover_bps))
@@ -58,7 +61,8 @@ def m_of_t(rv: np.ndarray, rv_ref: np.ndarray, cfg: RewardConfig) -> np.ndarray:
     return np.clip(np.where(np.isfinite(x), x, 1.0), cfg.m_lo, cfg.m_hi)
 
 
-def block_terms(net_b, u_b, k_b, m_b, d_target: float, cfg: RewardConfig, require_set: bool = True) -> dict:
+def block_terms(net_b, u_b, k_b, m_b, d_target: float, cfg: RewardConfig, require_set: bool = True,
+                shaping_b=None) -> dict:
     """Vectorized terms from per-block arrays (net4 sum, executed U, k minutes, m) of one step."""
     if require_set and not cfg.is_set():
         raise ValueError("reward magnitudes are UNSET (idle / inventory await the user's decision)")
@@ -71,26 +75,30 @@ def block_terms(net_b, u_b, k_b, m_b, d_target: float, cfg: RewardConfig, requir
     turn = np.zeros(nb)
     if nb:
         turn[0] = z(cfg.turnover_bps) * d_target
-    r = net_b - idle - inv - turn
+    shaping = np.zeros(nb) if shaping_b is None else np.asarray(shaping_b, float)
+    r = net_b - idle - inv - turn + shaping
     disc = np.array([MK.gamma(5.0 * b) for b in range(nb)])
     return {"net4": float(np.sum(net_b)), "idle": float(idle.sum()), "inventory": float(inv.sum()),
-            "turnover": float(turn.sum()), "reward": float(r.sum()), "reward_discounted": float((disc * r).sum()),
+            "turnover": float(turn.sum()), "shaping": float(shaping.sum()), "reward": float(r.sum()),
+            "reward_discounted": float((disc * r).sum()),
             "blocks": int(nb), "flat_blocks": int(flat.sum()), "m_mean": float(m_b.mean()) if nb else None,
             "k_hours_end": float(k_b[-1] / 60.0) if nb else None, "reward_values_set": bool(cfg.is_set())}
 
 
 def step_reward(pnl, upath, kpath, mpath, i: int, j: int, d_target: float, cfg: RewardConfig,
-                require_set: bool = True) -> dict:
+                require_set: bool = True, shaping_path=None) -> dict:
     """Scalar-kernel step (minute arrays): blocks of 5 minutes over i+1 .. j."""
     minutes = max(j - i, 0)
     nb = (minutes + 4) // 5
     if nb:
         seg = pnl[i + 1:j + 1]
         net = np.add.reduceat(seg, np.arange(0, len(seg), 5))
+        shaping = (np.zeros(nb) if shaping_path is None else
+                   np.add.reduceat(np.asarray(shaping_path)[i + 1:j + 1], np.arange(0, len(seg), 5)))
         end = np.minimum(i + 5 * (np.arange(nb) + 1), j)
     else:
-        net, end = np.zeros(0), np.zeros(0, dtype=int)
-    out = block_terms(net, upath[end], kpath[end], mpath[end], d_target, cfg, require_set)
+        net, shaping, end = np.zeros(0), np.zeros(0), np.zeros(0, dtype=int)
+    out = block_terms(net, upath[end], kpath[end], mpath[end], d_target, cfg, require_set, shaping)
     out["gamma_d"] = MK.gamma(float(j - i))
     return out
 
