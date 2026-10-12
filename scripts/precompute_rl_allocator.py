@@ -5302,9 +5302,27 @@ def a6_fixed_policy_diag(mk, rcfg) -> dict:
     return out
 
 
-def a6_feats(cache, clk, month_start_ns: int, r1: int):
+SCALER_MODE = "fixed2021"          # Gate-0 (Codex): "fixed2021" (default) or "expanding" (A6 / A6b / A7 behaviour)
+_FEATS_CACHE: dict = {}
+
+
+def a6_feats(cache, clk, month_start_ns: int, r1: int, mode: str | None = None):
+    """Observation scaling. 'expanding' refits the robust scaler on all rows before the month (the A6/A7 runs did this
+    and swapped it under an already-trained model every month - the Gate-0 defect); 'fixed2021' (default) fits once
+    on 2021 rows (2021-01-30 .. 2022-01-01) and never changes."""
     from btcusdt_quant.rl import smdp_batch as SB
+    mode = mode or SCALER_MODE
     a = pd.Timestamp(USABLE_FROM, tz="UTC").value
+    if mode == "fixed2021":
+        key = ("fixed2021", r1)
+        if key not in _FEATS_CACHE:
+            b = pd.Timestamp("2022-01-01", tz="UTC").value
+            rows = np.flatnonzero((clk[:r1] >= a) & (clk[:r1] < b))
+            _FEATS_CACHE.clear()
+            _FEATS_CACHE[key] = SB.scaled_features(cache, rows, r1)
+        return _FEATS_CACHE[key]
+    if mode != "expanding":
+        raise ValueError(f"unknown scaler mode {mode!r}")
     rows = np.flatnonzero((clk[:r1] >= a) & (clk[:r1] < month_start_ns))
     return SB.scaled_features(cache, rows, r1)
 

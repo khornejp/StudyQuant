@@ -54,3 +54,4 @@ tests/rl/test_smdp_continual.py text eol=lf
 btcusdt_quant/rl/smdp_gpu.py text eol=lf
 btcusdt_quant/rl/a7_rpbt.py text eol=lf
 tests/rl/test_a7_rpbt.py text eol=lf
+tests/rl/test_gate0_scaler.py text eol=lf
