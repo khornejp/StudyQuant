@@ -7,6 +7,7 @@ import pytest
 import torch
 
 from btcusdt_quant.rl import a8_ga_rl as A8
+from btcusdt_quant.rl import a8_selection as A8S
 from btcusdt_quant.rl import maker_kernel as MK
 from btcusdt_quant.rl import signal_store as SG
 from btcusdt_quant.rl import smdp_reward as RW
@@ -55,10 +56,16 @@ def test_fixed_2021_scaler_rows_evaluate_first_and_test_guard():
                         ("replay", "2022-02"), ("train", "2022-02")]
     assert A8.GA_SELECTION == ("2022-01-01", "2024-01-01") and A8.FINAL_EVALUATION == ("2024-01-01", "2026-01-01")
     A8.assert_dev_path("dev_market/btcusdt_2025.parquet")
+    A8.assert_dev_path("out/rl_allocator_20261010/dev_market/btcusdt_1m_dev_2020_2025.parquet")
     with pytest.raises(PermissionError):
         A8.assert_dev_path("market/2026-01.parquet")
     with pytest.raises(PermissionError):
         A8.assert_dev_path("market/test.parquet")
+    assert [f"{month:%Y-%m}" for month in A8.selection_months()] == list(pd.period_range("2022-01", "2023-12", freq="M").astype(str))
+    with pytest.raises(PermissionError):
+        A8.selection_months("2023-12", "2024-01")
+    with pytest.raises(PermissionError):
+        A8.selection_months("2026-01", "2026-01")
 
 
 def test_checkpoint_hash_refusal_and_rng_resume():
@@ -116,6 +123,29 @@ def test_recurrent_trainer_resume_is_deterministic():
     assert left["net4"] == right["net4"] and left["identity_error"] == right["identity_error"]
     assert np.array_equal(first.env.ST, resumed.env.ST) and np.array_equal(first.observation, resumed.observation)
     assert all(torch.equal(a, b) for a, b in zip(first.model.state_dict().values(), resumed.model.state_dict().values()))
+
+
+def test_selection_driver_resume_identity_and_three_seed_median():
+    config_a = A8S.SelectionConfig("unit", population=2, generations=2, envs=2, start="2022-01", end="2022-01",
+                                   pretrain_decisions=2, monthly_decisions=2, smoke=True, stop_after_commits=1)
+    config_b = A8S.SelectionConfig("unit", population=2, generations=2, envs=2, start="2022-01", end="2022-01",
+                                   pretrain_decisions=2, monthly_decisions=2, smoke=True, stop_after_commits=0)
+    assert A8S._identity_config(config_a) == A8S._identity_config(config_b)
+    assert [f"{month:%Y-%m}" for month in config_a.validate()] == ["2022-01"]
+    assert A8.median_seed_fitness({20261012: (1, 10), 20261013: (3, 4), 20261014: (2, 7)}) == (2.0, 7.0)
+    with pytest.raises(ValueError):
+        A8.median_seed_fitness({1: (1, 1), 2: (2, 2)})
+
+
+def test_selection_evaluator_refuses_final_evaluation_period():
+    env = _batch_env()
+    genome = A8.population(n=1)[0]
+    market = {key: getattr(env, key) for key in ("t", "o", "h", "l", "c", "frate", "rv", "rv_ref", "m")}
+    market["clock0"] = env.clock0
+    with pytest.raises(PermissionError):
+        A8.A8Evaluator(market, (env.tok, env.mk), genome.reward_config(), 1000.0, [(2, 0.5)],
+                       pd.Timestamp("2023-12-01", tz="UTC").value,
+                       pd.Timestamp("2024-02-01", tz="UTC").value, 1, device="cpu")
 
 
 def test_a8_quadratic_reward_scalar_batch_definition():

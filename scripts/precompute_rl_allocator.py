@@ -6390,16 +6390,31 @@ def cmd_gate0(args) -> None:
     log(f"gate0 done {rep['total_wall_sec']}s")
 
 
-# ================================================================ A8 implementation smoke only (selection stays locked)
+# ================================================================ A8 smoke / GA selection
 def cmd_smdp_a8(args) -> None:
-    """Authorized A8 smoke: two fresh genomes, one generation, one cell/month, 100k total decisions."""
+    """A8 kernel smoke, throughput calibration, or user-authorized GA selection."""
     import numba
     import torch
     from btcusdt_quant.rl import a8_ga_rl as A8, a8_model as AM, dev_data as DD, signal_store as SG
     from btcusdt_quant.rl import maker_kernel as MK, smdp_batch as SB, u35
 
-    if "smoke" not in set(getattr(args, "only", ()) or ()):
-        raise SystemExit("A8 GA selection is locked; use --only smoke")
+    modes = set(getattr(args, "only", ()) or ())
+    if "calibration" in modes:
+        from btcusdt_quant.rl import a8_selection as AS
+        env_counts = [int(value) for value in args.a8_calibration_envs.split(",")]
+        return AS.run_calibration(args.run_id or datetime.now(timezone.utc).strftime("calibration_%Y%m%dT%H%M%SZ"),
+                                  env_counts, args.a8_calibration_decisions)
+    if "selection" in modes:
+        from btcusdt_quant.rl import a8_selection as AS
+        config = AS.SelectionConfig(run_id=args.run_id or datetime.now(timezone.utc).strftime("selection_%Y%m%dT%H%M%SZ"),
+                                    population=args.population, generations=args.generations, envs=args.a8_envs,
+                                    start=args.selection_start, end=args.selection_end,
+                                    pretrain_decisions=args.pretrain_decisions,
+                                    monthly_decisions=args.monthly_decisions, smoke="driver-smoke" in modes,
+                                    stop_after_commits=args.stop_after_commits)
+        return AS.run_selection(config, resume=args.resume)
+    if "smoke" not in modes:
+        raise SystemExit("A8 mode required: --only smoke|calibration|selection")
     started = time.time()
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = OUT / "smdp_a8_smoke"
@@ -6520,6 +6535,18 @@ def main(argv=None) -> None:
     ap.add_argument("--no-registry", action="store_true")
     ap.add_argument("--allow-test-parity", action="store_true",
                     help="explicit TEST unlock: precompute integrity parity / TEST state rows only")
+    ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--run-id", default="")
+    ap.add_argument("--population", type=int, default=8)
+    ap.add_argument("--generations", type=int, default=6)
+    ap.add_argument("--a8-envs", type=int, default=2048)
+    ap.add_argument("--selection-start", default="2022-01")
+    ap.add_argument("--selection-end", default="2023-12")
+    ap.add_argument("--pretrain-decisions", type=int, default=10_000_000)
+    ap.add_argument("--monthly-decisions", type=int, default=2_000_000)
+    ap.add_argument("--stop-after-commits", type=int, default=0)
+    ap.add_argument("--a8-calibration-envs", default="256,512,1024,2048")
+    ap.add_argument("--a8-calibration-decisions", type=int, default=131_072)
     args = ap.parse_args(argv)
     args.only = set(args.only.split(","))
     if args.command == "freeze":

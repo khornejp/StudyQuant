@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 
 import numpy as np
 
@@ -28,6 +29,7 @@ ACCOUNT_CHANNELS = ("executed", "target", "pending", "pending_dq", "position_pnl
 ACCOUNT_DIM = len(ACCOUNT_CHANNELS)
 GA_SELECTION = ("2022-01-01", "2024-01-01")
 FINAL_EVALUATION = ("2024-01-01", "2026-01-01")
+SELECTION_END_NS = np.datetime64("2024-01-01T00:00:00", "ns").astype(np.int64)
 
 
 def normalize_gates(values) -> tuple[float, ...]:
@@ -133,6 +135,25 @@ def raw_net4_fitness(cell_daily: dict) -> tuple[float, float]:
     return min(totals), float(np.mean(totals))
 
 
+def selection_months(start: str = "2022-01", end: str = "2023-12") -> list:
+    """Inclusive GA months. Selection can never cross into final evaluation."""
+    import pandas as pd
+    months = [period.to_timestamp().tz_localize("UTC") for period in pd.period_range(start, end, freq="M")]
+    if not months or months[0] < pd.Timestamp(GA_SELECTION[0], tz="UTC"):
+        raise ValueError("A8 selection must start on or after 2022-01")
+    if months[-1] + pd.offsets.MonthBegin(1) > pd.Timestamp(GA_SELECTION[1], tz="UTC"):
+        raise PermissionError("A8 selection cannot read 2024 evaluation data")
+    return months
+
+
+def median_seed_fitness(seed_fitness: dict[int, tuple[float, float]]) -> tuple[float, float]:
+    """Locked three-seed genotype score: component-wise median raw-net4 fitness."""
+    if len(seed_fitness) != 3:
+        raise ValueError("A8 genotype confirmation requires exactly three seeds")
+    values = np.asarray(list(seed_fitness.values()), np.float64)
+    return tuple(float(value) for value in np.median(values, axis=0))
+
+
 def next_generation(genomes: list[Genome], fitness: dict[str, tuple], seed: int, generation: int,
                     elite: int = 2) -> list[Genome]:
     """Elite-2 plus tournament-3 offspring. Only genotypes cross generations; model weights are not accepted."""
@@ -212,7 +233,7 @@ def scaled_features_fixed_2021(cache: dict, clock, r1: int):
 
 def assert_dev_path(path) -> None:
     text = str(path).replace("\\", "/").lower()
-    if "2026" in text or "test" in Path(text).name:
+    if re.search(r"(?:^|[/_.-])(?:2026|test)(?=$|[/_.-])", text):
         raise PermissionError(f"A8 refuses TEST/2026 path: {path}")
 
 
@@ -273,6 +294,7 @@ class A8Trainer:
         self.observation = env.obs()
         self.decisions = 0
         self.stats = {"net4": 0.0, "renewal_count": 0, "sl_count": 0, "tp_count": 0,
+                      "round_trips": 0.0,
                       "sl_pnl": 0.0, "tp_pnl": 0.0, "cap_pnl": 0.0, "renewal_cost": 0.0,
                       "reentry_requests": 0, "reentry_fills": 0, "flat_gap_min": 0,
                       "identity_error": 0.0, "faults": 0, "max_hold_min": 0}
@@ -282,7 +304,8 @@ class A8Trainer:
         return {"model": copy.deepcopy(self.model.state_dict()), "optimizer": copy.deepcopy(self.optimizer.state_dict()),
                 "generator": self.generator.get_state(), "numpy_rng": self.numpy_rng.bit_generator.state,
                 "torch_cpu_rng": torch.get_rng_state(), "hidden": self.hidden.detach().cpu(),
-                "observation": self.observation.copy(), "decisions": self.decisions, "stats": copy.deepcopy(self.stats),
+                "torch_cuda_rng": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+                "decisions": self.decisions, "stats": copy.deepcopy(self.stats),
                 "genome": self.genome.to_json(),
                 "env": {"ST": self.env.ST.copy(), "gi": self.env.gi.copy(), "endx": self.env.endx.copy(),
                         "startx": self.env.startx.copy(), "last_t": self.env.last_t.copy()}}
@@ -294,11 +317,13 @@ class A8Trainer:
         self.generator.set_state(state["generator"])
         self.numpy_rng.bit_generator.state = state["numpy_rng"]
         torch.set_rng_state(state["torch_cpu_rng"])
+        if self.device.type == "cuda" and state.get("torch_cuda_rng"):
+            torch.cuda.set_rng_state_all(state["torch_cuda_rng"])
         self.hidden = state["hidden"].to(self.device)
-        self.observation = state["observation"].copy()
         self.decisions, self.stats = int(state["decisions"]), copy.deepcopy(state["stats"])
         for key in ("ST", "gi", "endx", "startx", "last_t"):
             getattr(self.env, key)[:] = state["env"][key]
+        self.observation = state.get("observation", self.env.obs()).copy()
 
     def _sequence_forward(self, observations, hidden, done):
         import torch
@@ -329,6 +354,7 @@ class A8Trainer:
                 parts = [categorical_logp_entropy(logits, action)[0] for logits, action in
                          zip((joint_logits, sl_logits, tp_logits), actions)]
             target_action, wait_action = decode_joint(actions[0].cpu().numpy())
+            round_trips_before = self.env.ST[:, MK.S_RT].sum()
             result = self.env.step(target_action, wait_action, actions[1].cpu().numpy(), actions[2].cpu().numpy())
             records["obs"].append(x)
             for key, value_ in zip(("joint", "sl", "tp"), actions):
@@ -342,6 +368,7 @@ class A8Trainer:
             records["minutes"].append(torch.as_tensor(result["minutes"], dtype=torch.float32, device=self.device))
             records["learn"].append(torch.as_tensor(self.env.burnin_mask(self.cfg.burnin_hours), device=self.device))
             self.stats["net4"] += float(result["net4"].sum())
+            self.stats["round_trips"] += float(self.env.ST[:, MK.S_RT].sum() - round_trips_before)
             self.stats["identity_error"] = max(self.stats["identity_error"], float(result["identity_err"].max()))
             self.stats["faults"] += int(result["fault"].sum())
             if result["fault"].any() or float(result["identity_err"].max()) > 1e-8:
@@ -411,6 +438,90 @@ class A8Trainer:
             steps = min(rollout_steps, math.ceil((target - self.decisions) / self.env.E))
             latest = self.update(steps)
         return latest
+
+
+class A8Evaluator:
+    """Continuous six-cell sampled-policy ledger for 2022-2023 selection only."""
+
+    METRICS = ("net4", "fills", "minutes", "renewal_count", "sl_count", "tp_count", "sl_pnl", "tp_pnl",
+               "cap_pnl", "rl_exit_pnl", "renewal_cost", "reentry_requests", "reentry_fills", "flat_gap_min")
+
+    def __init__(self, market: dict, features: tuple, reward_config, rv_median: float, cells: list,
+                 start_ns: int, end_ns: int, seed: int, device="cuda"):
+        import torch
+        if int(end_ns) > int(SELECTION_END_NS):
+            raise PermissionError("A8 evaluator refuses 2024-2025 evaluation during selection")
+        self.device = torch.device(device)
+        self.env = A8BatchEnv(market, features, cells, tuple(TARGETS), tuple(WAITS), reward_config, rv_median,
+                              require_set=True)
+        self.env.reset_env(np.arange(len(cells)), np.full(len(cells), start_ns), np.full(len(cells), end_ns))
+        self.hidden = None
+        self.observation = self.env.obs()
+        self.generator = torch.Generator(device=self.device).manual_seed(int(seed))
+        self.total_decisions = 0
+
+    def state_dict(self):
+        return {"generator": self.generator.get_state(), "hidden": None if self.hidden is None else self.hidden.cpu(),
+                "observation": self.observation.copy(), "total_decisions": self.total_decisions,
+                "env": {key: getattr(self.env, key).copy() for key in ("ST", "gi", "endx", "startx", "last_t")}}
+
+    def load_state_dict(self, state):
+        self.generator.set_state(state["generator"])
+        self.hidden = None if state["hidden"] is None else state["hidden"].to(self.device)
+        self.observation = state["observation"].copy()
+        self.total_decisions = int(state["total_decisions"])
+        for key, value in state["env"].items():
+            getattr(self.env, key)[:] = value
+
+    def run_month(self, model, month_end_ns: int) -> dict:
+        import torch
+        if int(month_end_ns) > int(SELECTION_END_NS):
+            raise PermissionError("A8 evaluator refuses 2024-2025 evaluation during selection")
+        env, E = self.env, self.env.E
+        end_index = int(np.searchsorted(env.t, month_end_ns))
+        if end_index > int(env.endx.min()):
+            raise ValueError("month exceeds evaluator selection boundary")
+        metrics = {key: np.zeros(E, np.float64) for key in self.METRICS}
+        round_trips_start = env.ST[:, MK.S_RT].copy()
+        identity_error = 0.0
+        faults = decisions = 0
+        max_hold = int(env.ST[:, MK.S_MAXHOLD].max())
+        model.eval()
+        while True:
+            live = env.gi < end_index - 1
+            if not live.any():
+                break
+            x = torch.as_tensor(self.observation, device=self.device)
+            with torch.no_grad():
+                joint, sl, tp, _, next_hidden = model(x, self.hidden)
+                actions = [torch.multinomial(torch.softmax(logits, -1), 1, generator=self.generator).squeeze(1)
+                           for logits in (joint, sl, tp)]
+            if self.hidden is not None and (~live).any():
+                next_hidden[:, ~torch.as_tensor(live, device=self.device)] = self.hidden[:, ~torch.as_tensor(live, device=self.device)]
+            target_action, wait_action = decode_joint(actions[0].cpu().numpy())
+            dead = np.flatnonzero(~live)
+            saved_dead = ({key: getattr(env, key)[dead].copy() for key in ("ST", "gi", "endx", "startx", "last_t")}
+                          if len(dead) else None)
+            saved_end = env.endx.copy()
+            env.endx[:] = np.minimum(env.endx, end_index)
+            result = env.step(target_action, wait_action, actions[1].cpu().numpy(), actions[2].cpu().numpy())
+            env.endx[:] = saved_end
+            if saved_dead is not None:
+                for key, value in saved_dead.items():
+                    getattr(env, key)[dead] = value
+            for key in self.METRICS:
+                metrics[key] += np.where(live, result[key], 0.0)
+            identity_error = max(identity_error, float(result["identity_err"][live].max()))
+            faults += int(result["fault"][live].sum())
+            max_hold = max(max_hold, int(result["max_hold_min"][live].max()))
+            decisions += int(live.sum())
+            self.hidden = next_hidden
+            self.observation = env.obs()
+        self.total_decisions += decisions
+        return {**{key: value.tolist() for key, value in metrics.items()},
+                "round_trips": (env.ST[:, MK.S_RT] - round_trips_start).tolist(),
+                "identity_error": identity_error, "faults": faults, "max_hold_min": max_hold,
+                "decisions": decisions}
 
 
 def json_write(path: Path, value) -> str:
